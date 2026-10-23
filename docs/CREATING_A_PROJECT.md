@@ -255,7 +255,7 @@ front-loaded: requirements, design, build, validation and QA crowd the start,
 and steady execution afterwards needs a fraction of the seats. While it writes
 the plan, the CEO records for each team the requirement or stage after which
 that role is done, and the platform stands the team down when that comes true.
-Every change lands in your boardroom, and the Overview roster carries **stand
+Every change lands in your boardroom, and the Team page carries **stand
 down** and **recall** so you can overrule any of it.
 
 **Constitution.** These are the hard rules the project lives under — spending
@@ -363,7 +363,7 @@ reveals as its own text and can be edited in place to rotate.
 
 ## Step 4 — Follow the checklist
 
-Go to the project's **Overview**. If anything about the setup is wrong or
+Go to the project's **Team** page. If anything about the setup is wrong or
 missing, a **Setup & health** card sits at the top naming each problem in
 plain English with a link to fix it — a dead or missing billing credential, a credential that
 should be a URL but isn't, a team running an outdated role version. Fix the
@@ -429,7 +429,7 @@ You can watch all of it in **Roadmap**, **Tasks** and **Team**, and in
   recent completed work and evidence claims. Fail anything that doesn't hold up —
   the CEO is told its team's work is suspect. You are the one reviewer that
   doesn't approve everything put in front of it.
-- **Watch the money if you want to** — the Overview budget meter warns at
+- **Watch the money if you want to** — the money line under the Team page's chart warns at
   80%. Crossing 100% does **not** stop the project — it is a plan, and going
   over obliges the CEO to account for what the extra bought. The wall is
   `hard_stop_multiple` times the plan (3x by default), and that is the only
@@ -457,7 +457,7 @@ project pauses itself rather than burning money against a wall.
 2. (Or later: Settings → billing → pick a credential → Save assignment → Test.)
 3. (Or later: Settings → Data sources → `ppc` + the MCP URL + engineer
    role → Save, auto-tested.)
-4. Overview → fix anything the health card names → card disappears.
+4. Team page → fix anything the health card names → card disappears.
 5. Chat → brief the CEO.
 6. Roadmap → accept the requirements you want, cut the rest, sign the date.
 7. Done. Check back in the morning.

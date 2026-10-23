@@ -73,7 +73,7 @@ approving, cutting, rescheduling, auditing; and setting up teams, data sources
 and rules.
 No dashboard needed day to day.
 
-<img src="docs/screenshots/boardroom.png" alt="Chat with the CEO: the chairman asks how confident it is in the 30th; the CEO answers with the estimate-to-actual ratio, its re-projection, and what would move it — with the question it is asking and the approval waiting beside the conversation">
+<img src="docs/screenshots/boardroom.png" alt="Chat with the CEO: the chairman asks for the free route; the CEO answers that Ines can rebuild the vintages from filing dates and has still filed the licence as a decision — with What they did open under the answer, and the open question and the $180 decision beside the conversation">
 
 You pick the scopes when you connect:
 
@@ -203,9 +203,9 @@ behaviour is held by golden transcripts of a scripted backend plus one opt-in
 paid check. The rules are the part an agent argues with, so the rules are the
 part under attack.
 
-<img src="docs/screenshots/plan-and-promise.png" alt="The Roadmap: the commitment with its levers, pace and waste, the burn-up against the committed and projected dates, and requirements in stages with dependencies">
+<img src="docs/screenshots/plan-and-promise.png" alt="Details › Roadmap: the commitment with its pace and spend, the date you signed against the platform's projection, and requirements in stages — two proven true, two in progress, one waiting for you to accept">
 
-<img src="docs/screenshots/work-and-proof.png" alt="Tasks: a read-only board — ready, in progress, being checked, stuck, done — with each task's team, holder and the bet it serves, and a button to ask the CEO for a change">
+<img src="docs/screenshots/work-and-proof.png" alt="Details › Tasks: a read-only board — ready, in progress, being checked, stuck, done — with each task's team, holder and the requirement it serves, and a button to ask the CEO for a change">
 
 **How much you decide is a setting.** *Supervised*: you accept scope, sign the
 date, judge the closes a script can't check. *Autonomous*: the CEO does all

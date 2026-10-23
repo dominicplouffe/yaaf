@@ -43,7 +43,7 @@ employees and a lead. The CEO is the only agent that plans.
   down ones whose job is finished, up to `max_teams`, with no approval
   round-trip — it is spending inside a budget it already has, and hiring buys
   no runs (the daily ration and the monthly wall are the project's, not the
-  seat's). Every change lands in your boardroom and on the Overview roster,
+  seat's). Every change lands in your boardroom and on the Team page,
   where you can stand a role down or recall one yourself. Two seats are not the
   CEO's to remove: its last `challenge` role, and its last reader when the
   constitution asks for an independent read.
@@ -194,7 +194,7 @@ dates are its cycles' (§4).
   "completed" work and evidence to check yourself, and records your verdict —
   because AI reviewers approve nearly everything, and you don't.
 - **CEO-judgment metric.** The platform tracks how much of what the CEO called
-  progress actually survived verification, and shows it on the Overview.
+  progress actually survived verification, and shows it on the Team page.
 
 ## 7. Money that can't run away
 
@@ -375,7 +375,7 @@ absence, what the CEO decided on its own authority, what you decided, and what
 that leaves waiting on you. It reads in the app under **Inbox → Updates** and
 **Activity → What happened**, from `yaaf briefing`, over MCP, and — with
 `brief_daily_at` set — in your email every morning. It is deliberately not a
-panel on the Overview or the Inbox's Needs-you tab: both of those are the
+panel on the Team page or the Inbox's Needs-you tab: both of those are the
 present tense, and a narrative sitting on top of them restated their own counts
 back at them. It has a tab of its own beside them instead.
 
@@ -425,7 +425,7 @@ costs you the interrupt and never the news: everything in that class is a
 section. Both what was sent and what was held are on the record.
 
 **The agenda — what it is going to do next.** A fourteen-day strip on each
-project's Overview (and `yaaf agenda`): the wall-clock wakes, the standing
+project's Team page (and `yaaf agenda`): the wall-clock wakes, the standing
 review, the cycle roll, bet kill dates, approval and spot-check expiries, the
 budget reset, and the promised delivery date with the platform's own projection
 beside it. Recurring wakes are drawn as *rhythms* — one fact with a cadence and
@@ -546,7 +546,7 @@ evidence at all about your *project*.
 
 ## 16. Setup that can't silently fail
 
-- **Health checklist** on each project's Overview names anything misconfigured
+- **Health checklist** on each project's Team page names anything misconfigured
   — dead billing, a credential that isn't a URL, an untested data source, a
   team running an outdated role version — in plain language, with a fix link. A
   healthy project shows nothing at all.

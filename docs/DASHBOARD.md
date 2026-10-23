@@ -44,8 +44,10 @@ phone the sidebar folds into a drawer behind the menu button.
 a search box of its own) opens a palette
 that finds any page, project or person and runs the few app-wide actions
 (theme, shortcuts, sign out). **?** lists every shortcut. **g** then a letter
-goes to a page of the project you are in — **g o** Overview, **g c** Chat,
-**g k** Tasks, **g t** Team, and so on — and **g i** to the Inbox. No single
+goes to a page of the project you are in — **g t** Team, **g c** Chat,
+**g r** Results, **g d** Details, and straight to a Details tab with **g m**
+Roadmap, **g k** Tasks, **g f** Deliverables, **g s** Spend, **g v** Reviews,
+**g a** Activity — and **g i** to the Inbox. No single
 keypress ever decides anything: approving, denying and answering are always a
 click on a labelled button.
 
@@ -147,7 +149,7 @@ stopped, cannot run, paused, failing (its last three runs died), late, at
 risk, decisions waiting, busy with nothing to show (twenty or more paid runs in
 a week, from a project at least a week old, with nothing finished, met,
 published or proven), gone quiet, on track — decided once on the server,
-so the Projects page, the project's Overview, `yaaf projects`, `yaaf status`
+so the Projects page, the project's Team page, `yaaf projects`, `yaaf status`
 and Claude's `desk` and `project` say exactly the same thing.
 
 It replaced the Desk as the first screen. The Desk answered "what needs me?"
@@ -209,7 +211,7 @@ the whole case:
 - **Scope, a date, a close to judge** link to the screen where the decision is
   made, with the consequence stated first.
 
-The sidebar badge, Home, the project switcher and each Overview's **Needs you**
+The sidebar badge, Home, the project switcher and each Team page's **You** box
 card all read the same list from the same request, so they cannot disagree.
 
 **Only live projects appear.** Stopped and completed ones are the Projects
@@ -345,8 +347,8 @@ Chosen once, at creation, and frozen — the rules differ by shape.
 
 A Deliver project whose every requirement is true tells you so, and then closes
 itself after `complete_after_hours` (24 by default; Settings → Rules in force →
-Autonomy) unless its scope moves: the Overview's strip says when, and **Complete
-the project…** does it now. A completed delivery's Overview offers **Reopen…** for
+Autonomy) unless its scope moves: the Team page's strip says when, and **Complete
+the project…** does it now. A completed delivery's Team page offers **Reopen…** for
 14 days; a reopened one runs again and will not close itself until its scope has
 moved.
 
@@ -417,6 +419,8 @@ its own absence is clutter. See [project shapes](#project-shapes) below.
 
 ## Team — the project's home
 
+<img src="screenshots/cockpit-overview.png" alt="The Team page: the chairman at the top with the three decisions waiting on them, the CEO beneath, and each team — a newly hired Risk team drawn dashed with the CEO's reason — with every person's state, model and month's cost">
+
 **The header** says what kind of project this is (its shape, the date it is due,
 how much the CEO decides on its own, your role on it), its name and status, the
 project's one-line status (the same sentence as Home, with a link to the page
@@ -476,6 +480,8 @@ delivered, what this month has cost against the cap, and runs today.
 
 ### One person's page
 
+<img src="screenshots/person.png" alt="One person's page: what Maya is working on now and the requirement it serves, her run in flight, her week, what she has made and who read it, the model she runs on and her month's cost, and her recent runs each with What they did">
+
 **Click anyone** — on the chart, in the sidebar's Live now, on a task card —
 and their page opens, with an address you can send:
 
@@ -528,6 +534,8 @@ The same conversation is reachable from Slack — see
 [INTEGRATIONS.md](INTEGRATIONS.md#slack).
 
 ## Results — what the team delivered, and who checked it
+
+<img src="screenshots/results.png" alt="Results: each published deliverable with who made it and who checked it — verified by YAAF, read by Juno — and the selected one's evidence: the check, the goal-to-requirement-to-task chain, and what the run that made it did">
 
 One row per published deliverable (its newest version), newest first: who made
 it, and who or what looked at it before it reached you, in the platform's words
@@ -621,7 +629,7 @@ forecast grades. Nothing but the platform ever writes `met`.
 
 Opened on schedule by the janitor, with zero tokens, regardless of budget or an
 empty board. A review with nothing on the board is the one you most need. An
-open review shows a banner on the Overview and the Roadmap until you close it.
+open review shows a banner on the Team page and the Roadmap until you close it.
 
 - **The platform's numbers**, frozen at open: pace, requirements met since the
   last review, the commitment's state with promised and projected dates,
@@ -664,6 +672,8 @@ used to be answered by reading two lists with different shapes.
   are the ones kept, and the screen says how many are not shown.
 
 ## Activity — "what happened?"
+
+<img src="screenshots/activity.png" alt="Details › Activity › Everything: every run, message and decision newest first, filterable by kind, person and window, each action saying on whose authority it happened, with View run and Export CSV">
 
 **Everything** is the default: one list of every message, run, decision and
 piece of proof, newest first, grouped by day. Filter it by kind — Messages,

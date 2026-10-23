@@ -160,7 +160,7 @@ one amendment from being turned back.
   purchase is in the audit log and under Activity → Decisions, whoever made it.
 - **Your buttons never close.** Pause, stop, veto, amend, reopen and audit are
   chairman powers at every autonomy level — and so are standing a role down and
-  recalling one, on the Overview roster.
+  recalling one, on the Team page.
 - **The roster is the CEO's at every level, and bounded at every level.** The
   autonomy dial does not govern staffing: the CEO hires and stands roles down
   itself whatever it is set to, because hiring buys no runs and cannot raise a

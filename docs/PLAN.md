@@ -71,7 +71,7 @@ golden-transcript evals — SQLite between edits, Postgres in CI.
 | Spend envelope, purchases, revenue-by-webhook | Built. |
 | Sandbox — container per run, scoped secrets, Chromium in the box | Built. |
 | Evidence verification, webhooks, spot-audit, CEO-judgment metric | Built. |
-| Dashboard — Home, Inbox, and per project Overview, Chat, Roadmap, Tasks, Deliverables, Team, Spend, Reviews, Activity, Settings | Built. See [ux-redesign](ux-redesign/README.md) for why it is laid out this way. |
+| Dashboard — Home, Inbox, and per project Team, Chat, Results and Details (Roadmap, Tasks, Deliverables, Spend, Reviews, Activity, Settings) | Built. See [ux-redesign](ux-redesign/README.md) for why it is laid out this way. |
 | The chairman's MCP server — 32 tools across four scopes | Built, M0 through M5. Claude gets its own credential, never its person's own; nothing irreversible lands in one call; agent text arrives wrapped and labelled untrusted; no secret is readable at any scope. See [MCP_SERVER.md](MCP_SERVER.md). |
 | People — accounts, sessions, personal tokens; chairman, co-chairs, observers | Built. One box, several people, each project with one chairman who alone decides who decides; co-chairs decide as peers and are recorded as themselves. Every human route declares its authority and a test refuses one that does not. The static admin token is retired. See [AUTH.md](AUTH.md). |
 | Integrations — Slack (Socket Mode), GitHub, MCP data sources, S3, email | Built. |

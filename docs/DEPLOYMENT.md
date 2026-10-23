@@ -530,7 +530,7 @@ these polling floors, never a replacement for them.
 
 - `GET /healthz` — process liveness.
 - `GET /observe/projects/{id}/health` — the per-project setup checklist, the
-  same one the Overview renders. All green = the UI hides the card.
+  same one the Team page renders. All green = the UI hides the card.
 - Dispatcher, janitor, and Slack threads log at INFO to the `api` container. A
   plan meter throttled by Anthropic logs one WARNING naming the token digest and
   how long it is staying quiet; it never retries through a `Retry-After`. A
@@ -636,7 +636,7 @@ difference. Three things are worth knowing:
 - **The names are placeholders.** A migrated key is called
   `Migrated <old name> (<id>)`, because two projects could each have had a key
   named `anthropic-api-key` and the shared list needs distinct names. Open
-  Settings → LLM credentials once and rename them; the Overview of every
+  Settings → LLM credentials once and rename them; the Team page of every
   project on a credential shows the name.
 - **Its billing mode is read from the project it paid for.** A key no project
   was attached to is decrypted to tell an API key from a subscription token —
