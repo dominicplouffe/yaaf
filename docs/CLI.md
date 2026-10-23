@@ -29,7 +29,7 @@ Every command that takes a project accepts **either a slug or an id**.
 | `yaaf seed-roles [DIR] [--only-missing]` | Load every `*.json` in the directory (default `roles/`) into the role library. Re-running creates new role *versions* — which is how an edited prompt reaches a running install. `--only-missing` skips the slugs the library already has, which is what you want after an update adds roles to the checkout; it still refiles those roles' **category and domains**, because those live on the role rather than the version and so can move without putting a live team behind its prompt. |
 | `yaaf seed-crews [DIR] [--only-missing]` | Load every `*.json` in the directory (default `crews/`) into the crew library — the pre-staffed teams the hiring desk offers. Crews are not versioned: one is read at hiring time and copied into the project's own teams, so re-seeding an edited crew can never reach a project that already started. Run it after `seed-roles`. |
 | `yaaf create-user EMAIL NAME [--admin]` | Invite somebody (instance admins only). Prints the one-time link that lets them choose a password — the box sends no mail, so hand it on. Idempotent by email. |
-| `yaaf create-project SPEC_FILE` | Create a project from a JSON spec (shape below). |
+| `yaaf create-project SPEC_FILE` | Create a project from a JSON spec (shape below), or from a setup file like those in `examples/` — roles it carries that your library lacks are added first, and its credential is matched by name. |
 | `yaaf set-secret NAME [--project P] [--scopes a,b] [--kind service]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. |
 | `yaaf set-secret NAME --from-file PATH [--filename NAME]` | Store a credential that **is a file** — a service-account key, a PEM, a kubeconfig. No prompt: a key file is not something anyone retypes. Granted roles receive its *path*, not its contents; `--filename` names it inside the sandbox and defaults to the file's own name. |
 | `yaaf llm-credentials [--include-hidden]` | List named LLM credentials and project assignments (no values). Each project says whether it is still live, and the credential says whether any of them are. |
@@ -136,7 +136,7 @@ yaaf stop  my-slug --reason "shipped"
 
 | Command | Shows |
 |---|---|
-| `yaaf projects` | Every project with status and headline numbers. |
+| `yaaf projects [--json]` | Every project as one line: status, spend against the budget, the hard stop, and how many things wait on you. `--json` for the raw payload. |
 | `yaaf rehearse SPEC_FILE [--days N] [--usd-per-run N] [--json]` | **A fire drill: run the spec as a project for nothing, before you fund it.** Needs no deployment and no key — `yaaf rehearse examples/01-your-first-hour.json` works on a fresh checkout. See [FEATURES §13](FEATURES.md). |
 | `yaaf briefing [PROJECT] [--hours N] [--seen]` | **What happened since you last read one.** Omit the project for every live project. Composed from the record at zero tokens, so it works on a paused project and a broke one. Reading never moves your mark; `--seen` does, and only to the edge of the window it just printed. |
 | `yaaf agenda PROJECT [--days 14]` | **What it is scheduled to do next**: the wall-clock wakes, the standing meeting, the cycle roll, the kill dates, the clocks that decide themselves, and the promised date with the platform's projection beside it. |
@@ -153,6 +153,7 @@ yaaf stop  my-slug --reason "shipped"
 | `yaaf hypotheses PROJECT` | Live bets and their kill dates. |
 | `yaaf approvals PROJECT` | Pending approvals. |
 | `yaaf flags PROJECT` | What the platform obliged the CEO to tell you, and whether it has. |
+| `yaaf asks PROJECT` | Questions the CEO put to you, live and settled. |
 | `yaaf audit PROJECT [--n 5]` | A random spot-audit sample of recent evidence and completed tasks. |
 | `yaaf receipt PROJECT [--json]` | **What it cost, and what the money bought.** Metered spend including the runs that died, beside only what the platform itself wrote: requirements it marked met after running their tests, external claims it fetched and hashed, closes it drew at random. Carries no agent-written text, so it is safe to paste in public. |
 
@@ -166,6 +167,7 @@ yaaf stop  my-slug --reason "shipped"
 | `yaaf unfreeze MESSAGE_ID` | Release a thread the pair circuit breaker froze. |
 | `yaaf audit-evidence EVIDENCE_ID --ok\|--bad [--note …]` | Record your verdict on a piece of evidence. |
 | `yaaf ack-flag FLAG_ID [--note …]` | Answer a flag the CEO raised. A moment closes here; a condition still true stays open under your note. |
+| `yaaf ack-heads-up HEADS_UP_ID [--note …]` | Mark noted something you asked to be told. Nothing waits on it; a note is held until the CEO answers it. |
 
 Constitution changes go through `yaaf amend` (above) or Settings → **Rules in
 force**. Either way they carry a written reason, an audit entry, and disclosure

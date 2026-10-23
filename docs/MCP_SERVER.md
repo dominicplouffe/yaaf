@@ -121,8 +121,8 @@ common shape, and the one to document in the README.
 
 **Transport.** Streamable HTTP, mounted in the existing app at `/mcp`, so the
 deployment story is unchanged — one process, one port, one TLS terminator. A
-stdio bridge (`yaaf mcp-stdio`) wraps it for clients that only speak stdio, and
-holds the token in the client's own config rather than in a shell history.
+stdio bridge for clients that only speak stdio was planned and is **not built**:
+there is no `yaaf mcp-stdio`. Every client named below speaks HTTP.
 
 **Two ways to present that credential**, and the difference decides which
 clients can connect at all:
@@ -500,7 +500,7 @@ yaaf/server/mcp/envelope.py     # untrusted-content wrapping, truncation, paging
 yaaf/server/mcp/oauth_server.py # M2: discovery, registration, authorize, token
 yaaf/server/mcp/consent.py      # M2: the chairman's login and consent screen
 yaaf/server/login.py            # M2: argon2id password check, session cookie
-yaaf/cli/mcp.py                 # `yaaf mcp-token` (mint/list/revoke), `yaaf mcp-stdio`
+yaaf/cli/main.py                # `yaaf mcp-token` (mint/list/revoke)
 migrations/versions/0018_mcp_clients.py
 migrations/versions/0019_mcp_oauth.py
 ```
