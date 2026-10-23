@@ -537,6 +537,9 @@ def org(principal: Principal, session: Session, arguments: dict) -> dict:
                 observe.project_activity, project_id=row.id,
                 since=arguments.get("since") or "today",
                 until=arguments.get("until"), session=session)),
+            # Who works when: the runs of the last half day and the wakes of
+            # the next, per person — the strip under the Team page's chart.
+            "schedule": _observe(observe.project_schedule, project_id=row.id, session=session),
         }
     return envelope.fit({"project": row.slug, **payload}, arguments.get("detail"))
 
@@ -667,20 +670,63 @@ def files(principal: Principal, session: Session, arguments: dict) -> dict:
     scope="read",
     description=(
         "The judgement record. view: decisions (what the CEO decided and why), reviews, "
-        "cycles, hypotheses, suggestions, memories, approvals, asks. This is where 'how did we "
-        "get here' is answered."
+        "cycles, hypotheses, suggestions, memories, approvals, asks; everything (every "
+        "message, run, decision and proof, newest first, each action with the permission it "
+        "ran on — filter with `kind` and `agent`); results (what was published, who made it "
+        "and who checked it). This is where 'how did we get here' is answered. Agent-written "
+        "text comes back wrapped as untrusted data."
     ),
     input_schema=_schema(
         view={"type": "string",
               "enum": ["decisions", "reviews", "cycles", "hypotheses", "suggestions",
-                       "memories", "approvals", "asks"]},
-        limit={"type": "integer", "description": "decisions only: rows, default 20"},
+                       "memories", "approvals", "asks", "everything", "results"]},
+        limit={"type": "integer", "description": "decisions and everything: rows, default 20"},
+        kind={"type": "string", "description": "everything only: all, message, run, yours, "
+                                               "ceo, rule or proof"},
+        agent={"type": "string", "description": "everything and results: one agent's, by id"},
+        days={"type": "integer", "description": "everything only: window in days, default 7"},
     ),
     carries_agent_text=True,
 )
 def record(principal: Principal, session: Session, arguments: dict) -> dict:
     row = _project_of(principal, session, arguments)
     view = arguments.get("view") or "decisions"
+    agent_id = None
+    if arguments.get("agent"):
+        agent_id = _owned(session, row, Agent, str(arguments["agent"]), "agent").id
+    if view == "everything":
+        result = _observe(observe.project_record, project_id=row.id,
+                          kind=str(arguments.get("kind") or "all"), agent_id=agent_id,
+                          days=int(arguments.get("days") or 7), limit=500, format="json",
+                          session=session)
+        # Lines are cut to a sentence on the server before they are wrapped, so
+        # the budget below can never split an envelope.
+        lines = [{**line, "text": envelope.untrusted(line["text"], author=line["who"],
+                                                     kind="record")}
+                 for line in envelope.page(result["lines"], arguments.get("limit"))]
+        return envelope.fit({"project": row.slug, "view": view, "since": result["since"],
+                             "lines": lines}, arguments.get("detail"))
+    if view == "results":
+        result = _observe(observe.project_results, project_id=row.id, agent_id=agent_id,
+                          session=session)
+        wrapped = []
+        for r in result["results"]:
+            author = (r["made_by"] or {}).get("name")
+            wrapped.append({
+                **r,
+                "name": envelope.untrusted(r["name"][:_TITLE_CHARS], author=author, kind="file"),
+                "task": ({**r["task"], "title": _wrapped(r["task"]["title"], "task")}
+                         if r["task"] else None),
+                "serves": [{**x, "statement": _wrapped(x["statement"], "requirement")}
+                           for x in r["serves"]],
+                "checks": [{**c, "note": envelope.untrusted(c["note"], author=c.get("who"),
+                                                            kind="review")
+                            if c.get("note") and c["kind"] == "reviewer" else c.get("note")}
+                           for c in r["checks"]],
+            })
+        return envelope.fit({"project": row.slug, "view": view, "counts": result["counts"],
+                             "total": result["total"], "results": wrapped},
+                            arguments.get("detail"))
     if view == "decisions":
         rows = _observe(observe.ceo_decisions, project_id=row.id, limit=200, session=session)
         payload = {"decisions": envelope.page(rows, arguments.get("limit"))}

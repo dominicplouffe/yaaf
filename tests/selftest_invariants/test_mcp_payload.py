@@ -71,6 +71,8 @@ def test_every_read_tool_stays_inside_the_default_budget(client):
         ("inbox", {"project": SLUG}),
         ("files", {"project": SLUG}),
         ("record", {"project": SLUG}),
+        ("record", {"project": SLUG, "view": "everything"}),
+        ("record", {"project": SLUG, "view": "results"}),
     ]
     oversized = {
         f"{name} {arguments.get('view', '')}".strip(): len(text_of(client, reader["token"],
