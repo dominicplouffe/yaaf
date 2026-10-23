@@ -44,6 +44,7 @@ LABELS = {
     "list_credentials": "Checking what can pay for this project",
     "propose_bundle": "Writing the draft",
     "rehearse": "Running the fire drill on the draft",
+    "ask": "Writing your next questions",
 }
 
 
@@ -73,6 +74,9 @@ class Turn:
     # happens rather than waiting for the next full fetch.
     error: str | None = None
     kind: str | None = None
+    # The round of questions, the moment `ask` is called rather than when the
+    # turn commits: the draft takes minutes more, and that is reading time.
+    round: dict | None = None
 
 
 _lock = threading.Lock()
@@ -130,6 +134,13 @@ def note(thread_id: str, text: str) -> None:
     first = next((line.strip() for line in text.splitlines() if line.strip()), "")
     if first:
         start_step(thread_id, first[:160])
+
+
+def set_round(thread_id: str, asked: dict) -> None:
+    with _lock:
+        turn = _turns.get(thread_id)
+        if turn is not None:
+            turn.round = asked
 
 
 def touch(thread_id: str) -> None:
@@ -190,13 +201,14 @@ def read(thread_id: str) -> dict:
         turn = _turns.get(thread_id)
         if turn is None:
             return {"running": False, "steps": [], "seconds": 0.0,
-                    "error": None, "kind": None}
+                    "error": None, "kind": None, "round": None}
         return {
             "running": turn.running,
             "seconds": round((turn.ended_at or time.time()) - turn.started_at, 1),
             "steps": [step.as_dict() for step in turn.steps],
             "error": turn.error,
             "kind": turn.kind,
+            "round": turn.round,
         }
 
 

@@ -1785,6 +1785,99 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   .step-running .step-mark { animation: none; }
 }
 
+/* ── the founding interview ──────────────────────────────────────────────────
+   The draft, split into decisions. Each question arrives with the Founder's
+   answer already chosen, so the page's job is to make agreeing invisible and
+   disagreeing one click: the pick is drawn as chosen, the alternatives sit
+   beside it at the same weight, and the round's one button says in words
+   what pressing it means. */
+.round { display: flex; flex-direction: column; gap: 10px; padding: 14px;
+  border: 1px solid var(--border); border-left: 2px solid var(--accent);
+  border-radius: var(--radius); background: var(--surface); }
+.round-head { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; }
+.round-title { font-weight: 600; }
+.round-head .muted { font-size: var(--t-micro); }
+.round-note { width: 100%; resize: vertical; font: inherit; background: var(--surface-2);
+  color: var(--ink); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 8px 12px; }
+.round-note:focus { outline: none; border-color: var(--accent); }
+.round-foot { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; }
+.round-foot .muted { font-size: var(--t-micro); flex: 1; min-width: 180px; }
+.round-done { border-left-color: var(--good); }
+.round-done p { margin: 0; color: var(--ink-2); }
+/* An answered round reads back as a quiet record, not a second form. */
+.round-past { border-left-color: var(--border-strong); background: transparent;
+  padding: 10px 14px; margin-top: 4px; gap: 6px; }
+.round-past .round-title { font-weight: 600; font-size: var(--t-micro); color: var(--muted); }
+
+.question { margin: 0; padding: 0; border: 0; min-width: 0;
+  display: flex; flex-direction: column; gap: 6px; }
+.question + .question { border-top: 1px solid var(--border); padding-top: 12px; }
+.question-head { display: flex; align-items: baseline; gap: 8px; padding: 0;
+  width: 100%; flex-wrap: wrap; }
+.question-n { flex: none; width: 20px; height: 20px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: var(--accent);
+  border: 1px solid rgba(var(--accent-rgb), 0.5); font-variant-numeric: tabular-nums; }
+.question-title { font-weight: 600; color: var(--ink); }
+.question-affects { margin-left: auto; font-size: var(--t-micro); color: var(--muted); }
+.question-body { margin: 0; color: var(--ink-2); line-height: 1.5; }
+.question-yours { margin: 0; font-size: var(--t-micro); }
+.question-options { display: flex; flex-direction: column; gap: 6px; }
+.option { display: flex; align-items: flex-start; gap: 9px; padding: 7px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-2); cursor: pointer; transition: border-color 0.12s; }
+.option:hover { border-color: var(--grid); }
+.option.on { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.07); }
+.option input[type="radio"] { width: 15px; height: 15px; min-height: 0; padding: 0;
+  margin: 3px 0 0; flex: none; accent-color: var(--accent); }
+.option .badge { margin-left: auto; flex: none; }
+.option-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.option-label { color: var(--ink); }
+.option-detail { font-size: var(--t-micro); color: var(--muted); line-height: 1.4; }
+.option-own { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.option-own textarea { width: 100%; resize: vertical; font: inherit; min-height: 0;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--accent);
+  border-radius: var(--radius); padding: 8px 10px; }
+.option-own textarea:focus { outline: none; }
+.question button.link { min-height: 0; padding: 0; border: 0; background: none;
+  font-weight: 500; font-size: var(--t-micro); color: var(--muted); }
+.question button.link:hover { color: var(--accent); background: none; }
+.option-own-open { align-self: flex-start; }
+
+.recap { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
+  gap: 3px; }
+.recap li { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 12px; font-size: var(--t-small); }
+.recap-q { color: var(--muted); }
+.recap-a { color: var(--ink); }
+.recap-mark { color: var(--good); }
+
+/* What is settled, beside the draft it produced. An assumption is the one
+   entry worth a second look, so it is the one drawn differently. */
+.ledger h3 { margin: 0; }
+.ledger-head { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; margin-bottom: 8px; }
+.ledger-head .muted { font-size: var(--t-micro); }
+.ledger ul { list-style: none; margin: 0; padding: 0; }
+.ledger-row { position: relative; padding: 7px 56px 7px 10px; border-left: 2px solid var(--border);
+  margin-bottom: 4px; }
+.ledger-answer { border-left-color: var(--accent); }
+.ledger-assumed { border-left-color: var(--warning); border-left-style: dashed; }
+.ledger-topic { font-size: var(--t-micro); color: var(--muted); display: flex; gap: 8px;
+  align-items: baseline; }
+.ledger-source { font-size: 11px; opacity: 0.85; }
+.ledger-assumed .ledger-source { color: var(--warning); }
+.ledger-decision { color: var(--ink); font-size: var(--t-small); line-height: 1.45; }
+.ledger-change { position: absolute; right: 0; top: 6px; min-height: 0; padding: 2px 8px;
+  font-size: 11px; font-weight: 600; background: transparent; border-color: transparent;
+  color: var(--muted); opacity: 0; transition: opacity var(--fast) var(--ease); }
+.ledger-row:hover .ledger-change, .ledger-change:focus-visible { opacity: 1; }
+.ledger-change:hover { color: var(--accent); background: transparent; border-color: transparent; }
+@media (hover: none) { .ledger-change { opacity: 1; } }
+
 /* ── who receives a credential ───────────────────────────────────────────────
    This replaced a free-text box asking for "role slugs, comma-separated", into
    which the chairman reasonably typed the names of the two people he could see

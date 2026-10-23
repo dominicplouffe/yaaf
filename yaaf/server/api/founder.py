@@ -86,9 +86,13 @@ def _render(thread: FoundingThread, running: bool | None = None) -> dict:
     return {
         "id": thread.id,
         "title": thread.title,
+        # A turn is drawn if it said something or asked something: a round
+        # can arrive with no prose around it, and it is still the turn.
         "turns": [
-            {"role": turn.get("role", "founder"), "text": turn.get("text", "")}
-            for turn in (thread.transcript or []) if turn.get("text")
+            {"role": turn.get("role", "founder"), "text": turn.get("text", ""),
+             **{key: turn[key] for key in ("round", "answers", "note", "changed")
+                if turn.get(key) is not None}}
+            for turn in (thread.transcript or []) if turn.get("text") or turn.get("round")
         ],
         "draft_bundle": thread.draft_bundle,
         "created_project_id": thread.created_project_id,
@@ -234,8 +238,19 @@ def get_thread(thread_id: str, session: Session = Depends(db),
     return _render(_thread(session, thread_id, person), running)
 
 
+class AnswerIn(BaseModel):
+    id: str = Field(min_length=1, max_length=80)
+    #: Index into the question's options. Absent with no text: left open.
+    choice: int | None = Field(default=None, ge=0, le=3)
+    #: His own words instead of any option.
+    text: str | None = Field(default=None, max_length=4_000)
+
+
 class SayIn(BaseModel):
-    message: str = Field(min_length=1, max_length=40_000)
+    message: str = Field(default="", max_length=40_000)
+    #: Answers to the round the Founder last asked. With these, `message` is an
+    #: optional note beside them rather than the turn itself.
+    answers: list[AnswerIn] | None = Field(default=None, max_length=12)
 
 
 def _accepted(body: dict) -> JSONResponse:
@@ -249,7 +264,8 @@ def _accepted(body: dict) -> JSONResponse:
     return JSONResponse(status_code=202, content=jsonable_encoder(body))
 
 
-def _say(session: Session, thread: FoundingThread, message: str) -> None:
+def _say(session: Session, thread: FoundingThread, message: str,
+         answers: list[dict] | None = None) -> None:
     """Record the message and hand the turn to a background thread.
 
     Nothing here waits on a model. The turn takes minutes, and a request that
@@ -270,7 +286,18 @@ def _say(session: Session, thread: FoundingThread, message: str) -> None:
             "no platform credential is configured. Set one in Settings so "
             "product-wide conversations (the Founder) can run; a project's own "
             "billing key is never used for them.")))
-    founder_agent.start_turn(session, thread, message)
+    if answers is not None:
+        asked = founder_agent.open_round(thread)
+        if asked is None:
+            raise HTTPException(status_code=409, detail=(
+                "there is no open round to answer — the conversation moved on; "
+                "say it in words instead"))
+        known = {q["id"] for q in asked["questions"]}
+        stray = sorted({a["id"] for a in answers} - known)
+        if stray:
+            raise HTTPException(status_code=422, detail=(
+                f"no question {', '.join(stray)} in the open round"))
+    founder_agent.start_turn(session, thread, message, answers)
     # After the commit, so the thread the worker loads already has the message
     # on it. `db()` commits when the request returns.
     _after_commit(session, lambda: founder_runner.submit(thread.id))
@@ -299,7 +326,10 @@ def say(thread_id: str, body: SayIn, session: Session = Depends(db),
             status_code=409,
             detail="this thread already became a project; talk to its CEO in the boardroom",
         )
-    _say(session, thread, body.message.strip())
+    answers = [a.model_dump() for a in body.answers] if body.answers is not None else None
+    if not body.message.strip() and answers is None:
+        raise HTTPException(status_code=422, detail="say something, or answer the questions")
+    _say(session, thread, body.message.strip(), answers)
     return _accepted(_render(thread))
 
 

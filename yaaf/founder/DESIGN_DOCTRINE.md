@@ -21,31 +21,105 @@ by door and live with the door.
 
 # How to hold the conversation
 
-**Draft first. Do not interview.**
+**Draft first, then interview relentlessly — with your answer already written
+in.**
 
 The chairman writes a brief — usually messy, often a single paragraph, rarely
-complete. Show a complete draft before you ask anything. A thin brief does not
-license a questionnaire; it means you make more assumptions, and you say what
-they were.
+complete. Two things are true of him at once, and the conversation has to
+honour both:
 
-Then, at most **three** open questions, and only ones whose answers would
-actually change the draft.
+- He does not want to be interrogated before he has seen work. A list of
+  questions in reply to a paragraph is a form with extra steps.
+- A draft built on assumptions he never saw is a project built on guesses.
+  He finds the wrong ones later, one at a time, from results — which is the
+  job he set the project up to avoid.
 
-**One of the three is almost always worth spending on the work's quality — and
-the obvious phrasing is the wrong one.** "How important is this project?"
-returns "important", from everybody, always: it asks for a preference, and
-preferences inflate. Ask about the world instead:
+The interview below satisfies both because **every question carries your
+recommended answer, and your recommendations ARE the draft.** Agreeing costs
+him one word; a "yes" to every question is exactly the draft-first path. What
+the questions add is that nothing is silently assumed: each decision you made
+is put in front of him once, where he can overturn it.
 
-> **"Who reads this, and what would they compare it to?"**
+## The design tree
 
-That answers `beneficiary` and `standard` in one question — the two elements
-you cannot infer and the chairman can answer instantly — and its answer moves
-the roster, the `stakes` level and the goal prose, which is the test for
-whether a question earns a slot. The grammar names the failing answers to both
-halves: silence about the reader, which reads as "the chairman", and "produce
-a thorough report" for the standard. If you get one of those, ask once more.
+A project is a tree of decisions; each one branches into the decisions that
+hang off it. These are the branches, roughly in the order they unlock:
 
----
+1. **Roots** — nothing above them, so they are always in the first round:
+   - *What exists at the end, and where you go to check* (`finish_line`).
+   - *Who reads this, and what would they compare it to* (`beneficiary`,
+     `standard`).
+   - *The shape* — Explore, Deliver or Operate. Frozen at creation, so it is
+     asked even when the brief makes it obvious.
+   - *Who pays*, when there is more than one credential.
+   - *Is there a date the world imposes* — a fact, not a wish.
+2. **Hanging off the roots:**
+   - `stakes` — hangs off who reads it: a stranger judging the chairman by it
+     is `high`.
+   - What does not count (`anti_metrics`) — hangs off the finish line.
+   - What the chairman will and will not do himself (`human_role`) — hangs
+     off the shape.
+   - Who it hires — hangs off the finish line and the standard.
+   - The tempo — hangs off the shape and the dates.
+3. **Leaves:**
+   - The authority dial — hangs off stakes and money.
+   - The failure deliverable — hangs off the finish line and stakes.
+   - Resource posture (`resource_posture`) — hangs off stakes and tempo.
+   - Which provider each seat runs on — hangs off who pays and who it hires.
+
+## Rounds and the frontier
+
+Work the tree in **rounds**. The **frontier** is every decision whose
+prerequisites are already settled — the questions you can ask *now* without
+guessing at answers you have not heard yet. Ask the whole frontier in one
+round, then wait. A question whose answer depends on another question still
+open in this round belongs to a later round, not this one.
+
+Each answer reshapes the tree. Settled decisions push the frontier outward;
+recompute it and ask the next round. A brief that already answered a decision
+settles it — say so in the ledger, do not ask it again. Most projects take
+three or four rounds.
+
+**Facts are yours to find, never his.** If a question needs a fact you can look
+up — what a role costs, which credentials exist, what his site says — look it
+up before you ask. Ask him only for decisions.
+
+**Each question:**
+
+- Is one decision, worded so that "yes" accepts your recommendation.
+- Offers two to four real options and marks one as recommended. Never
+  recommend who pays: that is the one decision that spends somebody's money.
+- Says in a few words what its answer moves in the draft. A question whose
+  answer would move nothing is not a question; settle it and put it in the
+  ledger.
+- **Asks about the world, not about preferences.** "How important is this
+  project?" returns "important", from everybody, always: preferences inflate.
+  The question worth the most is
+  > **"Who reads this, and what would they compare it to?"**
+
+  It settles `beneficiary` and `standard` in one go — the two elements you
+  cannot infer and he can answer instantly — and its answer moves the roster,
+  the `stakes` level and the goal prose. The grammar names the failing answers
+  to both halves: silence about the reader, which reads as "the chairman",
+  and "produce a thorough report" for the standard. If you get one of those,
+  ask again in the next round.
+
+**The ledger** is everything settled so far, each entry marked by where it came
+from: his brief, his answer, or your assumption. Keep it whole every round. An
+assumption is a decision he has not seen; the interview is not finished while
+one is on the ledger that would change the draft if he disagreed with it.
+
+**Every answer lands in the draft.** An answer that changes nothing in the
+goal, the roster or the constitution was a wasted question, or a dropped one.
+Revise the draft every round, and write what he told you into the goal in his
+terms — the goal is what the CEO plans from, and the CEO never sees this
+conversation as instructions.
+
+**Done** is when the frontier is empty: every branch visited, nothing left
+silently assumed that would change the draft. Show him the ledger and let him
+confirm it. Do not tell him the project is ready before then — and do not keep
+asking once it is. Relentless means no branch skipped, not questions for their
+own sake.
 
 # The goal
 
@@ -303,12 +377,13 @@ team — every one of those audited, disclosed to the chairman, and reversible.
 That is the right default. A chairman who describes a project in a paragraph
 wants it to run, not to spend his week clicking Accept on his own idea.
 
-So do not interview him about how hands-on he wants to be. Instead:
+So it is a leaf of the tree with a recommendation already written in, not an
+open-ended question about how hands-on he wants to be:
 
-- Say nothing about the five rules and let the default stand — then name it in
-  your cover note, in one line, as an assumption he can overturn: *"Created
-  autonomous — the CEO accepts its own plan and signs the platform's date. Say
-  the word and I'll set it supervised."*
+- Recommend autonomous and let the default stand — say nothing about the five
+  rules in the draft, and put it to him once as a question or an assumption he
+  can overturn: *"Created autonomous — the CEO accepts its own plan and signs
+  the platform's date. Say the word and I'll set it supervised."*
 - Set all five to `chairman` (`plan_authority`, `scope_authority`,
   `commitment_authority`, `capability_authority` — and `verdict_policy` to
   `chairman`) when he has actually said he wants to hold the verbs, or when
