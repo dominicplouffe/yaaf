@@ -157,10 +157,10 @@ one amendment from being turned back.
 - **Security challenges go to a human.** A captcha or a 2FA prompt is handed
   to you through the *assist* protocol; the platform never tries to defeat one.
 - **Everything is recorded.** Every acceptance, cut, verdict, grant and
-  purchase is in the audit log and on the Decisions screen, whoever made it.
+  purchase is in the audit log and under Activity → Decisions, whoever made it.
 - **Your buttons never close.** Pause, stop, veto, amend, reopen and audit are
   chairman powers at every autonomy level — and so are standing a role down and
-  recalling one, on the Overview roster.
+  recalling one, on the Team page.
 - **The roster is the CEO's at every level, and bounded at every level.** The
   autonomy dial does not govern staffing: the CEO hires and stands roles down
   itself whatever it is set to, because hiring buys no runs and cannot raise a
@@ -185,6 +185,16 @@ There is deliberately **no `spend_authority` switch**: the money dial *is*
 these three numbers, and a switch would only duplicate them. Inside the
 envelope an autonomous CEO buys without asking; outside it, the ordinary
 approval machinery answers.
+
+**The envelope can learn from your yeses.** When you approve a spend and it is
+your third or later approved spend on that project in 90 days (approved by you,
+not by a timeout, with no spend inside the proposed line declined), the decision
+returns an *offer*: raise the per-purchase line and the threshold to the round
+number just above the largest one you approved, so purchases like those stop
+asking. The web app shows it as a question; over MCP, `approval_decide` returns
+it and `amend` takes it. It is only ever an offer: nothing moves until you say
+yes, saying yes is an ordinary amendment with the reason filled in, and the
+monthly wall is never part of it (no offer is made above the wall).
 
 Purchases go through an idempotent two-step — `purchase_begin` clears the
 envelope *before* money moves and reserves the headroom, `purchase_finish`
@@ -213,7 +223,7 @@ meter what it buys.
   rule that a credential is never written to a file stays true for them.
 - The **needs loop**: an agent that lacks a capability files a `need`, which
   rides the approval machinery *and* lands as a boardroom line the Slack
-  bridge mirrors. You fulfil it in one motion on the Decisions screen — the
+  bridge mirrors. You fulfil it in one motion in the Inbox — the
   credential is stored, scoped to roles, and the need approved together.
 - With `capability_authority: ceo`, the CEO re-scopes existing service
   credentials across its own team. Never billing credentials, never values.

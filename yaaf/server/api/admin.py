@@ -29,6 +29,7 @@ from yaaf.core.constitution import (
     ConstitutionDoc,
     create_initial,
     default_autonomy,
+    default_briefing,
     default_tempo,
     effective,
     effective_version,
@@ -1268,7 +1269,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     try:
         doc = ConstitutionDoc.model_validate(
             {**ConstitutionDoc().model_dump(),
-             **default_tempo(body.mode, default_autonomy(body.constitution))})
+             **default_tempo(body.mode,
+                             default_briefing(default_autonomy(body.constitution)))})
     except ValidationError as exc:
         # A rule that cannot hold — a 29th of every month — is the founder's to
         # fix, not a 500. It reached here unchecked for as long as the suite's
@@ -3060,36 +3062,21 @@ def stop_project(
             "voided_approvals": voided}
 
 
-@router.post("/projects/{project_id}/complete", dependencies=[authority.STEER])
-def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
-    """The chairman confirms a delivery. One of the three gates he chose to be
-    asked at — the janitor only detects readiness and emails; this button
-    decides. Refused with the same outstanding list the janitor checks, so
-    the email and the refusal can never disagree.
+#: How long after it completes a delivery can be reopened, whoever completed it.
+REOPEN_DAYS = 14
+
+
+def complete_delivery(session: Session, project: Project, *, by_user_id: str | None,
+                      how: str) -> dict:
+    """Close a Deliver project whose every requirement is settled, and write
+    its receipt. ONE implementation for both doors — the chairman's Complete
+    and the janitor's `complete_after_hours` — so a project that closed itself
+    reads exactly like one he closed, bar the first line of its record.
 
     The receipt's load-bearing row is "failed once before": every requirement
     that ate dead runs on its way to true says so, because a delivery that
     looked effortless in the receipt would teach the wrong lesson about what
-    it cost.
-    """
-    from yaaf.server.janitor import delivery_outstanding
-
-    project = _get_project(session, project_id)
-    if project.mode != ProjectMode.DELIVER:
-        raise HTTPException(
-            status_code=422,
-            detail="only a Deliver project completes: Explore is judged and stopped, "
-                   "Operate finishes and starts again.",
-        )
-    if project.status == ProjectStatus.COMPLETED:
-        raise HTTPException(status_code=409, detail="already completed")
-    outstanding = delivery_outstanding(session, project)
-    if outstanding:
-        raise HTTPException(
-            status_code=409,
-            detail="not everything is true yet — " + "; ".join(outstanding),
-        )
-
+    it cost."""
     scope = policy.scope_requirements(session, project.id)
     accepted = [r for r in scope if r.status != RequirementStatus.PROPOSED]
     rows = []
@@ -3143,15 +3130,88 @@ def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
     session.add(Decision(
         id=ids.new_id(ids.DECISION),
         project_id=project.id,
-        by_user_id=_decider(project),
+        by_user_id=by_user_id,
         subject=f"delivery receipt: {receipt['met']} true, {receipt['cut']} cut",
-        body=("Confirmed complete by the chairman.\n\n" + "\n".join(lines)
+        body=(f"{how}\n\n" + "\n".join(lines)
               + f"\n\nTotals: {receipt['runs_total']} runs, "
                 f"${receipt['cost_usd']:,.2f}, {receipt['duration_days']} days."
               + (f"\nCommitment {'KEPT' if receipt['commitment']['kept'] else 'missed'}: "
                  f"promised {receipt['commitment']['deliver_by'][:10]}."
                  if receipt["commitment"] else "")),
     ))
+    return {"receipt": receipt, "revoked_runs": revoked, "voided_approvals": voided}
+
+
+@router.post("/projects/{project_id}/reopen", dependencies=[authority.STEER])
+def reopen_project(project_id: str, session: Session = Depends(db)) -> dict:
+    """Undo a completion, within REOPEN_DAYS. Completing is safe to automate
+    only because it can be taken back: the project runs again, the CEO is told
+    something is missing and to ask what, and it will not close itself again
+    until scope has moved — a reopened delivery is not the same one twice."""
+    project = _get_project(session, project_id)
+    if project.status != ProjectStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="only a completed project reopens")
+    completed_at = session.execute(
+        select(AuditLog.at).where(
+            AuditLog.project_id == project.id,
+            AuditLog.action.in_(("project.complete", "project.auto_complete")))
+        .order_by(AuditLog.at.desc()).limit(1)
+    ).scalar_one_or_none()
+    if completed_at is not None:
+        at = completed_at if completed_at.tzinfo else completed_at.replace(tzinfo=UTC)
+        if utcnow() - at > timedelta(days=REOPEN_DAYS):
+            raise HTTPException(
+                status_code=409,
+                detail=f"completed more than {REOPEN_DAYS} days ago; duplicate it to "
+                       "carry on from where it stopped")
+    project.status = ProjectStatus.RUNNING
+    project.status_reason = None
+    from yaaf.core.models import Decision
+
+    session.add(Decision(
+        id=ids.new_id(ids.DECISION), project_id=project.id, by_user_id=_decider(project),
+        subject="delivery reopened",
+        body="Reopened by the chairman: something the delivery needs is still missing."))
+    ceo = policy.ceo_of(session, project.id)
+    if ceo is not None:
+        session.add(Notice(
+            id=ids.new_id(ids.NOTICE), project_id=project.id, agent_id=ceo.id,
+            kind=NoticeKind.DELIVERY_REOPENED,
+            body=("The chairman reopened this delivery after it completed: something is "
+                  "still missing. Ask him in the boardroom what, then propose the "
+                  "requirement that captures it. The project will not close itself "
+                  "again until scope has moved.")))
+    _audit(session, project.id, "project.reopen", "project", project.id, {})
+    return {"id": project.id, "status": project.status}
+
+
+@router.post("/projects/{project_id}/complete", dependencies=[authority.STEER])
+def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
+    """The chairman confirms a delivery, now rather than when it would close
+    itself (`complete_after_hours`; 0 leaves this button the only door).
+    Refused with the same outstanding list the janitor checks, so the email
+    and the refusal can never disagree."""
+    from yaaf.server.janitor import delivery_outstanding
+
+    project = _get_project(session, project_id)
+    if project.mode != ProjectMode.DELIVER:
+        raise HTTPException(
+            status_code=422,
+            detail="only a Deliver project completes: Explore is judged and stopped, "
+                   "Operate finishes and starts again.",
+        )
+    if project.status == ProjectStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="already completed")
+    outstanding = delivery_outstanding(session, project)
+    if outstanding:
+        raise HTTPException(
+            status_code=409,
+            detail="not everything is true yet — " + "; ".join(outstanding),
+        )
+
+    done = complete_delivery(session, project, by_user_id=_decider(project),
+                             how="Confirmed complete by the chairman.")
+    receipt, revoked, voided = done["receipt"], done["revoked_runs"], done["voided_approvals"]
     _audit(session, project.id, "project.complete", "project", project.id,
            {**receipt, "voided_approvals": voided})
     return {"id": project.id, "status": project.status, "receipt": receipt,
@@ -3262,6 +3322,16 @@ def _carry_library_roles(session: Session, spec: dict) -> dict:
     named = {project.get("ceo_role_slug") or "ceo"}
     named.update(team.get("role_slug") for team in (project.get("teams") or [])
                  if isinstance(team, dict) and team.get("role_slug"))
+    # A spec asking for an independent read with no reader on its roster is
+    # refused, and the refusal lists the reviewing roles it could hire. In the
+    # drill those come from the drill's own library — which held only the roles
+    # the spec named — so it told the chairman none were installed and to seed
+    # a library that had nine. Carry the reviewers too, so it names them.
+    constitution = project.get("constitution") if isinstance(project.get("constitution"),
+                                                            dict) else {}
+    if constitution.get("deliverable_review") == "independent_read":
+        named.update(session.execute(
+            select(Role.slug).where(Role.category == REVIEW_CATEGORY)).scalars())
     carried = [r for r in (spec.get("roles") or []) if isinstance(r, dict)]
     missing = named - {r.get("slug") for r in carried} - {None}
     if not missing:
@@ -3547,7 +3617,13 @@ def decide_approval(
                      f"{'APPROVED' if body.approve else 'DENIED'}"
                      + (f": {body.note}" if body.note else ".")),
     )
-    return {"id": approval.id, "status": approval.status}
+    out = {"id": approval.id, "status": approval.status}
+    if body.approve and approval.kind == ApprovalKind.SPEND:
+        session.flush()
+        offer = policy.spend_precedent(session, project.id, effective(session, project.id))
+        if offer is not None:
+            out["offer"] = {**offer, "project_id": project.id}
+    return out
 
 
 def _decide_brief(session: Session, approval: Approval, project: Project,
@@ -4379,7 +4455,12 @@ class HeadsUpAck(BaseModel):
 def acknowledge_heads_up(heads_up_id: str, body: HeadsUpAck,
                          session: Session = Depends(db)) -> dict:
     """He saw it. Nothing was waiting on this, so nothing moves but the CEO's
-    knowledge that he did — and his note, if he wrote one, held for an answer."""
+    knowledge that he did — and his note, if he wrote one, held for an answer.
+
+    Opening a heads-up in the Inbox notes it: it asked for nothing, so reading
+    it was the whole of his part, and a "Noted" button was one more click per
+    message he had asked to receive. A reply can follow on a heads-up already
+    noted — it carries the note, and nothing else changes."""
     from yaaf.core.models import HeadsUp
     from yaaf.server import chairman_notes
     from yaaf.server import heads_up as heads
@@ -4387,9 +4468,10 @@ def acknowledge_heads_up(heads_up_id: str, body: HeadsUpAck,
     row = session.get(HeadsUp, heads_up_id)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown heads-up")
-    if row.acknowledged_at is not None:
+    if row.acknowledged_at is not None and not body.note.strip():
         raise HTTPException(status_code=409, detail="already noted")
-    heads.acknowledge(session, row)
+    if row.acknowledged_at is None:
+        heads.acknowledge(session, row)
     held = chairman_notes.record(session, row.project_id, "heads_up", row.id,
                                  f"Noted: {row.title}", body.note)
     if held is not None:
@@ -5185,9 +5267,21 @@ def close_review(
         raise HTTPException(status_code=409,
                             detail=f"review #{review.number} is already {review.status}")
     project = _get_project(session, review.project_id)
+    decisions = finish_review(session, project, review, by_user_id=_decider(project),
+                              note=body.note)
+    _audit(session, project.id, "review.close", "review", review.id,
+           {"number": review.number, "decisions": len(decisions)})
+    return {"id": review.id, "number": review.number, "status": review.status,
+            "decisions": decisions}
+
+
+def finish_review(session: Session, project: Project, review: Review, *,
+                  by_user_id: str | None, note: str = "") -> list:
+    """Close the meeting and tell the CEO what it decided. One implementation
+    for his Close and for the janitor closing a green review nobody needed."""
     review.status = ReviewStatus.CLOSED
     review.closed_at = utcnow()
-    review.closed_by_user_id = _decider(project)
+    review.closed_by_user_id = by_user_id
     decisions = review.decisions or []
     summary = ("; ".join(f"{d['kind']}: {d['detail']} — {d['reason'][:120]}"
                          for d in decisions)
@@ -5212,13 +5306,10 @@ def close_review(
     _notice_ceo(
         session, project.id, NoticeKind.GOAL_CHANGED,
         f"Review #{review.number} is closed. Decisions: {summary}."
-        + (f" His closing note: {body.note[:500]}" if body.note else "")
+        + (f" His closing note: {note[:500]}" if note else "")
         + " Each will be shown at the next review beside what it bought.",
     )
-    _audit(session, project.id, "review.close", "review", review.id,
-           {"number": review.number, "decisions": len(decisions)})
-    return {"id": review.id, "number": review.number, "status": review.status,
-            "decisions": decisions}
+    return decisions
 
 
 # ── the commitment: the chairman owns the date ──────────────────────────────────

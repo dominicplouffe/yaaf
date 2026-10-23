@@ -6,7 +6,9 @@
 import type React from "react";
 import { Icon } from "./ui/Icon";
 import { useEffect, useId, useRef, useState } from "react";
-import { Activity, Dashboard, get, post, RunRow, SpendBucket } from "./api";
+import { Activity, Dashboard, get, RunRow, SpendBucket } from "./api";
+import { announceOffer, SpendOffer } from "./precedent";
+import { holdDecision } from "./undo";
 
 // ── time ────────────────────────────────────────────────────────────────────────
 
@@ -302,7 +304,11 @@ export function budgetOf(dash: Dashboard) {
   const cap = usdMode ? dash.caps.monthly_usd_cap : dash.caps.monthly_token_cap;
   const warnRatio = Number(dash.constitution["budget_warn_ratio"] ?? 0.8);
   const frac = cap > 0 ? spent / cap : 0;
-  return { usdMode, unit, spent, cap, warnRatio, frac };
+  // The budget is a plan; the wall that pauses the project is this multiple
+  // of it. Every line that says where spending stops reads `wall`, never `cap`.
+  const hardStop = Number(dash.constitution["hard_stop_multiple"] ?? 3);
+  const wall = cap * hardStop;
+  return { usdMode, unit, spent, cap, warnRatio, frac, hardStop, wall };
 }
 
 /** What one spend row cost, in the same unit and by the same arithmetic the
@@ -333,6 +339,23 @@ export function fmtUnit(n: number, unit: "usd" | "tokens"): string {
 export function clip(s: string, max = 150): string {
   if (s.length <= max) return s;
   return s.slice(0, max).replace(/\s+\S*$/, "") + "…";
+}
+
+/** `clip` for text that is then rendered as Markdown. Cutting a message
+    mid-emphasis leaves its opening `_` or `**` with no partner, and Markdown
+    then shows the bare marker — an ask's "_Answer by …_" footer read as
+    "_Answer by" in every preview. So a marker the cut orphaned is closed. */
+export function clipMarkdown(s: string, max = 150): string {
+  if (s.length <= max) return s;
+  const out = s.slice(0, max).replace(/\s+\S*$/, "");
+  let close = "";
+  for (const mark of ["_", "**", "`"]) {
+    // Count markers that open or close a span (not the `_` in snake_case).
+    const re = mark === "_" ? /(^|[^\w])_|_(?=[^\w]|$)/g
+      : new RegExp(mark.replace(/\*/g, "\\*"), "g");
+    if ((out.match(re) ?? []).length % 2 === 1) close += mark;
+  }
+  return out + "…" + close;
 }
 
 // ── composers: Enter sends, Shift+Enter is a newline ────────────────────────────
@@ -808,6 +831,8 @@ export function SplitAction({
   primary = true,
   small = true,
   disabled = false,
+  exposed,
+  confirm,
 }: {
   label: string;
   run: () => Promise<void>;
@@ -815,8 +840,16 @@ export function SplitAction({
   primary?: boolean;
   small?: boolean;
   disabled?: boolean;
+  /** A choice that also gets a button of its own beside the split — the "no"
+      of a decision, so the safer answer is never the one you have to hunt for
+      behind an arrow. */
+  exposed?: number;
+  /** When set, the one click asks first, with this line: for outcomes that
+      cannot be taken back, like spending money. */
+  confirm?: string;
 }) {
   const [menu, setMenu] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [picked, setPicked] = useState<SplitChoice | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -902,10 +935,26 @@ export function SplitAction({
     );
   }
 
+  if (confirming) {
+    return (
+      <span className="split-confirm">
+        <span className="help">{confirm}</span>{" "}
+        <button className={`primary${size}`} disabled={busy} autoFocus
+          onClick={() => go(run).then(() => setConfirming(false))}>
+          {label}
+        </button>{" "}
+        <button className={size.trim()} disabled={busy}
+          onClick={() => setConfirming(false)}>Cancel</button>
+        {error && <span className="help" style={{ color: "var(--critical)" }}>{error}</span>}
+      </span>
+    );
+  }
+
+  const shown = exposed === undefined ? null : choices[exposed];
   return (
     <span className="split" ref={wrap} onKeyDown={menu ? onMenuKey : undefined}>
       <button className={`split-main${tone}${size}`} disabled={disabled || busy}
-        onClick={() => go(run)}>
+        onClick={() => (confirm ? setConfirming(true) : go(run))}>
         {label}
       </button>
       <button ref={caret} className={`split-caret${tone}${size}`} disabled={disabled || busy}
@@ -913,6 +962,12 @@ export function SplitAction({
         onClick={() => setMenu(!menu)}>
         <Icon name="down" size={13} />
       </button>
+      {shown && (
+        <button className={`split-exposed${size}`} disabled={disabled || busy}
+          style={{ marginLeft: 6 }} onClick={() => setPicked(shown)}>
+          {shown.label}
+        </button>
+      )}
       {menu && (
         <span className="split-menu" role="menu">
           {choices.map((c) => (
@@ -951,6 +1006,7 @@ export function NotedButton({ onSubmit, primary = true }: {
 export interface Decidable {
   id: string;
   kind: string;
+  title?: string;
   amount_usd?: number | null;
   capacity?: { from: number; to: number } | null;
   grant?: unknown;
@@ -995,15 +1051,28 @@ export function DecideButtons({ approval, onDone, small = true }: {
   small?: boolean;
 }) {
   const l = decideLabels(approval);
+  // Held for a few seconds with an Undo before it is sent (yaaf/web/src/undo):
+  // once it reaches the server it cannot honestly be taken back.
   const decide = async (approve: boolean, note: string) => {
-    await post(`/admin/approvals/${approval.id}/decide`, {
-      approve, note,
-      ...(approve && approval.capacity ? { to: approval.capacity.to } : {}),
+    holdDecision({
+      key: approval.id,
+      label: `${approve ? "Approved" : "Declined"}${approval.title ? `: ${clip(approval.title, 60)}` : ""}`,
+      path: `/admin/approvals/${approval.id}/decide`,
+      body: { approve, note, ...(approve && approval.capacity ? { to: approval.capacity.to } : {}) },
+      after: (decided) => {
+        onDone();
+        announceOffer((decided as { offer?: SpendOffer } | null)?.offer);
+      },
     });
-    onDone();
   };
+  // Money that leaves cannot be called back, so that one yes asks first.
+  const spends = approval.kind === "spend" && (approval.amount_usd ?? 0) > 0;
   return (
-    <SplitAction small={small} label={l.yes} run={() => decide(true, "")} choices={[
+    <SplitAction small={small} label={l.yes} run={() => decide(true, "")} exposed={1}
+      confirm={spends
+        ? `This spends $${(approval.amount_usd ?? 0).toLocaleString()} — a purchase cannot be taken back.`
+        : undefined}
+      choices={[
       { label: l.yesMore, hint: l.yesHint, send: l.yes, placeholder: l.yesPlaceholder,
         run: (note) => decide(true, note) },
       { label: `${l.no}…`, hint: "Say why; the CEO re-plans from it", send: l.no,
@@ -1048,19 +1117,27 @@ export function ExportCsv({ onClick, label }: { onClick: () => void; label?: str
     show a table of what is about to change. Escape and the backdrop both
     cancel, so the safe exit is the reflexive one. */
 export function ConfirmModal({
-  title, confirmLabel, danger, busy, onConfirm, onCancel, children,
+  title, confirmLabel, cancelLabel = "Cancel", danger, busy, onConfirm, onCancel, onDismiss,
+  children,
 }: {
   title: string;
   confirmLabel: string;
+  /** For a question rather than a confirmation, where the other answer is a
+      real choice and "Cancel" would not say what it chooses. */
+  cancelLabel?: string;
   danger?: boolean;
   busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Escape and the backdrop, when closing the dialog is not the same as
+      answering it with the cancel button. Defaults to onCancel. */
+  onDismiss?: () => void;
   children: React.ReactNode;
 }) {
+  const dismiss = onDismiss ?? onCancel;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape") dismiss();
     };
     window.addEventListener("keydown", onKey);
     // The page behind a modal must not scroll under it.
@@ -1070,10 +1147,10 @@ export function ConfirmModal({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = previous;
     };
-  }, [onCancel]);
+  }, [dismiss]);
 
   return (
-    <div className="modal-back" onClick={onCancel}>
+    <div className="modal-back" onClick={dismiss}>
       <div
         className="modal"
         role="dialog"
@@ -1088,7 +1165,7 @@ export function ConfirmModal({
             {busy ? "Saving…" : confirmLabel}
           </button>
           <button className="small" disabled={busy} onClick={onCancel}>
-            Cancel
+            {cancelLabel}
           </button>
         </div>
       </div>

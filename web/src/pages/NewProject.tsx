@@ -17,8 +17,12 @@ import {
   sourceReady,
 } from "../datasource";
 import { CeoPicker, HirePanel, needsOf, roughMonthly } from "../roles";
-import { CredentialValue, SecretInput } from "../ui";
+import { clip, CredentialValue, SecretInput } from "../ui";
 import type { FounderStatus, PresetCard } from "./StartProject";
+
+/** Names for a seat the chairman hired without naming. Plain, distinct,
+    and short enough to read in a run log. */
+const SEAT_NAMES = ["Ada", "Juno", "Iris", "Theo", "Noor", "Kai", "Mira", "Sol", "Wren", "Otto"];
 
 interface TeamDraft {
   role_slug: string;
@@ -279,6 +283,7 @@ export default function NewProject() {
   const [status, setStatus] = useState<FounderStatus | null>(null);
   const [solo, setSolo] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  const [started, setStarted] = useState(false);
   const [webhooks, setWebhooks] = useState<{
     projectId: string;
     github: { url: string; secret: string };
@@ -476,6 +481,30 @@ export default function NewProject() {
       { role_slug: pick.slug, name: "Review", employees: "Juno", lead: "" }]);
   }
 
+  // What Create will actually hire. Two gaps used to be silent: a team with a
+  // role and no names was dropped at submit, so a chairman who hired a
+  // Researcher got a project with nobody on it; and a preset asking for an
+  // independent read with no reader on the roster was refused at the very
+  // end. Both are filled here, in the open — the review step lists every seat
+  // this adds, and the read can be turned off there instead.
+  const autoReview = needsReviewSeat && reviewRoles.length > 0;
+  const effectiveTeams: (TeamDraft & { named?: boolean; added?: boolean })[] = (() => {
+    const staffed = teams.filter((t) => t.role_slug && t.name.trim());
+    const taken = new Set(staffed.flatMap((t) => t.employees.split(",").map((n) => n.trim())));
+    const fresh = () => {
+      const n = SEAT_NAMES.find((x) => !taken.has(x)) ?? `Seat ${taken.size + 1}`;
+      taken.add(n);
+      return n;
+    };
+    const out: (TeamDraft & { named?: boolean; added?: boolean })[] = staffed.map((t) =>
+      solo || t.employees.trim() ? t : { ...t, employees: fresh(), named: true });
+    if (autoReview) {
+      const pick = reviewRoles.find((r) => r.slug === "editor") ?? reviewRoles[0];
+      out.push({ role_slug: pick.slug, name: "Review", employees: fresh(), lead: "", added: true });
+    }
+    return out;
+  })();
+
   function setTeam(i: number, patch: Partial<TeamDraft>) {
     setTeams((prev) => prev.map((t, j) => (j === i ? { ...t, ...patch } : t)));
   }
@@ -521,9 +550,6 @@ export default function NewProject() {
       if (!ceoSlug && !bundle?.project.ceo_role_slug) return "Nobody is running this project";
       const staffed = teams.filter((t) => t.role_slug && t.name.trim());
       if (!staffed.length) return "Nobody is doing the work";
-      if (!solo && staffed.some((t) => !t.employees.trim())) {
-        return "A team with no employees does no work";
-      }
       return null;
     }
     if (n === 3) {
@@ -899,8 +925,7 @@ export default function NewProject() {
           ...(bundle?.project.ceo_harness_override
             ? { ceo_harness_override: bundle.project.ceo_harness_override } : {}),
           solo,
-          teams: teams
-            .filter((t) => t.role_slug && t.name && (solo || t.employees.trim()))
+          teams: effectiveTeams
             .map((t) => {
               const employees = t.employees.split(",").map((s) => s.trim()).filter(Boolean);
               // Daily wakes and model overrides ride the setup file per person.
@@ -1084,7 +1109,7 @@ export default function NewProject() {
             "form tests an address and holds the Connect button — then start the project.",
         );
         if (created.webhooks) setDone(created.id);
-        else navigate(`/projects/${created.id}/settings?s=data`);
+        else navigate(`/projects/${created.id}/details/settings?s=data`);
         return;
       }
       // The chairman already explained all of this to the Founder and argued
@@ -1098,7 +1123,10 @@ export default function NewProject() {
           /* the project exists; a missing briefing is not worth failing on */
         }
       }
-      if (startNow && canStartNow) await post(`/admin/projects/${created.id}/start`);
+      if (startNow && canStartNow) {
+        await post(`/admin/projects/${created.id}/start`);
+        setStarted(true);
+      }
       if (created.webhooks) setDone(created.id);
       else navigate(`/projects/${created.id}`);
     } catch (err) {
@@ -1108,15 +1136,43 @@ export default function NewProject() {
     }
   }
 
-  // The project exists; what this screen still owes the chairman is the
-  // webhook secrets, shown exactly once with the endpoint beside each — and
-  // the names of the Slack rooms it just made, which are no use to anyone
-  // sitting in a log file.
+  // The project exists, and the question in front of the chairman is what
+  // happens now. This screen used to open on two webhook URLs, two HMAC
+  // secrets and an openssl recipe — optional, readable later in Settings, and
+  // the first thing a new project said. They fold away under it now; the
+  // Slack rooms it just made stay, because they are no use in a log file.
   if (done && webhooks) {
     const origin = window.location.origin;
+    const plans = mode !== "explore";
     return (
       <>
         <h1>Project created</h1>
+        <div className="card" style={{ maxWidth: 760 }}>
+          <p style={{ marginTop: 0 }}>
+            <b>{started ? "It is running."
+              : canStartNow ? "It is created, and not started."
+              : "It is created, and cannot start yet: nothing is set to pay for it."}</b>
+          </p>
+          <p className="help">
+            {!plans
+              ? "The CEO's first job is to state a bet — something evidence can prove wrong — with a kill date."
+              : autonomy === "supervised"
+                ? "The CEO's first job is a plan. It appears on the Roadmap as proposed, and "
+                  + "nothing is built until you accept it. It lands in your Inbox when it is ready."
+                : "The CEO's first job is a plan. It accepts its own and starts; you are told "
+                  + "what it chose, and every choice can be undone from the Roadmap."}
+          </p>
+          <div className="actions" style={{ justifyContent: "flex-start" }}>
+            <button className="primary" onClick={() => navigate(`/projects/${done}`)}>
+              Open the project
+            </button>
+            {!canStartNow && (
+              <button onClick={() => navigate(`/projects/${done}/details/settings?s=money`)}>
+                Add a key to start
+              </button>
+            )}
+          </div>
+        </div>
         {slack && (
           <div className="card" style={{ maxWidth: 760 }}>
             <p style={{ marginTop: 0 }}>
@@ -1162,9 +1218,11 @@ export default function NewProject() {
             </p>
           </div>
         )}
-        <div className="card" style={{ maxWidth: 760 }}>
-          <p style={{ marginTop: 0 }}>
-            <b>Inbound evidence endpoints — optional, skippable.</b> Use these when an
+        <details className="card" style={{ maxWidth: 760 }}>
+          <summary><b>Inbound evidence endpoints</b> — optional, and always in Settings →
+            Integrations</summary>
+          <p>
+            Use these when an
             outside system should <em>prove</em> something happened: GitHub proving code
             merged, Stripe proving money landed, your app proving a signup. Evidence
             arriving signed with these secrets is platform-attested — proof no agent can
@@ -1209,13 +1267,15 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           <p className="help">
             Both secrets stay readable (and regenerable) in Settings → Integrations.
           </p>
-          <button className="primary" onClick={() => navigate(`/projects/${done}`)}>
-            Open the project
-          </button>
-        </div>
+        </details>
       </>
     );
   }
+
+  // The step rail marks a problem with a dot and lets you walk past it, so the
+  // first word a chairman heard about a missing name was the browser's own
+  // "Please fill out this field" on Create. The button says it instead.
+  const missing = [problemsOn(1), problemsOn(2)].filter((p): p is string => !!p);
 
   return (
     <>
@@ -1760,7 +1820,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               background: "rgba(var(--warning-rgb), 0.09)", fontSize: 13 }}>
               This preset asks for the work to be read by somebody who did not write it,
               and no team on your roster does that — so the only reader of a deliverable
-              before you would be the agent that wrote it. Creating it will be refused.
+              before you would be the agent that wrote it.
+              {reviewRoles.length > 0 && " Create will hire a reviewer for you unless you choose otherwise."}
               {reviewRoles.length ? (
                 <>
                   {" "}
@@ -1786,14 +1847,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             </div>
           )}
           <p className="help" style={{ marginTop: 10 }}>
-            Money, proof and how finished the work has to be — a card just fills the
-            numbers in the Constitution section below. Adjust any of them there, now or
-            later in Settings. Every card asks for the work to be read by somebody who
-            did not write it, which means the roster needs a reviewing seat; the
-            {" "}<b>Full send</b> card also hires the writing and checking seats on the
-            strongest model, and raises the per-run ceiling so a long piece survives.
-            How often the project runs is the card above — these two used to be one, and
-            the pace half of it never actually moved.
+            Money, proof and how finished the work has to be. A card fills in the numbers
+            in the Constitution section below; change any of them there, now or later in
+            Settings. Every card has the work read by someone who did not write it, so a
+            review team is added if you have none. <b>Full send</b> also hires the writing
+            and checking seats on the strongest model and allows longer runs.
           </p>
           <p className="help" style={{ marginTop: 6 }}>
             {/* The rehearsal's own argument, reused: do not invent a price, invert
@@ -1977,12 +2035,21 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <span className="chip accent">{roleLabel(bundle?.project.ceo_role_slug ?? ceoSlug)}</span>
             <span className="help">the only agent that speaks to you</span>
           </div>
-          {teams.filter((t) => t.role_slug && t.name).map((t, i) => (
+          {effectiveTeams.map((t, i) => (
             <div className="orgline" key={i}>
               <strong>{t.name}</strong>
               <span className="chip">{roleLabel(t.role_slug)}</span>
               <span className="help">
-                {t.employees.trim() || (solo ? "the CEO, working alone" : "nobody yet")}
+                {t.employees.trim() || "the CEO, working alone"}
+                {t.named && " — named for you"}
+                {t.added && <>
+                  {" — added because this preset has the work read by somebody who did "}
+                  {"not write it. "}
+                  <button type="button" className="small"
+                    onClick={() => setCraft((prev) => ({ ...prev, deliverable_review: "none" }))}>
+                    turn the read off instead
+                  </button>
+                </>}
               </span>
             </div>
           ))}
@@ -1991,6 +2058,29 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <span className="chip">{MODES.find((m) => m.value === mode)?.label ?? mode}</span>
             <span className="help">{MODES.find((m) => m.value === mode)?.blurb}</span>
           </div>
+          {/* The two questions the summary did not answer: how much it does
+              without asking, and who reads the work before you do. */}
+          <div className="orgline">
+            <strong>Say-so</strong>
+            <span className="chip">
+              {autonomyPresets.find((p) => p.value === autonomy)?.label ?? autonomy}</span>
+            <span className="help">
+              {clip(autonomyPresets.find((p) => p.value === autonomy)?.blurb ?? "", 160)}</span>
+          </div>
+          <div className="orgline">
+            <strong>Checked</strong>
+            {craft.deliverable_review === "independent_read" && !solo ? (
+              <>
+                <span className="chip">by a second agent</span>
+                <span className="help">someone who did not write it reads each deliverable before you do</span>
+              </>
+            ) : (
+              <>
+                <span className="chip">by you</span>
+                <span className="help">nobody reads a deliverable before you except the agent that wrote it</span>
+              </>
+            )}
+          </div>
           <div className="orgline">
             <strong>Cap</strong>
             {tokensMode ? (
@@ -1998,15 +2088,19 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 <span className="chip">{monthlyTokenCap.toLocaleString()} tokens/mo</span>
                 <span className="help">
                   metered against the selected subscription — the project pauses itself at
-                  the cap, and the plan's own windows apply before it
+                  {" "}{Number(craft.hard_stop_multiple ?? 3)}× this, and the plan's own windows
+                  apply before it
                 </span>
               </>
             ) : (
               <>
                 <span className="chip">${usdCap}/mo</span>
                 <span className="help">
-                  ≈ ${roughMonthly(hiredRoles)}/mo at this staffing — the project pauses
-                  itself at the cap
+                  ≈ ${roughMonthly(hiredRoles)} a month if this staffing worked all month
+                  {mode === "deliver" ? " (a one-off usually finishes well inside one)" : ""}
+                  {" "}— the project pauses
+                  itself at the hard stop, $
+                  {(usdCap * Number(craft.hard_stop_multiple ?? 3)).toLocaleString()}
                 </span>
               </>
             )}
@@ -2059,7 +2153,12 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           })}
         </div>
 
-        <h2>Service credentials (optional)</h2>
+        {/* Optional, so folded: open only when a hire needs a key or one was
+            already added — otherwise two paragraphs of plumbing sat between
+            the summary and the button that creates the project. */}
+        <details className="opt-sec" open={requiredScopes.length > 0 || credentials.length > 0}>
+        <summary><h2>Service credentials (optional)</h2>
+          <span className="help">keys for WordPress, GitHub, Stripe… — or add them later in Settings</span></summary>
         <p className="subtitle">
           Keys your agents will need for outside services (WordPress, GitHub, Stripe…). Encrypted
           at rest and injected only into the sandboxes of roles you tick — agents are told the
@@ -2156,8 +2255,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         >
           + Add credential
         </button>
+        </details>
 
-        <h2>Data sources (optional)</h2>
+        <details className="opt-sec" open={dataSources.length > 0}>
+        <summary><h2>Data sources (optional)</h2>
+          <span className="help">MCP servers your agents may read from — or add them later in Settings</span></summary>
         <DataSourceIntro>
           One added here is saved with the project and tested again before it starts.
           Afterwards, sources are added and changed in Settings → Data sources.
@@ -2194,6 +2296,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         >
           + Add data source
         </button>
+        </details>
 
         {/* The drill. It sits above the create button because that is the
             order the question comes in: a chairman about to hand over a budget
@@ -2231,7 +2334,10 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             )}
           </label>
           <div className="spacer" />
-          <button className="primary" disabled={busy}>
+          {missing.length > 0 && (
+            <span className="help serious">Still needed: {missing.join("; ")}.</span>
+          )}
+          <button className="primary" disabled={busy || missing.length > 0}>
             {busy ? "Creating…" : "Create project"}
           </button>
         </div>

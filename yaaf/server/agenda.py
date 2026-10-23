@@ -488,3 +488,87 @@ def project_agenda(session: Session, project: Project,
         "events": events,
         "notes": notes,
     }
+
+
+#: How far either side of now the "who works when" strip draws: the last half
+#: day as it happened, the next half day as it is scheduled.
+STRIP_HOURS = 12
+
+
+def schedule_strip(session: Session, project: Project,
+                   cons: ConstitutionDoc | None = None) -> dict:
+    """Who works when, one row per person, across the day around now.
+
+    The agenda answers "what will this project do this week?" as a list of
+    rhythms. The Team page needed the same facts as a picture of the people:
+    the CEO planning every six hours, the analyst waking at seven, and
+    everyone else waking only when handed work. The past half of the strip is
+    the runs that happened, read from the run table; the future half is the
+    wakes the dispatcher will fire, computed by the same helpers the agenda
+    uses, so the two can never draw different schedules."""
+    from yaaf.core.models import Run
+
+    cons = cons or effective(session, project.id)
+    now = utcnow()
+    tz = _zone(cons)
+    start, end = now - timedelta(hours=STRIP_HOURS), now + timedelta(hours=STRIP_HOURS)
+    live = project.status == ProjectStatus.RUNNING
+    agents = [a for a in session.execute(
+        select(Agent).where(Agent.project_id == project.id)
+    ).scalars() if a.status != AgentStatus.STOOD_DOWN]
+    teams = {t.id: t.name for t in session.execute(
+        select(Team).where(Team.project_id == project.id)).scalars()}
+
+    ran: dict[str, list[dict]] = {}
+    for run in session.execute(
+        select(Run).where(Run.project_id == project.id, Run.started_at >= start,
+                          Run.agent_id.is_not(None)).order_by(Run.started_at)
+    ).scalars():
+        began = _aware(run.started_at)
+        ran.setdefault(run.agent_id, []).append({
+            "at": began.isoformat(),
+            "until": (_aware(run.finished_at) or now).isoformat(),
+            "run_id": run.id, "status": run.status})
+
+    def upcoming(agent: Agent) -> tuple[list[dict], str]:
+        nexts: list[dict] = []
+        said: list[str] = []
+        if agent.kind == AgentKind.CEO:
+            if cons.ceo_daily_at:
+                said.append(f"daily at {cons.ceo_daily_at}")
+                at = _next_daily(session, agent, cons.ceo_daily_at, tz, now, "daily")
+                if live and at is not None and at <= end:
+                    nexts.append({"at": at.isoformat(), "label": "daily wake"})
+            if cons.ceo_heartbeat_hours:
+                hours = float(cons.ceo_heartbeat_hours)
+                said.append(f"plans every {hours:g}h")
+                beat = session.execute(
+                    select(Heartbeat).where(Heartbeat.agent_id == agent.id,
+                                            Heartbeat.name == "planning")
+                ).scalar_one_or_none()
+                at = (max(now, _aware(beat.last_fired_at) + timedelta(hours=hours))
+                      if beat is not None else now)
+                while live and at <= end:
+                    nexts.append({"at": at.isoformat(), "label": "planning wake"})
+                    at += timedelta(hours=hours)
+        elif agent.daily_at:
+            said.append(f"daily at {agent.daily_at}")
+            at = _next_daily(session, agent, agent.daily_at, tz, now, "agent_daily")
+            if live and at is not None and at <= end:
+                nexts.append({"at": at.isoformat(), "label": "daily wake"})
+        said.append("and whenever handed work or a message" if said
+                    else "whenever handed work or a message")
+        return nexts, ", ".join(said)
+
+    order = sorted(agents, key=lambda a: (a.kind != AgentKind.CEO,
+                                          teams.get(a.team_id or "", ""), a.name))
+    rows = []
+    for agent in order:
+        nexts, wakes = upcoming(agent)
+        rows.append({"agent_id": agent.id, "name": agent.name,
+                     "team": "CEO" if agent.kind == AgentKind.CEO
+                     else teams.get(agent.team_id or "", "no team"),
+                     "paused": agent.status != AgentStatus.ACTIVE,
+                     "ran": ran.get(agent.id, []), "next": nexts, "wakes": wakes})
+    return {"now": now.isoformat(), "from": start.isoformat(), "to": end.isoformat(),
+            "timezone": cons.timezone, "live": live, "rows": rows}

@@ -4,9 +4,15 @@ import { Link, useSearchParams } from "react-router-dom";
 import { DeskProject, DeskView, get } from "../api";
 import { usePoll } from "../hooks";
 import { AsOf, Skeleton, clip, fmtAgo, fmtUnit } from "../ui";
-import { needsYouCount } from "../desk";
+import { needsYouCount, WARN_VERDICTS } from "../desk";
 
-export function statusBadge(status: string) {
+export function statusBadge(status: string, unpaid = false) {
+  // A project that cannot pay for a run is not running, whatever its row says:
+  // its first run dies on the missing key. Say so where the status is read.
+  if (unpaid && (status === "running" || status === "draft")) {
+    return <span className="badge warn" title="No billing credential: agents cannot run">
+      {plainStatus(status)} · no key</span>;
+  }
   const cls =
     status === "running"
       ? "good"
@@ -290,7 +296,9 @@ export default function Projects() {
                 </span>
               ))}
               {waiting > 0 && (
-                <Link to="/inbox"><span className="chip warn">{waiting} waiting on you</span></Link>
+                <Link to="/inbox"><span className="chip warn">
+                  {waiting} {waiting === 1 ? "decision" : "decisions"} waiting on you
+                </span></Link>
               )}
             </div>
           )}
@@ -463,21 +471,27 @@ function ProjectCard({ p }: { p: DeskProject }) {
         <Link to={`/projects/${p.id}`}>
           <strong style={{ fontSize: 15 }}>{p.name}</strong>
         </Link>
-        {statusBadge(p.status)}
+        {statusBadge(p.status, p.unpaid)}
         <WaitingChip p={p} />
         <UnreadChip p={p} />
         <div className="spacer" />
         <span className="mono help">{p.slug}</span>
       </div>
 
-      <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
-        {clip(p.goal, 220)}
-      </p>
-      {p.status_reason && p.status !== "running" && (
+      {/* The sentence every surface says about it (its pause or stop reason
+          included), then what it is for. */}
+      {p.status_line ? (
+        <p className={`pcard-status${WARN_VERDICTS.includes(p.status_line.verdict) ? " warn" : ""}`}>
+          {p.status_line.sentence}
+        </p>
+      ) : p.status_reason && p.status !== "running" && (
         <p className="help" style={{ margin: "6px 0 0" }}>
           {p.status}: {clip(p.status_reason, 120)}
         </p>
       )}
+      <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
+        {clip(p.goal, 220)}
+      </p>
 
       <div className="pcard-vitals">
         <span>
@@ -496,8 +510,8 @@ function ProjectCard({ p }: { p: DeskProject }) {
       <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 12.5 }}>
         <Link to={`/projects/${p.id}`}>Overview →</Link>
         <Link to={`/projects/${p.id}/chat`}>Chat →</Link>
-        <Link to={`/projects/${p.id}/tasks`}>Tasks →</Link>
-        <Link to={`/projects/${p.id}/settings`}>Settings →</Link>
+        <Link to={`/projects/${p.id}/details/tasks`}>Tasks →</Link>
+        <Link to={`/projects/${p.id}/details/settings`}>Settings →</Link>
       </div>
     </div>
   );
@@ -509,14 +523,15 @@ function ProjectRow({ p }: { p: DeskProject }) {
   const { terminal } = vitals(p);
   return (
     <div className={`wrow prow${terminal ? " done" : ""}`}>
-      {statusBadge(p.status)}
+      {statusBadge(p.status, p.unpaid)}
       <div className="grow">
         <Link to={`/projects/${p.id}`}><strong>{p.name}</strong></Link>{" "}
         <span className="mono help">{p.slug}</span>
-        <div className="sb">
-          {p.status_reason && p.status !== "running"
-            ? `${p.status}: ${clip(p.status_reason, 160)}`
-            : clip(p.goal, 160)}
+        <div className={`sb${p.status_line && WARN_VERDICTS.includes(p.status_line.verdict) ? " warn" : ""}`}>
+          {p.status_line?.sentence
+            ?? (p.status_reason && p.status !== "running"
+              ? `${p.status}: ${clip(p.status_reason, 160)}`
+              : clip(p.goal, 160))}
         </div>
       </div>
       <WaitingChip p={p} />

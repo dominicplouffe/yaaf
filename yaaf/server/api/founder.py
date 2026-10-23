@@ -117,6 +117,8 @@ def status(session: Session = Depends(db)) -> dict:
     """
     return {
         "credential_configured": platform.has_credential(session),
+        # Its own key, or an LLM credential it borrows — and which, by name.
+        "credential_source": platform.credential_source(session),
         "billing_mode": platform.billing_mode(session),
         "provider": platform.credential_provider(session),
         "model": platform.founder_model(session),
@@ -164,6 +166,23 @@ def put_credential(body: CredentialIn, session: Session = Depends(db)) -> dict:
     """
     return app_settings.install_credential(session, body.value, body.mode, body.provider,
                                            body.base_url, body.model)
+
+
+class BorrowIn(BaseModel):
+    credential_id: str = Field(min_length=3, max_length=40)
+
+
+@router.put("/credential/llm", dependencies=[authority.INSTANCE_ADMIN])
+def borrow_credential(body: BorrowIn, session: Session = Depends(db)) -> dict:
+    """Run the Founder on one of the LLM credentials projects pay with.
+
+    The one-key install: an administrator who added an Anthropic key for
+    projects should not have to paste the same key a second time, under a
+    second name, before the recommended way to create a project works. It
+    replaces a key of the Founder's own; deleting this (`DELETE /credential`)
+    stops the borrowing and leaves the LLM credential untouched.
+    """
+    return app_settings.borrow_llm_credential(session, body.credential_id)
 
 
 @router.post("/credential/test", dependencies=[authority.INSTANCE_ADMIN])
@@ -283,9 +302,9 @@ def _say(session: Session, thread: FoundingThread, message: str,
         )
     if not platform.has_credential(session):
         raise HTTPException(status_code=422, detail=str(platform.NoPlatformCredential(
-            "no platform credential is configured. Set one in Settings so "
-            "product-wide conversations (the Founder) can run; a project's own "
-            "billing key is never used for them.")))
+            "no platform credential is configured — point the Founder at one of your "
+            "LLM credentials, or give it a key of its own, in Settings → Founder. It "
+            "pays for drafting and is never handed to a project's agents.")))
     if answers is not None:
         asked = founder_agent.open_round(thread)
         if asked is None:

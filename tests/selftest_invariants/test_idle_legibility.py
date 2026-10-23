@@ -730,3 +730,16 @@ def test_a_quiet_board_does_not_claim_nobody_has_mail(client):
     brief = _activity(project)["brief"]
     assert "nobody is holding unread work" not in brief["detail"]
     assert "unread" in brief["short"] or "unread" in brief["detail"]
+
+
+def test_a_reset_is_said_in_the_readers_zone_too():
+    """Midnight UTC is somebody's evening. A project with a zone hears its own
+    time beside it; the UTC moment stays, so nothing is lost for a reader
+    comparing it with a log."""
+    daily = _synthetic("inbox_runs")
+    daily["timezone"] = "America/New_York"
+    daily["daily_runs"] = {**daily.get("daily_runs", {}),
+                           "resets_at": "2026-10-24T00:00:00+00:00"}
+    brief = dispatcher._activity_brief(daily)
+    assert brief["detail"].startswith(
+        "Inbox reads reset at 00:00 UTC (Fri 23 Oct, 8:00 pm EDT).")

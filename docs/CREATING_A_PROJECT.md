@@ -74,11 +74,12 @@ wants to know. You argue; it revises. When the draft is right, **Review &
 create** drops the whole thing into the form below, where you change anything
 you like, run the fire drill for nothing, and create it.
 
-It needs one thing first: the **Founder's own credential**, set once under
-Settings — Anthropic's, or an API key of any other provider with one of its
-models. That is not one of the LLM credentials projects pay with and never
-becomes one — it pays for product-wide conversations like this, and no
-project's agents ever see it. Every project you create still pays its own way,
+It needs one thing first: a key for the Founder, set once under Settings →
+Founder. The quickest is **one you already added** as an LLM credential —
+one click, and rotating that credential rotates this too; adding your first
+LLM credential offers it, ticked. Or give the Founder a key of its own,
+Anthropic's or any other provider's with one of its models. Either way it pays
+for drafting only, and no project's agents ever see it. Every project you create still pays its own way,
 and the Founder knows it: it reads the list of LLM credentials, names the one
 that pays in its draft when there is only one, and asks you which when there
 are several. That is an instruction to the model, not a rule the server can
@@ -254,7 +255,7 @@ front-loaded: requirements, design, build, validation and QA crowd the start,
 and steady execution afterwards needs a fraction of the seats. While it writes
 the plan, the CEO records for each team the requirement or stage after which
 that role is done, and the platform stands the team down when that comes true.
-Every change lands in your boardroom, and the Overview roster carries **stand
+Every change lands in your boardroom, and the Team page carries **stand
 down** and **recall** so you can overrule any of it.
 
 **Constitution.** These are the hard rules the project lives under — spending
@@ -362,7 +363,7 @@ reveals as its own text and can be edited in place to rotate.
 
 ## Step 4 — Follow the checklist
 
-Go to the project's **Overview**. If anything about the setup is wrong or
+Go to the project's **Team** page. If anything about the setup is wrong or
 missing, a **Setup & health** card sits at the top naming each problem in
 plain English with a link to fix it — a dead or missing billing credential, a credential that
 should be a URL but isn't, a team running an outdated role version. Fix the
@@ -373,7 +374,7 @@ That's the rule to remember: **no card = ready.**
 
 ## Step 5 — Say hello
 
-Open the **Boardroom** and talk to the CEO like you'd talk to a new hire on
+Open **Chat** and talk to the CEO like you'd talk to a new hire on
 day one. It already knows the goal; give it whatever else a person would
 need:
 
@@ -385,7 +386,7 @@ Then let it work.
 
 **In a Deliver or Operate project, the next thing that happens is the plan.**
 The CEO proposes requirements — things that must be *true* at the end, each
-with an acceptance test and an estimate — and they appear on the **Plan** tab
+with an acceptance test and an estimate — and they appear on the **Roadmap**
 marked *proposed*, which counts as nothing until you accept them. Read them
 like a statement of work: is this the right list, in the right order, and does
 each one have a test that could actually fail? Accept what you want, cut what
@@ -424,11 +425,11 @@ You can watch all of it in **Roadmap**, **Tasks** and **Team**, and in
   banner across the top of every tab, so you cannot miss it by being on the
   wrong page. Undecided approvals expire to "no" after a week — the
   project degrades gracefully while you're on vacation; it never deadlocks.
-- **Spot-check.** The **Work** tab deals you a random sample of recent
-  completed work and evidence claims. Fail anything that doesn't hold up —
+- **Spot-check.** **Tasks → Check the agents' work** deals you a random sample of
+  recent completed work and evidence claims. Fail anything that doesn't hold up —
   the CEO is told its team's work is suspect. You are the one reviewer that
   doesn't approve everything put in front of it.
-- **Watch the money if you want to** — the Overview budget meter warns at
+- **Watch the money if you want to** — the money line under the Team page's chart warns at
   80%. Crossing 100% does **not** stop the project — it is a plan, and going
   over obliges the CEO to account for what the extra bought. The wall is
   `hard_stop_multiple` times the plan (3x by default), and that is the only
@@ -456,7 +457,7 @@ project pauses itself rather than burning money against a wall.
 2. (Or later: Settings → billing → pick a credential → Save assignment → Test.)
 3. (Or later: Settings → Data sources → `ppc` + the MCP URL + engineer
    role → Save, auto-tested.)
-4. Overview → fix anything the health card names → card disappears.
+4. Team page → fix anything the health card names → card disappears.
 5. Chat → brief the CEO.
 6. Roadmap → accept the requirements you want, cut the rest, sign the date.
 7. Done. Check back in the morning.

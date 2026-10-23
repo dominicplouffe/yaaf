@@ -190,11 +190,11 @@ export function InboxExplainer({ projectId, reading, onInbox }: {
       <p className="help">
         {!onInbox && (
           <>
-            <NavLink to={`/projects/${projectId}/activity/inbox`}>See each agent's unread messages</NavLink>
+            <NavLink to={`/projects/${projectId}/details/activity/inbox`}>See each agent's unread messages</NavLink>
             {" · "}
           </>
         )}
-        <NavLink to={`/projects/${projectId}/settings?s=rules&t=${encodeURIComponent("Pace & brakes")}`}>
+        <NavLink to={`/projects/${projectId}/details/settings?s=rules&t=${encodeURIComponent("Pace & brakes")}`}>
           Set an exact number in Settings
         </NavLink>
       </p>

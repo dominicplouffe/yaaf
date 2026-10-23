@@ -83,7 +83,13 @@ from yaaf.core.models import (
 )
 from yaaf.server import asks as ask_lib
 from yaaf.server import briefing, metrics, policy, staffing
-from yaaf.server.notify import Attention, boardroom_line, chairman_notify
+from yaaf.server.notify import (
+    Attention,
+    boardroom_line,
+    chairman_notify,
+    inbox_line,
+    project_link,
+)
 from yaaf.server.policy import Refusal
 from yaaf.server.rows import approval_row, chairman_time, requirement_name
 from yaaf.server.verifier import verify_pending_evidence
@@ -290,7 +296,11 @@ def send_daily_brief(session: Session, project: Project) -> bool:
     else:
         beat.last_fired_at = now
 
-    brief = briefing.project_briefing(session, project, cons, since=since, until=now)
+    brief = briefing.project_briefing(
+        session, project, cons, since=since, until=now,
+        # The morning letter's edges, said the way a person would; it used to
+        # call its own schedule "the window you asked for".
+        source="since yesterday's briefing" if beat is not None else "since this project started")
     chairman_notify(
         session, project,
         f"briefing — {brief['headline'][:100]}",
@@ -339,7 +349,7 @@ def stand_down_due_teams(session: Session, project: Project) -> list[str]:
             session, project.id,
             f"🚪 STOOD DOWN: {team.name} — the condition your CEO set when it planned "
             f"({_condition_words(team.stand_down_when)}) came true, so the platform "
-            "stood the role down. Recall it on the Overview roster if you disagree.")
+            "stood the role down. Recall it on the Team page if you disagree.")
         stood_down.append(outcome["team"])
     if stood_down:
         notify(session, "yaaf_wake", project.id)
@@ -494,7 +504,7 @@ def void_operate_commitments(session: Session, project: Project) -> None:
                 "a single delivery date for it meant nothing — and it should never have "
                 "been accepted. The platform has withdrawn it. The project is judged "
                 "cycle by cycle instead: each turn's results, and what carried over, "
-                "are on its Overview. Nothing about the work itself changed.",
+                "are on its Team page. Nothing about the work itself changed.",
                 attention=Attention.FYI,
             )
 
@@ -622,8 +632,9 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
         chairman_notify(
             session, project, "commitment met",
             f"Every requirement in scope is true — {len(scope_keys)} requirement(s), "
-            f"promised by {commitment.deliver_by:%Y-%m-%d}, finished "
-            f"{now:%Y-%m-%d %H:%M} UTC.",
+            f"promised by {commitment.deliver_by.day} {commitment.deliver_by:%b}, finished "
+            f"{chairman_time(now, cons.timezone)}."
+            + project_link(project.id, "deliverables", "See what was delivered"),
             attention=Attention.FYI,
         )
     elif status == CommitmentStatus.BREACHED:
@@ -642,7 +653,8 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
             session, project, "commitment BREACHED",
             f"The promised date {commitment.deliver_by:%Y-%m-%d} has passed with "
             f"{projection['remaining']} requirement(s) still open; {landing}. "
-            "New scope is frozen. " + _slip_moves_for_chairman(cons),
+            "New scope is frozen. " + _slip_moves_for_chairman(cons)
+            + project_link(project.id, "roadmap", "Cut scope or move the date"),
             attention=Attention.ALARM,
         )
     elif status == CommitmentStatus.AT_RISK:
@@ -659,7 +671,8 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
             session, project, "commitment at risk",
             f"The projection now lands about {projected:%Y-%m-%d} against the promised "
             f"{commitment.deliver_by:%Y-%m-%d} ({basis['note']}).{ground}\n\n"
-            "New scope is frozen for the CEO. " + _slip_moves_for_chairman(cons),
+            "New scope is frozen for the CEO. " + _slip_moves_for_chairman(cons)
+            + project_link(project.id, "roadmap", "Cut scope or move the date"),
             attention=Attention.ACTION,
         )
     else:  # recovered to ACCEPTED
@@ -977,7 +990,8 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
                 f"Cycles {previous.ordinal} and {cycle.ordinal} both closed with "
                 "nothing made true. The platform paused the project rather than "
                 "billing you for a third. Resume from the project page when you have "
-                "decided what changes — the next cycle opens on resume.",
+                "decided what changes — the next cycle opens on resume."
+                + project_link(project.id, "", "Resume it"),
                 attention=Attention.ALARM,
             )
             log.warning("project %s paused: two skipped cycles", project.slug)
@@ -1106,7 +1120,8 @@ def check_explore_deadline(session: Session, project: Project) -> None:
         f"This month's spend so far: ${usd:,.2f} / {tokens:,} tokens.\n\n"
         "Your call, as it always was: stop it, extend the window (set a new date in "
         "Settings), or convert what worked into a Deliver project with real "
-        "requirements. The project keeps working until you decide.",
+        "requirements. The project keeps working until you decide."
+        + project_link(project.id, "settings", "Decide"),
         attention=Attention.ALARM,
     )
 
@@ -1168,6 +1183,8 @@ def check_delivery_ready(session: Session, project: Project) -> None:
                 RequirementEvent.at > last)
         ).scalar_one()
         if not moved:
+            if _complete_itself(session, project, last):
+                return
             _nag_delivery_ready(session, project)
             return
 
@@ -1178,27 +1195,83 @@ def check_delivery_ready(session: Session, project: Project) -> None:
         action="project.completion_ready", entity="project", entity_id=project.id,
         detail={"met": [r.key for r in met]},
     ))
+    cons = effective(session, project.id)
+    at = chairman_time(utcnow() + timedelta(hours=cons.complete_after_hours), cons.timezone)
+    closes = ("Confirm completion on the project page — it writes the delivery receipt "
+              "and closes the project down cleanly"
+              + (f" — or it completes itself {at} unless scope moves first. Either way "
+                 "you can reopen it for 14 days. "
+                 if cons.complete_after_hours > 0 else ". "))
     body = (
         f"Every requirement is settled and {len(met)} of them are true: "
-        f"{', '.join(r.key for r in met)}. Confirm completion on the project page — "
-        "it writes the delivery receipt and closes the project down cleanly. "
-        "Nothing will run until you do: a delivered project stops waking for its "
+        f"{', '.join(r.key for r in met)}. {closes}"
+        "Nothing runs in the meantime: a delivered project stops waking for its "
         "own agents' traffic, so it is not spending while it waits."
+        + project_link(project.id, "", "Open it")
     )
     chairman_notify(session, project, "ready to complete", body, attention=Attention.ACTION)
     boardroom_line(session, project.id, body)
     _notice_ceo(
         session, project, NoticeKind.DELIVERY_READY,
         f"Delivery is complete: {len(met)} requirement(s) in scope are true and "
-        "nothing is open. The chairman has been told and the project is now waiting "
-        "on his confirmation — it will not wake for agent-to-agent messages until "
-        "he decides, and new scope is refused. Do not invent work to fill the "
+        "nothing is open. The chairman has been told; the project now waits for his "
+        "confirmation"
+        + (f", and closes itself in {cons.complete_after_hours:g}h if scope does not move"
+           if cons.complete_after_hours > 0 else "")
+        + " — it will not wake for agent-to-agent messages meanwhile, and new scope "
+        "is refused. Do not invent work to fill the "
         "quiet. If you believe something is genuinely missing, say so in the "
         "boardroom; reopening the plan is his call, not yours.",
     )
     # The beat starts now, so the first chase lands a full window from the
     # announcement rather than on the janitor's next tick.
     _touch_delivery_beat(session, project)
+
+
+def _complete_itself(session: Session, project: Project, announced_at) -> bool:
+    """Close a delivery that has stood finished for `complete_after_hours`
+    since he was told, with the receipt his own Complete writes. Not when the
+    rule is 0, not on a project he paused, and not after he reopened it: a
+    reopened delivery closes again only once its scope has moved, which starts
+    a new announcement and a new clock."""
+    from yaaf.server.api.admin import REOPEN_DAYS, complete_delivery
+
+    cons = effective(session, project.id)
+    if cons.complete_after_hours <= 0 or project.status != ProjectStatus.RUNNING:
+        return False
+    if announced_at.tzinfo is None:
+        announced_at = announced_at.replace(tzinfo=UTC)
+    if utcnow() - announced_at < timedelta(hours=cons.complete_after_hours):
+        return False
+    reopened = session.execute(
+        select(func.count(AuditLog.id)).where(
+            AuditLog.project_id == project.id, AuditLog.action == "project.reopen",
+            AuditLog.at > announced_at)
+    ).scalar_one()
+    if reopened:
+        return False
+    told = chairman_time(announced_at, cons.timezone)
+    done = complete_delivery(
+        session, project, by_user_id=None,
+        how=(f"Completed by the platform: every requirement had stood settled for "
+             f"{cons.complete_after_hours:g}h since you were told ({told}), and the "
+             "rules close a finished delivery then."))
+    receipt = done["receipt"]
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+        action="project.auto_complete", entity="project", entity_id=project.id,
+        detail={**receipt, "voided_approvals": done["voided_approvals"]},
+    ))
+    money = f"${receipt['cost_usd']:,.2f}"
+    body = (f"Delivered: {receipt['met']} requirement(s) true, {receipt['cut']} cut, "
+            f"{receipt['runs_total']} runs, {money}, {receipt['duration_days']} days. "
+            f"It had stood finished since {told}, so it closed itself and wrote the "
+            f"receipt. If something is missing, reopen it on the project page within "
+            f"{REOPEN_DAYS} days." + project_link(project.id, "deliverables", "See what was delivered"))
+    chairman_notify(session, project, "delivered and closed", body, attention=Attention.ACTION)
+    boardroom_line(session, project.id, body)
+    log.info("delivery %s completed itself", project.slug)
+    return True
 
 
 def _delivery_beat(session: Session, project: Project) -> Heartbeat | None:
@@ -1241,8 +1314,10 @@ def _nag_delivery_ready(session: Session, project: Project) -> None:
         session, project.id,
         f"Still waiting on you: all {met} requirement(s) are true and this delivery "
         "has not been confirmed. Complete it on the project page to write the receipt "
-        "and close it, or reopen scope if something is missing. The project is not "
-        "spending while it waits.",
+        "and close it, or reopen scope if something is missing"
+        + (" — otherwise it closes itself when your rules say"
+           if effective(session, project.id).complete_after_hours > 0 else "")
+        + ". The project is not spending while it waits.",
     )
 
 
@@ -1438,6 +1513,10 @@ def nag_reviews(session: Session, project: Project) -> None:
         return
     now = utcnow()
     age_hours = (now - review.opened_at).total_seconds() / 3600
+    if (review.nag_sent_at is None and age_hours >= REVIEW_NAG_HOURS
+            and _review_needs_nobody(review)):
+        _close_green_review(session, project, review)
+        return
     if review.nag_sent_at is None and age_hours >= REVIEW_NAG_HOURS:
         chairman_notify(
             session, project, f"review #{review.number} is waiting on you",
@@ -1467,6 +1546,52 @@ def nag_reviews(session: Session, project: Project) -> None:
             entity_id=review.id,
             detail={"number": review.number, "open_hours": round(age_hours)},
         ))
+
+
+def _review_needs_nobody(review: Review) -> str | None:
+    """Why this meeting has nothing for him, or None if it might. All four,
+    from the numbers frozen when it opened and the CEO's own filing: the CEO
+    explained the period and recommended no change; the promised date (if
+    any) still holds; no spot-check failed; the month is inside its plan.
+    Anything else — no narrative yet, a recommendation, a date at risk, a
+    failed audit, an overrun — is a meeting worth having, and it chases him."""
+    numbers = review.numbers or {}
+    if not review.narrative or review.recommended:
+        return None
+    commitment = numbers.get("commitment") or {}
+    if commitment.get("status") in (CommitmentStatus.AT_RISK, CommitmentStatus.BREACHED):
+        return None
+    if (numbers.get("audit_coverage") or {}).get("failed"):
+        return None
+    budget = numbers.get("budget") or {}
+    if budget.get("cap") and (budget.get("spent_mtd") or 0) > budget["cap"]:
+        return None
+    return ("every number was inside its plan and the CEO recommended no change")
+
+
+def _close_green_review(session: Session, project: Project, review: Review) -> None:
+    """Close a review nobody needed, as "no changes", and say so — with the
+    CEO's narrative, so what he would have read in the meeting still reaches
+    him. Every lever the meeting offered stays on the Roadmap and in Settings,
+    where it always was."""
+    from yaaf.server.api.admin import finish_review
+
+    why = _review_needs_nobody(review)
+    finish_review(session, project, review, by_user_id=None,
+                  note=f"Closed by the platform: {why}.")
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+        action="review.auto_close", entity="review", entity_id=review.id,
+        detail={"number": review.number, "why": why}))
+    chairman_notify(
+        session, project, f"review #{review.number} closed itself — nothing needed you",
+        f"Review #{review.number} closed with no changes after {REVIEW_NAG_HOURS}h: {why}. "
+        f"The CEO's account of the period:\n\n{(review.narrative or '')[:3000]}\n\n"
+        "Nothing was decided for you. Every lever the meeting offered — cut, add, move "
+        "the date, raise the budget — is still on the Roadmap and in Settings."
+        + project_link(project.id, "reviews", "Read the review"),
+        attention=Attention.FYI,
+    )
 
 
 # ── the sampled audit: drawn after the fact, never blocking ─────────────────────
@@ -1916,8 +2041,8 @@ def nag_approvals(session: Session, project: Project, cons: ConstitutionDoc) -> 
             f"approval expiring: {approval.title}",
             f"{approval.body[:4000]}\n\n"
             f"If you have not decided by {chairman_time(approval.expires_at, cons.timezone)}, "
-            f"the answer is {silence} — that is what this project's rules say. "
-            "Decide it on the Decisions screen.",
+            f"the answer is {silence} — that is what this project's rules say.\n"
+            + inbox_line(approval.id),
             kind="approval_expiring", data={"approval": approval_row(approval)},
             attention=Attention.ACTION,
         )
@@ -1946,11 +2071,18 @@ def expire_approvals(session: Session, project: Project, cons: ConstitutionDoc) 
             approval.status = ApprovalStatus.EXPIRED
             approval.decision_note = "expired: no chairman decision in time; default is deny"
         approval.decided_at = now
+        # The answer silence gave, in the words he would have used, and what
+        # to do if it was the wrong one — "DENIED per this constitution" told
+        # him a rule fired, not what happens now.
         chairman_notify(
             session, project,
-            f"approval expired: {approval.title}",
-            f"'{approval.title}' expired at {now:%Y-%m-%d %H:%M} UTC without a decision and "
-            f"is {'APPROVED' if approve_on_timeout else 'DENIED'} per this constitution.",
+            f"no decision, so {'yes' if approve_on_timeout else 'no'}: {approval.title}",
+            f"'{approval.title}' ran out of time without your decision. Your rules answer "
+            + ("yes on silence, so it is approved and the CEO is going ahead."
+               if approve_on_timeout else
+               "no on silence, so it is declined and the CEO will plan without it. "
+               "If you wanted it, tell the CEO in chat and it will ask again.")
+            + project_link(project.id, "activity/decisions", "See the decision"),
             kind="approval_expired", data={"approval": approval_row(approval)},
             attention=Attention.FYI,
         )
@@ -2300,7 +2432,8 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
             f"hard stop at {hard_stop:,.0f}. Live runs were revoked and the queue "
             "purged. This is the runaway wall rather than the plan — the CEO is "
             "allowed to go over the plan and report, so reaching this means "
-            "something else is wrong. Resume from the project page.",
+            "something else is wrong. Resume from the project page."
+            + project_link(project.id, "spend", "See where it went"),
             attention=Attention.ALARM,
         )
         log.warning("project %s auto-paused: hard stop at %.0f", project.slug, hard_stop)
@@ -2675,7 +2808,7 @@ def nag_observable_requirements(
         session, project, subject,
         f"{_plural_reqs(len(due))} reached an acceptance test the platform cannot "
         f"run, so the verdict is yours:\n\n{detail}\n\n"
-        "Nothing downstream of them can start until you rule. Open the Plan tab and "
+        "Nothing downstream of them can start until you rule. Open the Roadmap and "
         "record met or not met.",
         attention=Attention.ACTION,
     )
@@ -2761,7 +2894,7 @@ def nag_awaiting_chairman(
                                       project.id, PROPOSAL_NAG_HOURS)
         if not recent:
             more = ("" if len(proposed) <= 10
-                    else f"\n  … and {len(proposed) - 10} more on the Plan tab")
+                    else f"\n  … and {len(proposed) - 10} more on the Roadmap")
             session.add(AuditLog(
                 id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
                 action="scope.proposal_nag", entity="project", entity_id=project.id,
@@ -2775,7 +2908,7 @@ def nag_awaiting_chairman(
                 + more
                 + "\n\nProposed scope is not scope. No work can be created against any "
                   "of these until you accept them, so the plan they belong to cannot "
-                  "start. Open the Plan tab to accept, reword, or decline."
+                  "start. Open the Roadmap to accept, reword, or decline."
                 + ("" if not ever else "\n\nThis is a repeat — they are still waiting."),
                 attention=Attention.ACTION,
             )
@@ -2802,7 +2935,7 @@ def nag_awaiting_chairman(
                 "platform's own projection of measured pace — the CEO did not write it "
                 "and cannot.\n\nNothing binds until you sign: until then the project "
                 "is working without a promise, so no slip can freeze new scope and "
-                "nothing tells you when the date stops holding. Open the Plan tab to "
+                "nothing tells you when the date stops holding. Open the Roadmap to "
                 "sign it, or set your own."
                 + ("" if not ever else "\n\nThis is a repeat — it is still unsigned."),
                 attention=Attention.ACTION,
@@ -2870,7 +3003,8 @@ def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> Non
     chairman_notify(
         session, project, "the project has gone quiet",
         f"No run has started in {cons.stall_hours:g}h and there is still work open.\n\n"
-        f"{brief['headline']} {brief['detail']}",
+        f"{brief['headline']} {brief['detail']}"
+        + project_link(project.id, "activity/runs", "See its runs"),
         attention=Attention.ALARM,
     )
     log.warning("stall in %s after %sh: %s", project.slug, cons.stall_hours,

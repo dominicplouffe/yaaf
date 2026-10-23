@@ -225,6 +225,12 @@ class ConstitutionDoc(BaseModel):
         "deny", group="Autonomy", label="What an expired approval decides",
         choices=["deny", "approve"],
         help="'deny' or 'approve'. Default-deny: silence is not consent.")
+    complete_after_hours: float = _rule(
+        24.0, ge=0, group="Autonomy", label="Hours before a finished delivery closes itself",
+        help="When everything a Deliver project must make is true, you are told, and it "
+             "completes itself this long afterwards — the same receipt your Complete "
+             "button writes — unless its scope moves first. You can reopen it for 14 "
+             "days. 0: it waits for you to press Complete.")
     ask_window_hours_max: float = _rule(
         72.0, gt=0, group="Autonomy", label="Longest window your CEO may wait on an answer",
         help="A question to you carries the moment it stops waiting and what it will do "
@@ -933,6 +939,28 @@ def stated_tempo(constitution: dict[str, Any]) -> str | None:
     if not set(TEMPO_RULES) <= set(constitution):
         return None
     return tempo_name(constitution)
+
+
+#: When a new project's daily briefing arrives if nobody said. A schedule, not
+#: a model call: the briefing is composed from rows at zero tokens.
+DEFAULT_BRIEF_AT = "08:00"
+
+
+def default_briefing(constitution: dict[str, Any]) -> dict[str, Any]:
+    """A creation-time constitution with the daily briefing switched on if it
+    was silent.
+
+    The field default stays `None` for the reason `DEFAULT_AUTONOMY` gives:
+    it is what an omitted rule means for a document already stored, and
+    flipping it would start mailing every existing project's chairman one
+    morning without anybody choosing it. A new project with no opinion gets the
+    letter, because the alternative was that the one notice which arrives when
+    nothing is wrong was off unless somebody found the rule that turns it on.
+    An explicit `null` is an opinion, and is left alone.
+    """
+    if "brief_daily_at" in constitution:
+        return dict(constitution)
+    return {**constitution, "brief_daily_at": DEFAULT_BRIEF_AT}
 
 
 def default_tempo(mode: str, constitution: dict[str, Any]) -> dict[str, Any]:

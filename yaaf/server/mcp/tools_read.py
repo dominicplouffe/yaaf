@@ -18,6 +18,7 @@ from yaaf.server.api import observe
 from yaaf.server.mcp import envelope
 from yaaf.server.mcp.auth import Principal, ToolRefusal, reachable_projects, resolve_project
 from yaaf.server.mcp.registry import register, required, whole
+from yaaf.server.status_line import portfolio_summary
 
 #: Goals are written to brief a CEO, not to fit in a list. Full text is one
 #: `project` call away (M1); this is the line that tells them apart.
@@ -228,7 +229,77 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
                              if not isinstance(row, dict)
                              or row.get("project_id", row.get("id")) in reachable
                              or "project_id" not in row and "id" not in row]
-    return envelope.fit(filtered, arguments.get("detail"))
+    # The CEO wrote every title, case, default and option on these rows: data,
+    # never instruction — cut before it is wrapped, so the trim never splits
+    # an envelope (see below).
+    for row in filtered.get("projects") or []:
+        for item in row.get("pending_approvals") or []:
+            item["title"] = _wrapped(item.get("title"), "approval")
+        for item in row.get("pending_asks") or []:
+            for field in ("title", "body", "default_action", "recommendation"):
+                if item.get(field):
+                    item[field] = _wrapped(item[field], "ask")
+            item["options"] = [_wrapped(o, "ask_option") for o in item.get("options") or []]
+    also = _also_yours(session, reachable)
+    summary = portfolio_summary(filtered.get("projects") or [], also)
+    # Both added AFTER the trim. The summary is what must survive it — a long
+    # desk loses rows to the context budget, and the project that needed him
+    # must still be named. And the trim cuts strings blind, so a wrapped
+    # heads-up title cut mid-envelope would lose its closing tag and leave
+    # everything after it reading as agent text; `also_yours` is bounded by
+    # construction instead (short titles, a capped list).
+    out = envelope.fit(filtered, arguments.get("detail"))
+    shown = also[:ALSO_YOURS_LISTED]
+    rest = {"also_yours_more": len(also) - len(shown)} if len(also) > len(shown) else {}
+    return {"summary": summary, **out, "also_yours": shown, **rest}
+
+
+def _wrapped(text: str | None, kind: str) -> str:
+    return envelope.untrusted(str(text or "")[:_TITLE_CHARS], author="CEO", kind=kind)
+
+
+#: How many of `also_yours` a desk reply lists; the rest are a count, and the
+#: summary already counts every one of them by kind.
+ALSO_YOURS_LISTED = 20
+#: An agent-written title is cut to this BEFORE it is wrapped, never after.
+_TITLE_CHARS = 160
+
+
+def _also_yours(session: Session, reachable: set[str]) -> list[dict]:
+    """What waits on the chairman that the desk rows do not carry: flags the
+    CEO raised to him and he has not answered, heads-ups he asked for and has
+    not noted, and standing reviews still open. Without these, "what needs
+    me?" took one desk call plus two per project; the Inbox shows all of it."""
+    from yaaf.core.models import HeadsUp, Project, Review, ReviewStatus
+    from yaaf.server import flags as flag_lib
+
+    out: list[dict] = []
+    for project in session.execute(
+            select(Project).where(Project.id.in_(reachable))).scalars():
+        for flag in flag_lib.open_flags(session, project.id):
+            if flag.raised_at is not None and flag.acknowledged_at is None:
+                # Platform-written, but it quotes agent text — a requirement's
+                # statement, a team's name, a cycle's goal — so it is data too.
+                out.append({"project": project.slug, "kind": "flag", "id": flag.id,
+                            "what": envelope.untrusted(
+                                flag.summary[:_TITLE_CHARS],
+                                author="platform, quoting CEO text", kind="flag"),
+                            "answer_with": "flag_ack"})
+        for note in session.execute(select(HeadsUp).where(
+                HeadsUp.project_id == project.id,
+                HeadsUp.acknowledged_at.is_(None))).scalars():
+            # The CEO wrote this title: data, never instruction (rule 5).
+            out.append({"project": project.slug, "kind": "heads_up", "id": note.id,
+                        "what": envelope.untrusted(note.title[:_TITLE_CHARS],
+                                                   author="CEO", kind="heads_up"),
+                        "answer_with": "heads_up_ack"})
+        for review in session.execute(select(Review).where(
+                Review.project_id == project.id,
+                Review.status == ReviewStatus.OPEN)).scalars():
+            out.append({"project": project.slug, "kind": "review", "id": review.id,
+                        "what": f"review #{review.number} is open",
+                        "answer_with": "review_decide"})
+    return out
 
 
 @register(
@@ -238,12 +309,17 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
         "One project's cockpit. view: overview (status, spend, org, the deliverable), "
         "health (the setup checklist), flags (obligations the platform opened), "
         "heads_ups (what the chairman asked to be told, to note), "
-        "agenda (what is scheduled), briefing (what changed since you last looked)."
+        "agenda (what is scheduled), briefing (what changed since you last looked — or "
+        "over the window `hours` or `since` names, for 'what changed since yesterday?')."
     ),
     input_schema=_schema(
         view={"type": "string",
               "enum": ["overview", "health", "flags", "heads_ups", "agenda", "briefing"]},
         days={"type": "integer", "description": "agenda only: horizon, default 14"},
+        hours={"type": "number",
+               "description": "briefing only: the last N hours instead of since you last looked"},
+        since={"type": "string",
+               "description": "briefing only: an ISO date or time to start the window at"},
     ),
 )
 def project(principal: Principal, session: Session, arguments: dict) -> dict:
@@ -260,9 +336,25 @@ def project(principal: Principal, session: Session, arguments: dict) -> dict:
         payload = _observe(observe.project_agenda, project_id=row.id,
                            days=int(arguments.get("days") or 14), session=session)
     elif view == "briefing":
-        payload = _observe(observe.project_briefing, project_id=row.id, session=session)
+        # The read mark is the default and never moves here; a window the
+        # caller names is just a window. The CLI always had this (--hours).
+        payload = _observe(observe.project_briefing, project_id=row.id,
+                           hours=arguments.get("hours"), since=arguments.get("since"),
+                           session=session)
+        # A deliverable's name is the agent's choice of words: data. Cut
+        # before it is wrapped, so the trim can never split the envelope.
+        payload = _as_dict(payload)
+        payload["delivered"] = [
+            {**item, "name": envelope.untrusted(str(item.get("name", ""))[:_TITLE_CHARS],
+                                                author="agent", kind="deliverable_name")}
+            for item in payload.get("delivered") or []]
     else:
         payload = _observe(observe.dashboard, project_id=row.id, session=session)
+        # The sentence every other surface leads with (Home, the Overview,
+        # `yaaf projects`, `desk`), written by the platform, before the trim.
+        rows = _observe(observe.desk, only=row.id, session=session)["projects"]
+        if rows:
+            payload = {"summary": rows[0]["status_line"]["sentence"], **_as_dict(payload)}
     return envelope.fit({"project": row.slug, "view": view, **_as_dict(payload)},
                         arguments.get("detail"))
 
@@ -445,6 +537,9 @@ def org(principal: Principal, session: Session, arguments: dict) -> dict:
                 observe.project_activity, project_id=row.id,
                 since=arguments.get("since") or "today",
                 until=arguments.get("until"), session=session)),
+            # Who works when: the runs of the last half day and the wakes of
+            # the next, per person — the strip under the Team page's chart.
+            "schedule": _observe(observe.project_schedule, project_id=row.id, session=session),
         }
     return envelope.fit({"project": row.slug, **payload}, arguments.get("detail"))
 
@@ -575,20 +670,63 @@ def files(principal: Principal, session: Session, arguments: dict) -> dict:
     scope="read",
     description=(
         "The judgement record. view: decisions (what the CEO decided and why), reviews, "
-        "cycles, hypotheses, suggestions, memories, approvals, asks. This is where 'how did we "
-        "get here' is answered."
+        "cycles, hypotheses, suggestions, memories, approvals, asks; everything (every "
+        "message, run, decision and proof, newest first, each action with the permission it "
+        "ran on — filter with `kind` and `agent`); results (what was published, who made it "
+        "and who checked it). This is where 'how did we get here' is answered. Agent-written "
+        "text comes back wrapped as untrusted data."
     ),
     input_schema=_schema(
         view={"type": "string",
               "enum": ["decisions", "reviews", "cycles", "hypotheses", "suggestions",
-                       "memories", "approvals", "asks"]},
-        limit={"type": "integer", "description": "decisions only: rows, default 20"},
+                       "memories", "approvals", "asks", "everything", "results"]},
+        limit={"type": "integer", "description": "decisions and everything: rows, default 20"},
+        kind={"type": "string", "description": "everything only: all, message, run, yours, "
+                                               "ceo, rule or proof"},
+        agent={"type": "string", "description": "everything and results: one agent's, by id"},
+        days={"type": "integer", "description": "everything only: window in days, default 7"},
     ),
     carries_agent_text=True,
 )
 def record(principal: Principal, session: Session, arguments: dict) -> dict:
     row = _project_of(principal, session, arguments)
     view = arguments.get("view") or "decisions"
+    agent_id = None
+    if arguments.get("agent"):
+        agent_id = _owned(session, row, Agent, str(arguments["agent"]), "agent").id
+    if view == "everything":
+        result = _observe(observe.project_record, project_id=row.id,
+                          kind=str(arguments.get("kind") or "all"), agent_id=agent_id,
+                          days=int(arguments.get("days") or 7), limit=500, format="json",
+                          session=session)
+        # Lines are cut to a sentence on the server before they are wrapped, so
+        # the budget below can never split an envelope.
+        lines = [{**line, "text": envelope.untrusted(line["text"], author=line["who"],
+                                                     kind="record")}
+                 for line in envelope.page(result["lines"], arguments.get("limit"))]
+        return envelope.fit({"project": row.slug, "view": view, "since": result["since"],
+                             "lines": lines}, arguments.get("detail"))
+    if view == "results":
+        result = _observe(observe.project_results, project_id=row.id, agent_id=agent_id,
+                          session=session)
+        wrapped = []
+        for r in result["results"]:
+            author = (r["made_by"] or {}).get("name")
+            wrapped.append({
+                **r,
+                "name": envelope.untrusted(r["name"][:_TITLE_CHARS], author=author, kind="file"),
+                "task": ({**r["task"], "title": _wrapped(r["task"]["title"], "task")}
+                         if r["task"] else None),
+                "serves": [{**x, "statement": _wrapped(x["statement"], "requirement")}
+                           for x in r["serves"]],
+                "checks": [{**c, "note": envelope.untrusted(c["note"], author=c.get("who"),
+                                                            kind="review")
+                            if c.get("note") and c["kind"] == "reviewer" else c.get("note")}
+                           for c in r["checks"]],
+            })
+        return envelope.fit({"project": row.slug, "view": view, "counts": result["counts"],
+                             "total": result["total"], "results": wrapped},
+                            arguments.get("detail"))
     if view == "decisions":
         rows = _observe(observe.ceo_decisions, project_id=row.id, limit=200, session=session)
         payload = {"decisions": envelope.page(rows, arguments.get("limit"))}

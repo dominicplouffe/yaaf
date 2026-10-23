@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
@@ -57,6 +57,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import policy
+from yaaf.server.rows import chairman_time
 
 log = logging.getLogger("yaaf.dispatcher")
 
@@ -95,7 +96,9 @@ URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
                        # emptied its own board to wait for this answer, so there
                        # is no next wake to batch into. This notice IS the wake
                        # that makes the CEO's stated default happen.
-                       NoticeKind.ASK_LAPSED}
+                       NoticeKind.ASK_LAPSED,
+                       # The project is running again for exactly this reason.
+                       NoticeKind.DELIVERY_REOPENED}
 
 # What still buys a run on a project the chairman has been told is finished.
 # Everything else waits for his click: a CEO reading an amendment note or a
@@ -785,11 +788,26 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
     }
 
 
-def _hhmm(iso: str | None) -> str:
+def _hhmm(iso: str | None, tz: str | None = None) -> str:
     """An ISO instant as the only part of it a reader acts on. Absolute rather
     than relative on purpose: "in 4 minutes" is wrong the moment the response
-    is cached, and a time you can check against a clock is falsifiable."""
-    return f"{iso[11:16]} UTC" if iso else "shortly"
+    is cached, and a time you can check against a clock is falsifiable. In the
+    project's own zone when it has one, so the reader does no arithmetic."""
+    if not iso:
+        return "shortly"
+    if tz and tz != "UTC":
+        return chairman_time(datetime.fromisoformat(iso), tz)
+    return f"{iso[11:16]} UTC"
+
+
+def _midnight(state: dict) -> str:
+    """When the daily counts reset: midnight UTC for every project, which is
+    the reader's evening or morning, so it is said in their zone as well."""
+    tz = state.get("timezone")
+    resets = (state.get("daily_runs") or {}).get("resets_at")
+    if tz and tz != "UTC" and resets:
+        return f"00:00 UTC ({chairman_time(datetime.fromisoformat(resets), tz)})"
+    return "00:00 UTC"
 
 
 def _listed(names: list[str]) -> str:
@@ -818,6 +836,7 @@ def _activity_brief(state: dict) -> dict:
     gate = state["blocked_by"]
     waiting = state["waiting"]
     board = state["board"]
+    tz = state.get("timezone")
     behind = []
     if waiting["claimable_tasks"]:
         behind.append(f"{waiting['claimable_tasks']} task(s) ready to claim")
@@ -850,10 +869,11 @@ def _activity_brief(state: dict) -> dict:
             "ok", "delivered",
             "everything is true; waiting on your confirmation",
             "Everything is true. This delivery is waiting on your confirmation.",
-            "Nothing will run until you complete it — the project has stopped waking "
+            "Nothing will run until it completes — the project has stopped waking "
             "for its own agents' messages, so it is not spending while it waits. "
-            "Confirm it on the project page to write the receipt and close it, or "
-            "reopen scope if something is still missing.")
+            "Confirm it on the project page to write the receipt and close it now, "
+            "or let it close itself when your rules say (Complete after, in "
+            "Settings); reopen scope first if something is still missing.")
 
     if gate == "daily_runs":
         d = state["daily_runs"]
@@ -868,9 +888,9 @@ def _activity_brief(state: dict) -> dict:
                 if d["used"] > d["cap"] else "")
         return brief(
             "serious", "capped",
-            f"out of runs for today ({d['used']} of {wall}), resumes 00:00 UTC",
+            f"out of runs for today ({d['used']} of {wall}), resumes {_midnight(state)}",
             f"Out of runs for today — {d['used']} of {wall} used.",
-            f"Nothing starts until the count resets at 00:00 UTC.{queue} Runs that "
+            f"Nothing starts until the count resets at {_midnight(state)}.{queue} Runs that "
             f"died still spent the allowance.{over} Raise 'Runs per day, whole "
             "project' in Settings if this is tighter than you meant it to be.",
             sig="daily_runs", clears_at=d["resets_at"])
@@ -880,9 +900,9 @@ def _activity_brief(state: dict) -> dict:
         return quiet_wait(
             "pacing",
             f"pacing itself ({p['used']} of {p['cap']} this hour), next run "
-            f"{_hhmm(p['frees_at'])}",
+            f"{_hhmm(p['frees_at'], tz)}",
             f"Pacing itself — {p['used']} of {p['cap']} runs used in the last hour.",
-            f"The next run may start at {_hhmm(p['frees_at'])}.{queue} This is the "
+            f"The next run may start at {_hhmm(p['frees_at'], tz)}.{queue} This is the "
             "brake that stops a whole day's runs going before lunch; it clears on "
             "its own and usually needs nothing from you.",
             sig="pacing", clears_at=p["frees_at"])
@@ -920,7 +940,7 @@ def _activity_brief(state: dict) -> dict:
             "serious", "inbox",
             f"{unread} waiting, {used}",
             f"{unread.capitalize()} {are} waiting, and {used}.",
-            ("Inbox reads reset at 00:00 UTC." if daily
+            (f"Inbox reads reset at {_midnight(state)}." if daily
              else "More inbox reads free up within the hour.")
             + " Until then, agents read messages only when they wake up for real "
             "work. Reading has its own limit so chatter can't use up the runs "
@@ -937,7 +957,7 @@ def _activity_brief(state: dict) -> dict:
             f"Ordinary work has spent its day — {d['used']} of {g['ordinary_cap']}.",
             f"The last {g['reserved']} run(s) of the day are reserved so a status "
             f"review or a re-forecast always has somewhere to run.{queue} Everything "
-            "else resumes at 00:00 UTC. Raise 'Runs per day, whole project', or lower "
+            f"else resumes at {_midnight(state)}. Raise 'Runs per day, whole project', or lower "
             "'Reserved governance runs', in Settings.",
             sig="governance_reserve", clears_at=d["resets_at"])
 
@@ -946,9 +966,9 @@ def _activity_brief(state: dict) -> dict:
         return quiet_wait(
             "throttled",
             f"every agent with work has hit its hourly wake ceiling, clearing "
-            f"{_hhmm(w['frees_at'])}",
+            f"{_hhmm(w['frees_at'], tz)}",
             f"Every agent with work has hit its hourly wake ceiling ({w['cap']}/hour).",
-            f"The oldest wake ages out at {_hhmm(w['frees_at'])} and work starts again "
+            f"The oldest wake ages out at {_hhmm(w['frees_at'], tz)} and work starts again "
             f"on its own — nothing here needs you.{queue} Raise 'Wakes per agent per "
             "hour' in Settings only if the cap is tighter than you meant it to be.",
             sig="wake_ceiling", clears_at=w["frees_at"])
@@ -957,8 +977,8 @@ def _activity_brief(state: dict) -> dict:
         c = state["coalescing"]
         return quiet_wait(
             "batching",
-            f"batching a wake until it is worth a run, due {_hhmm(c['ripe_at'])}",
-            f"Holding a wake until it is worth the run — due {_hhmm(c['ripe_at'])}.",
+            f"batching a wake until it is worth a run, due {_hhmm(c['ripe_at'], tz)}",
+            f"Holding a wake until it is worth the run — due {_hhmm(c['ripe_at'], tz)}.",
             "Waking an agent costs a full-price run, so one or two notices wait for a "
             f"third or for the oldest to age out.{queue} Nothing is wrong and nothing "
             "here needs you; anything you say yourself skips the wait entirely.",
@@ -967,8 +987,8 @@ def _activity_brief(state: dict) -> dict:
     if gate == "scheduled":
         return quiet_wait(
             "scheduled",
-            f"the ready work is gated until {_hhmm(board['next_gate_at'])}",
-            f"The only work on the board is scheduled for {_hhmm(board['next_gate_at'])}.",
+            f"the ready work is gated until {_hhmm(board['next_gate_at'], tz)}",
+            f"The only work on the board is scheduled for {_hhmm(board['next_gate_at'], tz)}.",
             f"{board['gated']} task(s) carry a start time the CEO set, so nobody may "
             "claim them yet and nobody is woken for them. Work resumes on its own at "
             "that moment. If that is later than you meant, open the task and clear its "
@@ -1054,7 +1074,7 @@ def _activity_brief(state: dict) -> dict:
             "warn", "your call",
             f"waiting on you — {asks}",
             f"Waiting on you: {asks}.",
-            " ".join(why) + " Decide it on the Plan tab.")
+            " ".join(why) + " Decide it on the Roadmap.")
 
     if gate == "awaiting_ceo":
         # The same three causes as awaiting_chairman, on a project whose dial
@@ -1398,6 +1418,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
         "board": board,
         "agents": rows,
     }
+    state["timezone"] = cons.timezone
     state["brief"] = _activity_brief(state)
     return state
 

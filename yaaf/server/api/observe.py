@@ -7,6 +7,7 @@ completions. In M1 this backs the CLI; the SPA consumes the same endpoints."""
 from __future__ import annotations
 
 import hashlib
+import json
 import random
 import re
 from datetime import UTC, datetime, timedelta
@@ -14,7 +15,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse, PlainTextResponse
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import artifacts
@@ -61,9 +62,11 @@ from yaaf.core.models import (
     Run,
     RunKind,
     RunQueue,
+    RunStatus,
     Secret,
     Suggestion,
     Task,
+    TaskEvent,
     TaskStatus,
     Team,
     User,
@@ -85,6 +88,7 @@ from yaaf.server import asks as ask_lib
 from yaaf.server.briefing import reading_member
 from yaaf.server.deps import db
 from yaaf.server.dispatcher import (
+    MODEL_RUN_KINDS,
     activity_state,
     chat_session_live,
     day_start,
@@ -93,7 +97,13 @@ from yaaf.server.dispatcher import (
 )
 from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.receipt import receipt as receipt_projection
-from yaaf.server.rows import approval_row, requirement_name
+from yaaf.server.rows import approval_row, approval_undo, chairman_time, requirement_name
+from yaaf.server.status_line import (
+    FAILING_AFTER,
+    SPINNING_DAYS,
+    SPINNING_RUNS,
+    status_line,
+)
 from yaaf.server.unread import boardroom_unread
 from yaaf.server.velocity import (
     commitment_projection,
@@ -215,11 +225,14 @@ def _awaiting_chairman(session: Session, project: Project, cons) -> dict:
 
 
 @router.get("/desk", dependencies=[authority.SIGNED_IN])
-def desk(live: bool = False, session: Session = Depends(db),
+def desk(live: bool = False, only: str | None = None, session: Session = Depends(db),
          person: Person = Depends(person_auth)) -> dict:
     """Cross-project rollup: decisions waiting on the chairman, countdowns
     worth watching, and one comparable row per project — in one request, so a
     page answers "what needs me?" without fanning out per project.
+
+    `only` narrows the rows to one project, for a reader that wants one
+    project's line without paying for everyone's.
 
     `live=true` drops the terminal projects (stopped, completed) entirely,
     which is what the Desk wants: a project that is over cannot need anything,
@@ -243,7 +256,8 @@ def desk(live: bool = False, session: Session = Depends(db),
     # mind, and the day it bypassed it is the day it listed a stranger's work.
     reachable = _reachable(session, person)
     finished = sum(1 for p in reachable if p.status in TERMINAL)
-    listing = [p for p in reachable if not (live and p.status in TERMINAL)]
+    listing = [p for p in reachable if not (live and p.status in TERMINAL)
+               and (only is None or p.id == only)]
 
     projects_out: list[dict] = []
     for project in listing:
@@ -262,7 +276,12 @@ def desk(live: bool = False, session: Session = Depends(db),
         usd_mode = project.billing_mode == "api_key"
         pending = [
             {"id": a.id, "title": a.title, "kind": a.kind, "amount_usd": a.amount_usd,
-             "expires_at": aware(a.expires_at).isoformat(), "capacity": a.capacity}
+             "expires_at": aware(a.expires_at).isoformat(), "capacity": a.capacity,
+             "undo": approval_undo(a.kind),
+             # What silence decides on THIS project; the row said "denied"
+             # on every project, including those whose rules approve.
+             "if_silent": ("approved" if cons.approval_timeout_decision == "approve"
+                           else "declined")}
             for a in session.execute(
                 select(Approval)
                 .where(Approval.project_id == project.id,
@@ -278,7 +297,8 @@ def desk(live: bool = False, session: Session = Depends(db),
         pending_asks = [
             {"id": a.id, "title": a.title, "body": a.body,
              "answer_by": aware(a.answer_by).isoformat(),
-             "default_action": a.default_action}
+             "default_action": a.default_action,
+             "options": a.options or [], "recommendation": a.recommendation}
             for a in ask_lib.open_asks(session, project.id)
         ]
         hyps = list(
@@ -330,10 +350,30 @@ def desk(live: bool = False, session: Session = Depends(db),
                 select(func.max(Run.started_at)).where(Run.project_id == project.id)
             ).scalar_one()
         )
+        # Consecutive failures, newest first, among the runs that call a
+        # model: the retry loop hides one, but three in a row is a project
+        # spending and producing nothing, which "Working." would paper over.
+        recent = session.execute(
+            select(Run.status, Run.error_kind)
+            .where(Run.project_id == project.id, Run.kind.in_(MODEL_RUN_KINDS),
+                   Run.finished_at.is_not(None))
+            .order_by(Run.finished_at.desc()).limit(FAILING_AFTER)
+        ).all()
+        failed_in_a_row = 0
+        for run_status, _ in recent:
+            if run_status != RunStatus.FAILED:
+                break
+            failed_in_a_row += 1
+        spinning = _spinning_runs(session, project, now)
         projects_out.append({
             "id": project.id, "slug": project.slug, "name": project.name,
             "status": project.status, "status_reason": project.status_reason,
             "goal": project.goal, "billing_mode": project.billing_mode,
+            # Nothing pays for it, so nothing it starts can run. A row that
+            # said "Running" here sent the chairman to a project whose first
+            # run had already died on the missing key.
+            "unpaid": (project.billing_secret_id is None
+                       and (project.integrations or {}).get("runtime") != "mock"),
             "budget": {
                 "unit": "usd" if usd_mode else "tokens",
                 # Token mode must match enforcement (janitor.month_to_date):
@@ -343,6 +383,10 @@ def desk(live: bool = False, session: Session = Depends(db),
                           + int(cache_creation) + int(cache_read)),
                 "cap": cons.monthly_usd_cap if usd_mode else cons.monthly_token_cap,
                 "warn_ratio": cons.budget_warn_ratio,
+                # The budget is the plan; this times the budget is the wall
+                # that pauses the project. A row that reads only the cap
+                # cannot say where spending actually stops.
+                "hard_stop_multiple": cons.hard_stop_multiple,
             },
             "open_tasks": len(policy.open_top_level_tasks(session, project.id)),
             "queue_ceiling": cons.queue_ceiling,
@@ -390,7 +434,59 @@ def desk(live: bool = False, session: Session = Depends(db),
             "runs_running": int(running),
             "last_run_at": last_run_at.isoformat() if last_run_at else None,
         })
-    return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out}
+        row = projects_out[-1]
+        waiting = row["awaiting_you"]
+        row["status_line"] = status_line(
+            status=project.status, status_reason=project.status_reason,
+            unpaid=row["unpaid"], commitment=policy.live_commitment(session, project.id),
+            waiting=(len(pending) + len(pending_asks) + (1 if waiting["plan"] else 0)
+                     + len(waiting["verdicts"]) + (1 if waiting["commitment"] else 0)),
+            open_tasks=row["open_tasks"], runs_running=int(running), last_run_at=last_run_at,
+            stall_hours=float(cons.stall_hours), unit=row["budget"]["unit"],
+            spent=row["budget"]["spent"], cap=row["budget"]["cap"],
+            failed_in_a_row=failed_in_a_row,
+            last_error_kind=recent[0][1] if failed_in_a_row else None,
+            spinning_runs=spinning)
+    # The reader's own "not now"s, so every surface that draws their Inbox
+    # leaves out the same rows. Personal: nobody else's Inbox changes.
+    from yaaf.server.api import me as me_api
+
+    reader = person if isinstance(person, Person) else authority.acting_person(session)
+    snoozed = (me_api.active(session, reader.id, {p.id for p in listing})
+               if reader is not None else [])
+    return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out,
+            "snoozed": snoozed}
+
+
+def _spinning_runs(session: Session, project: Project, now: datetime) -> int:
+    """The week's paid runs, when the week produced nothing at all — no task
+    closed, no requirement met, nothing published, no outside proof — and the
+    project is old enough to have been expected to. Zero otherwise, which is
+    every case the status line must not call waste."""
+    since = now - timedelta(days=SPINNING_DAYS)
+    created = project.created_at if project.created_at.tzinfo else \
+        project.created_at.replace(tzinfo=UTC)
+    if created > since:
+        return 0
+    runs = session.execute(
+        select(func.count(Run.id)).where(
+            Run.project_id == project.id, Run.kind.in_(MODEL_RUN_KINDS),
+            Run.metered.is_(True), Run.created_at >= since)
+    ).scalar_one()
+    if runs < SPINNING_RUNS:
+        return 0
+    produced = (
+        session.execute(select(func.count(TaskEvent.id)).where(
+            TaskEvent.project_id == project.id, TaskEvent.to_status == TaskStatus.DONE,
+            TaskEvent.at >= since)).scalar_one()
+        + session.execute(select(func.count(RequirementEvent.id)).where(
+            RequirementEvent.project_id == project.id,
+            RequirementEvent.to_status == RequirementStatus.MET,
+            RequirementEvent.at >= since)).scalar_one()
+        + session.execute(select(func.count(Artifact.id)).where(
+            Artifact.project_id == project.id, Artifact.published_at >= since)).scalar_one()
+        + policy.countable_external_evidence(session, project.id, since))
+    return 0 if produced else int(runs)
 
 
 @router.get("/briefing", dependencies=[authority.SIGNED_IN])
@@ -424,6 +520,23 @@ def project_briefing(project_id: str, hours: float | None = None,
     return briefing.project_briefing(session, project, since=at)
 
 
+#: The plan gate's reasons are written to the CEO, which reads them in its
+#: context pack — and they were shown verbatim on the chairman's Roadmap, so a
+#: Supervised chairman read that scope was "waiting on him, not on you" beside
+#: rows badged "waiting for you". The CEO's words stay as they are; the
+#: chairman's screen is told the same fact in the second person.
+_CHAIRMAN_WORDING = {
+    "the chairman decides what is in scope, so this is waiting on him, not on you.":
+        "you decide what is in scope — accept or cut them on the Roadmap.",
+}
+
+
+def _to_chairman(gap: str) -> str:
+    for theirs, yours in _CHAIRMAN_WORDING.items():
+        gap = gap.replace(theirs, yours)
+    return gap
+
+
 @router.get("/projects/{project_id}/agenda", dependencies=[authority.READ])
 def project_agenda(project_id: str, days: int = agenda.DEFAULT_DAYS,
                    session: Session = Depends(db)) -> dict:
@@ -431,6 +544,49 @@ def project_agenda(project_id: str, days: int = agenda.DEFAULT_DAYS,
     rhythm, the clocks that run out, and the promise."""
     project = _project(session, project_id)
     return agenda.project_agenda(session, project, days=days)
+
+
+@router.get("/projects/{project_id}/schedule", dependencies=[authority.READ])
+def project_schedule(project_id: str, session: Session = Depends(db)) -> dict:
+    """Who works when: each person's runs over the last half day and the
+    wakes scheduled for the next, for the strip under the org chart."""
+    project = _project(session, project_id)
+    return agenda.schedule_strip(session, project)
+
+
+@router.get("/projects/{project_id}/record", dependencies=[authority.READ])
+def project_record(project_id: str, kind: str = "all", agent_id: str | None = None,
+                   days: int = 7, limit: int = 500, format: str = "json",
+                   session: Session = Depends(db)):
+    """Everything that happened, newest first, filterable by kind and person,
+    each line saying on whose authority it happened. `format=csv` is the same
+    lines as a spreadsheet, for the reader who wants to keep them."""
+    from yaaf.server import record
+
+    if kind != "all" and kind not in record.KINDS:
+        raise HTTPException(status_code=422,
+                            detail=f"kind is one of: all, {', '.join(record.KINDS)}")
+    project = _project(session, project_id)
+    view = record.project_record(session, project, kind=kind, agent_id=agent_id,
+                                 days=days, limit=limit)
+    if format != "csv":
+        return view
+    import csv
+    import io
+
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["at", "kind", "who", "what", "on whose authority", "run"])
+    def cell(text: str) -> str:
+        # Agent-written text opens in a spreadsheet; one starting "=" would run
+        # as a formula there. A leading quote makes it read as the text it is.
+        return f"'{text}" if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
+
+    for line in view["lines"]:
+        writer.writerow([line["at"], line["kind"], cell(line["who"]), cell(line["text"]),
+                         cell(line["authority"] or ""), line["run_id"] or ""])
+    return Response(out.getvalue(), media_type="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="{project.slug}-record.csv"'})
 
 
 def _parse_since(raw: str | None) -> datetime | None:
@@ -900,13 +1056,18 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             if "challenge" not in categories:
                 # The fix is one hire, so the row offers it: the library's own
                 # plan reviewer when the install has it, otherwise the Team
-                # page, where any challenge role can be hired.
+                # page, where any challenge role can be hired. Said for the dial
+                # this project is on: a Supervised chairman read that the CEO
+                # "accepted it too" about a plan he had accepted himself.
                 reviewer = session.execute(
                     select(Role).where(Role.slug == PLAN_REVIEWER_ROLE)
                 ).scalar_one_or_none()
+                who = ("The CEO wrote it and accepted it too, so nobody else checks it."
+                       if effective(session, project.id).plan_authority == "ceo" else
+                       "The CEO wrote it and you accept it, so you are the only one who "
+                       "checks it.")
                 add("no-adversary", "warn",
-                    "Nobody on this team is there to disagree with the CEO's plan, so "
-                    "the only one who checks it is the CEO who wrote it."
+                    "Nobody on this team is there to disagree with the CEO's plan. " + who
                     + (" Adding a plan reviewer puts one more agent on the team whose "
                        "job is to find what the plan is missing." if reviewer else
                        " Hire a role whose job is to challenge the plan."),
@@ -981,9 +1142,9 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     if pending_asks:
         soonest = min(a.answer_by for a in pending_asks)
         add("asks", "ok",
-            f"Your CEO has {len(pending_asks)} question(s) waiting on you; the first stops "
-            f"waiting at {soonest:%b} {soonest.day}, {soonest:%H:%M} UTC. Nothing is "
-            "blocked: each says what the CEO will do if you don't answer.",
+            f"{len(pending_asks)} question(s) from your CEO waiting on you, the first "
+            f"stopping {chairman_time(soonest, effective(session, project.id).timezone)}. "
+            "Nothing is blocked: each says what the CEO will do if you don't answer.",
             "boardroom")
 
     # Liveness. Every other check on this page asks "is this project set up
@@ -1359,7 +1520,8 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
         "plan": {
             "status": plan.status if plan else None,
             "holds": plan is not None and plan.status == RequirementStatus.MET,
-            "outstanding": policy.evaluate_plan(session, project, cons),
+            "outstanding": [_to_chairman(gap)
+                            for gap in policy.evaluate_plan(session, project, cons)],
             "arithmetic": policy.plan_arithmetic(session, project, cons),
             "planning_spend": spend.get(plan.id, {"runs": 0, "usd": 0}) if plan else None,
         },
@@ -1420,7 +1582,57 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
     project = _project(session, project_id)
     # The same helper the health finding reads, so the Team page can never mark
     # a seat the Overview does not name, or the other way round.
+    from yaaf.runtimes import catalog
+    from yaaf.runtimes.seats import seat_for
+    from yaaf.server.contextpack import role_version_for
+
     dormant = _dormant_seats(session, project)
+    # What each person runs on and has cost this month, so the chart answers
+    # "who is expensive?" where the people are rather than on another page.
+    month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    spent = dict(session.execute(
+        select(Run.agent_id, func.coalesce(func.sum(Run.cost_usd), 0.0))
+        .where(Run.project_id == project.id, Run.created_at >= month_start)
+        .group_by(Run.agent_id)
+    ).all())
+    total = sum(float(v) for v in spent.values()) or 0.0
+
+    def working(agent) -> dict:
+        seat = seat_for(agent, role_version_for(session, agent))
+        usd = float(spent.get(agent.id, 0.0))
+        return {"model": catalog.label(seat.model), "model_id": seat.model,
+                "provider": seat.provider, "month_usd": round(usd, 2),
+                "month_share": round(usd / total, 3) if total else 0.0}
+
+    # The last roster change on each team, with who made it and why — so a
+    # team the CEO hired yesterday is drawn as new, with its reason beside
+    # it, rather than appearing on the chart as if it had always been there.
+    from yaaf.core.models import AuditLog
+
+    names = {a.id: a.name for a in session.execute(
+        select(Agent).where(Agent.project_id == project.id)).scalars()}
+    moved: dict[str, AuditLog] = {}
+    for row in session.execute(
+        select(AuditLog).where(AuditLog.project_id == project.id, AuditLog.entity == "team",
+                               AuditLog.action.in_(["team.hire", "team.stand_down", "team.recall"]))
+        .order_by(AuditLog.at)
+    ).scalars():
+        moved[row.entity_id] = row
+    hire_cut = utcnow() - timedelta(days=NEW_TEAM_DAYS)
+
+    def change(team_id: str) -> dict | None:
+        row = moved.get(team_id)
+        if row is None:
+            return None
+        at = row.at if row.at.tzinfo else row.at.replace(tzinfo=UTC)
+        by = row.actor.split(":", 1)
+        return {"action": row.action.removeprefix("team."), "at": at.isoformat(),
+                "by": names.get(by[1], "your CEO") if by[0] == "agent"
+                else ("you" if by[0] == "user" else "the platform"),
+                "by_agent": by[0] == "agent",
+                "reason": ((row.detail or {}).get("reason") or "")[:600] or None,
+                "recent": at >= hire_cut}
+
     teams = []
     for team in session.execute(select(Team).where(Team.project_id == project.id)).scalars():
         members = policy.team_agents(session, team.id)
@@ -1457,10 +1669,11 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
                 "stood_down_at": team.stood_down_at.isoformat()
                 if team.stood_down_at else None,
                 "stand_down_when": team.stand_down_when,
+                "last_change": change(team.id),
                 "agents": [
                     {"id": a.id, "name": a.name, "status": a.status,
                      "stood_down_reason": a.stood_down_reason,
-                     **_dormancy(dormant, a.id)}
+                     **_dormancy(dormant, a.id), **working(a)}
                     for a in members
                 ],
             }
@@ -1473,7 +1686,7 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
     ceo_version = session.get(RoleVersion, ceo.role_version_id) if ceo else None
     ceo_role = session.get(Role, ceo_version.role_id) if ceo_version else None
     return {"ceo": {"id": ceo.id, "name": ceo.name, "status": ceo.status,
-                    **_dormancy(dormant, ceo.id),
+                    **_dormancy(dormant, ceo.id), **working(ceo),
                     "role_slug": ceo_role.slug if ceo_role else None,
                     # Named like a team's, for the same reason. No version:
                     # only teams can be repinned, and a version number beside
@@ -1481,6 +1694,12 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
                     # cannot answer.
                     "role_name": ceo_role.name if ceo_role else None} if ceo else None,
             "teams": teams}
+
+
+#: How long a hire or a recall is drawn as new on the org chart. A week is
+#: one full cycle of every cadence, so the chairman sees it at least once on
+#: whatever rhythm he reads on.
+NEW_TEAM_DAYS = 7
 
 
 #: A seat with no run in this long is not resting, it is absent. A week is
@@ -1556,6 +1775,10 @@ def board(project_id: str, session: Session = Depends(db)) -> list[dict]:
             # nobody could see.
             "not_before": t.not_before.isoformat() if t.not_before else None,
             "hypothesis_id": t.hypothesis_id, "audit_status": t.audit_status,
+            # The requirement this work is for: the middle link of the chain
+            # from the project's goal to the task, drawn wherever a task is.
+            "requirement_id": t.requirement_id,
+            "updated_at": t.updated_at.isoformat() if t.updated_at else None,
         }
         for t in rows
     ]
@@ -1719,13 +1942,18 @@ def channel_messages(channel_id: str, limit: int = 100, before: str | None = Non
 
 
 @router.get("/projects/{project_id}/runs", dependencies=[authority.READ])
-def runs(project_id: str, limit: int = 50, session: Session = Depends(db)) -> list[dict]:
+def runs(project_id: str, limit: int = 50, agent_id: str | None = None,
+         run_id: str | None = None, session: Session = Depends(db)) -> list[dict]:
+    # `agent_id` is one person's runs (their page links here); `run_id` is
+    # one run, for "View run" on a line of the record.
+    query = select(Run).where(Run.project_id == project_id)
+    if agent_id:
+        query = query.where(Run.agent_id == agent_id)
+    if run_id:
+        query = query.where(Run.id == run_id)
     rows = list(
         session.execute(
-            select(Run)
-            .where(Run.project_id == project_id)
-            .order_by(Run.created_at.desc())
-            .limit(min(limit, 200))
+            query.order_by(Run.created_at.desc()).limit(min(limit, 200))
         ).scalars()
     )
     agent_ids = {r.agent_id for r in rows if r.agent_id}
@@ -1795,6 +2023,133 @@ def run_trace(run_id: str, session: Session = Depends(db)) -> PlainTextResponse:
         raise HTTPException(status_code=404, detail="no trace recorded for this run")
     text = _artifact_text(run.trace_path, missing="trace not present in the artifact store")
     return PlainTextResponse(text[-500_000:])
+
+
+#: What the platform calls its own actions, in the words a chairman reads.
+_DID_AUDIT = {
+    "team.hire": "hired {team}",
+    "team.stand_down": "stood down {team}",
+    "team.recall": "recalled {team}",
+}
+#: How many of a run's steps the "What they did" list carries.
+DID_STEPS = 40
+
+
+def _tool_name(record: dict) -> str | None:
+    """The tool a trace line called, across the drivers' shapes, or None."""
+    if record.get("type") == "tool_use" and record.get("tool"):
+        return str(record["tool"])
+    raw = record.get("repr")
+    if not isinstance(raw, str) or "tool_use" not in raw:
+        return None
+    try:
+        block = json.loads(raw)
+    except ValueError:
+        return None
+    if isinstance(block, dict) and block.get("type") in ("tool_use", "server_tool_use"):
+        return str(block.get("name") or "") or None
+    return None
+
+
+def _tool_words(name: str) -> str:
+    """`mcp__yaaf__complete_task` → `complete task`: the verb, not the plumbing."""
+    return name.rsplit("__", 1)[-1].replace("_", " ").strip().lower()
+
+
+@router.get("/runs/{run_id}/did", dependencies=[authority.READ])
+def run_did(run_id: str, session: Session = Depends(db)) -> dict:
+    """What one run did, in order, from the platform's own record.
+
+    The trace is the model's account, in the model's vocabulary, and it is
+    the size of a novel. Everything a run changed went through the platform —
+    a task moved, a file published, a message posted, a request filed, a team
+    hired — and each left a row with a time and an author. Those rows, in the
+    run's window, are what it did. The tools it reached for are counted from
+    the trace as a footnote, because they are what it tried rather than what
+    happened.
+    """
+    run = session.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="no such run")
+    start = run.started_at or run.created_at
+    end = (run.finished_at or utcnow()) + timedelta(seconds=5)
+    actor = f"agent:{run.agent_id}" if run.agent_id else None
+    steps: list[tuple[datetime, str, str]] = []
+
+    def aware(at: datetime) -> datetime:
+        return at if at.tzinfo else at.replace(tzinfo=UTC)
+
+    if actor:
+        for e, title in session.execute(
+            select(TaskEvent, Task.title).join(Task, Task.id == TaskEvent.task_id)
+            .where(TaskEvent.project_id == run.project_id, TaskEvent.actor == actor,
+                   TaskEvent.at >= start, TaskEvent.at <= end)
+        ).all():
+            verb = {"claimed": "took on", "done": "finished", "review": "handed for a read",
+                    "blocked": "flagged as blocked", "ready": "put back"}.get(e.to_status,
+                                                                         f"moved to {e.to_status}")
+            if e.from_status == TaskStatus.REVIEW and e.to_status == TaskStatus.DONE:
+                verb = "passed its read of"
+            elif e.from_status == TaskStatus.REVIEW:
+                verb = "sent back"
+            steps.append((e.at, "task", f"{verb} “{title}”"))
+        for m, kind, team in session.execute(
+            select(Message, Channel.kind, Team.name).join(Channel, Channel.id == Message.channel_id)
+            .outerjoin(Team, Team.id == Channel.team_id)
+            .where(Message.project_id == run.project_id,
+                   Message.sender_agent_id == run.agent_id,
+                   Message.created_at >= start, Message.created_at <= end)
+        ).all():
+            where = "you, in Chat" if kind == "boardroom" else (f"the {team} room" if team else "the team")
+            steps.append((m.created_at, "message", f"wrote to {where}: “{m.body[:140].strip()}”"))
+        for a in session.execute(
+            select(Approval).where(Approval.project_id == run.project_id,
+                                   Approval.requested_by_agent_id == run.agent_id,
+                                   Approval.created_at >= start, Approval.created_at <= end)
+        ).scalars():
+            steps.append((a.created_at, "approval", f"asked you to decide: “{a.title}”"))
+        for row in session.execute(
+            select(AuditLog).where(AuditLog.project_id == run.project_id, AuditLog.actor == actor,
+                                   AuditLog.at >= start, AuditLog.at <= end,
+                                   AuditLog.action.in_(list(_DID_AUDIT)))
+        ).scalars():
+            steps.append((row.at, "staffing",
+                          _DID_AUDIT[row.action].format(team=(row.detail or {}).get("team") or "a team")))
+    for art in session.execute(
+        select(Artifact).where(Artifact.run_id == run.id)
+    ).scalars():
+        steps.append((art.published_at, "publish", f"published {art.name} (v{art.version})"))
+
+    tools: dict[str, int] = {}
+    if run.trace_path:
+        try:
+            text = _artifact_text(run.trace_path, missing="")
+        except HTTPException:
+            text = ""
+        for line in text.splitlines():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            name = _tool_name(record) if isinstance(record, dict) else None
+            if name:
+                words = _tool_words(name)
+                tools[words] = tools.get(words, 0) + 1
+
+    steps.sort(key=lambda s: aware(s[0]))
+    return {
+        "run_id": run.id, "agent_id": run.agent_id, "status": run.status,
+        "started_at": aware(start).isoformat() if start else None,
+        "finished_at": aware(run.finished_at).isoformat() if run.finished_at else None,
+        "cost_usd": run.cost_usd, "model": run.model,
+        "summary": (run.summary or "")[:600] or None,
+        "steps": [{"at": aware(at).isoformat(), "kind": kind, "text": text}
+                  for at, kind, text in steps[:DID_STEPS]],
+        "more_steps": max(0, len(steps) - DID_STEPS),
+        "tools": sorted(({"tool": k, "times": v} for k, v in tools.items()),
+                        key=lambda t: -t["times"])[:12],
+        "has_trace": bool(run.trace_path),
+    }
 
 
 @router.get("/runs/{run_id}/context", dependencies=[authority.READ])
@@ -2135,14 +2490,173 @@ def _file_index(project: Project) -> file_index.Snapshot:
     return file_index.snapshot(project.id, _workspace_root(project), f"projects/{project.id}/")
 
 
-def _receipt(a: Artifact, key_of: dict[str, str]) -> dict:
+#: Acceptance tests the platform runs itself. An observable is judged by a
+#: person or the CEO; it can be met, but it was never machine-checked.
+_MACHINE_CHECKED = ("command", "metric")
+
+
+def _checked(satisfied: list) -> tuple[str | None, str | None]:
+    """How the requirements a deliverable claims were settled, as one label.
+
+    The proof lived on another page (Activity → Proof) and the file showed
+    only that it "satisfies R-02" — a claim the agent made at publish, which
+    says nothing about whether anything checked it. The label never upgrades a
+    judgement to a verification: one observable among them makes it "judged".
+    """
+    if not satisfied:
+        return None, None
+    keys = ", ".join(r.key for r in satisfied)
+    if any(r.status != RequirementStatus.MET for r in satisfied):
+        unsettled = ", ".join(r.key for r in satisfied if r.status != RequirementStatus.MET)
+        return "pending", f"{unsettled} not settled yet"
+    if all((r.acceptance_test or {}).get("type") in _MACHINE_CHECKED for r in satisfied):
+        return "verified", f"the platform ran the acceptance test for {keys}"
+    return "judged", f"{keys} met by judgement — an observable no script can check"
+
+
+def _receipt(a: Artifact, reqs: dict) -> dict:
+    satisfied = [reqs[rid] for rid in a.requirement_ids or [] if rid in reqs]
+    checked, why = _checked(satisfied)
     return {
         "id": a.id, "name": a.name, "version": a.version, "sha256": a.sha256,
         "size": a.size_bytes, "key": a.storage_key,
         "published_at": a.published_at.isoformat(),
         "published_by": a.published_by_agent_id,
-        "satisfies": sorted(key_of.get(rid, rid) for rid in a.requirement_ids or []),
+        "satisfies": sorted(reqs[rid].key if rid in reqs else rid
+                            for rid in a.requirement_ids or []),
+        "checked": checked, "checked_why": why,
     }
+
+
+#: How many published results the Results page lists. A project that has
+#: published more than this is read newest first, and the rest are on
+#: Details › Deliverables, which pages through all of them.
+RESULTS_LISTED = 100
+
+
+def _checks(events: list[TaskEvent], satisfied: list,
+            names: dict[str, str]) -> list[dict]:
+    """Everyone and everything that looked at a result before it reached the
+    chairman, strongest first. Built from what happened rather than what was
+    claimed: a platform check is the `checker` closing the task, a read is a
+    reviewing seat taking it out of review, and a requirement only counts once
+    the platform has settled it."""
+    out: list[dict] = []
+    for e in events:
+        if e.to_status == TaskStatus.DONE and e.actor == "checker":
+            out.append({"kind": "platform", "label": "verified by YAAF",
+                        "note": "the platform ran the task's own check and it passed"})
+        elif e.from_status == TaskStatus.REVIEW and e.to_status == TaskStatus.DONE \
+                and e.actor.startswith("agent:"):
+            who = names.get(e.actor.removeprefix("agent:"), "a reviewer")
+            note = (e.note or "").removeprefix("reviewed: ").strip() or None
+            out.append({"kind": "reviewer", "label": f"read by {who}", "who": who,
+                        "note": note[:400] if note else None})
+    checked, why = _checked(satisfied)
+    if checked == "verified" and not any(c["kind"] == "platform" for c in out):
+        out.append({"kind": "platform", "label": "verified by YAAF", "note": why})
+    elif checked == "judged":
+        out.append({"kind": "judged", "label": "met by judgement", "note": why})
+    elif checked == "pending":
+        out.append({"kind": "pending", "label": "not settled yet", "note": why})
+    return out
+
+
+@router.get("/projects/{project_id}/results", dependencies=[authority.READ])
+def project_results(project_id: str, agent_id: str | None = None,
+                    session: Session = Depends(db)) -> dict:
+    """What the team has published, newest first: who made each result, who
+    or what checked it before it reached the chairman, what it was for, and
+    what it cost to make.
+
+    The Deliverables screen is a file explorer — every draft and working file,
+    by day — and it answered "what did they make?" only for a reader willing
+    to dig. This answers it directly, one row per deliverable (its newest
+    version), with the chain from the project's goal down to the task that
+    produced it. `agent_id` narrows it to one person's work, for their page.
+    """
+    project = _project(session, project_id)
+    rows = list(session.execute(
+        select(Artifact).where(Artifact.project_id == project.id)
+        .order_by(Artifact.published_at.desc())
+    ).scalars())
+    latest: dict[str, Artifact] = {}
+    versions: dict[str, int] = {}
+    for a in rows:
+        versions[a.name] = versions.get(a.name, 0) + 1
+        latest.setdefault(a.name, a)
+    shown = [a for a in latest.values()
+             if agent_id is None or a.published_by_agent_id == agent_id][:RESULTS_LISTED]
+    names = {a.id: a.name for a in session.execute(
+        select(Agent).where(Agent.project_id == project.id)).scalars()}
+    reqs = {r.id: r for r in policy.scope_requirements(session, project.id)}
+    run_ids = {a.run_id for a in shown if a.run_id}
+    runs = {r.id: r for r in session.execute(
+        select(Run).where(Run.id.in_(run_ids))).scalars()} if run_ids else {}
+    # The task a result came from: the one its run was woken for, or — for a
+    # run woken by a message that then claimed work — the one that run claimed.
+    task_of_run = {r.id: r.task_id for r in runs.values() if r.task_id}
+    if run_ids:
+        for t_id, claim_run in session.execute(
+            select(Task.id, Task.claim_run_id).where(Task.claim_run_id.in_(run_ids))
+        ).all():
+            task_of_run.setdefault(claim_run, t_id)
+    task_ids = set(task_of_run.values())
+    tasks = {t.id: t for t in session.execute(
+        select(Task).where(Task.id.in_(task_ids))).scalars()} if task_ids else {}
+    events: dict[str, list[TaskEvent]] = {}
+    spent: dict[str, tuple[float, int, int]] = {}
+    if task_ids:
+        for e in session.execute(
+            select(TaskEvent).where(TaskEvent.task_id.in_(task_ids)).order_by(TaskEvent.at)
+        ).scalars():
+            events.setdefault(e.task_id, []).append(e)
+        for tid, usd, n, failed in session.execute(
+            select(Run.task_id, func.coalesce(func.sum(Run.cost_usd), 0.0), func.count(Run.id),
+                   func.sum(case((Run.status.in_([RunStatus.FAILED, RunStatus.REAPED,
+                                                  RunStatus.TERMINATED_REFUSALS]), 1), else_=0)))
+            .where(Run.task_id.in_(task_ids)).group_by(Run.task_id)
+        ).all():
+            spent[tid] = (float(usd or 0.0), int(n or 0), int(failed or 0))
+
+    out = []
+    tally = {"platform": 0, "reviewer": 0, "judged": 0, "unchecked": 0}
+    for a in shown:
+        run = runs.get(a.run_id) if a.run_id else None
+        task = tasks.get(task_of_run.get(a.run_id, "")) if a.run_id else None
+        satisfied = [reqs[rid] for rid in a.requirement_ids or [] if rid in reqs]
+        if not satisfied and task is not None and task.requirement_id in reqs:
+            satisfied = [reqs[task.requirement_id]]
+        checks = _checks(events.get(task.id, []) if task else [], satisfied, names)
+        strongest = next((c["kind"] for c in checks if c["kind"] in ("platform", "reviewer", "judged")),
+                         "unchecked")
+        tally[strongest] += 1
+        # What its task's runs cost; where those runs were not woken for the
+        # task (one claimed it mid-run), the run that published it is the
+        # honest floor rather than a dash.
+        if task is not None and task.id in spent:
+            usd, n_runs, failed = spent[task.id]
+        elif run is not None:
+            usd, n_runs, failed = float(run.cost_usd or 0.0), 1, 0
+        else:
+            usd, n_runs, failed = 0.0, 0, 0
+        out.append({
+            "name": a.name, "key": a.storage_key, "version": a.version,
+            "versions": versions.get(a.name, 1), "size": a.size_bytes,
+            "published_at": a.published_at.isoformat(),
+            "made_by": ({"id": a.published_by_agent_id,
+                         "name": names.get(a.published_by_agent_id, "an agent no longer on it")}
+                        if a.published_by_agent_id else None),
+            "checks": checks, "checked": strongest,
+            # Goal → requirement → task: why this exists, in the project's own
+            # words, so a result never arrives without its reason.
+            "serves": [{"key": r.key, "statement": r.statement} for r in satisfied],
+            "task": {"id": task.id, "title": task.title} if task else None,
+            "run_id": a.run_id,
+            "cost": {"usd": round(usd, 2), "runs": n_runs, "failed": failed},
+        })
+    return {"goal": project.goal, "results": out, "counts": tally,
+            "total": len(latest), "listed": len(out)}
 
 
 @router.get("/projects/{project_id}/files", dependencies=[authority.READ])
@@ -2166,9 +2680,9 @@ def project_files(project_id: str, session: Session = Depends(db)) -> dict:
     # The receipts: published rows with a real hash, a real timestamp, and the
     # requirements each claims to satisfy. The listing above is what the store
     # HOLDS; this is what was formally shipped, and the two can differ.
-    key_of = {r.id: r.key for r in policy.scope_requirements(session, project.id)}
+    reqs = {r.id: r for r in policy.scope_requirements(session, project.id)}
     published = [
-        _receipt(a, key_of)
+        _receipt(a, reqs)
         for a in session.execute(
             select(Artifact).where(Artifact.project_id == project.id)
             .order_by(Artifact.published_at.desc()).limit(200)
@@ -2196,8 +2710,8 @@ def _receipts(session: Session, project: Project, items: list) -> dict[str, dict
         ).scalars().all()
     if not rows:
         return {}
-    key_of = {r.id: r.key for r in policy.scope_requirements(session, project.id)}
-    return {a.storage_key: _receipt(a, key_of) for a in rows}
+    reqs = {r.id: r for r in policy.scope_requirements(session, project.id)}
+    return {a.storage_key: _receipt(a, reqs) for a in rows}
 
 
 def _file_row(item: file_index.Item, pos: int | None, receipts: dict[str, dict],

@@ -68,9 +68,15 @@ from yaaf.core.models import (
 from yaaf.server import acting, activity, policy, typing_state
 from yaaf.server.contextpack import _speaker
 from yaaf.server.deps import RunContext, db, run_auth
-from yaaf.server.notify import Attention, chairman_notify
+from yaaf.server.notify import (
+    Attention,
+    chairman_notify,
+    inbox_line,
+    inbox_url,
+    project_link,
+)
 from yaaf.server.policy import Refusal
-from yaaf.server.rows import approval_row, chairman_time
+from yaaf.server.rows import approval_row, approval_undo, chairman_time
 
 
 async def _the_agent_acts(ctx: RunContext = Depends(run_auth)) -> None:
@@ -642,7 +648,7 @@ def hire(body: HireIn, ctx: RunContext = Depends(run_auth),
         + (f"Standing down when {_condition_words(condition)}. "
            if condition else "No stand-down condition set. ")
         + "Your CEO decides who to hire, up to the number of teams this project "
-          "allows; if you disagree, stand the team down on the Overview roster.")
+          "allows; if you disagree, stand the team down on the Team page.")
     session.flush()
     chairman_notify(
         session, ctx.project, f"The project hired {body.name} ({body.role_slug})",
@@ -691,7 +697,7 @@ def stand_down_team(team_id: str, body: StandDownIn,
         session, ctx.project.id,
         f"🚪 STOOD DOWN: {team.name} — {body.reason[:400]}\n"
         "Those seats wake for nothing now and cost nothing. Recall them on the "
-        "Overview roster if you disagree; nothing about their record is lost.")
+        "Team page if you disagree; nothing about their record is lost.")
     session.flush()
     chairman_notify(
         session, ctx.project, f"The project stood down {team.name}",
@@ -1150,8 +1156,8 @@ def _disclose_self_action(session: Session, ctx: RunContext, kind: str,
     chairman_notify(
         session, ctx.project,
         f"CEO decision: {detail}",
-        f"{detail}\n\nIts reason: {reason}\n\nExercised under the authority dial you "
-        "set in the constitution. Everything here is reversible — reopen what was "
+        f"{detail}\n\nIts reason: {reason}\n\nThe CEO may decide this itself because "
+        "of how you set this project's say-so dial. Everything here is reversible — reopen what was "
         "cut, cut what was accepted — and the dial itself is yours to turn back.",
         attention=Attention.FYI,
     )
@@ -2238,6 +2244,13 @@ def decision_add(
 
 
 
+def _inbox_link(item_key: str) -> str:
+    """The Inbox row's link on a line of its own, or nothing when this install
+    has no browser-facing origin to build one from."""
+    url = inbox_url(item_key)
+    return f"\n{url}" if url else ""
+
+
 def _file_approval(session: Session, ctx: RunContext, kind: str, title: str,
                    body: str, amount_usd: float | None = None) -> Approval:
     """ONE way an agent puts something on the chairman's desk: same id, same
@@ -2288,6 +2301,22 @@ def approval_request(
         session, ctx, body.kind, body.title,
         f"{body.body.strip()}\n\nWhat happens without it: {body.if_declined.strip()}",
         body.amount_usd)
+    session.flush()
+    # Told now, not two days before it decides itself. The expiry chase was the
+    # first word he heard of a spend, legal or tool approval — five days into a
+    # seven-day default-deny clock — so silence became a veto he never got to
+    # cast. The ration still applies; the expiry nag still follows.
+    silence = "yes" if cons.approval_timeout_decision == "approve" else "no"
+    chairman_notify(
+        session, ctx.project, f"waiting on your decision: {body.title}",
+        f"{row.body[:4000]}\n\n"
+        f"If you have not decided by {chairman_time(row.expires_at, cons.timezone)}, "
+        f"the answer is {silence}."
+        + (f"\nCan you undo a yes? {undo}" if (undo := approval_undo(row.kind)) else "")
+        + f"\n{inbox_line(row.id)}",
+        kind="approval_requested", data={"approval": approval_row(row)},
+        attention=Attention.ACTION,
+    )
     return {
         "id": row.id,
         "expires_at": row.expires_at.isoformat(),
@@ -2398,6 +2427,8 @@ def ask_chairman(
         body=case,
         answer_by=answer_by,
         default_action=body.default_action.strip(),
+        options=[o.strip() for o in body.options if o.strip()] or None,
+        recommendation=(body.recommendation or "").strip() or None,
         asked_in_message_id=message.id,
     )
     session.add(row)
@@ -2800,7 +2831,8 @@ def book_spend(
             f"month at ${committed + body.usd:,.2f} of the ${cap:,.0f} envelope. "
             "Booked rather than refused — the money had already moved, and an "
             "unrecorded spend is worse than an overshot one. Further purchases are "
-            "walled; the spend itself is on the ledger and the audit.",
+            "walled; the spend itself is on the ledger and the audit."
+            + project_link(ctx.project.id, "spend", "See the spend"),
             attention=Attention.ALARM,
         )
         return {"id": row.id,
@@ -2924,7 +2956,7 @@ def assist_request(
         session, ctx.project.id,
         f"🤝 ASSIST NEEDED ({ctx.agent.name}): {body.what[:400]}"
         + (f"\nWhere: {body.where}" if body.where else "")
-        + "\nAnswer on the Decisions screen — your note travels back verbatim "
+        + "\nAnswer it in your Inbox — your note travels back verbatim "
           "(a code, a 'done', a 'no') and wakes the agent.")
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
@@ -2935,10 +2967,10 @@ def assist_request(
     session.flush()
     chairman_notify(
         session, ctx.project, f"Human needed: {body.what[:120]}",
-        approval.body + "\n\nAnswer on the Decisions screen — your note travels "
+        approval.body + "\n\nAnswer it in your Inbox — your note travels "
         "back verbatim and wakes the agent. This is the one step autonomy never "
         "takes from you: the platform hands over security challenges, it never "
-        "defeats them.",
+        "defeats them." + _inbox_link(approval.id),
         kind="approval_requested", data={"approval": approval_row(approval)},
         attention=Attention.ACTION,
     )
@@ -3075,7 +3107,7 @@ def capacity_request(
         session, ctx.project.id,
         f"📈 MORE ROOM: your CEO asks to raise “{dial}” from {current:g} to {body.to:g}"
         f"{' (shared with your other projects)' if shared else ''} — {body.buys[:400]}\n"
-        f"Decide it on the Decisions screen. Unanswered, it expires to no in "
+        f"Decide it in your Inbox. Unanswered, it expires to no in "
         f"{cons.approval_timeout_days} days and the cap stays where it is.")
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
@@ -3086,7 +3118,7 @@ def capacity_request(
     session.flush()
     chairman_notify(
         session, ctx.project, f"Your CEO asks for more room: {dial}",
-        "\n".join(detail),
+        "\n".join(detail) + "\n\n" + inbox_line(approval.id),
         kind="approval_requested",
         data={"approval": approval_row(approval)},
         attention=Attention.ACTION,
@@ -3306,7 +3338,7 @@ def need_request(
     _boardroom_system_line(
         session, ctx.project.id,
         f"📋 NEED: {body.title}{cost} — {body.why[:400]}\n"
-        f"Give it on the Decisions screen — you paste the key or login once and "
+        f"Give it in your Inbox — you paste the key or login once and "
         f"the right people get it — or decline it there. Unanswered, it expires "
         f"to no in {cons.approval_timeout_days} days.")
     session.add(AuditLog(
@@ -3319,8 +3351,9 @@ def need_request(
     session.flush()
     chairman_notify(
         session, ctx.project, f"The project needs: {body.title}",
-        "\n".join(detail_lines) + "\n\nGive it or decline it on the Decisions screen "
-        "— you paste the key or login once and the right people get it.",
+        "\n".join(detail_lines) + "\n\nGive it or decline it in your Inbox "
+        "— you paste the key or login once and the right people get it."
+        + _inbox_link(approval.id),
         kind="approval_requested", data={"approval": approval_row(approval)},
         attention=Attention.ACTION,
     )

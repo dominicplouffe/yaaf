@@ -620,6 +620,9 @@ export interface TaskRow {
   hypothesis_id: string | null;
   /** Chairman spot-audit verdict on the completion; null = never audited. */
   audit_status: string | null;
+  /** The requirement this work is for — the middle link of goal → requirement → task. */
+  requirement_id?: string | null;
+  updated_at?: string | null;
 }
 
 export interface MessageRow {
@@ -734,6 +737,7 @@ export interface ApprovalRow {
   kind: string;
   title: string;
   body: string;
+  undo?: string | null;
   amount_usd: number | null;
   status: string;
   requested_by: string;
@@ -801,6 +805,10 @@ export interface DeskApproval {
   amount_usd: number | null;
   expires_at: string;
   capacity?: CapacityAsk | null;
+  /** Whether a yes can be undone, where the kind alone says (yaaf.server.rows). */
+  undo?: string | null;
+  /** What silence decides on this project. */
+  if_silent?: "approved" | "declined";
 }
 
 /** A capacity request's dial. Approving it is what raises the dial. */
@@ -863,6 +871,9 @@ export interface DeskAsk {
   body: string;
   answer_by: string;
   default_action: string;
+  /** The choices, when the question has them; answering is one click. */
+  options?: string[];
+  recommendation?: string | null;
 }
 
 export interface DeskBet {
@@ -878,9 +889,17 @@ export interface DeskProject {
   name: string;
   status: string;
   status_reason: string | null;
+  /** Nothing pays for it, so nothing it starts can run. */
+  unpaid?: boolean;
+  /** One verdict and one sentence, decided on the server so every surface
+      says the same thing (yaaf.server.status_line). */
+  status_line?: { verdict: string; sentence: string };
   goal: string;
   billing_mode: string;
-  budget: { unit: "usd" | "tokens"; spent: number; cap: number; warn_ratio: number };
+  budget: {
+    unit: "usd" | "tokens"; spent: number; cap: number; warn_ratio: number;
+    hard_stop_multiple: number;
+  };
   open_tasks: number;
   queue_ceiling: number;
   /** Populated only for switches the chairman holds — empty on an autonomous
@@ -928,6 +947,8 @@ export interface DeskView {
       `?live=true` has kept them out of `projects`. */
   finished: number;
   projects: DeskProject[];
+  /** The reader's own snoozes still running (yaaf/server/api/me.py). */
+  snoozed?: { item_key: string; project_id: string; until: string }[];
 }
 
 // ── the fire drill: the project, run for nothing ───────────────────────────────
@@ -940,6 +961,8 @@ export interface RehearsalStep {
       project has no plan gate and no commitment by design, and drawing those
       as misses would report an absent feature as a broken one. */
   na?: boolean;
+  /** Why the rung does not apply: an Explore shape, or a rule left off. */
+  na_reason?: string | null;
   detail: string | null;
   tick: number | null;
 }
@@ -1044,11 +1067,70 @@ export interface HypothesisRow {
   extended_once: boolean;
 }
 
+/** Who or what looked at a result before it reached the chairman. */
+export interface ResultCheck {
+  kind: "platform" | "reviewer" | "judged" | "pending";
+  label: string;
+  who?: string;
+  note?: string | null;
+}
+
+/** One published deliverable, its newest version, for the Results page. */
+export interface ResultRow {
+  name: string;
+  key: string;
+  version: number;
+  versions: number;
+  size: number;
+  published_at: string;
+  made_by: { id: string; name: string } | null;
+  checks: ResultCheck[];
+  checked: "platform" | "reviewer" | "judged" | "unchecked";
+  serves: { key: string; statement: string }[];
+  task: { id: string; title: string } | null;
+  run_id: string | null;
+  cost: { usd: number; runs: number; failed: number };
+}
+
+export interface ResultsView {
+  goal: string;
+  results: ResultRow[];
+  counts: { platform: number; reviewer: number; judged: number; unchecked: number };
+  total: number;
+  listed: number;
+}
+
+/** What one run did, from the platform's own rows. */
+export interface RunDid {
+  run_id: string;
+  agent_id: string | null;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  cost_usd: number | null;
+  model: string | null;
+  summary: string | null;
+  steps: { at: string; kind: string; text: string }[];
+  more_steps: number;
+  tools: { tool: string; times: number }[];
+  has_trace: boolean;
+}
+
+/** What a person runs on and has cost this month (`month_share` is their part
+    of the project's own month, 0..1). */
+export interface SeatWork {
+  model: string;
+  model_id: string;
+  provider: string;
+  month_usd: number;
+  month_share: number;
+}
+
 export interface OrgView {
-  ceo: {
+  ceo: ({
     id: string; name: string; status: string;
     role_slug: string | null; role_name: string | null;
-  } & Dormancy | null;
+  } & Dormancy & Partial<SeatWork>) | null;
   teams: {
     id: string;
     name: string;
@@ -1068,10 +1150,59 @@ export interface OrgView {
         platform. `{kind: "requirement_met", keys: [...]}` or
         `{kind: "stage_cleared", stage: n}`. */
     stand_down_when: { kind: string; keys?: string[]; stage?: number } | null;
+    /** The last roster change on this team — a hire, stand-down or recall —
+        with who made it and why. `recent` while it is under a week old, which
+        is how long the chart draws the team as new. */
+    last_change: {
+      action: "hire" | "stand_down" | "recall";
+      at: string;
+      by: string;
+      by_agent: boolean;
+      reason: string | null;
+      recent: boolean;
+    } | null;
     agents: ({
       id: string; name: string; status: string; stood_down_reason: string | null;
-    } & Dormancy)[];
+    } & Dormancy & Partial<SeatWork>)[];
   }[];
+}
+
+/** Who works when: each person's runs over the last half day and the wakes
+    scheduled for the next. */
+export interface ScheduleView {
+  now: string;
+  from: string;
+  to: string;
+  timezone: string;
+  live: boolean;
+  rows: {
+    agent_id: string;
+    name: string;
+    team: string;
+    paused: boolean;
+    ran: { at: string; until: string; run_id: string; status: string }[];
+    next: { at: string; label: string }[];
+    wakes: string;
+  }[];
+}
+
+/** One line of the project's record, with the permission it ran on. */
+export interface RecordLine {
+  at: string;
+  kind: "message" | "run" | "yours" | "ceo" | "rule" | "proof";
+  who_id: string | null;
+  who: string;
+  text: string;
+  authority: string | null;
+  run_id: string | null;
+}
+
+export interface RecordView {
+  since: string;
+  kinds: RecordLine["kind"][];
+  people: { id: string; name: string }[];
+  lines: RecordLine[];
+  more: number;
 }
 
 /** An active seat with no run in a week — the same definition the health

@@ -27,11 +27,14 @@ import { LedgerRow, SpendBars, SpendBreakdown } from "./Runs";
     gauge versus a range estimate. */
 export function BudgetCard({ ctx }: { ctx: ProjectCtx }) {
   const { dash, projectId } = ctx;
-  const { usdMode, unit, spent, cap, warnRatio, frac } = budgetOf(dash);
+  const { usdMode, unit, spent, cap, warnRatio, frac, hardStop, wall } = budgetOf(dash);
   const pace = paceDate(spent, cap);
-  const state = frac >= 1 ? { tone: "critical" as const, label: "Exhausted — paused" }
-    : frac >= warnRatio ? { tone: "warn" as const, label: "Past its warning line" }
-      : { tone: "good" as const, label: "Healthy" };
+  const unpaid = !dash.billing_secret_id && dash.integrations?.runtime !== "mock";
+  const state = unpaid ? { tone: "warn" as const, label: "Nothing pays for it" }
+    : wall > 0 && spent >= wall ? { tone: "critical" as const, label: "Hard stop — paused" }
+    : frac >= 1 ? { tone: "critical" as const, label: "Over budget" }
+      : frac >= warnRatio ? { tone: "warn" as const, label: "Past its warning line" }
+        : { tone: "good" as const, label: "Healthy" };
   return (
     <div className="card budget-card">
       <div className="bc-top">
@@ -58,7 +61,14 @@ export function BudgetCard({ ctx }: { ctx: ProjectCtx }) {
       </div>
       <ul className="policy">
         <li><Icon name="alert" size={14} /> Warns you at <b>{Math.round(warnRatio * 100)}%</b></li>
-        <li><Icon name="pause" size={14} /> Pauses the project at <b>100%</b></li>
+        <li>
+          <Icon name="flag" size={14} /> Past <b>100%</b> the CEO must account for the overrun;
+          nothing stops
+        </li>
+        <li>
+          <Icon name="pause" size={14} /> Pauses the project at <b>{fmtUnit(wall, unit)}</b>
+          {" "}({hardStop}× the budget) — the hard stop
+        </li>
         <li>
           <Icon name="shield" size={14} />{" "}
           {dash.billing_secret_name
@@ -71,7 +81,7 @@ export function BudgetCard({ ctx }: { ctx: ProjectCtx }) {
       </ul>
       <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode} />
       {dash.can_steer !== false && (
-        <Link className="btnlink small" to={`/projects/${projectId}/settings?s=money`}>
+        <Link className="btnlink small" to={`/projects/${projectId}/details/settings?s=money`}>
           Change the budget…
         </Link>
       )}
@@ -181,7 +191,7 @@ export default function Spend({ ctx }: { ctx: ProjectCtx }) {
       <h2 className="zone">The last 30 days, in detail</h2>
       <SpendBreakdown projectId={projectId} usdMode={usdMode} />
       <p className="help">
-        Every run with its own cost is on <Link to={`/projects/${projectId}/activity/runs`}>Activity → Runs</Link>.
+        Every run with its own cost is on <Link to={`/projects/${projectId}/details/activity/runs`}>Activity → Runs</Link>.
       </p>
     </>
   );

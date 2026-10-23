@@ -185,3 +185,33 @@ def test_the_drill_says_what_the_bundle_asks_of_the_work(client):
     assert already.status_code == 200, already.text
     assert _craft_findings(already.json()["id"],
                            _real_constitution(already.json()["id"])) == []
+
+
+def test_a_spec_that_asks_for_a_read_carries_the_reviewers_it_could_hire(client):
+    # The drill refuses a read with no reader and lists the reviewing roles to
+    # hire — from its own library. Holding only the roles the spec named, it
+    # said none were installed and told the chairman to seed a full library.
+    seed_role(client, "ceo", is_ceo=True)
+    seed_role(client, "writer", category="content")
+    seed_role(client, "editor", category="challenge")
+
+    out = carry({"project": {"ceo_role_slug": "ceo",
+                             "constitution": {"deliverable_review": "independent_read"},
+                             "teams": [{"role_slug": "writer", "name": "Desk",
+                                        "employees": ["Ada"]}]}})
+
+    assert "editor" in by_slug(out)
+    # Carried so the refusal can name it; hiring it is still the chairman's call.
+    assert [t["role_slug"] for t in out["project"]["teams"]] == ["writer"]
+
+
+def test_a_spec_that_does_not_ask_carries_no_reviewers(client):
+    seed_role(client, "ceo", is_ceo=True)
+    seed_role(client, "writer", category="content")
+    seed_role(client, "editor", category="challenge")
+
+    out = carry({"project": {"ceo_role_slug": "ceo",
+                             "teams": [{"role_slug": "writer", "name": "Desk",
+                                        "employees": ["Ada"]}]}})
+
+    assert "editor" not in by_slug(out)

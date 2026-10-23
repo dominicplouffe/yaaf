@@ -701,7 +701,10 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
 
 
 def load_spec(path: str | Path) -> dict:
-    raw = Path(path).read_text()
+    try:
+        raw = Path(path).read_text()
+    except OSError as exc:
+        raise RehearsalError(f"can't read {path}: {exc.strerror}") from exc
     try:
         spec = json.loads(raw)
     except ValueError as exc:

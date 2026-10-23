@@ -121,8 +121,8 @@ common shape, and the one to document in the README.
 
 **Transport.** Streamable HTTP, mounted in the existing app at `/mcp`, so the
 deployment story is unchanged — one process, one port, one TLS terminator. A
-stdio bridge (`yaaf mcp-stdio`) wraps it for clients that only speak stdio, and
-holds the token in the client's own config rather than in a shell history.
+stdio bridge for clients that only speak stdio was planned and is **not built**:
+there is no `yaaf mcp-stdio`. Every client named below speaks HTTP.
 
 **Two ways to present that credential**, and the difference decides which
 clients can connect at all:
@@ -361,19 +361,19 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 | Tool | Does | Backing routes | Status |
 |---|---|---|---|
 | `whoami` | What this client may do: the chairman it acts for, its scopes, the projects it reaches. | — (the principal describing itself) | **done** (M0) |
-| `desk` | Cross-project standing: what needs you, everywhere. | `GET /observe/desk` | **done** (M1) |
+| `desk` | Cross-project standing: what needs you, everywhere. Leads with `summary`, one platform-written paragraph naming every project that is not fine (written before any trim, so none is cut) — and, under `also_yours`, the flags, heads-ups and open reviews the desk rows do not carry, so "what needs me?" is one call. | `GET /observe/desk` | **done** (M1) |
 | `projects` | List the projects this client can see: status, shape, goal preview. | `GET /observe/projects` | **done** (M0) |
-| `project` | One project's cockpit. `view`: `overview` \| `health` \| `flags` \| `agenda` \| `briefing`. | `GET /observe/projects/{id}` + `/health` `/flags` `/agenda` `/briefing` | **done** (M1) |
+| `project` | One project's cockpit. `view`: `overview` \| `health` \| `flags` \| `heads_ups` \| `agenda` \| `briefing`. The briefing takes `hours` or `since` for "what changed since yesterday?"; without them it is since you last looked. `overview` leads with `summary`, the project's status sentence. | `GET /observe/projects/{id}` + `/health` `/flags` `/agenda` `/briefing` | **done** (M1) |
 | `plan` | Requirements by stage, dependencies, burn-up, the commitment and its risk. | `GET /observe/projects/{id}/plan`, `GET /admin/projects/{id}/requirements` | **done** (M1) |
 | `spend` | Against the cap, by team; ledger lines. | `GET /observe/projects/{id}/spend` `/ledger` | **done** (M1) |
 | `work` | Runs, one run's trace, the context pack it ran on. Long text walks by `offset`. | `GET /observe/projects/{id}/runs`, `/runs/{id}/trace` `/context` | **done** (M1) |
 | `proof` | Evidence, provenance, snapshots, audit samples. | `GET /observe/projects/{id}/evidence` `/audit_samples` `/spot_audit`, `/observe/evidence/{id}/snapshot` | **done** (M1) |
 | `receipt` | Whole-life cost beside what the platform verified. `format=text` returns the pasteable block. No envelope, because it carries no agent prose. | `GET /observe/projects/{id}/receipt` | **done** |
-| `org` | Teams, agents, schedules, one agent's detail, the board — and what each seat actually did in a window (`since`: `today`, `yesterday`, `7d`, a date). | `GET /observe/projects/{id}/org` `/board` `/activity`, `/observe/agents/{id}` | **done** (M1) |
+| `org` | Teams, agents, schedules, one agent's detail, the board — what each seat actually did in a window (`since`: `today`, `yesterday`, `7d`, a date) — and who works when: each person's runs over the last 12h and scheduled wakes over the next. | `GET /observe/projects/{id}/org` `/board` `/activity` `/schedule`, `/observe/agents/{id}` | **done** (M1) |
 | `channels` | Channel list and messages. **Wraps agent text.** | `GET /observe/projects/{id}/channels`, `/observe/channels/{id}/messages` | **done** (M1) |
 | `inbox` | Each agent's unread messages and the inbox-read allowance — what the dashboard's inbox banner counts. `agent` for one. **Wraps agent text.** | `GET /observe/projects/{id}/inbox` | **done** |
 | `files` | Workspace listing and file content. **Wraps agent text.** Long files walk by `offset`. | `GET /observe/projects/{id}/files` `/files/content` | **done** (M1) |
-| `record` | The judgement record. `view`: `decisions` \| `reviews` \| `cycles` \| `hypotheses` \| `suggestions` \| `memories` \| `approvals`. | `GET /observe/projects/{id}/ceo_decisions` and siblings | **done** (M1) |
+| `record` | The judgement record. `view`: `decisions` \| `reviews` \| `cycles` \| `hypotheses` \| `suggestions` \| `memories` \| `approvals` \| `everything` (every message, run, decision and proof, each action with the permission it ran on; `kind`, `agent`, `days`) \| `results` (published deliverables, who made each and who checked it). | `GET /observe/projects/{id}/ceo_decisions` `/record` `/results` and siblings | **done** (M1) |
 
 ### Steer — `steer` scope
 
@@ -500,7 +500,7 @@ yaaf/server/mcp/envelope.py     # untrusted-content wrapping, truncation, paging
 yaaf/server/mcp/oauth_server.py # M2: discovery, registration, authorize, token
 yaaf/server/mcp/consent.py      # M2: the chairman's login and consent screen
 yaaf/server/login.py            # M2: argon2id password check, session cookie
-yaaf/cli/mcp.py                 # `yaaf mcp-token` (mint/list/revoke), `yaaf mcp-stdio`
+yaaf/cli/main.py                # `yaaf mcp-token` (mint/list/revoke)
 migrations/versions/0018_mcp_clients.py
 migrations/versions/0019_mcp_oauth.py
 ```

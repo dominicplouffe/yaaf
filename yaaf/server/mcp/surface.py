@@ -49,6 +49,7 @@ REACHED = {
     "POST /admin/projects/{project_id}/pause": "lifecycle",
     "POST /admin/projects/{project_id}/stop": "lifecycle",
     "POST /admin/projects/{project_id}/complete": "lifecycle",
+    "POST /admin/projects/{project_id}/reopen": "lifecycle",
     "POST /admin/agents/{agent_id}/pause": "lifecycle",
     "PATCH /admin/agents/{agent_id}/schedule": "lifecycle",
     "POST /admin/threads/{message_id}/unfreeze": "lifecycle",
@@ -224,6 +225,9 @@ WITHHELD = {
         "where it lands.",
     "PUT /admin/founder/credential": "a platform credential value, inbound.",
     "POST /admin/founder/credential/test": "reaches the platform credential.",
+    "PUT /admin/founder/credential/llm":
+        "points the product-wide Founder at a shared credential — an administrator's "
+        "call about what pays for every future draft.",
     "DELETE /admin/founder/credential": "product-wide, and destructive to every future draft.",
     "PUT /admin/founder/model": "product-wide configuration, not a project's.",
     # App-wide settings, withheld as a block. Every client token is scoped to
@@ -244,6 +248,8 @@ WITHHELD = {
         "a subscription's plan meter is the account owner's, not any one project's.",
     "GET /admin/settings":
         "the app-wide configuration screen, above every project a client is scoped to.",
+    "GET /admin/settings/doctor":
+        "the install's own wiring, above every project a client is scoped to.",
     "GET /admin/projects/{project_id}/credentials":
         "the same list rides the project's dashboard (`credentials`), which `project` "
         "already returns — a second read path would be a second definition of it.",

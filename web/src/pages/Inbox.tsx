@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApprovalRow, AskRow, DeskProject, get, HeadsUpRow, HeldNote, post, splitWithout } from "../api";
 import { BriefBody, DeskBrief, ProjectBrief } from "../briefing";
-import { isLive, Item, ItemType, needsYou, soonestClock, useDesk } from "../desk";
+import { isLive, Item, ItemType, needsYou, SnoozeMenu, soonestClock, useDesk, wake } from "../desk";
 import { fmtWhen, usePoll } from "../hooks";
 import { clip, DecideButtons, fmtAgo, fmtSoon, NotedButton, SEND_HINT, sendOnEnter } from "../ui";
+import { holdDecision } from "../undo";
 import { Avatar, EmptyState, Seg } from "../ui/kit";
 import { Icon, IconName } from "../ui/Icon";
 import { flagPlain } from "../ui/project";
@@ -105,6 +106,9 @@ function ApprovalCase({ item }: { item: Item }) {
         <div><dt>Amount</dt><dd>${item.amountUsd.toLocaleString()}</dd></div>
       )}
       <div className="silence"><dt>If you do nothing</dt><dd>{item.consequence}</dd></div>
+      {(row?.undo ?? item.approval?.undo) && (
+        <div><dt>Can you undo a yes?</dt><dd>{row?.undo ?? item.approval?.undo}</dd></div>
+      )}
     </dl>
   );
 }
@@ -133,9 +137,41 @@ function AskAnswer({ item, others, onDone }: { item: Item; others: number; onDon
       setBusy(false);
     }
   }
+  const options = item.ask?.options ?? [];
+  const rec = (item.ask?.recommendation ?? "").toLowerCase();
+  const recommended = (o: string) => !!rec
+    && (rec.includes(o.toLowerCase()) || o.toLowerCase().includes(rec));
+  // One click, held for the same few seconds as a decision so it can be undone;
+  // it reaches the CEO as the same chat line typing it would have sent.
+  const choose = (option: string) => holdDecision({
+    key: item.key,
+    label: `Answered: ${clip(option, 60)}`,
+    path: `/admin/projects/${item.project.id}/boardroom`,
+    body: { body: `Re: “${item.title}” — ${option}` },
+    after: onDone,
+  });
   return (
     <div className="answer">
-      <label className="field" htmlFor="ib-answer">Your answer — it goes to the CEO in the chat</label>
+      {options.length > 0 && (
+        <div className="answer-options">
+          {item.ask?.recommendation && (
+            <p className="help" style={{ margin: "0 0 8px" }}>
+              The CEO recommends: {item.ask.recommendation}
+            </p>
+          )}
+          <div className="answer-choices">
+            {[...options].sort((x, y) => Number(recommended(y)) - Number(recommended(x))).map((o) => (
+              <button key={o} className={`small${recommended(o) ? " primary" : ""}`}
+                onClick={() => choose(o)}>
+                {o}{recommended(o) ? " · recommended" : ""}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <label className="field" htmlFor="ib-answer">
+        {options.length ? "Or answer in your own words" : "Your answer — it goes to the CEO in the chat"}
+      </label>
       <textarea id="ib-answer" value={text} onChange={(e) => setText(e.target.value)}
         onKeyDown={sendOnEnter(send, { disabled: busy || !text.trim() })}
         placeholder="e.g. Split it out, and footnote the reconciliation to the filing." />
@@ -167,6 +203,7 @@ function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDes
         <span className="ib-kind">{item.kind}</span>
         <ProjectTag p={item.project} />
         <span className="grow" />
+        <SnoozeMenu item={item} onDone={desk.reload} />
         {item.clocked && (
           <span className={`clockpill${item.at - Date.now() < 6 * 3_600_000 ? " warn" : ""}`}>
             <Icon name="clock" size={13} />
@@ -209,37 +246,71 @@ function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDes
   );
 }
 
-function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
-  if (u.type === "heads_up") {
-    const h = u.heads;
-    return (
-      <div className="ib-doc">
-        <div className="ib-meta">
-          <span className="kind-ic k-flag"><Icon name="info" size={15} /></span>
-          <span className="ib-kind">You asked to be told</span>
-          <ProjectTag p={u.project} />
-          <span className="grow" />
-          <span className="help">{fmtAgo(h.created_at)}</span>
-        </div>
-        <h2 className="ib-title">{h.title}</h2>
-        <dl className="case">
-          <div><dt>What the CEO says</dt><dd className="pre">{h.body}</dd></div>
-          <div><dt>Why it is here</dt><dd>Your standing order: “{h.standing_order}”</dd></div>
-          {h.note && <NoteAndAnswer held={h.note} />}
-        </dl>
-        <div className="ib-acts">
-          {h.acknowledged_at ? (
-            <span className="help">You noted this {fmtAgo(h.acknowledged_at)}.</span>
-          ) : (
-            <NotedButton
-              onSubmit={async (note) => { await post(`/admin/heads_up/${h.id}/ack`, { note }); onChanged(); }} />
-          )}
-          <span className="grow" />
-          <Link to={`/projects/${u.project.id}/chat`}><Icon name="message" size={13} /> Talk it through</Link>
-        </div>
+/** A reply to the CEO about something already seen. */
+function ReplyBox({ onSend }: { onSend: (note: string) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!open) return <button className="small" onClick={() => setOpen(true)}>Reply to the CEO…</button>;
+  return (
+    <span className="split-confirm" style={{ flexWrap: "wrap" }}>
+      <textarea aria-label="Your reply" value={note} rows={2} autoFocus
+        placeholder="e.g. send it by 8pm from now on" onChange={(e) => setNote(e.target.value)} />
+      <button className="small primary" disabled={busy || !note.trim()} onClick={async () => {
+        setBusy(true);
+        try { await onSend(note.trim()); setOpen(false); setNote(""); }
+        catch (e) { setError((e as Error).message); }
+        finally { setBusy(false); }
+      }}>Send</button>
+      <button className="small" disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
+      {error && <span className="help" style={{ color: "var(--critical)" }}>{error}</span>}
+    </span>
+  );
+}
+
+/** A heads-up asks for nothing, so opening it is noting it: the CEO learns he
+    read it without a "Noted" click per message he asked to receive. */
+function HeadsUpDetail({ u, onChanged }: {
+  u: Extract<Update, { type: "heads_up" }>; onChanged: () => void;
+}) {
+  const h = u.heads;
+  useEffect(() => {
+    if (h.acknowledged_at) return;
+    post(`/admin/heads_up/${h.id}/ack`, { note: "" }).then(onChanged).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [h.id]);
+  return (
+    <div className="ib-doc">
+      <div className="ib-meta">
+        <span className="kind-ic k-flag"><Icon name="info" size={15} /></span>
+        <span className="ib-kind">You asked to be told</span>
+        <ProjectTag p={u.project} />
+        <span className="grow" />
+        <span className="help">{fmtAgo(h.created_at)}</span>
       </div>
-    );
-  }
+      <h2 className="ib-title">{h.title}</h2>
+      <dl className="case">
+        <div><dt>What the CEO says</dt><dd className="pre">{h.body}</dd></div>
+        <div><dt>Why it is here</dt><dd>Your standing order: “{h.standing_order}”</dd></div>
+        {h.note && <NoteAndAnswer held={h.note} />}
+      </dl>
+      <div className="ib-acts">
+        <span className="help">Seen — the CEO knows you read it.</span>
+        {!h.note && (
+          <ReplyBox onSend={async (note) => {
+            await post(`/admin/heads_up/${h.id}/ack`, { note }); onChanged();
+          }} />
+        )}
+        <span className="grow" />
+        <Link to={`/projects/${u.project.id}/chat`}><Icon name="message" size={13} /> Talk it through</Link>
+      </div>
+    </div>
+  );
+}
+
+function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
+  if (u.type === "heads_up") return <HeadsUpDetail u={u} onChanged={onChanged} />;
   if (u.type === "flag") {
     const plain = flagPlain(u.flag.kind);
     return (
@@ -291,7 +362,7 @@ function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
           }}>Mark as read</button>
         )}
         <span className="grow" />
-        <Link to={`/projects/${u.project.id}/activity/summary`}>Everything that happened →</Link>
+        <Link to={`/projects/${u.project.id}/details/activity/summary`}>Everything that happened →</Link>
       </div>
     </div>
   );
@@ -324,7 +395,7 @@ function DecidedDetail({ d }: { d: Decided }) {
         )}
       </dl>
       <div className="ib-acts">
-        <Link to={`/projects/${d.project.id}/activity/decisions`}>The full record →</Link>
+        <Link to={`/projects/${d.project.id}/details/activity/decisions`}>The full record →</Link>
       </div>
     </div>
   );
@@ -462,6 +533,7 @@ export default function Inbox() {
 
   const inProject = <T extends { project: DeskProject }>(xs: T[]) => (only ? xs.filter((x) => x.project.id === only) : xs);
   const needs = inProject(desk.mine);
+  const snoozed = only ? desk.snoozed.filter((s) => s.item.project.id === only) : desk.snoozed;
   const watching = inProject(desk.items.filter((i) => !needsYou(i)));
   const acks = inProject(updates.filter(isAck));
   const news = inProject(updates.filter((u) => !isAck(u)));
@@ -619,6 +691,22 @@ export default function Inbox() {
                   {r.render()}
                 </button>
               ))}
+          {tab === "needs" && snoozed.length > 0 && (
+            <div className="ib-snoozed">
+              <div className="ib-snoozed-h help">Snoozed · {snoozed.length}</div>
+              {snoozed.map(({ item: it, until }) => (
+                <div className="ib-snoozed-row" key={it.key}>
+                  <span className="grow">
+                    <span className="ib-t">{it.title}</span>
+                    <br /><span className="help">back {fmtSoon(until)}</span>
+                  </span>
+                  <button className="small" onClick={async () => { await wake(it.key); desk.reload(); }}>
+                    Wake now
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <div className="ib-keys help"><kbd>J</kbd><kbd>K</kbd> move · decisions take a click, never a key</div>
       </div>

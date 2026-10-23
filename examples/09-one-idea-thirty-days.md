@@ -44,7 +44,7 @@ reasoning back to you in a confident voice. With it, plus
 - **refuses to count anything from a domain you control**
 - and refuses to count anything whose URL does not resolve
 
-So when the Work tab shows you three pieces of verified external evidence, they
+So when **Activity → Proof** shows you three pieces of verified external evidence, they
 are three strangers, in public, saying something. That is a different object
 from three paragraphs of plausible argument, and telling them apart is most of
 what this example is for.
@@ -57,7 +57,7 @@ queue ceiling, the evidence rules, the budget, the audit, the spot-check. What
 disappears is the hierarchy, not the discipline.
 
 **Explore** is the shape for a question you cannot write requirements for yet.
-There is no plan gate and no Plan tab — instead the agent states falsifiable
+There is no plan gate and no Roadmap page — instead the agent states falsifiable
 bets with kill dates, and the platform enforces them:
 
 > **H1:** Small agencies pay for a thing that reconciles two systems by hand
@@ -89,7 +89,7 @@ punished for reporting "nothing here" learns to find something.
 - **Evidence that is really opinion.** A blog post arguing the market exists is
   not someone with the problem. A forum thread where somebody describes the
   problem unprompted is.
-- **Verification failures.** In the Work tab's proof table, `failed` means the
+- **Verification failures.** In **Activity → Proof**, `failed` means the
   platform fetched the URL and got a 404 or a mismatch. Those count for
   nothing, and the drought clock keeps running — which is exactly why a busy
   week can still be in drought.

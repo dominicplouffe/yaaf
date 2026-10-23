@@ -161,12 +161,12 @@ function UsedBy({ row }: { row: Credential }) {
   const done = row.projects.filter((p) => !p.live);
   return <>
     {live.map((p, i) => <span key={p.id}>{i > 0 && ", "}
-      <Link to={`/projects/${p.id}/settings`}>{p.name}</Link></span>)}
+      <Link to={`/projects/${p.id}/details/settings`}>{p.name}</Link></span>)}
     {live.length > 0 && done.length > 0 && <br />}
     {done.length > 0 && <span className="muted">
       {live.length > 0 ? "also " : ""}
       {done.slice(0, 3).map((p, i) => <span key={p.id}>{i > 0 && ", "}
-        <Link className="muted" to={`/projects/${p.id}/settings`}>{p.name}</Link> ({p.status})</span>)}
+        <Link className="muted" to={`/projects/${p.id}/details/settings`}>{p.name}</Link> ({p.status})</span>)}
       {done.length > 3 && `, +${done.length - 3} more`}
     </span>}
   </>;
@@ -226,6 +226,15 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
   // around arriving one step later than before.
   const [recheck, setRecheck] = useState<Record<string, number>>({});
   const [hiding, setHiding] = useState<Credential[] | null>(null);
+  // Whether the Founder still has no key. While it has none, a new credential
+  // offers to be the one it drafts on — ticked, because the alternative was
+  // pasting this same key again under a second name on the next screen.
+  const [founderKeyless, setFounderKeyless] = useState(false);
+  const [alsoDraft, setAlsoDraft] = useState(true);
+  useEffect(() => {
+    get<{ credential_configured: boolean }>("/admin/founder/status")
+      .then((st) => setFounderKeyless(!st.credential_configured)).catch(() => {});
+  }, []);
 
   // One fetch, hidden included: the counts on the filters are only honest if
   // the screen can see everything it is counting.
@@ -296,9 +305,18 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
       && editing.mode === "subscription" && !!value.trim() ? editing.id : null;
     await act(
       async () => {
-        if (editing === "new") await post(endpoint, {
-          name: name.trim(), mode, value: value.trim(), provider,
-          ...(seller?.credential_base_url ? { base_url: baseUrl.trim() } : {}) });
+        if (editing === "new") {
+          const created = await post<{ id: string }>(endpoint, {
+            name: name.trim(), mode, value: value.trim(), provider,
+            ...(seller?.credential_base_url ? { base_url: baseUrl.trim() } : {}) });
+          if (founderKeyless && alsoDraft && created?.id) {
+            // A refusal here (a provider the Founder cannot run on) must not
+            // read as the credential failing to save — it saved.
+            await put("/admin/founder/credential/llm", { credential_id: created.id })
+              .then(() => setFounderKeyless(false))
+              .catch((e) => setError(`Saved, but the Founder cannot draft on it: ${(e as Error).message}`));
+          }
+        }
         else if (editing) await patch(`${endpoint}/${editing.id}`,
           { name: name.trim(), ...(value.trim() ? { value: value.trim() } : {}),
             ...(seller?.credential_base_url && baseUrl.trim() ? { base_url: baseUrl.trim() } : {}) });
@@ -375,6 +393,12 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
           <p className="notice-box">Replacing this value changes what{" "}
             {editing.projects.filter(p => p.live).map(p => p.name).join(", ")} pays with on
             the next run.</p>}
+        {editing === "new" && founderKeyless &&
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input type="checkbox" style={{ width: "auto" }} checked={alsoDraft}
+              onChange={(e) => setAlsoDraft(e.target.checked)} />
+            Also use it to draft projects — the Founder has no key yet
+          </label>}
         <div className="actions">
           <button className="primary" disabled={!name.trim() || (editing === "new" && value.trim().length < 8)}>
             {busy ? "Saving…" : "Save credential"}</button>

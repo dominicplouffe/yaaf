@@ -22,7 +22,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { del, get, post, put, UserRow } from "../api";
 import { PasswordCard, SessionsCard, TokensCard } from "../account";
-import { LlmCredentials, ModelPrices, useProviders } from "../llmCredentials";
+import { Credential, LlmCredentials, ModelPrices, useProviders } from "../llmCredentials";
 import { useMe } from "../me";
 import { People } from "../people";
 import { SecretInput } from "../ui";
@@ -34,6 +34,57 @@ interface AnthropicSettings {
   provider: string;
   model: string;
   note: string;
+  /** Its own key, or one of the LLM credentials, borrowed — named, never shown. */
+  source?: { source: "own" | "llm_credential" | null; credential_id?: string; name?: string };
+}
+
+/** Point the Founder at a key the install already holds for projects, so one
+    key is enough to start. */
+function BorrowCard({
+  settings, reload,
+}: { settings: AnthropicSettings; reload: () => void }) {
+  const [existing, setExisting] = useState<Credential[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    get<Credential[]>("/admin/settings/llm-credentials").then(setExisting).catch(() => {});
+  }, []);
+  const borrowed = settings.source?.source === "llm_credential" ? settings.source : null;
+  if (!existing.length && !borrowed) return null;
+
+  async function borrow(id: string) {
+    setBusy(true);
+    setNote(null);
+    try {
+      await put("/admin/founder/credential/llm", { credential_id: id });
+      setNote({ ok: true, text: "The Founder now drafts on that key." });
+      reload();
+    } catch (err) {
+      setNote({ ok: false, text: (err as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 10 }}>
+      <p className="help" style={{ marginTop: 0 }}>
+        {borrowed
+          ? <>The Founder drafts on <strong>{borrowed.name}</strong>, one of your LLM
+              credentials. Rotating that credential rotates this too. Paste a key below to
+              give the Founder its own instead.</>
+          : <>Use one of your LLM credentials for drafting, rather than a second key:</>}
+      </p>
+      <div className="actions" style={{ flexWrap: "wrap", justifyContent: "flex-start" }}>
+        {existing.filter((c) => c.id !== borrowed?.credential_id).map((c) => (
+          <button key={c.id} disabled={busy} onClick={() => borrow(c.id)}>
+            Use {c.name}
+          </button>
+        ))}
+      </div>
+      <Flash note={note} />
+    </div>
+  );
 }
 
 interface SlackSettings {
@@ -108,7 +159,12 @@ function ModelCard({
         {settings.note}
       </p>
       <p className="help">
-        {settings.configured ? (
+        {settings.configured && settings.source?.source === "llm_credential" ? (
+          <>
+            <span className="badge good">configured</span> drafting on the LLM credential{" "}
+            <strong>{settings.source.name}</strong>, running <code>{settings.model}</code>.
+          </>
+        ) : settings.configured ? (
           <>
             <span className="badge good">configured</span>{" "}
             {settings.provider && settings.provider !== "anthropic"
@@ -596,7 +652,8 @@ export default function Settings() {
               {section === "prices" && <ModelPrices />}
               {section === "founder" && settings && (
                 <>
-                  <h2 style={{ marginTop: 0 }}>The Founder&apos;s own model credential</h2>
+                  <h2 style={{ marginTop: 0 }}>The key the Founder drafts on</h2>
+                  <BorrowCard settings={settings.anthropic} reload={reload} />
                   <ModelCard settings={settings.anthropic} reload={reload} />
                 </>
               )}

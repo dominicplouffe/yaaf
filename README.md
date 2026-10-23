@@ -41,7 +41,18 @@ true at once — [PLAN.md](docs/PLAN.md) says which claims are load-bearing and
 what would falsify them, and [SECURITY.md](SECURITY.md) says what contains an
 agent and what does not.
 
-<img src="docs/screenshots/cockpit-overview.png" alt="A project's Overview: delivery against the promised date, progress, spend against the cap and who is working now; the decisions waiting on the chairman with their buttons; each agent's status and what it is doing; the CEO's latest message and flags; what is coming up; and spend by team">
+<img src="docs/screenshots/cockpit-overview.png" alt="A project's home page is its team: the chairman at the top of the org chart with the decision waiting on them, the CEO beneath, and each team with what every person is doing, the model they run on, and what they have cost">
+
+Three things to know before anything else:
+
+- **Open source, Apache-2.0.** You run it, on your machine or your server. [LICENSE](LICENSE)
+- **Any model, per person.** Anthropic, OpenAI, Google, Mistral, xAI, DeepSeek,
+  Qwen, Moonshot, OpenRouter, or any OpenAI-compatible endpoint — and each seat
+  on the org chart can run a different one. The chart says which, and what each
+  person has cost this month.
+- **Your data, through MCP.** The project reads the systems you connect as MCP
+  data sources, scoped per role, and the whole cockpit is itself an MCP server —
+  so the record of what your team did is yours to query from any client.
 
 A CEO sets the priorities. Teams of specialists argue with each other. A budget
 stops itself and a delivery date nobody can quietly move. **You are the
@@ -62,7 +73,7 @@ approving, cutting, rescheduling, auditing; and setting up teams, data sources
 and rules.
 No dashboard needed day to day.
 
-<img src="docs/screenshots/boardroom.png" alt="Chat with the CEO: the chairman asks how confident it is in the 30th; the CEO answers with the estimate-to-actual ratio, its re-projection, and what would move it — with the question it is asking and the approval waiting beside the conversation">
+<img src="docs/screenshots/boardroom.png" alt="Chat with the CEO: the chairman asks for the free route; the CEO answers that Ines can rebuild the vintages from filing dates and has still filed the licence as a decision — with What they did open under the answer, and the open question and the $180 decision beside the conversation">
 
 You pick the scopes when you connect:
 
@@ -192,9 +203,9 @@ behaviour is held by golden transcripts of a scripted backend plus one opt-in
 paid check. The rules are the part an agent argues with, so the rules are the
 part under attack.
 
-<img src="docs/screenshots/plan-and-promise.png" alt="The Roadmap: the commitment with its levers, pace and waste, the burn-up against the committed and projected dates, and requirements in stages with dependencies">
+<img src="docs/screenshots/plan-and-promise.png" alt="Details › Roadmap: the commitment with its pace and spend, the date you signed against the platform's projection, and requirements in stages — two proven true, two in progress, one waiting for you to accept">
 
-<img src="docs/screenshots/work-and-proof.png" alt="Tasks: a read-only board — ready, in progress, being checked, stuck, done — with each task's team, holder and the bet it serves, and a button to ask the CEO for a change">
+<img src="docs/screenshots/work-and-proof.png" alt="Details › Tasks: a read-only board — ready, in progress, being checked, stuck, done — with each task's team, holder and the requirement it serves, and a button to ask the CEO for a change">
 
 **How much you decide is a setting.** *Supervised*: you accept scope, sign the
 date, judge the closes a script can't check. *Autonomous*: the CEO does all
@@ -231,10 +242,14 @@ Secrets, images, Postgres, migrations, the role library, and — on a first
 install, with `--admin-email you@example.com` — a one-time link to choose your
 password, printed at the end. Safe to re-run. The dashboard binds to `127.0.0.1`, so reach
 it over SSH (`ssh -N -L 8080:localhost:8080 you@your-server`, then
-`localhost:8080/app`). Then connect Claude:
+`localhost:8080/app`). Just trying it on your own machine? From a checkout,
+`pip install -e .`, build the dashboard once (`cd web && npm install && npm run build`),
+then `yaaf up --no-isolation --email you@example.com` starts everything and prints
+the address (see [DEPLOYMENT.md](docs/DEPLOYMENT.md)). Then connect Claude:
 
 ```bash
 yaaf login                                   # your email and password, once
+yaaf doctor                                  # checks the install, says what to fix
 yaaf mcp-token mint my-laptop --scopes read
 # → ymt_…
 

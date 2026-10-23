@@ -1,5 +1,5 @@
 import { CSSProperties, Fragment, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Dashboard, get, getText, RunRow, SpendReport } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { AsOf, downloadCsv, ExportCsv, fmtAgo, fmtUnit, runHealth, spentOf } from "../../ui";
@@ -164,6 +164,7 @@ export function SpendBreakdown({ projectId, usdMode }: { projectId: string; usdM
         ))}
         <span className="help">last 30 days</span>
       </div>
+      <div className="table-scroll">
       <table>
         <thead>
           <tr>
@@ -192,14 +193,23 @@ export function SpendBreakdown({ projectId, usdMode }: { projectId: string; usdM
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
 
 export default function Runs({ projectId, dash }: { projectId: string; dash: Dashboard }) {
+  // One person's runs (from their page) or one run (from "View run" on a
+  // line of the record), narrowed by the server rather than filtered here.
+  const [params, setParams] = useSearchParams();
+  const onlyAgent = params.get("agent");
+  const onlyRun = params.get("run");
+  const narrowed = new URLSearchParams({ limit: "50" });
+  if (onlyAgent) narrowed.set("agent_id", onlyAgent);
+  if (onlyRun) narrowed.set("run_id", onlyRun);
   const { data: runs, error, at } = usePoll(
-    () => get<RunRow[]>(`/observe/projects/${projectId}/runs?limit=50`),
-    5000,
+    () => get<RunRow[]>(`/observe/projects/${projectId}/runs?${narrowed}`),
+    5000, [onlyAgent, onlyRun],
   );
   // Traces are fetched once per run (plain text, can be large) and cached here;
   // the toggle only shows/hides the cached copy after that.
@@ -309,7 +319,7 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
           spending against; this one stays about the runs themselves. */}
       <p className="help" style={{ margin: "12px 0 16px" }}>
         Spend per day and by model, team or person is on the{" "}
-        <Link to={`/projects/${projectId}/spend`}>Spend page →</Link>
+        <Link to={`/projects/${projectId}/details/spend`}>Spend page →</Link>
       </p>
 
       {/* Patterns become sentences: the platform knows these share a cause —
@@ -356,10 +366,19 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
             )}
           </div>
           {storms.some((r) => (r.last_refusal ?? "").startsWith("Memory cap")) ? (
-            <Link to={`/projects/${projectId}/settings`}>give it more room →</Link>
+            <Link to={`/projects/${projectId}/details/settings`}>give it more room →</Link>
           ) : (
             <Link to={`/projects/${projectId}/chat`}>give direction →</Link>
           )}
+        </div>
+      )}
+
+      {(onlyAgent || onlyRun) && (
+        <div className="notice-box" style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+          <span className="grow">
+            {onlyRun ? "Showing one run." : `Showing ${runs?.[0]?.agent_name ?? "one person"}'s runs only.`}
+          </span>
+          <button className="small" onClick={() => setParams({}, { replace: true })}>Show every run</button>
         </div>
       )}
 

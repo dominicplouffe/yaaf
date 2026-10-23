@@ -540,6 +540,9 @@ class NoticeKind(enum.StrEnum):
     # Not urgent: it can wait out a batching window, because the one thing it
     # must not do is buy a run on every tick of a project that has finished.
     DELIVERY_READY = "delivery_ready"
+    # The chairman took a completed delivery back: something is missing. Urgent
+    # in the ordinary sense — the project is running again for this reason.
+    DELIVERY_REOPENED = "delivery_reopened"
 
     # Memory pressure warns the scope's curator early enough to curate on a wake
     # it was having anyway; MEMORY_FULL is urgent because the scope has stopped
@@ -2026,6 +2029,28 @@ class Approval(Base):
     capacity: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
+class Snooze(Base):
+    """One person's "not now" on one thing in their Inbox.
+
+    Personal, not the project's: a co-chair snoozing a decision must not hide it
+    from the chairman. And never past the thing's own clock — an approval or a
+    question that decides itself comes back well before it does (the route
+    refuses a later `until`), because a snooze that outlived the deadline would
+    turn "remind me later" into a default nobody chose.
+    """
+
+    __tablename__ = "snoozes"
+    __table_args__ = (Index("ix_snoozes_user_item", "user_id", "item_key", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    #: The Inbox row's key: an approval or ask id, or a row the desk derives.
+    item_key: Mapped[str] = mapped_column(String(120))
+    until: Mapped[datetime] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
 class HeadsUp(Base):
     """Something the chairman asked to be told, and has to say he saw.
 
@@ -2137,6 +2162,11 @@ class Ask(Base):
     # back verbatim in the lapse notice: the CEO is held to the sentence it
     # wrote when it still did not know which way he would go.
     default_action: Mapped[str] = mapped_column(Text)
+    # The choices, kept apart from the prose so the owner can answer with one
+    # click instead of typing one of them back. Null on a question of fact and
+    # on every ask filed before they were kept.
+    options: Mapped[list | None] = mapped_column(JSONVariant)
+    recommendation: Mapped[str | None] = mapped_column(Text)
     asked_in_message_id: Mapped[str] = mapped_column(String(40))
     # He is nagged before the window closes, for the same reason an approval
     # nags: degrading is fine, degrading silently is not.

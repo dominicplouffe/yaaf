@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { NavigateFunction, useNavigate } from "react-router-dom";
 import { DeskProject } from "./api";
 import { firstName, useProjectFrame } from "./projectCtx";
-import { PROJECT_PAGES } from "./nav";
+import { PROJECT_DESTINATIONS } from "./nav";
 import { Icon, IconName } from "./ui/Icon";
 import { applyTheme, Avatar } from "./ui/kit";
 import { SEAT_LABEL } from "./ui/team";
@@ -48,15 +48,13 @@ function useCommands({
     if (currentProjectId) {
       const base = `/projects/${currentProjectId}`;
       const ceo = ctx ? firstName(ctx.ceoName) : "your CEO";
-      for (const p of PROJECT_PAGES) {
+      for (const p of PROJECT_DESTINATIONS) {
         out.push({
           group: "Go to",
           label: p.path === "chat" ? `Chat with ${ceo}` : p.label,
           icon: p.icon,
           hint: p.key === "," ? undefined : `G ${p.key.toUpperCase()}`,
-          words: p.path === "chat" ? "boardroom ceo message" : p.path === "roadmap" ? "plan requirements"
-            : p.path === "activity" ? "records runs messages memory decisions evidence proof"
-              : p.path === "team" ? "org chart people agents" : p.path === "tasks" ? "board work" : "",
+          words: p.words,
           run: () => navigate(p.path ? `${base}/${p.path}` : base),
         });
       }
@@ -187,14 +185,16 @@ const SHEET: [string, string][] = [
   ["G then H", "Home"],
   ["G then I", "Inbox"],
   ["G then P", "All projects"],
-  ["G then O", "This project’s Overview"],
+  ["G then T", "This project’s team (its home)"],
   ["G then C", "Chat with the CEO"],
-  ["G then R", "Roadmap"],
-  ["G then K", "Tasks"],
-  ["G then D", "Deliverables"],
-  ["G then T", "Team"],
-  ["G then S", "Spend"],
-  ["G then A", "Activity"],
+  ["G then R", "Results"],
+  ["G then D", "Details"],
+  ["G then M", "Details › Roadmap"],
+  ["G then K", "Details › Tasks"],
+  ["G then F", "Details › Deliverables"],
+  ["G then S", "Details › Spend"],
+  ["G then V", "Details › Reviews"],
+  ["G then A", "Details › Activity"],
   ["J / K", "Next / previous item in the Inbox"],
   ["Esc", "Close a panel"],
   ["?", "This list"],
@@ -265,7 +265,7 @@ export function useShortcuts({
         const k = e.key.toLowerCase();
         const top: Record<string, string> = { h: "/home", i: "/inbox", p: "/projects" };
         if (top[k]) { s.navigate(top[k]); return; }
-        const page = PROJECT_PAGES.find((p) => p.key === k);
+        const page = PROJECT_DESTINATIONS.find((p) => p.key === k);
         if (page && s.projectId) {
           s.navigate(page.path ? `/projects/${s.projectId}/${page.path}` : `/projects/${s.projectId}`);
         }

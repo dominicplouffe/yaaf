@@ -13,6 +13,7 @@ import { ApiError, del, get, post, ProjectBundle, put } from "../api";
 import Markdown from "../Markdown";
 import { SecretInput, SEND_HINT, sendOnEnter } from "../ui";
 import { Badge } from "../ui/kit";
+import type { Credential } from "../llmCredentials";
 import {
   Aligned,
   Answer,
@@ -132,6 +133,26 @@ function CredentialGate({ onSaved }: { onSaved: () => void }) {
   const [mode, setMode] = useState("api_key");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The keys this install already holds for projects. Most installs have
+  // exactly one, and asking for it a second time under a second name was the
+  // whole of this screen.
+  const [existing, setExisting] = useState<Credential[]>([]);
+  useEffect(() => {
+    get<Credential[]>("/admin/settings/llm-credentials").then(setExisting).catch(() => {});
+  }, []);
+
+  async function borrow(id: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await put("/admin/founder/credential/llm", { credential_id: id });
+      onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function save() {
     setBusy(true);
@@ -148,13 +169,24 @@ function CredentialGate({ onSaved }: { onSaved: () => void }) {
 
   return (
     <div className="card">
-      <h2>The Founder needs a key of its own</h2>
+      <h2>The Founder needs a key</h2>
       <p className="muted">
-        This one is the platform's, not a project's. It pays for product-wide
-        conversations like this one, and it is never handed to a project's
-        agents — every project you create still pays its own way with its own
-        key. Stored encrypted; only the server reads it.
+        It pays for drafting — conversations like this one — and is never handed
+        to a project's agents. Every project still pays its own way.
       </p>
+      {existing.length > 0 && (
+        <>
+          <p><strong>Use a key you already added</strong></p>
+          <div className="actions" style={{ flexWrap: "wrap", justifyContent: "flex-start" }}>
+            {existing.map((c) => (
+              <button key={c.id} className="primary" disabled={busy} onClick={() => borrow(c.id)}>
+                Use {c.name}{c.bills ? ` (${c.bills})` : ""}
+              </button>
+            ))}
+          </div>
+          <p className="muted">Or paste a different key just for drafting:</p>
+        </>
+      )}
       <label>
         Key type
         <select value={mode} onChange={(e) => setMode(e.target.value)}>

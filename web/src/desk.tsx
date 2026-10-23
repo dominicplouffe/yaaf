@@ -1,7 +1,8 @@
-import { createContext, ReactNode, useContext, useMemo } from "react";
+import { createContext, ReactNode, useContext, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { DeskApproval, DeskProject, DeskView, get } from "./api";
+import { del, DeskApproval, DeskProject, DeskView, get, post } from "./api";
 import { usePoll } from "./hooks";
+import { useHeldKeys } from "./undo";
 import { clip, DecideButtons, fmtSoon, fmtUnit, fmtWhenShort, hoursSince, paceDate } from "./ui";
 
 /** What needs the chairman, decided once for every screen that says so.
@@ -91,7 +92,8 @@ export interface Item {
   /** Present on the two kinds a row can settle in place. */
   approvalId?: string;
   approval?: DeskApproval;
-  ask?: { id: string; body: string; defaultAction: string };
+  ask?: { id: string; body: string; defaultAction: string; options: string[];
+    recommendation: string | null };
   amountUsd?: number | null;
   actions?: ReactNode;
 }
@@ -113,6 +115,10 @@ export const needsYou = (i: Item) => i.yours === true;
     project object: the counts are pure functions of the row, the list is
     rebuilt on every poll, and sorts call this O(n log n) times per render. */
 const NEEDS = new WeakMap<DeskProject, number>();
+/** Status-line verdicts that are a problem, in the warning tone wherever the
+    sentence appears (yaaf.server.status_line decides the verdict). */
+export const WARN_VERDICTS = ["blocked", "failing", "late", "at_risk", "spinning", "stalled", "needs_you"];
+
 export function needsYouCount(p: DeskProject): number {
   const hit = NEEDS.get(p);
   if (hit !== undefined) return hit;
@@ -152,7 +158,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "The CEO pivots. You hold the one extension.",
-      to: `${to}/tasks`, toLabel: "Decide on the Tasks page",
+      to: `${to}/details/tasks`, toLabel: "Decide on the Tasks page",
     });
   }
   if (p.frozen_threads > 0) {
@@ -167,7 +173,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "Those agents stay stuck until you unfreeze the thread.",
-      to: `${to}/activity/messages`, toLabel: "Review the thread",
+      to: `${to}/details/activity/messages`, toLabel: "Review the thread",
     });
   }
 
@@ -188,7 +194,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "It stays open. Nobody on the project can mark it met.",
-      to: `${to}/roadmap`, toLabel: "Judge it on the Roadmap",
+      to: `${to}/details/roadmap`, toLabel: "Judge it on the Roadmap",
     });
   }
   if (w.plan > 0) {
@@ -203,7 +209,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "Proposed scope is not scope: no work can be built against it.",
-      to: `${to}/roadmap`, toLabel: "Review on the Roadmap",
+      to: `${to}/details/roadmap`, toLabel: "Review on the Roadmap",
     });
   }
   if (w.commitment) {
@@ -219,7 +225,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "The project keeps working, but it is promising nothing until you sign.",
-      to: `${to}/roadmap`, toLabel: "Sign or move it on the Roadmap",
+      to: `${to}/details/roadmap`, toLabel: "Sign or move it on the Roadmap",
     });
   }
 
@@ -238,8 +244,8 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
           )}
         </>
       ),
-      consequence: `It is denied ${fmtSoon(a.expires_at)}. Silence is a decision here.`,
-      to: `${to}/activity/decisions`, toLabel: "Read the full request",
+      consequence: `It is ${a.if_silent ?? "declined"} ${fmtSoon(a.expires_at)}. Silence is a decision here.`,
+      to: `${to}/details/activity/decisions`, toLabel: "Read the full request",
       actions: <DecideButtons approval={a} onDone={reload} />,
     });
   }
@@ -248,10 +254,13 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
       key: ask.id, type: "ask", tier: 2, at: new Date(ask.answer_by).getTime(), clocked: true,
       yours: true, project: p, kind: "Question",
       title: ask.title,
-      ask: { id: ask.id, body: ask.body, defaultAction: ask.default_action },
+      ask: { id: ask.id, body: ask.body, defaultAction: ask.default_action,
+        options: ask.options ?? [], recommendation: ask.recommendation ?? null },
       what: <>{ask.title}</>,
       consequence: `It stops waiting ${fmtSoon(ask.answer_by)}, then: ${clip(ask.default_action, 160)}`,
-      to: `${to}/chat`, toLabel: "Answer in the chat",
+      // With options it is answered with one click, in the Inbox.
+      to: ask.options?.length ? `/inbox?item=${encodeURIComponent(ask.id)}` : `${to}/chat`,
+      toLabel: ask.options?.length ? "Answer" : "Answer in the chat",
     });
   }
   for (const bet of p.kill_dates_soon) {
@@ -261,7 +270,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
       title: `A bet expires ${fmtSoon(bet.kill_date)}: “${clip(bet.statement, 70)}”`,
       what: <>“{clip(bet.statement, 160)}”</>,
       consequence: "Then its tasks block and the CEO re-plans.",
-      to: `${to}/tasks`, toLabel: "See the bet",
+      to: `${to}/details/tasks`, toLabel: "See the bet",
     });
   }
 
@@ -278,7 +287,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
       title: `Nothing outside the project has verified anything in ${d.window_hours}h`,
       what: <>No verified external evidence in <b>{d.window_hours}h</b>.</>,
       consequence: "Happening now: new internal-only work is refused until proof lands.",
-      to: `${to}/activity/evidence`, toLabel: "See the proof",
+      to: `${to}/details/activity/evidence`, toLabel: "See the proof",
     });
   } else if (droughtShown && d.last_countable_at) {
     const startsAt = new Date(d.last_countable_at).getTime() + d.window_hours * 3_600_000;
@@ -293,7 +302,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: `The platform starts refusing internal work ${fmtSoon(new Date(startsAt).toISOString())}.`,
-      to: `${to}/activity/evidence`, toLabel: "See the proof",
+      to: `${to}/details/activity/evidence`, toLabel: "See the proof",
     });
   }
 
@@ -315,8 +324,9 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
           lands <b>{fmtWhenShort(pace.toISOString())}</b>.
         </>
       ),
-      consequence: "The platform pauses the project at 100%.",
-      to: `${to}/spend`, toLabel: "See the spend",
+      consequence: `Over the budget the CEO must account for it; the platform pauses the `
+        + `project at ${fmtUnit(b.cap * b.hard_stop_multiple, b.unit)}, the hard stop.`,
+      to: `${to}/details/spend`, toLabel: "See the spend",
     });
   } else if (frac < 1 && frac >= b.warn_ratio) {
     items.push({
@@ -330,7 +340,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "Nothing yet: at this rate the cap holds to the end of the month.",
-      to: `${to}/spend`, toLabel: "See the spend",
+      to: `${to}/details/spend`, toLabel: "See the spend",
     });
   }
 
@@ -352,7 +362,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "Nothing breaks. The work may be real, but only the agents say so.",
-      to: `${to}/tasks`, toLabel: "See what it bought",
+      to: `${to}/details/tasks`, toLabel: "See what it bought",
     });
   }
 
@@ -371,8 +381,12 @@ interface DeskState {
   reload: () => void;
   /** Every row, running projects only, ranked by time to consequence. */
   items: Item[];
-  /** The subset the badge counts. */
+  /** The subset the badge counts: yours, not snoozed, not just decided. */
   mine: Item[];
+  /** Yours, snoozed by you, with when each comes back. */
+  snoozed: { item: Item; until: string }[];
+  /** Keys every list leaves out: snoozed, or decided and still in its undo window. */
+  hidden: Set<string>;
 }
 
 const DeskContext = createContext<DeskState | null>(null);
@@ -387,10 +401,21 @@ export function DeskProvider({ children }: { children: ReactNode }) {
     () => (data ? buildItems(data.projects, reload) : []),
     [data, reload],
   );
-  const value = useMemo(
-    () => ({ data, error, at, reload, items, mine: items.filter(needsYou) }),
-    [data, error, at, reload, items],
-  );
+  const held = useHeldKeys();
+  const value = useMemo(() => {
+    // A snooze that has ended stops hiding at once, not on the next poll.
+    const now = Date.now();
+    const until = new Map((data?.snoozed ?? [])
+      .filter((s) => new Date(s.until).getTime() > now)
+      .map((s) => [s.item_key, s.until] as const));
+    const hidden = new Set<string>([...until.keys(), ...held]);
+    return {
+      data, error, at, reload, items, hidden,
+      mine: items.filter((i) => needsYou(i) && !hidden.has(i.key)),
+      snoozed: items.filter((i) => needsYou(i) && until.has(i.key) && !held.has(i.key))
+        .map((item) => ({ item, until: until.get(item.key)! })),
+    };
+  }, [data, error, at, reload, items, held]);
   return <DeskContext.Provider value={value}>{children}</DeskContext.Provider>;
 }
 
@@ -398,6 +423,67 @@ export function useDesk(): DeskState {
   const state = useContext(DeskContext);
   if (!state) throw new Error("useDesk() outside <DeskProvider>");
   return state;
+}
+
+/** How close to its own deadline a snooze may run (yaaf/server/api/me.py). */
+const SNOOZE_MARGIN_MS = 2 * 3_600_000;
+
+function tomorrowMorning(): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(8, 0, 0, 0);
+  return d;
+}
+
+/** "Not now" on one row of your own Inbox — never past the moment it decides
+    itself: a row with a clock comes back at least two hours before it. */
+export function SnoozeMenu({ item, onDone }: { item: Item; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!item.yours) return null;
+  const now = Date.now();
+  const latest = item.clocked ? item.at - SNOOZE_MARGIN_MS : now + 7 * 86_400_000 - 60_000;
+  if (latest <= now + 5 * 60_000) {
+    return <span className="help">Too close to its deadline to snooze</span>;
+  }
+  const options: { label: string; at: number }[] = [
+    { label: "For 1 hour", at: now + 3_600_000 },
+    { label: "Until tomorrow morning", at: tomorrowMorning().getTime() },
+    ...(item.clocked
+      ? [{ label: "Until 2 hours before it decides", at: latest - 60_000 }]
+      : [{ label: "For a week", at: latest }]),
+  ].filter((o) => o.at <= latest);
+  const snooze = async (at: number) => {
+    setError(null);
+    try {
+      await post("/me/snoozes", { project_id: item.project.id, item_key: item.key,
+        until: new Date(at).toISOString() });
+      setOpen(false);
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  return (
+    <span className="snooze">
+      <button className="small" aria-expanded={open} onClick={() => setOpen(!open)}>Snooze ▾</button>
+      {open && (
+        <span className="snooze-menu" role="menu">
+          {options.map((o) => (
+            <button key={o.label} role="menuitem" onClick={() => snooze(o.at)}>
+              {o.label}<span className="help"> · back {fmtSoon(new Date(o.at).toISOString())}</span>
+            </button>
+          ))}
+        </span>
+      )}
+      {error && <span className="help" style={{ color: "var(--critical)" }}>{error}</span>}
+    </span>
+  );
+}
+
+/** Bring a snoozed row back now. */
+export async function wake(itemKey: string) {
+  await del(`/me/snoozes/${encodeURIComponent(itemKey)}`);
 }
 
 /** The row's own verb, or the way to it. Shared by the Inbox, Home and the

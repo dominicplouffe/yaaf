@@ -1,7 +1,7 @@
 import { CredentialPicker, PlanMeter, ProviderCredentials } from "../../llmCredentials";
 import { plainStatus } from "../../ui/kit";
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   AmendmentRow,
   CloneResult,
@@ -32,7 +32,7 @@ import { fmtWhen, usePoll } from "../../hooks";
 import type { FounderStatus, PresetCard } from "../StartProject";
 import { RoleGrants } from "../../roles";
 import { MembersPanel } from "./Members";
-import { ConfirmModal, CredentialValue, SecretInput, StoredSecret } from "../../ui";
+import { ConfirmModal, CredentialValue, fmtUnit, SecretInput, StoredSecret } from "../../ui";
 
 /** "amazon-audit-v2" → "amazon-audit-v3"; "Acme" → "Acme (clone)". Twins come
     in numbered runs far more often than they come in ones. */
@@ -1606,6 +1606,65 @@ function CardPicker({
   );
 }
 
+/** The three dials, read before the rulebook: which card each family is set
+    to, in one line apiece, so "how is this project set up?" is answered
+    without opening three tabs. Each line jumps to the tab that changes it. */
+function DialSummary({
+  presets, cons, usd, onOpen,
+}: {
+  presets: FounderStatus["presets"];
+  cons: Record<string, unknown>;
+  usd: boolean;
+  onOpen: (theme: string) => void;
+}) {
+  const cap = Number(usd ? cons.monthly_usd_cap : cons.monthly_token_cap) || 0;
+  const wall = cap * (Number(cons.hard_stop_multiple) || 1);
+  const amount = (n: number) => usd ? fmtUnit(Math.round(n), "usd") : `${fmtUnit(n, "tokens")} tokens`;
+  // Two lines ask him about a purchase — the threshold (at or over) and the
+  // per-purchase line (over, when set) — and the lower one is the one he meets.
+  const threshold = Number(cons.approval_threshold_usd) || 0;
+  const perPurchase = Number(cons.max_usd_per_purchase) || 0;
+  const asksAt = perPurchase > 0 && perPurchase < threshold
+    ? { usd: perPurchase, words: "over" } : { usd: threshold, words: "at or over" };
+  const asEdit = (value: unknown) => String(value ?? "");
+  const inForce = (cards: PresetCard[]) => cards.find((card) =>
+    Object.entries(card.constitution).every(([k, v]) => asEdit(cons[k]) === asEdit(v)));
+  const dials: { name: string; theme: string; cards: PresetCard[] }[] = [
+    { name: "Say-so", theme: "Autonomy", cards: presets.autonomy },
+    { name: "Pace", theme: "Pace & brakes", cards: presets.tempo },
+    { name: "Quality bar", theme: "The bar", cards: presets.bar },
+  ];
+  return (
+    <div className="dial-summary">
+      <div className="dial-row">
+        <span className="dial-name">Money</span>
+        <span className="dial-value">
+          <b>{amount(cap)} a month</b>
+          <span className="help"> · pauses itself at {amount(wall)}
+            {asksAt.usd > 0
+              ? ` · asks you before any purchase ${asksAt.words} $${asksAt.usd.toLocaleString()}`
+              : " · asks you before every purchase"}</span>
+        </span>
+        <button className="small" onClick={() => onOpen("Money")}>Change</button>
+      </div>
+      {dials.filter((d) => d.cards.length).map((d) => {
+        const card = inForce(d.cards);
+        return (
+          <div key={d.name} className="dial-row">
+            <span className="dial-name">{d.name}</span>
+            <span className="dial-value">
+              <b>{card ? card.label : "Hand-tuned"}</b>
+              {card?.headline && <span className="help"> · {card.headline}</span>}
+              {!card && <span className="help"> · set rule by rule, so no preset describes it</span>}
+            </span>
+            <button className="small" onClick={() => onOpen(d.theme)}>Change</button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function changedRules(
   fields: ConstitutionField[],
   edits: Record<string, string>,
@@ -1976,9 +2035,11 @@ export default function Settings({
         </div>
       ) : (
         <div className="error">
-          {!billingReady
-            ? "⚠ Agents have no way to pay for Claude yet — connect a credential below or every real run will fail."
-            : "⚠ This project runs FAKE test agents (mock runtime) — nothing real will happen. Switch it under Advanced below."}
+          {/* Mock first: a mock project needs nothing to pay with, and telling
+              it to add a key sent the reader after the wrong fix. */}
+          {runtimeNow === "mock"
+            ? "⚠ This project runs FAKE test agents (mock runtime) — nothing real will happen. Switch it under Advanced below."
+            : "⚠ Agents have no way to pay for their model yet — connect a credential below or every real run will fail."}
         </div>
       )}
 
@@ -1987,12 +2048,32 @@ export default function Settings({
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
           What every agent reads first, on every run: the goal, then your standing orders, then
-          what you have taken back. When you change your mind in chat, the CEO writes it back
-          here for you to confirm; you can also edit it yourself. Saving replaces the old
-          version in every agent's instructions — nothing is added next to it — and the CEO is
-          told to bring its files and checks into line.
+          what you have taken back. A change replaces the old version everywhere — nothing is
+          added next to it.
           {dash.brief_confirmed_at && <> Last confirmed {fmtWhen(dash.brief_confirmed_at)}.</>}
         </p>
+        {/* Two doors to the same brief, said side by side so neither is a
+            surprise: editing here is immediate; asking the CEO gets the change
+            drafted with what it means for the plan, for you to confirm. */}
+        <div className="dial-summary" style={{ marginTop: 10 }}>
+          <div className="dial-row">
+            <span className="dial-name">Edit it here</span>
+            <span className="dial-value help">
+              In force from every agent's next run. The CEO is told to bring its files and
+              checks into line.
+            </span>
+          </div>
+          <div className="dial-row">
+            <span className="dial-name">Or ask the CEO</span>
+            <span className="dial-value help">
+              Say what you want in chat. The CEO writes the whole brief back — the goal, every
+              standing order, what no longer applies — and nothing changes until you confirm
+              it from your Inbox, where it shows beside the brief in force.
+            </span>
+            <Link className="btnlink small" to={`/projects/${projectId}/chat`}
+              state={{ draft: "I want to change direction: " }}>Ask the CEO</Link>
+          </div>
+        </div>
         <label className="grant-label">The goal</label>
         <textarea value={goal} onChange={(e) => setGoal(e.target.value)} minLength={10} />
         <label className="grant-label">Standing orders — one per line, with the number</label>
@@ -2051,7 +2132,8 @@ export default function Settings({
           {dash.billing_mode === "subscription"
             ? `${Number(dash.constitution["monthly_token_cap"]).toLocaleString()} tokens`
             : `$${Number(dash.constitution["monthly_usd_cap"]).toLocaleString()}`}{" "}
-          — the platform pauses the project by itself at 100%.
+          — the plan. The platform pauses the project by itself at{" "}
+          {Number(dash.constitution["hard_stop_multiple"] ?? 3)}× that, the hard stop.
         </p>
         <CredentialPicker value={billingCredentialId} onChange={id => setBillingCredentialId(id)} disabled={busy} />
         <div className="actions">
@@ -2296,13 +2378,13 @@ export default function Settings({
       <h2>Rules in force</h2>
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
-          Every limit the platform enforces, and every one of them yours to change. Edit what
-          you need, say why, and confirm — <b>the new rules are in force on the very next agent
-          call</b>. Nothing waits. Every change is recorded with your reason and disclosed to
-          the CEO, which is what keeps the rulebook accountable: the agents cannot move these
-          limits, and you always can.
+          Every limit the platform enforces. Agents cannot move them; you can. Change one, say
+          why, and it is <b>in force from the next agent call</b>, recorded with your reason
+          and disclosed to the CEO.
         </p>
         {schema.length === 0 && <p className="help">Loading the rulebook…</p>}
+        {presets && <DialSummary presets={presets} cons={cons}
+          usd={dash.billing_mode === "api_key"} onOpen={(t) => go("rules", t)} />}
 
         {/* Six tabs rather than fourteen headings on one scroll. The dot says
             which tab holds an edit, so a pending change is never somewhere you

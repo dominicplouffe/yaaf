@@ -12,6 +12,7 @@ import {
   post,
   RunRow,
 } from "../../api";
+import { WhatTheyDid } from "../../did";
 import { fmtWhen, usePoll } from "../../hooks";
 import Markdown from "../../Markdown";
 import {
@@ -91,9 +92,9 @@ function dayLabel(iso: string): string {
     platform's, and says so. It used to sit under the CEO's name and face, so
     the chairman read the platform's wording as the CEO talking. */
 const MessageBubble = memo(function MessageBubble(
-  { body, at, mine, platform, who, team }: {
+  { body, at, mine, platform, who, team, runId, projectId }: {
     body: string; at: string; mine: boolean; platform: boolean; who: string;
-    team: string | null;
+    team: string | null; runId?: string | null; projectId: string;
   },
 ) {
   const name = platform ? "Platform notice" : who;
@@ -106,6 +107,12 @@ const MessageBubble = memo(function MessageBubble(
           <Markdown>{body}</Markdown>
         </div>
         <div className="when">{fmtWhen(at)}</div>
+        {/* How the CEO got to what it says: the run that wrote it, opened in
+            place. Only for the CEO's own words — yours have no run behind
+            them, and a platform notice is written by no run at all. */}
+        {!mine && !platform && runId && (
+          <WhatTheyDid runId={runId} projectId={projectId} label="What they did" />
+        )}
       </div>
     </div>
   );
@@ -373,7 +380,7 @@ export default function Boardroom({ projectId, dash, org }: {
     type Row =
       | { kind: "day"; key: string; label: string }
       | { kind: "msg"; key: string; body: string; at: string; mine: boolean;
-          platform: boolean };
+          platform: boolean; runId: string | null };
     const out: Row[] = [];
     let day = "";
     for (const m of loaded) {
@@ -382,11 +389,18 @@ export default function Boardroom({ projectId, dash, org }: {
         day = label;
         out.push({ kind: "day", key: `day-${m.id}`, label });
       }
+      // The run that wrote it: the sender's run whose window holds the moment
+      // the message landed. Matched here rather than stored on the message,
+      // because every message an agent posts is posted from inside a run.
+      const at = new Date(m.at).getTime();
+      const run = m.from_agent ? (runs ?? []).find((r) => r.agent_id === m.from_agent && r.started_at
+        && new Date(r.started_at).getTime() <= at + 1000
+        && (!r.finished_at || new Date(r.finished_at).getTime() + 5000 >= at)) : undefined;
       out.push({ kind: "msg", key: m.id, body: m.body, at: m.at, mine: !!m.from_user,
-        platform: !m.from_user && !m.from_agent });
+        platform: !m.from_user && !m.from_agent, runId: run?.id ?? null });
     }
     return out;
-  }, [loaded]);
+  }, [loaded, runs]);
 
   // The CEO is the agent with no team, and these are the two kinds of run that
   // mean it is working on something a reply could come out of.
@@ -498,6 +512,8 @@ export default function Boardroom({ projectId, dash, org }: {
                   platform={row.platform}
                   who={ceoName}
                   team="leadership"
+                  runId={row.runId}
+                  projectId={projectId}
                 />
               ),
             )}
@@ -659,7 +675,7 @@ export default function Boardroom({ projectId, dash, org }: {
                   <div style={{ marginTop: 3 }}>{killChip(h.kill_date, h.status)}</div>
                 </div>
               ))}
-              <Link to={`/projects/${projectId}/tasks?view=list`} style={{ fontSize: 12 }}>
+              <Link to={`/projects/${projectId}/details/tasks?view=list`} style={{ fontSize: 12 }}>
                 all bets &amp; evidence →
               </Link>
             </div>

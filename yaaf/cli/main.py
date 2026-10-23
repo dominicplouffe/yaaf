@@ -21,7 +21,7 @@ from pathlib import Path
 import httpx
 import typer
 
-app = typer.Typer(no_args_is_help=True, add_completion=False)
+app = typer.Typer(no_args_is_help=True, add_completion=False, rich_markup_mode="markdown")
 
 
 def _register_spend() -> None:
@@ -68,33 +68,82 @@ def _token() -> str | None:
         "token")
 
 
+class _Client(httpx.Client):
+    """An HTTP client that says, in one line, when there is nobody to talk to.
+
+    A server that was not running used to answer `yaaf projects` with a
+    224-line traceback ending in `[Errno 111] Connection refused` — the most
+    common first mistake, reported as a crash."""
+
+    def send(self, request: httpx.Request, **kwargs) -> httpx.Response:
+        try:
+            return super().send(request, **kwargs)
+        except httpx.ConnectError:
+            typer.echo(f"Can't reach yaaf at {_api_base()}. Is the server running? "
+                       "If it lives elsewhere, set YAAF_API to its address.", err=True)
+            raise typer.Exit(1) from None
+        except httpx.TimeoutException:
+            typer.echo(f"yaaf at {_api_base()} did not answer in time. Try again, or "
+                       "check the server's log.", err=True)
+            raise typer.Exit(1) from None
+
+
 def _client() -> httpx.Client:
     token = _token()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    return httpx.Client(base_url=_api_base(), timeout=30, headers=headers)
+    return _Client(base_url=_api_base(), timeout=30, headers=headers)
+
+
+def _detail(response: httpx.Response) -> str:
+    """A refusal as a person reads it. A validation error is a list of
+    {loc, msg}; printing it raw was a 175-line dump for one missing field."""
+    try:
+        detail = response.json().get("detail", response.text[:200])
+    except Exception:
+        return response.text[:200]
+    if isinstance(detail, list):
+        lines = []
+        for err in detail[:8]:
+            if isinstance(err, dict):
+                where = ".".join(str(p) for p in err.get("loc", []) if p != "body")
+                lines.append(f"  {where or 'request'}: {err.get('msg', err)}")
+            else:
+                lines.append(f"  {err}")
+        more = f"\n  … and {len(detail) - 8} more" if len(detail) > 8 else ""
+        return "the request was refused:\n" + "\n".join(lines) + more
+    return detail if isinstance(detail, str) else json.dumps(detail, default=str)
+
+
+def _fail(response: httpx.Response):
+    """Every command fails the same way: the status, the reason, and a hint
+    where one is known. Most commands used to print the raw JSON body and no
+    hint, so the same 401 read two different ways depending on the command."""
+    detail = _detail(response)
+    typer.echo(f"API error {response.status_code}: {detail}", err=True)
+    if response.status_code == 401:
+        typer.echo(f"Hint: run `yaaf login` (signing in to {_api_base()}), or set "
+                   "YAAF_TOKEN to a personal token.", err=True)
+    elif response.status_code == 404 and detail == "Not Found":
+        # FastAPI's own wording for a route that does not exist — a base URL
+        # with a path on it, not a missing project.
+        typer.echo(f"Hint: is YAAF_API ({_api_base()}) the install's own address, "
+                   "with no path after it?", err=True)
+    raise typer.Exit(1)
 
 
 def _json_or_die(response: httpx.Response):
     if response.status_code >= 400:
-        try:
-            detail = response.json().get("detail", response.text[:200])
-        except Exception:
-            detail = response.text[:200]
-        typer.echo(f"API error {response.status_code}: {detail}")
-        if response.status_code == 401:
-            typer.echo(f"Hint: run `yaaf login` (signing in to {_api_base()}), or set "
-                       "YAAF_TOKEN to a personal token.")
-        raise typer.Exit(1)
+        _fail(response)
     return response.json()
 
 
 def _show(response: httpx.Response) -> None:
+    if response.status_code >= 400:
+        _fail(response)
     try:
         typer.echo(json.dumps(response.json(), indent=2, default=str))
     except Exception:
         typer.echo(f"HTTP {response.status_code}: {response.text[:2000]}")
-    if response.status_code >= 400:
-        raise typer.Exit(1)
 
 
 def _resolve_project(client: httpx.Client, ref: str) -> str:
@@ -153,6 +202,7 @@ def seed_roles(
     them arrives at New Project with its team's role blank. That flag loads
     exactly those, leaving every role already in the library untouched.
     """
+    failed = 0
     with _client() as client:
         have: set[str] = set()
         if only_missing:
@@ -181,7 +231,15 @@ def seed_roles(
                            f"alone, {filed} as {body.get('category') or 'uncategorised'}")
                 continue
             response = client.post("/admin/roles", json=body)
+            if response.status_code == 401:
+                # Not signed in fails every file the same way: say it once, with
+                # the fix, rather than 38 times and an exit of 0.
+                _fail(response)
             typer.echo(f"{path.name}: {response.status_code} {response.text[:120]}")
+            failed += response.status_code >= 400
+        if failed:
+            typer.echo(f"{failed} file(s) were refused — see above.", err=True)
+            raise typer.Exit(1)
 
 
 @app.command()
@@ -204,6 +262,7 @@ def seed_crews(
     accepted and listed with that slug marked missing, but the picker is more
     use when everything resolves.
     """
+    failed = 0
     with _client() as client:
         have: set[str] = set()
         if only_missing:
@@ -219,7 +278,15 @@ def seed_crews(
                 typer.echo(f"{path.name}: already in the library, left alone")
                 continue
             response = client.post("/admin/crews", json=body)
+            if response.status_code == 401:
+                # Not signed in fails every file the same way: say it once, with
+                # the fix, rather than 17 times and an exit of 0.
+                _fail(response)
             typer.echo(f"{path.name}: {response.status_code} {response.text[:120]}")
+            failed += response.status_code >= 400
+        if failed:
+            typer.echo(f"{failed} file(s) were refused — see above.", err=True)
+            raise typer.Exit(1)
 
 
 @app.command()
@@ -311,7 +378,40 @@ def logout() -> None:
 
 
 @app.command()
+def doctor() -> None:
+    """Check this install end to end and say what to do about anything wrong:
+    the server, your sign-in, the dashboard, roles, keys, the runner, email."""
+    def line(ok: bool, name: str, detail: str, fix: str | None = None,
+             problem: bool = True) -> None:
+        mark = "✓" if ok else ("✗" if problem else "!")
+        typer.echo(f"{mark} {name}: {detail}")
+        if not ok and fix:
+            typer.echo(f"    → {fix}")
+
+    with _client() as client:
+        client.get("/healthz")  # an unreachable server exits here, in one line
+        line(True, "server", f"answering at {_api_base()}")
+        me = client.get("/auth/me")
+        if me.status_code == 401:
+            line(False, "signed in", "not signed in", "yaaf login")
+            raise typer.Exit(1)
+        who = me.json()
+        line(True, "signed in", f"as {who.get('email', who.get('id', 'you'))}")
+        report = client.get("/admin/settings/doctor")
+        if report.status_code == 403:
+            typer.echo("The rest of the checks are an instance admin's to run.")
+            return
+        body = _json_or_die(report)
+    for check in body["checks"]:
+        line(check["ok"], check["name"], check["detail"], check.get("fix"),
+             problem=check["level"] == "problem")
+    if not body["ok"]:
+        raise typer.Exit(1)
+
+
+@app.command()
 def whoami() -> None:
+    """Who this CLI is signed in as, and against which install."""
     with _client() as client:
         _show(client.get("/auth/me"))
 
@@ -329,9 +429,57 @@ def create_user(email: str, name: str,
 
 @app.command()
 def create_project(spec_file: Path) -> None:
-    """Create a project from a JSON spec (see docs/CLI.md for the shape)."""
+    """Create a project from a JSON spec, or from a setup file such as the ones
+    in examples/ — its missing roles are added to the library first, and its
+    billing credential is matched by name."""
+    try:
+        spec = json.loads(spec_file.read_text())
+    except OSError as exc:
+        typer.echo(f"can't read {spec_file}: {exc.strerror}", err=True)
+        raise typer.Exit(2) from None
+    except ValueError as exc:
+        typer.echo(f"{spec_file} is not valid JSON: {exc}", err=True)
+        raise typer.Exit(2) from None
     with _client() as client:
-        _show(client.post("/admin/projects", json=json.loads(spec_file.read_text())))
+        if isinstance(spec, dict) and "yaaf_bundle" in spec:
+            # A setup file wraps the project with the roles it hires and the
+            # credential names it expects. Sent bare, the server read it as a
+            # project with no slug and answered with a page of validation.
+            project = dict(spec.get("project") or {})
+            known = {r["slug"] for r in _json_or_die(client.get("/admin/roles"))}
+            for role in spec.get("roles") or []:
+                if role.get("slug") and role["slug"] not in known:
+                    _json_or_die(client.post("/admin/roles", json=role))
+                    typer.echo(f"added role {role['slug']} from the setup file")
+            wanted = project.pop("billing_secret_name", None)
+            others = project.pop("credential_names", None) or {}
+            listed = (_json_or_die(client.get("/admin/settings/llm-credentials"))
+                      if wanted or others else [])
+
+            def named(name: str) -> dict | None:
+                return next((c for c in listed
+                             if c["name"].lower() == str(name).lower()), None)
+
+            if wanted and not project.get("billing_secret_id"):
+                match = named(wanted)
+                if match:
+                    project["billing_secret_id"] = match["id"]
+                else:
+                    typer.echo(f"no LLM credential called {wanted!r} — the project is "
+                               "created unable to start; assign one in its Settings → Money",
+                               err=True)
+            # The other providers' credentials travel by name too, resolved the
+            # way the web form and the Founder resolve them.
+            for provider, name in others.items():
+                match = named(name)
+                if match and (match.get("provider") or "anthropic") == provider:
+                    project.setdefault("credentials", {})[provider] = match["id"]
+                else:
+                    typer.echo(f"no {provider} credential called {name!r} on this install "
+                               "— seats on that provider cannot run until one is assigned",
+                               err=True)
+            spec = project
+        _show(client.post("/admin/projects", json=spec))
 
 
 @app.command()
@@ -508,15 +656,31 @@ def delete_llm_credential(credential_id: str) -> None:
 @app.command()
 def set_platform_key(
     mode: str = typer.Option("api_key", "--mode", help="api_key | subscription"),
+    from_credential: str = typer.Option(
+        None, "--from-credential",
+        help="Draft on this LLM credential (name or id) instead of pasting a second key"),
 ) -> None:
-    """Install or rotate the platform model credential (value prompted).
+    """Set the key the Founder drafts on: a new one (value prompted), or one of
+    your LLM credentials with --from-credential.
 
-    This is the Founder's key. It is never injected into a sandbox and never
-    reaches a project's agents — a project pays its own way with its own
-    billing credential, and there is no fallback.
+    Never injected into a sandbox and never a project's billing key. Borrowing
+    an LLM credential means one key serves both, and rotating it rotates both.
     """
-    value = typer.prompt("Credential value", hide_input=True)
     with _client() as client:
+        if from_credential:
+            listed = _json_or_die(client.get("/admin/settings/llm-credentials"))
+            wanted = from_credential.strip().lower()
+            match = next((c for c in listed
+                          if c["id"] == from_credential or c["name"].lower() == wanted), None)
+            if match is None:
+                names = ", ".join(c["name"] for c in listed) or "none yet"
+                typer.echo(f"no LLM credential called {from_credential!r} — you have: {names}",
+                           err=True)
+                raise typer.Exit(2)
+            _show(client.put("/admin/founder/credential/llm",
+                             json={"credential_id": match["id"]}))
+            return
+        value = typer.prompt("Credential value", hide_input=True)
         _show(client.put("/admin/settings/anthropic", json={"value": value, "mode": mode}))
 
 
@@ -643,12 +807,14 @@ def amend(
 
 @app.command()
 def start(project: str) -> None:
+    """Start a project, or resume a paused one."""
     with _client() as client:
         _show(client.post(f"/admin/projects/{_resolve_project(client, project)}/start"))
 
 
 @app.command()
 def pause(project: str, reason: str = typer.Option("", "--reason")) -> None:
+    """Pause a project: no new runs until you start it again. Runs in flight finish."""
     with _client() as client:
         _show(client.post(f"/admin/projects/{_resolve_project(client, project)}/pause",
                           json={"reason": reason}))
@@ -656,6 +822,7 @@ def pause(project: str, reason: str = typer.Option("", "--reason")) -> None:
 
 @app.command()
 def stop(project: str, reason: str = typer.Option("", "--reason")) -> None:
+    """Stop a project for good. A stopped project cannot be started again."""
     with _client() as client:
         _show(client.post(f"/admin/projects/{_resolve_project(client, project)}/stop",
                           json={"reason": reason}))
@@ -665,13 +832,94 @@ def stop(project: str, reason: str = typer.Option("", "--reason")) -> None:
 
 
 @app.command()
-def projects() -> None:
+def projects(as_json: bool = typer.Option(False, "--json", help="the raw payload")) -> None:
+    """Every project you can open: status, spend against the budget and the hard
+    stop, and how many things on it wait for you."""
     with _client() as client:
-        _show(client.get("/observe/projects"))
+        if as_json:
+            _show(client.get("/observe/projects"))
+            return
+        desk = _json_or_die(client.get("/observe/desk"))
+    rows = desk.get("projects", [])
+    if not rows:
+        typer.echo("No projects yet. `yaaf rehearse examples/01-your-first-hour.json` "
+                   "tries one for nothing.")
+        return
+
+    def money(budget: dict, n: float) -> str:
+        return f"${n:,.0f}" if budget.get("unit") == "usd" else f"{n:,.0f} tok"
+
+    table = [("PROJECT", "STATUS", "SPENT / BUDGET", "HARD STOP", "WAITING ON YOU", "NOW")]
+    for row in rows:
+        budget = row.get("budget") or {}
+        waiting = row.get("awaiting_you") or {}
+        count = (len(row.get("pending_approvals") or []) + len(row.get("pending_asks") or [])
+                 + (1 if waiting.get("plan") else 0) + len(waiting.get("verdicts") or [])
+                 + (1 if waiting.get("commitment") else 0))
+        cap = budget.get("cap") or 0
+        table.append((row.get("slug", ""), row.get("status", ""),
+                      f"{money(budget, budget.get('spent') or 0)} / {money(budget, cap)}",
+                      money(budget, cap * (budget.get("hard_stop_multiple") or 1)),
+                      str(count) if count else "—",
+                      # The server's verdict in words; the money is in its own column.
+                      (row.get("status_line") or {}).get("headline", "")))
+    widths = [max(len(r[c]) for r in table) for c in range(len(table[0]))]
+    for r in table:
+        typer.echo("  ".join(cell.ljust(widths[c]) for c, cell in enumerate(r)).rstrip())
+
+
+@app.command()
+def status(
+    project: str = typer.Argument(None, help="one project's id or slug; all of them if left out"),
+    as_json: bool = typer.Option(False, "--json", help="the status lines as JSON"),
+) -> None:
+    """Is everything OK, and if not, what — in sentences. The same words Home,
+    the project Overview and Claude's desk say, and what is waiting on you."""
+    from yaaf.server.status_line import portfolio_summary
+
+    with _client() as client:
+        only = _resolve_project(client, project) if project else None
+        desk = _json_or_die(client.get("/observe/desk", params={"only": only} if only else {}))
+    rows = desk.get("projects", [])
+    if as_json:
+        typer.echo(json.dumps([{"project": r.get("slug"), **(r.get("status_line") or {})}
+                               for r in rows], indent=2))
+        return
+    if not rows:
+        typer.echo("No projects yet. `yaaf rehearse examples/01-your-first-hour.json` "
+                   "tries one for nothing.")
+        return
+    if not only:
+        typer.echo(portfolio_summary(rows))
+        typer.echo("")
+    width = max(len(r.get("slug", "")) for r in rows)
+    for row in rows:
+        line = (row.get("status_line") or {}).get("sentence", row.get("status", ""))
+        typer.echo(f"{row.get('slug', '').ljust(width)}  {line}")
+    waiting: list[str] = []
+    for row in rows:
+        slug, yours = row.get("slug", ""), row.get("awaiting_you") or {}
+        for item in [*(row.get("pending_approvals") or []), *(row.get("pending_asks") or [])]:
+            waiting.append(f"{slug}: {item.get('title', '')}  [{item.get('id', '')}]")
+        # The rest of what the sentence counted, so the list and the count agree.
+        if yours.get("plan"):
+            waiting.append(f"{slug}: {yours['plan']} proposed requirement(s) to accept "
+                           "(its Roadmap)")
+        for verdict in yours.get("verdicts") or []:
+            waiting.append(f"{slug}: is it done? {verdict.get('name', '')}  "
+                           f"[{verdict.get('key', '')}]")
+        if yours.get("commitment"):
+            waiting.append(f"{slug}: a delivery date to sign (its Roadmap)")
+    if waiting:
+        typer.echo("")
+        typer.echo("Waiting on you:")
+        for line in waiting:
+            typer.echo(f"  {line}")
 
 
 @app.command()
 def dashboard(project: str) -> None:
+    """Everything one project's Overview reads, as JSON."""
     with _client() as client:
         _show(client.get(f"/observe/projects/{_resolve_project(client, project)}"))
 
@@ -685,6 +933,8 @@ def rehearse(
         help="what you actually pay for a run; without it the drill reports the "
              "break-even instead of inventing a price"),
     as_json: bool = typer.Option(False, "--json"),
+    verbose: bool = typer.Option(False, "--verbose",
+                                 help="also print the platform's own log lines"),
 ) -> None:
     """Run a project spec as a project for nothing, before you fund it.
 
@@ -699,9 +949,17 @@ def rehearse(
     works on a fresh checkout.
     """
     import json as _json
+    import logging
 
     from yaaf import rehearsal
     from yaaf.rehearsal import report as rehearsal_report
+
+    # The drill runs the real platform in this process, and the platform logs
+    # like a server: a deployment warning, the rules it relaxed as a raw dict,
+    # every refusal its scripted crew hit. Printed above the report, that was
+    # the first thing a newcomer read. The report already says all of it.
+    if not verbose:
+        logging.getLogger("yaaf").setLevel(logging.ERROR)
 
     try:
         result = rehearsal.rehearse(
@@ -783,12 +1041,14 @@ def agenda(project: str, days: int = typer.Option(14, "--days")) -> None:
 
 @app.command()
 def board(project: str) -> None:
+    """The task board: every open task, who holds it, and the requirement it serves."""
     with _client() as client:
         _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/board"))
 
 
 @app.command()
 def org(project: str) -> None:
+    """Teams, agents and schedules — who is on the project and when each one wakes."""
     with _client() as client:
         _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/org"))
 
@@ -811,6 +1071,7 @@ def activity(
 
 @app.command()
 def channels(project: str) -> None:
+    """The project's channels, with their ids for `yaaf tail`."""
     with _client() as client:
         _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/channels"))
 
@@ -838,6 +1099,7 @@ def inbox(project: str) -> None:
 
 @app.command()
 def tail(channel_id: str, limit: int = typer.Option(30, "--limit")) -> None:
+    """The latest messages in one channel (ids from `yaaf channels`)."""
     with _client() as client:
         response = client.get(f"/observe/channels/{channel_id}/messages",
                               params={"limit": limit})
@@ -851,6 +1113,7 @@ def tail(channel_id: str, limit: int = typer.Option(30, "--limit")) -> None:
 
 @app.command()
 def runs(project: str, limit: int = typer.Option(20, "--limit")) -> None:
+    """Recent runs: which agent, why it woke, how it ended, what it cost."""
     with _client() as client:
         _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/runs",
                          params={"limit": limit}))
@@ -858,24 +1121,28 @@ def runs(project: str, limit: int = typer.Option(20, "--limit")) -> None:
 
 @app.command()
 def ledger(project: str) -> None:
+    """Every metered line of spend this month."""
     with _client() as client:
         _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/ledger"))
 
 
 @app.command()
 def evidence(project: str) -> None:
+    """Every claim the agents filed, and what the platform could verify about it."""
     with _client() as client:
         _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/evidence"))
 
 
 @app.command()
 def hypotheses(project: str) -> None:
+    """An Explore project's bets, with their kill dates and what each has earned."""
     with _client() as client:
         _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/hypotheses"))
 
 
 @app.command()
 def approvals(project: str) -> None:
+    """Approvals waiting on you, and what each decides if you do nothing."""
     with _client() as client:
         _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/approvals"))
 
@@ -920,6 +1187,7 @@ def say(project: str, message: str) -> None:
 @app.command()
 def decide(approval_id: str, approve: bool = typer.Option(..., "--approve/--deny"),
            note: str = typer.Option("", "--note")) -> None:
+    """Approve or deny an approval (ids from `yaaf approvals`). The note reaches the CEO."""
     with _client() as client:
         _show(client.post(f"/admin/approvals/{approval_id}/decide",
                           json={"approve": approve, "note": note}))
@@ -952,6 +1220,7 @@ def ack_heads_up(heads_up_id: str, note: str = typer.Option("", "--note")) -> No
 
 @app.command()
 def unfreeze(message_id: str) -> None:
+    """Unfreeze a thread the loop breaker froze, so its agents may talk again."""
     with _client() as client:
         _show(client.post(f"/admin/threads/{message_id}/unfreeze"))
 
@@ -959,6 +1228,7 @@ def unfreeze(message_id: str) -> None:
 @app.command()
 def audit_evidence(evidence_id: str, ok: bool = typer.Option(..., "--ok/--bad"),
                    note: str = typer.Option("", "--note")) -> None:
+    """Record your own verdict on one piece of evidence (ids from `yaaf evidence`)."""
     with _client() as client:
         _show(client.post(f"/admin/evidence/{evidence_id}/audit",
                           json={"ok": ok, "note": note}))
@@ -1030,6 +1300,7 @@ app.add_typer(people, name="people")
 
 @people.command("list")
 def people_list() -> None:
+    """Everybody with an account on this install."""
     with _client() as client:
         _show(client.get("/admin/users"))
 
@@ -1051,12 +1322,14 @@ def people_link(email: str) -> None:
 
 @people.command("promote")
 def people_promote(email: str) -> None:
+    """Make somebody an instance admin."""
     with _client() as client:
         _show(client.patch(f"/admin/users/{_person_id(client, email)}", json={"is_admin": True}))
 
 
 @people.command("demote")
 def people_demote(email: str) -> None:
+    """Take instance admin away from somebody. The last admin cannot be demoted."""
     with _client() as client:
         _show(client.patch(f"/admin/users/{_person_id(client, email)}",
                            json={"is_admin": False}))
@@ -1072,6 +1345,7 @@ def people_deactivate(email: str) -> None:
 
 @people.command("reactivate")
 def people_reactivate(email: str) -> None:
+    """Let a deactivated person sign in again."""
     with _client() as client:
         _show(client.patch(f"/admin/users/{_person_id(client, email)}", json={"active": True}))
 
@@ -1124,8 +1398,41 @@ def _register_users() -> None:
     app.add_typer(users, name="users")
 
 
+def _register_up() -> None:
+    from yaaf.cli.up import up
+
+    app.command()(up)
+
+
 _register_spend()
 _register_users()
+_register_up()
+
+#: Where each command sits in `yaaf --help`, in the order somebody new reaches
+#: for them. The help used to be sixty commands in the order they were written.
+PANELS = {
+    "Get started": ("up", "login", "logout", "whoami", "doctor", "rehearse",
+                    "create_project", "projects", "status"),
+    "Run a project": ("start", "pause", "stop", "configure", "amend"),
+    "Decide": ("say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",
+               "audit_evidence"),
+    "Read": ("briefing", "agenda", "receipt", "dashboard", "board", "org", "activity",
+             "channels", "inbox", "tail", "runs", "ledger", "evidence", "hypotheses",
+             "approvals", "asks", "flags", "spend_report"),
+}
+_ORDER = [*PANELS, "Set up the install"]
+
+
+def _panel(name: str) -> str:
+    return next((panel for panel, names in PANELS.items() if name in names),
+                "Set up the install")
+
+
+for _info in app.registered_commands:
+    _info.rich_help_panel = _panel(_info.callback.__name__)
+app.registered_commands.sort(key=lambda info: _ORDER.index(info.rich_help_panel))
+for _group in app.registered_groups:
+    _group.rich_help_panel = "Set up the install"
 
 if __name__ == "__main__":
     app()

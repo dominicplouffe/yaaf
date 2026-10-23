@@ -22,7 +22,7 @@ function Walk({ report }: { report: RehearsalReport }) {
           </span>
           <span className="dl">{step.label}</span>
           <span className="dd">
-            {step.na ? "not in this project's shape" : step.detail}
+            {step.na ? step.na_reason ?? "not in this project's shape" : step.detail}
           </span>
           {step.tick !== null && !step.na && (
             <span className="dt">beat {step.tick}</span>

@@ -674,3 +674,14 @@ def test_a_seat_priced_by_this_install_is_priced_in_the_drill_too(monkeypatch):
         "roles": [*ROLES, critic]})
     steps = walk(report)
     assert steps["created"]["ok"], steps["created"]["detail"]
+
+
+def test_a_rung_that_does_not_apply_says_why_in_its_own_words(report):
+    """There are two reasons a rung does not apply, and the text gave the first
+    for both: a Deliver project that never asked for the read was told the
+    step was "not in an Explore project's shape"."""
+    assert report["spec"]["mode"] == "deliver"
+    read = walk(report)["work_read"]
+    assert read["na"] and "deliverable_review: none" in read["na_reason"], read
+    text = rehearsal_report.render_text(report)
+    assert "Explore" not in text, text

@@ -13,6 +13,15 @@ No Docker, SQLite instead of Postgres, and the sandbox replaced by a plain
 subprocess. This is the **contributor** path: if you want to *run* yaaf, use
 [the deploy script](#the-real-thing--your-own-server) below instead.
 
+**The short way:** from a checkout with the dashboard built (`cd web && npm install
+&& npm run build`), `yaaf up --no-isolation --email you@example.com` does every step
+below: it keeps a master key and a SQLite database in `~/.yaaf`, creates the schema,
+starts the server and the runner, makes you the first admin and prints your sign-in
+link, seeds an empty role library from `roles/` and `crews/`, and prints the address.
+Ctrl-C (or any SIGTERM) stops both processes. `--no-isolation` is required on
+purpose: it runs agents as you, with no sandbox, and yaaf will not choose that for
+you — set `YAAF_SANDBOX_MODE=docker` instead on anything other than a dev machine.
+
 The compose deployment does four things for you that you have to do by hand
 here. Miss any one and you get a project that looks alive and never moves — so
 each is called out.
@@ -47,7 +56,14 @@ export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
 .venv/bin/yaaf users bootstrap --email you@example.com --name "You"
 .venv/bin/yaaf login --email you@example.com
 .venv/bin/yaaf seed-roles roles/
+.venv/bin/yaaf seed-crews crews/   # the "start from a crew" picker reads these
+.venv/bin/yaaf doctor              # checks all of the above, names any fix
 ```
+
+If the API is not on port 8080, also export `YAAF_API_BASE_URL`: it is what
+the runner calls and what the bootstrap link is built from, and it defaults to
+`http://localhost:8080` — so on another port the runner talks to nothing, or
+to somebody else's server, without an error you would notice.
 
 Open the link `bootstrap` printed, choose a password, and you are in the
 dashboard at **http://localhost:8080/app**. See [AUTH.md](AUTH.md) for who
@@ -514,7 +530,7 @@ these polling floors, never a replacement for them.
 
 - `GET /healthz` — process liveness.
 - `GET /observe/projects/{id}/health` — the per-project setup checklist, the
-  same one the Overview renders. All green = the UI hides the card.
+  same one the Team page renders. All green = the UI hides the card.
 - Dispatcher, janitor, and Slack threads log at INFO to the `api` container. A
   plan meter throttled by Anthropic logs one WARNING naming the token digest and
   how long it is staying quiet; it never retries through a `Retry-After`. A
@@ -620,7 +636,7 @@ difference. Three things are worth knowing:
 - **The names are placeholders.** A migrated key is called
   `Migrated <old name> (<id>)`, because two projects could each have had a key
   named `anthropic-api-key` and the shared list needs distinct names. Open
-  Settings → LLM credentials once and rename them; the Overview of every
+  Settings → LLM credentials once and rename them; the Team page of every
   project on a credential shows the name.
 - **Its billing mode is read from the project it paid for.** A key no project
   was attached to is decrypted to tell an API key from a subscription token —
