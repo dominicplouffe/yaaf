@@ -68,7 +68,7 @@ export function OfferHost() {
   };
   return (
     <ConfirmModal title="Stop asking you about purchases like this?" confirmLabel="Yes, stop asking"
-      cancelLabel="Keep asking me"
+      cancelLabel="Keep asking me" onDismiss={() => setOffer(null)}
       busy={busy} onConfirm={yes} onCancel={no}>
       <p>{offer.question}</p>
       <p className="help">{offer.keeps} You can lower the line again in Settings → Rules in force.</p>

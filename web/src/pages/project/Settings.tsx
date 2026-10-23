@@ -1563,7 +1563,12 @@ function DialSummary({
   const cap = Number(usd ? cons.monthly_usd_cap : cons.monthly_token_cap) || 0;
   const wall = cap * (Number(cons.hard_stop_multiple) || 1);
   const amount = (n: number) => usd ? fmtUnit(Math.round(n), "usd") : `${fmtUnit(n, "tokens")} tokens`;
-  const purchase = Number(cons.max_usd_per_purchase) || 0;
+  // Two lines ask him about a purchase — the threshold (at or over) and the
+  // per-purchase line (over, when set) — and the lower one is the one he meets.
+  const threshold = Number(cons.approval_threshold_usd) || 0;
+  const perPurchase = Number(cons.max_usd_per_purchase) || 0;
+  const asksAt = perPurchase > 0 && perPurchase < threshold
+    ? { usd: perPurchase, words: "over" } : { usd: threshold, words: "at or over" };
   const asEdit = (value: unknown) => String(value ?? "");
   const inForce = (cards: PresetCard[]) => cards.find((card) =>
     Object.entries(card.constitution).every(([k, v]) => asEdit(cons[k]) === asEdit(v)));
@@ -1579,7 +1584,9 @@ function DialSummary({
         <span className="dial-value">
           <b>{amount(cap)} a month</b>
           <span className="help"> · pauses itself at {amount(wall)}
-            {purchase > 0 ? ` · asks you before any purchase over $${purchase.toLocaleString()}` : ""}</span>
+            {asksAt.usd > 0
+              ? ` · asks you before any purchase ${asksAt.words} $${asksAt.usd.toLocaleString()}`
+              : " · asks you before every purchase"}</span>
         </span>
         <button className="small" onClick={() => onOpen("Money")}>Change</button>
       </div>

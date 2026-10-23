@@ -1109,7 +1109,8 @@ export function ExportCsv({ onClick, label }: { onClick: () => void; label?: str
     show a table of what is about to change. Escape and the backdrop both
     cancel, so the safe exit is the reflexive one. */
 export function ConfirmModal({
-  title, confirmLabel, cancelLabel = "Cancel", danger, busy, onConfirm, onCancel, children,
+  title, confirmLabel, cancelLabel = "Cancel", danger, busy, onConfirm, onCancel, onDismiss,
+  children,
 }: {
   title: string;
   confirmLabel: string;
@@ -1120,11 +1121,15 @@ export function ConfirmModal({
   busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Escape and the backdrop, when closing the dialog is not the same as
+      answering it with the cancel button. Defaults to onCancel. */
+  onDismiss?: () => void;
   children: React.ReactNode;
 }) {
+  const dismiss = onDismiss ?? onCancel;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape") dismiss();
     };
     window.addEventListener("keydown", onKey);
     // The page behind a modal must not scroll under it.
@@ -1134,10 +1139,10 @@ export function ConfirmModal({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = previous;
     };
-  }, [onCancel]);
+  }, [dismiss]);
 
   return (
-    <div className="modal-back" onClick={onCancel}>
+    <div className="modal-back" onClick={dismiss}>
       <div
         className="modal"
         role="dialog"
