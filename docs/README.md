@@ -16,7 +16,7 @@ Start here if you're new; skim the table if you're not.
 |---|---|
 | [FEATURES.md](FEATURES.md) | The complete feature reference, grouped by the failure it prevents. |
 | [DASHBOARD.md](DASHBOARD.md) | Every screen and what you do there — Home, Inbox, Projects, Roles, and each project page. |
-| [GOVERNANCE.md](GOVERNANCE.md) | The constitution: all 60 rules, their defaults, what each refuses, and how to change one. |
+| [GOVERNANCE.md](GOVERNANCE.md) | The constitution: every rule, its default, what each refuses, and how to change one. |
 | [AUTONOMY.md](AUTONOMY.md) | How much the CEO decides without you — the five authority switches, and what never moves at any setting. |
 | [INTEGRATIONS.md](INTEGRATIONS.md) | Billing, credentials, MCP data sources, Slack, GitHub, webhooks, notifications, artifact storage. |
 

@@ -34,7 +34,7 @@ and are the part you are actually paying for.
 
 Two things before you click Create:
 
-1. **Paste your Anthropic key.**
+1. **Pick the credential that pays** on the money step.
 2. **Change the question,** which is in capitals in the goal. It ships as *which
    college majors actually pay, and how sure can anyone honestly be* — a good
    default because the obvious answer is wrong for a reason you can see. Swap in
@@ -165,7 +165,7 @@ and now you can see the difference, which is the point of putting this one last.
 
 ## What to watch
 
-- **The first failing R-03 run.** Records → Runs shows the check output. This is
+- **The first failing R-03 run.** Activity → Runs shows the check output. This is
   the moment the example exists for: a number the analysis was confident about,
   refused by arithmetic.
 - **A `PROVENANCE.md` written after the analysis.** Then it is decoration, not a

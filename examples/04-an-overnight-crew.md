@@ -88,7 +88,7 @@ platform runs it — not the agent that wants to open the PR.
 - **A red main branch.** CI failure arrives by webhook, wakes the crew, and it
   outranks everything else — that is in the goal, and it is the behaviour worth
   having.
-- **Records → Runs at 02:00.** Runs you were not there for, each with its wake
+- **Activity → Runs at 02:00.** Runs you were not there for, each with its wake
   reason and its cost. This is what "it keeps working while you're away" looks
   like as a table.
 
@@ -106,7 +106,7 @@ platform runs it — not the agent that wants to open the PR.
 ## Try this next
 
 - **Turn the dial to Autonomous** (Settings → Rules → Autonomy). The crew
-  accepts its own scope and signs its own dates; you read Records → Decisions
+  accepts its own scope and signs its own dates; you read Activity → Decisions
   over coffee instead of approving things at midnight. Everything stays audited
   and reversible.
 - Then **[05 — A tutor that adapts](05-a-tutor-that-adapts.md)**, where the

@@ -53,14 +53,14 @@ Three fields matter:
   income. There is **no agent tool that writes revenue**, so a number here
   cannot be invented by an agent having a good day.
 
-Now watch **Records → Runs**. A run appears within seconds, its wake reason is
+Now watch **Activity → Runs**. A run appears within seconds, its wake reason is
 the webhook, and Nadia is reading your event.
 
 ## Why signed, and why that matters
 
 Evidence that arrives this way is **platform-attested**: the platform saw the
 signature, so no agent typed it in. That is a different class of fact from an
-agent telling you something happened, and the Work tab labels it differently.
+agent telling you something happened, and **Activity → Proof** labels it differently.
 
 The signature is HMAC-SHA256 over the raw body. An unsigned or wrongly-signed
 caller learns nothing — the signature is checked before the body is even parsed.

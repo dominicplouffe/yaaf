@@ -373,7 +373,7 @@ That's the rule to remember: **no card = ready.**
 
 ## Step 5 — Say hello
 
-Open the **Boardroom** and talk to the CEO like you'd talk to a new hire on
+Open **Chat** and talk to the CEO like you'd talk to a new hire on
 day one. It already knows the goal; give it whatever else a person would
 need:
 
@@ -385,7 +385,7 @@ Then let it work.
 
 **In a Deliver or Operate project, the next thing that happens is the plan.**
 The CEO proposes requirements — things that must be *true* at the end, each
-with an acceptance test and an estimate — and they appear on the **Plan** tab
+with an acceptance test and an estimate — and they appear on the **Roadmap**
 marked *proposed*, which counts as nothing until you accept them. Read them
 like a statement of work: is this the right list, in the right order, and does
 each one have a test that could actually fail? Accept what you want, cut what
@@ -424,8 +424,8 @@ You can watch all of it in **Roadmap**, **Tasks** and **Team**, and in
   banner across the top of every tab, so you cannot miss it by being on the
   wrong page. Undecided approvals expire to "no" after a week — the
   project degrades gracefully while you're on vacation; it never deadlocks.
-- **Spot-check.** The **Work** tab deals you a random sample of recent
-  completed work and evidence claims. Fail anything that doesn't hold up —
+- **Spot-check.** **Tasks → Check the agents' work** deals you a random sample of
+  recent completed work and evidence claims. Fail anything that doesn't hold up —
   the CEO is told its team's work is suspect. You are the one reviewer that
   doesn't approve everything put in front of it.
 - **Watch the money if you want to** — the Overview budget meter warns at

@@ -151,12 +151,13 @@ happening at all.
 <img src="screenshots/inbox.png" alt="The Inbox: decisions waiting on the chairman across every project, soonest consequence first, with the selected approval's full case and its Approve and Deny buttons">
 
 Two panes, the way a mail client is: a list on the left, the selected item on
-the right, **j**/**k** to walk the list. Four tabs:
+the right, **j**/**k** to walk the list. Five tabs:
 
 | Tab | Holds |
 |---|---|
-| **Needs you** | The decisions only you can make. This is the old Desk, unchanged in its rule, and the only tab the sidebar badge counts. |
-| **Updates** | Each project's briefing — what moved since you last looked — and the flags the CEO raised to you. |
+| **Decide** | The decisions only you can make — the "needs you" list. This is the old Desk, unchanged in its rule, and the only tab the sidebar badge counts. |
+| **Acknowledge** | What you must know but not decide: a problem the CEO was made to raise, and a heads-up you asked for by standing order. One button, **Noted**. Nothing there blocks or expires. |
+| **Updates** | Each project's briefing — what moved since you last looked. |
 | **Watching** | Clocks the CEO resolves: droughts, kill dates still ahead, budget pace, unaudited work. Nothing here waits on a click. |
 | **Done** | Approvals and questions decided in the last seven days, and how — by you, or by their clock running out. |
 
@@ -317,7 +318,7 @@ Chosen once, at creation, and frozen — the rules differ by shape.
 
 | Shape | What it is | Example goal |
 |---|---|---|
-| **Explore** | Chase a goal with no fixed end. Bets, proof, and your call on when it has earned its keep. No requirements, no Plan tab. | "Find an idea and get one sale in 60 days." |
+| **Explore** | Chase a goal with no fixed end. Bets, proof, and your call on when it has earned its keep. No requirements, no Roadmap page. | "Find an idea and get one sale in 60 days." |
 | **Deliver** | Ship one thing, then stop. You accept what done means; the platform proves it. | "A security audit of our AWS estate." |
 | **Operate** | A Deliver that starts again on a rhythm, and gets better each cycle. | "A weekly market brief, tracked and improved." |
 
@@ -733,7 +734,7 @@ Data; everything after is occasional.
 
 **Governance**
 
-- **Rules in force** — all 52 constitution rules, each with its own help text
+- **Rules in force** — every constitution rule, each with its own help text
   and its stock default, behind six tabs: Money, Pace & brakes, How work is
   run, Autonomy, Memory, Rhythm & reporting. Edits span tabs; a tray at the
   foot of the pane lists every pending one, takes the required written reason,

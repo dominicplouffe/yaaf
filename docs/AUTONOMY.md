@@ -157,7 +157,7 @@ one amendment from being turned back.
 - **Security challenges go to a human.** A captcha or a 2FA prompt is handed
   to you through the *assist* protocol; the platform never tries to defeat one.
 - **Everything is recorded.** Every acceptance, cut, verdict, grant and
-  purchase is in the audit log and on the Decisions screen, whoever made it.
+  purchase is in the audit log and under Activity → Decisions, whoever made it.
 - **Your buttons never close.** Pause, stop, veto, amend, reopen and audit are
   chairman powers at every autonomy level — and so are standing a role down and
   recalling one, on the Overview roster.
@@ -213,7 +213,7 @@ meter what it buys.
   rule that a credential is never written to a file stays true for them.
 - The **needs loop**: an agent that lacks a capability files a `need`, which
   rides the approval machinery *and* lands as a boardroom line the Slack
-  bridge mirrors. You fulfil it in one motion on the Decisions screen — the
+  bridge mirrors. You fulfil it in one motion in the Inbox — the
   credential is stored, scoped to roles, and the need approved together.
 - With `capability_authority: ceo`, the CEO re-scopes existing service
   credentials across its own team. Never billing credentials, never values.

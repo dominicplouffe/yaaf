@@ -27,8 +27,9 @@ feeds, no repo.
 
 The form fills itself in. Three things to do before you click Create:
 
-1. **Paste your Anthropic key.** Without it the project is created but cannot
-   start — its first run would die looking for one.
+1. **Pick the credential that pays** on the money step — an Anthropic API key
+   an administrator added under Settings → LLM credentials. Without one the
+   project is created but cannot start.
 2. **Change the subject.** The goal says `RUNNING A MARATHON` in capitals.
    Replace it with whatever you actually want explained — a technology, a legal
    concept, a hobby, your own company's product. The capitals are there so you
@@ -42,7 +43,7 @@ Leave everything else. Supervised, Balanced, one writer named Ada.
 
 **Minute 0 — the plan.** Nothing works yet, and that is correct. A Deliver
 project starts owing a plan, so the first thing the CEO does is propose
-**requirements**: things that must be *true* at the end. Go to the **Plan** tab
+**requirements**: things that must be *true* at the end. Go to the **Roadmap**
 and you should see something like four of them, marked *proposed*:
 
 | | Requirement | Acceptance test |
@@ -57,25 +58,25 @@ Accept the ones you want; cut anything you don't. **Nothing can be created
 until you do** — that is a refusal in the server, not a nudge, and it is the
 single most important thing this example teaches you. Scope is yours.
 
-**Minutes 2–20 — it works.** The **Work** tab fills with tasks, each carrying
+**Minutes 2–20 — it works.** **Tasks** fills with tasks, each carrying
 the requirement it serves. Ada claims one at a time. You do nothing.
 
-**Whenever it finishes — the deliverable.** The **Deliverables** tab has the
+**Whenever it finishes — the deliverable.** **Deliverables** has the
 note. Read it. It is either good or it isn't, and you will know within a
 paragraph.
 
 ## What to look at while you wait
 
-- **Plan → the promise.** How much of the scope is true, and where the platform
+- **Roadmap → the promise.** How much of the scope is true, and where the platform
   projects it landing. On a four-requirement project you will see this as
   numbers rather than a chart, deliberately: a line drawn through one or two
   points is the number said twice with a slope nobody can check. Once enough
   has settled over enough days it becomes the burn-up, and the same card
   answers the same question either way.
-- **Records → Runs.** Every model call: which agent, why it woke, what it cost,
+- **Activity → Runs.** Every model call: which agent, why it woke, what it cost,
   and the full trace. Open one. This is where you learn what your agents are
   actually spending money on.
-- **Work → check the agents' work.** When something closes, the platform deals
+- **Tasks → Check the agents' work.** When something closes, the platform deals
   you a sample: what the task had to prove, beside what the agent claimed.
   Two minutes. Say whether you believe it.
 
@@ -87,9 +88,9 @@ it did is on the record.
 
 ## Try this next
 
-- **Change the goal mid-flight.** Settings → Brief. Then say so in the
-  Boardroom. Watch the CEO re-plan around it rather than carrying on.
-- **Cut a requirement** on the Plan tab and give a reason. It shows up in
-  Records → Decisions, and the CEO is told.
+- **Change the goal mid-flight.** Settings → Brief. Then say so in
+  Chat. Watch the CEO re-plan around it rather than carrying on.
+- **Cut a requirement** on the Roadmap and give a reason. It shows up in
+  Activity → Decisions, and the CEO is told.
 - Then go to **[02 — Settle an argument](02-settle-an-argument.md)**, where the
   answer has to survive a skeptic.

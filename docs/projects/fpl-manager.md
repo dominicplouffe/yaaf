@@ -403,7 +403,7 @@ wake, and the cycle roll are all read in it.
 
 **Operate plans before it builds.** The first thing the strategist does after you start it is
 propose the cycle's requirements — the memo, the review, the numbers each must carry — and
-they sit on the **Plan** tab as *proposed* until you accept them. Nothing gets created until
+they sit on the **Roadmap** as *proposed* until you accept them. Nothing gets created until
 that plan holds and fits the budget. Every cycle roll reopens that gate, which is what turns
 "we should learn from last week" into a step the platform actually makes the project take.
 

@@ -4,7 +4,7 @@
 > you a one-file game. What it will not do is put a developer, a UX designer and
 > a design analyst in a room with **different charters and conflicting
 > priorities**, make them argue in a channel you can read afterwards, and hand
-> you the argument as a record. Read `Records → Messages` on this one; the
+> you the argument as a record. Read **Activity → Messages** on this one; the
 > argument is more instructive than the game.
 
 **What you get:** a single HTML file you double-click, containing a small
@@ -43,7 +43,7 @@ Three teams for one HTML file looks like overkill and is the point of the
 example. These roles disagree by construction: the analyst wants a mechanic
 with a retention argument, the UX designer wants it to feel good in the hand,
 the developer wants it to hold 60fps on a mid-range Android. Read
-`Records → Messages` — the leadership channel is where that argument happens,
+**Activity → Messages** — the leadership channel is where that argument happens,
 and it is more instructive than the game.
 
 ## What "done" looks like

@@ -35,7 +35,7 @@ to be the reason 31 December arrives with no revenue.
 
 ## 1. The shape: Explore, not Deliver
 
-**Explore.** No plan, no requirements, no Plan tab. The CEO states falsifiable
+**Explore.** No plan, no requirements, no Roadmap page. The CEO states falsifiable
 **bets with kill dates** and the platform holds them to those dates.
 
 The temptation is Deliver — it has requirements, acceptance tests the platform
@@ -363,8 +363,8 @@ purpose.
 
 **`require_evidence_verification: true`.** Evidence counts only once the
 platform has fetched the URL itself, hashed it, snapshotted it, and checked the
-domain is not one you control. A link nobody fetched is not evidence. In the
-Work tab, `failed` means the platform fetched it and got a 404 or a mismatch —
+domain is not one you control. A link nobody fetched is not evidence. In
+**Activity → Proof**, `failed` means the platform fetched it and got a 404 or a mismatch —
 those count for nothing.
 
 **`drought_hours: 72`.** Three days with no verified external evidence and the
