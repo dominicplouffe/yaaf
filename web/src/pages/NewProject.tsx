@@ -2076,7 +2076,9 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               <>
                 <span className="chip">${usdCap}/mo</span>
                 <span className="help">
-                  ≈ ${roughMonthly(hiredRoles)}/mo at this staffing — the project pauses
+                  ≈ ${roughMonthly(hiredRoles)} a month if this staffing worked all month
+                  {mode === "deliver" ? " (a one-off usually finishes well inside one)" : ""}
+                  {" "}— the project pauses
                   itself at the hard stop, $
                   {(usdCap * Number(craft.hard_stop_multiple ?? 3)).toLocaleString()}
                 </span>
