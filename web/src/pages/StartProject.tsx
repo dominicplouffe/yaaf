@@ -152,9 +152,9 @@ export default function StartProject() {
 
       {status && !keyed && (
         <p className="help startnote">
-          The Founder needs a platform key of its own, set once. It pays for
-          product-wide conversations like this one and is never handed to a
-          project's agents — every project still pays its own way. You can set
+          The Founder needs a key, set once — one you already added for
+          projects will do. It pays for drafting and is never handed to a
+          project's agents; every project still pays its own way. You can set
           it on the way in, or in <Link to="/settings">Settings</Link>.
         </p>
       )}

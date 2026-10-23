@@ -508,15 +508,31 @@ def delete_llm_credential(credential_id: str) -> None:
 @app.command()
 def set_platform_key(
     mode: str = typer.Option("api_key", "--mode", help="api_key | subscription"),
+    from_credential: str = typer.Option(
+        None, "--from-credential",
+        help="Draft on this LLM credential (name or id) instead of pasting a second key"),
 ) -> None:
-    """Install or rotate the platform model credential (value prompted).
+    """Set the key the Founder drafts on: a new one (value prompted), or one of
+    your LLM credentials with --from-credential.
 
-    This is the Founder's key. It is never injected into a sandbox and never
-    reaches a project's agents — a project pays its own way with its own
-    billing credential, and there is no fallback.
+    Never injected into a sandbox and never a project's billing key. Borrowing
+    an LLM credential means one key serves both, and rotating it rotates both.
     """
-    value = typer.prompt("Credential value", hide_input=True)
     with _client() as client:
+        if from_credential:
+            listed = _json_or_die(client.get("/admin/settings/llm-credentials"))
+            wanted = from_credential.strip().lower()
+            match = next((c for c in listed
+                          if c["id"] == from_credential or c["name"].lower() == wanted), None)
+            if match is None:
+                names = ", ".join(c["name"] for c in listed) or "none yet"
+                typer.echo(f"no LLM credential called {from_credential!r} — you have: {names}",
+                           err=True)
+                raise typer.Exit(2)
+            _show(client.put("/admin/founder/credential/llm",
+                             json={"credential_id": match["id"]}))
+            return
+        value = typer.prompt("Credential value", hide_input=True)
         _show(client.put("/admin/settings/anthropic", json={"value": value, "mode": mode}))
 
 

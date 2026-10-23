@@ -17,7 +17,11 @@ Two stores, on purpose:
 
 The platform credential is decrypted server-side only. **It is never injected
 into a sandbox and never reaches a project's agents, under any circumstances:
-there is no inheritance and no fallback.** A project that has not attached its
+there is no inheritance and no fallback.** The other direction is allowed, by
+an administrator's explicit choice: the Founder may *borrow* one of the LLM
+credentials projects pay with (`use_llm_credential`), so an install that holds
+one Anthropic key does not have to be given it twice. That moves nothing into
+a project — the Founder still runs server-side, on no project's budget. A project that has not attached its
 own billing secret cannot run, and that is the intended answer — the Founder's
 key pays for product-wide conversations and nothing else. Slack tokens are
 different in kind: they are the *platform's* outward wiring, decrypted
@@ -48,6 +52,8 @@ SLACK_APP_SECRET = "platform-slack-app"
 #: read of a setting nobody ever wrote.
 BILLING_MODE = "platform.billing_mode"  # "api_key" | "subscription"
 FOUNDER_MODEL = "founder.model"
+#: The LLM credential the Founder borrows when it holds no key of its own.
+FOUNDER_LLM_CREDENTIAL = "founder.llm_credential"
 SLACK_CHAIRMAN_USER = "slack.chairman_user"
 SLACK_CHANNEL_PREFIX = "slack.channel_prefix"  # "" => the project slug
 SLACK_CHANNEL_VISIBILITY = "slack.channel_visibility"  # "private" | "public"
@@ -98,6 +104,10 @@ def set_setting(session: Session, key: str, value: str, *, is_secret: bool = Fal
 
 
 def billing_mode(session: Session) -> str:
+    # A borrowed credential bills the way it says it does; only the Founder's
+    # own key keeps its mode in a setting beside it.
+    if _own_row(session) is None and (borrowed := _borrowed_row(session)) is not None:
+        return borrowed.llm_mode or "api_key"
     return get_setting(session, BILLING_MODE, "api_key") or "api_key"
 
 
@@ -105,11 +115,65 @@ def founder_model(session: Session) -> str:
     return get_setting(session, FOUNDER_MODEL, DEFAULT_FOUNDER_MODEL) or DEFAULT_FOUNDER_MODEL
 
 
-def _credential_row(session: Session) -> Secret | None:
+def _own_row(session: Session) -> Secret | None:
     return session.execute(
         select(Secret).where(
             Secret.project_id.is_(None), Secret.name == PLATFORM_BILLING_SECRET)
     ).scalar_one_or_none()
+
+
+def _borrowed_row(session: Session) -> Secret | None:
+    """The LLM credential the Founder was told to use, while it still exists.
+
+    Read by id, not through the menus: hiding a credential takes it off the
+    pickers, and must not silently take the Founder offline with it. A deleted
+    one simply resolves to nothing, and the Founder says it has no key.
+    """
+    credential_id = get_setting(session, FOUNDER_LLM_CREDENTIAL)
+    if not credential_id:
+        return None
+    return session.execute(
+        select(Secret).where(Secret.id == credential_id, Secret.project_id.is_(None),
+                             Secret.llm_mode.is_not(None))
+    ).scalar_one_or_none()
+
+
+def _credential_row(session: Session) -> Secret | None:
+    """What pays for the Founder: its own key when it has one, else the LLM
+    credential it borrows. One function, so every reader agrees."""
+    return _own_row(session) or _borrowed_row(session)
+
+
+def credential_source(session: Session) -> dict:
+    """Where the Founder's key comes from, for a screen to say so. No value."""
+    if _own_row(session) is not None:
+        return {"source": "own"}
+    borrowed = _borrowed_row(session)
+    if borrowed is not None:
+        return {"source": "llm_credential", "credential_id": borrowed.id,
+                "name": borrowed.name}
+    return {"source": None}
+
+
+def use_llm_credential(session: Session, credential_id: str) -> Secret:
+    """Have the Founder pay with this LLM credential instead of a key of its own.
+
+    Replaces the Founder's own key if it had one: two places a key could come
+    from is how an install ends up rotating one and running on the other. The
+    credential stays exactly what it was — a project still has to be assigned
+    it to spend on it.
+    """
+    from yaaf.core import llm_credentials
+
+    row = llm_credentials.resolve(session, credential_id=credential_id)
+    if row is None:
+        raise NoPlatformCredential(
+            "no such LLM credential — pick one listed under Settings → LLM credentials")
+    own = _own_row(session)
+    if own is not None:
+        session.delete(own)
+    set_setting(session, FOUNDER_LLM_CREDENTIAL, row.id)
+    return row
 
 
 def has_credential(session: Session) -> bool:
@@ -128,9 +192,9 @@ def credential(session: Session) -> str:
     row = _credential_row(session)
     if row is None:
         raise NoPlatformCredential(
-            "no platform credential is configured. Set one in Settings so "
-            "product-wide conversations (the Founder) can run; a project's own "
-            "billing key is never used for them."
+            "no platform credential is configured — point the Founder at one of your "
+            "LLM credentials, or give it a key of its own, in Settings → Founder. It "
+            "pays for drafting and is never handed to a project's agents."
         )
     return decrypt(row.ciphertext)
 
@@ -146,7 +210,10 @@ def set_credential(session: Session, plaintext: str, *, mode: str = "api_key",
     provider = provider or DEFAULT_PROVIDER
     if mode not in {k.mode for k in seller(provider).kinds}:
         raise ValueError(f"unknown billing mode {mode!r}")
-    row = _credential_row(session)
+    # A key of its own ends any borrowing, so there is one answer to "what does
+    # the Founder run on?".
+    _forget_borrowed(session)
+    row = _own_row(session)
     if row is None:
         row = Secret(
             id=ids.new_id(ids.SECRET),
@@ -172,11 +239,24 @@ def credential_provider(session: Session) -> str:
     return (row.provider if row is not None else None) or DEFAULT_PROVIDER
 
 
-def clear_credential(session: Session) -> bool:
-    """Remove the platform credential. Returns whether one was there."""
-    row = _credential_row(session)
+def _forget_borrowed(session: Session) -> bool:
+    row = session.execute(
+        select(PlatformSetting).where(PlatformSetting.key == FOUNDER_LLM_CREDENTIAL)
+    ).scalar_one_or_none()
     if row is None:
         return False
+    session.delete(row)
+    return True
+
+
+def clear_credential(session: Session) -> bool:
+    """Remove the platform credential, or stop borrowing one. Returns whether
+    there was anything to remove. The borrowed LLM credential itself is never
+    touched — projects may be paying with it."""
+    forgot = _forget_borrowed(session)
+    row = _own_row(session)
+    if row is None:
+        return forgot
     session.delete(row)
     return True
 

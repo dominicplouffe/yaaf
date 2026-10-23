@@ -56,6 +56,8 @@ def get_settings(session: Session = Depends(db)) -> dict:
             # the Founder runs on whichever one this says (docs/RUNTIMES.md M6).
             "provider": platform.credential_provider(session),
             "model": platform.founder_model(session),
+            # Its own key, or one of the LLM credentials below, borrowed.
+            "source": platform.credential_source(session),
             "note": ("This key pays for product-wide conversations — the Founder. It is "
                      "never injected into a sandbox and never reaches a project's agents: "
                      "every project pays its own way with its own billing credential."),
@@ -145,6 +147,31 @@ def install_credential(session: Session, value: str, mode: str,
     if model:
         platform.set_setting(session, platform.FOUNDER_MODEL, model.strip())
     return {"ok": True, "billing_mode": mode, "provider": provider,
+            "model": platform.founder_model(session)}
+
+
+def borrow_llm_credential(session: Session, credential_id: str) -> dict:
+    """Have the Founder pay with an LLM credential projects already use.
+
+    The same refusals as installing a key of its own — a provider or mode the
+    Founder cannot run on, a model the credential does not pay for — because
+    which door a key came through should not change whether it works.
+    """
+    from yaaf.core import llm_credentials
+    from yaaf.founder.session import refusal
+
+    row = llm_credentials.resolve(session, credential_id=credential_id)
+    if row is None:
+        raise HTTPException(status_code=422, detail=(
+            "no such LLM credential — pick one listed under Settings → LLM credentials"))
+    provider = row.provider or DEFAULT_PROVIDER
+    problem = (refusal(provider, row.llm_mode)
+               or _founder_model_problem(platform.founder_model(session), provider))
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
+    platform.use_llm_credential(session, row.id)
+    return {"ok": True, **platform.credential_source(session),
+            "billing_mode": row.llm_mode, "provider": provider,
             "model": platform.founder_model(session)}
 
 

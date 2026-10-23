@@ -74,11 +74,12 @@ wants to know. You argue; it revises. When the draft is right, **Review &
 create** drops the whole thing into the form below, where you change anything
 you like, run the fire drill for nothing, and create it.
 
-It needs one thing first: the **Founder's own credential**, set once under
-Settings — Anthropic's, or an API key of any other provider with one of its
-models. That is not one of the LLM credentials projects pay with and never
-becomes one — it pays for product-wide conversations like this, and no
-project's agents ever see it. Every project you create still pays its own way,
+It needs one thing first: a key for the Founder, set once under Settings →
+Founder. The quickest is **one you already added** as an LLM credential —
+one click, and rotating that credential rotates this too; adding your first
+LLM credential offers it, ticked. Or give the Founder a key of its own,
+Anthropic's or any other provider's with one of its models. Either way it pays
+for drafting only, and no project's agents ever see it. Every project you create still pays its own way,
 and the Founder knows it: it reads the list of LLM credentials, names the one
 that pays in its draft when there is only one, and asks you which when there
 are several. That is an instruction to the model, not a rule the server can

@@ -103,10 +103,10 @@ What being managed buys you:
 > personal Claude subscription. Subscription mode exists for single-user
 > tinkering; use an API key for anything real.
 
-**Not to be confused with the Founder's credential.** The sidebar's **Settings
-→ Founder model credential** holds a *separate* key that pays for
-product-wide conversations (the Founder, which drafts a project before one
-exists). It is decrypted server-side only and **never reaches a project's
+**Not to be confused with the Founder's key.** **Settings → Founder** names the
+key that pays for product-wide conversations (the Founder, which drafts a
+project before one exists) — one of these LLM credentials, borrowed, or a
+separate key of its own. It is decrypted server-side only and **never reaches a project's
 agents** — there is no inheritance and no fallback. A project with no
 credential assigned cannot run, and that is the intended answer. It can be
 any provider's: an Anthropic key or subscription runs the Founder and the

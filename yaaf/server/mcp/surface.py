@@ -219,6 +219,9 @@ WITHHELD = {
         "where it lands.",
     "PUT /admin/founder/credential": "a platform credential value, inbound.",
     "POST /admin/founder/credential/test": "reaches the platform credential.",
+    "PUT /admin/founder/credential/llm":
+        "points the product-wide Founder at a shared credential — an administrator's "
+        "call about what pays for every future draft.",
     "DELETE /admin/founder/credential": "product-wide, and destructive to every future draft.",
     "PUT /admin/founder/model": "product-wide configuration, not a project's.",
     # App-wide settings, withheld as a block. Every client token is scoped to

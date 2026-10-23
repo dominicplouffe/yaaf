@@ -110,11 +110,12 @@ link to the credentials list.
   refuses these. Projects never store a billing key of their own: they pick
   one of these, under their own Settings → Money, on the New Project form, or
   by telling the Founder.
-- **Founder model credential** — the key the **Founder** runs on. Install,
-  rotate, run a live test against it, remove it, and pick the model it uses.
-  It pays for product-wide conversations and **never reaches a project's
-  agents**: no inheritance, no fallback. It is deliberately not one of the
-  LLM credentials above.
+- **Founder** — the key the **Founder** drafts on: one of the LLM credentials
+  above (**Use** it, one click — the default offered when you add your first),
+  or a key of its own. Install, rotate, run a live test against it, remove it,
+  and pick the model it uses. It pays for drafting and **never reaches a
+  project's agents**: borrowing runs one way — the Founder may use a
+  project-paying credential, a project never uses the Founder's.
 - **Slack connection** — the bot/signing/app tokens for your Slack workspace,
   your member ID, and the channel naming convention, stored once. Every project
   inherits them, so

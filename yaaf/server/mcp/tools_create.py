@@ -176,7 +176,8 @@ def grade_goal(principal: Principal, session: Session, arguments: dict) -> dict:
             "elements": list(GOAL_ELEMENTS),
             "rubric": "yaaf://docs/goal-grammar",
             "note": ("Read that resource and grade the goal against all ten elements "
-                     "yourself, or set a platform credential in Settings and ask again."),
+                     "yourself — or have an administrator point the Founder at one of the "
+                     "install's LLM credentials (Settings → Founder) and ask again."),
         }, arguments.get("detail"))
 
     grade = asyncio.run(run_grade(goal, env=env, model=founder_model(session)))
