@@ -4,6 +4,10 @@
 Analysis only: no product code was changed. Evidence, raw measurements and verbatim copy are in
 [APPENDIX.md](APPENDIX.md).*
 
+> **Next: [CLEAN_SHEET.md](CLEAN_SHEET.md)** redesigns YAAF from scratch around results, removes
+> ~80% of the interactions this audit's roadmap still leaves with the user, and recommends
+> shipping only Phase 1 below before validating that design. Treat this audit as the baseline.
+
 **Audited:** `main` at `cbb5bec` (23 Oct 2026) · **Surfaces:** README and docs, web app, CLI, MCP
 server, email/webhook notifications, Founder, fire drill · **Method:** the docs; the
 implementation wherever the docs and the product could disagree; and the product run locally in
