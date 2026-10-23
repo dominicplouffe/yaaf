@@ -8,8 +8,6 @@ import {
   HealthCheck,
   MessageRow,
   post,
-  requirementName,
-  RunRow,
 } from "../../api";
 import Agenda from "../../agenda";
 import { ItemActions, itemsFor, needsYou, soonestClock, useDesk, WARN_VERDICTS } from "../../desk";
@@ -22,7 +20,6 @@ import {
   clip,
   clipMarkdown,
   earlyRunSentence,
-  fmtLeft,
   fmtSoon,
   fmtUnit,
   fmtWhenShort,
@@ -33,10 +30,9 @@ import {
 import { Avatar, Badge, Btn, Term, Verdict } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
 import { chairmanDecides, deliveryVerdict, cycleOverdue, flagPlain, fmtDate, fmtRoll, fullyAutonomous } from "../../ui/project";
-import { heldFor, SeatState } from "../../ui/team";
 import { statusBadge } from "../Projects";
-import { SpendByTeam } from "./Spend";
-import { SeatPill } from "./Team";
+import ScheduleStrip from "./Schedule";
+import { TeamSection } from "./Team";
 
 /** The first page of a project answers three questions, in the order a
     chairman asks them, in about five seconds:
@@ -69,18 +65,8 @@ interface FlagRow {
 }
 interface FlagsView { unraised: number; flags: FlagRow[] }
 
-/** A deliverable as the files index sends it: the newest version of a name,
-    with its receipt when one was written. */
-interface ShelfRow { key: string; name: string; size: number; at: string | null; receipt: { key: string } | null }
-interface ShelfView { matched: number; rows: ShelfRow[] }
-
-const SEAT_ORDER: SeatState[] = ["working", "waiting", "blocked", "next", "idle", "paused"];
-
-function fmtSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+/** How many deliverables have been published — the files index's own count. */
+interface ShelfView { matched: number }
 
 /** Who holds which verb, in one word for the header. */
 function autonomyWord(dash: Dashboard): { word: string; means: string } {
@@ -94,151 +80,56 @@ function autonomyWord(dash: Dashboard): { word: string; means: string } {
     : { word: "Mixed autonomy", means: "Some decisions are yours and some are your CEO's — Settings → How it runs says which." };
 }
 
-/** Runs started per hour today, for the sparkline under "Working now". */
-function runsByHour(runs: RunRow[]): number[] {
-  const now = new Date();
-  const hours = new Array(now.getHours() + 1).fill(0);
-  for (const r of runs) {
-    if (!r.started_at) continue;
-    const at = new Date(r.started_at);
-    if (at.toDateString() === now.toDateString()) hours[at.getHours()] += 1;
-  }
-  return hours.length > 1 ? hours : [0, ...hours];
-}
-
-function Sparkline({ values }: { values: number[] }) {
-  const w = 200;
-  const h = 28;
-  const max = Math.max(...values, 1);
-  const step = w / Math.max(values.length - 1, 1);
-  const pts = values.map((v, i) => [i * step, h - 3 - (v / max) * (h - 6)] as const);
-  const d = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
-  const last = pts[pts.length - 1];
-  return (
-    <svg className="spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
-      <path d={`${d} L ${w} ${h} L 0 ${h} Z`} fill="var(--accent-fill)" stroke="none" />
-      <path d={d} fill="none" stroke="var(--accent)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
-      <circle cx={last[0]} cy={last[1]} r="2.4" fill="var(--accent)" />
-    </svg>
-  );
-}
-
-/** Today, the promise, and the projection on one line — so "at risk" is a
-    picture of a gap and not only a word. */
-function Timeline({ start, promised, projected }: { start: string; promised: string; projected: string | null }) {
-  const t0 = new Date(start).getTime();
-  const tp = new Date(promised).getTime();
-  const tj = projected ? new Date(projected).getTime() : tp;
-  const end = Math.max(tp, tj) + (Math.max(tp, tj) - t0) * 0.06;
-  const pos = (t: number) => `${Math.min(100, Math.max(0, ((t - t0) / (end - t0)) * 100))}%`;
-  const late = tj > tp;
-  return (
-    <div className="tl" aria-hidden="true">
-      <i className="tl-done" style={{ width: pos(Date.now()) }} />
-      {late && <i className="tl-slip" style={{ left: pos(tp), width: `calc(${pos(tj)} - ${pos(tp)})` }} />}
-      <i className="tl-mark today" style={{ left: pos(Date.now()) }} />
-      <i className="tl-mark promised" style={{ left: pos(tp) }} />
-      {projected && <i className="tl-mark projected" style={{ left: pos(tj) }} />}
-      <span className="tl-lab" style={{ left: pos(Date.now()) }}>Today</span>
-      <span className={`tl-lab${late ? " end" : ""}`} style={{ left: pos(tp) }}>{fmtDate(promised)}</span>
-    </div>
-  );
-}
-
-function Kpis({ ctx }: { ctx: ProjectCtx }) {
-  const { dash, plan, seats, projectId, hypotheses } = ctx;
+/** The team's scoreboard, one line under the chart: is it on track, how
+    much of "done" is true, what it has delivered, and what it has cost. Each
+    fact links to where its detail lives. */
+function TeamFoot({ ctx, published }: { ctx: ProjectCtx; published: number | null }) {
+  const { dash, plan, projectId, hypotheses } = ctx;
   const verdict = deliveryVerdict(dash, plan);
-  const c = plan?.commitment;
-  const { unit, spent, cap, warnRatio, frac } = budgetOf(dash);
+  const { unit, spent, cap, frac } = budgetOf(dash);
   const pace = paceDate(spent, cap);
-  const health = runHealth(ctx.runs ?? []);
-  const people = seats.filter((s) => s.state !== "stood_down");
-  const busy = people.filter((s) => s.state === "working").length;
   const reqs = (plan?.requirements ?? []).filter((r) => r.status !== "cut");
   const explore = dash.mode === "explore";
   const bets = hypotheses.filter((h) => h.status === "active");
   const base = `/projects/${projectId}`;
   const tone = verdict.tone === "good" ? "good" : verdict.tone;
-
   return (
-    <section className="kpis" aria-label="Is it on track?">
-      <Link className="kpi" to={explore ? `${base}/tasks` : `${base}/roadmap`}>
-        <span className="kpi-l"><Icon name="calendar" size={14} />{dash.mode === "operate" ? "This cycle" : "Delivery"}</span>
-        <span className={`kpi-v ${tone}`}>{verdict.label}</span>
-        <span className="kpi-s">{verdict.sub}</span>
-        {dash.mode === "operate" && dash.cycle && (
-          <Timeline start={dash.cycle.opened_at} promised={dash.cycle.due_at ?? dash.cycle.rolls_at} projected={null} />
-        )}
-        {c?.deliver_by && (
-          <Timeline start={c.accepted_at ?? dash.created_at} promised={c.deliver_by} projected={c.projected_done_at} />
-        )}
+    <div className="team-foot" aria-label="Is it on track?">
+      <Link to={explore ? `${base}/details/tasks` : `${base}/details/roadmap`} title={verdict.sub}>
+        <b className={`tf-${tone}`}>{verdict.label}</b>
       </Link>
       {explore ? (
-        <Link className="kpi" to={`${base}/tasks`}>
-          <span className="kpi-l"><Icon name="target" size={14} />Bets in play</span>
-          <span className="kpi-v">{bets.length}</span>
-          <span className="kpi-s">
-            {dash.ceo_judgment.tasks_with_verified_external} of {dash.ceo_judgment.tasks_created} bets
-            ever proven outside the project
-          </span>
+        <Link to={`${base}/details/tasks`}>
+          <b>{bets.length}</b> {bets.length === 1 ? "bet" : "bets"} in play ·{" "}
+          {dash.ceo_judgment.tasks_with_verified_external} proven outside
         </Link>
       ) : (
-        <Link className="kpi" to={`${base}/roadmap`}>
-          <span className="kpi-l"><Icon name="flag" size={14} />Progress</span>
-          <span className="kpi-v">
-            {plan?.burnup?.settled ?? reqs.filter((r) => r.status === "met").length}
-            <span className="kpi-of"> of {plan?.burnup?.scope_total ?? reqs.length}</span>
-          </span>
-          <span className="kpi-s">
-            <Term means="A requirement is a testable outcome; together they define done. Only the platform can mark one met.">
-              requirements
-            </Term>{" "}met
-            {reqs.some((r) => r.status === "in_progress") && ` · ${reqs.filter((r) => r.status === "in_progress").length} in progress`}
-            {dash.requirements_proposed > 0 && ` · ${dash.requirements_proposed} proposed`}
-          </span>
-          {reqs.length > 0 && (
-            <span className="segbar">
-              {reqs.map((r) => (
-                <i key={r.id} className={r.status === "met" ? "met" : r.status === "in_progress" ? "prog" : r.status === "proposed" ? "prop" : ""}
-                  title={`${r.key} — ${r.status.replaceAll("_", " ")}`} />
-              ))}
-            </span>
-          )}
+        <Link to={`${base}/details/roadmap`}>
+          <b>{plan?.burnup?.settled ?? reqs.filter((r) => r.status === "met").length} of{" "}
+            {plan?.burnup?.scope_total ?? reqs.length}</b>{" "}
+          <Term means="A requirement is a testable outcome; together they define done. Only the platform can mark one met.">
+            must-be-true things
+          </Term>{" "}true
         </Link>
       )}
-      <Link className="kpi" to={`${base}/spend`}>
-        <span className="kpi-l"><Icon name="wallet" size={14} />Spent this month</span>
-        <span className="kpi-v">{fmtUnit(spent, unit)}<span className="kpi-of"> of {fmtUnit(cap, unit)}</span></span>
-        <span className="kpi-s">
-          {frac >= 1 ? "the cap is reached — the project is paused"
-            : pace ? `on pace to reach the cap ${fmtWhenShort(pace.toISOString())}`
-              : "on pace to finish the month under the cap"}
-        </span>
-        <span className="meterline">
-          <i className={frac >= 1 ? "over" : frac >= warnRatio ? "warn" : ""} style={{ width: `${Math.min(frac, 1) * 100}%` }} />
-          <b style={{ left: `${warnRatio * 100}%` }} title={`Warns at ${Math.round(warnRatio * 100)}%`} />
-        </span>
+      <Link to={`${base}/results`}>
+        <b>{published ?? "—"}</b> result{published === 1 ? "" : "s"} delivered · see results
       </Link>
-      <Link className="kpi" to={`${base}/team`}>
-        <span className="kpi-l"><Icon name="users" size={14} />Working now</span>
-        <span className="kpi-v">{busy}<span className="kpi-of"> of {people.length}</span></span>
-        <span className="kpi-s">
-          {dash.activity.daily_runs.used} of {dash.activity.daily_runs.cap} runs today
-          {health.early.length > 0 && ` · ${health.early.length} ended early`}
-          {dash.activity.waiting.unread > 0 &&
-            ` · ${dash.activity.waiting.unread} unread message${dash.activity.waiting.unread === 1 ? "" : "s"}`}
-          {/* A wait that ends by itself — a start time the CEO set, pacing, a
-              batching window — is said here and nowhere louder. The full
-              sentence is one hover away for a reader who wants the why. */}
-          {dash.status === "running" && !dash.activity.brief.banner && dash.activity.brief.clears_at && (
-            <span title={`${dash.activity.brief.headline} ${dash.activity.brief.detail}`}>
-              {` · resumes ${fmtSoon(dash.activity.brief.clears_at)}`}
-            </span>
-          )}
-        </span>
-        <Sparkline values={runsByHour(ctx.runs ?? [])} />
+      <Link to={`${base}/details/spend`} title={pace ? `on pace to reach the cap ${fmtWhenShort(pace.toISOString())}` : "on pace to finish the month under the cap"}>
+        <b>{fmtUnit(spent, unit)}</b> this month ·{" "}
+        {frac >= 1 ? "the cap is reached — the project is paused" : `pauses at ${fmtUnit(cap, unit)}`}
       </Link>
-    </section>
+      <span>
+        <b>{dash.activity.daily_runs.used} of {dash.activity.daily_runs.cap}</b> runs today
+        {dash.activity.waiting.unread > 0 &&
+          ` · ${dash.activity.waiting.unread} unread message${dash.activity.waiting.unread === 1 ? "" : "s"}`}
+        {dash.status === "running" && !dash.activity.brief.banner && dash.activity.brief.clears_at && (
+          <span title={`${dash.activity.brief.headline} ${dash.activity.brief.detail}`}>
+            {` · resumes ${fmtSoon(dash.activity.brief.clears_at)}`}
+          </span>
+        )}
+      </span>
+    </div>
   );
 }
 
@@ -373,8 +264,8 @@ function LateBanner({ ctx }: { ctx: ProjectCtx }) {
       headline={verdict.headline}
       actions={scope || date ? (
         <>
-          {scope && <Link to={`/projects/${projectId}/roadmap`}><button className="primary">Drop something from the plan</button></Link>}
-          {date && <Link to={`/projects/${projectId}/roadmap`}><button>Move the delivery date</button></Link>}
+          {scope && <Link to={`/projects/${projectId}/details/roadmap`}><button className="primary">Drop something from the plan</button></Link>}
+          {date && <Link to={`/projects/${projectId}/details/roadmap`}><button>Move the delivery date</button></Link>}
         </>
       ) : (
         <Link to={`/projects/${projectId}/chat`}><button>Ask {firstName(ctx.ceoName)} what it is doing about it</button></Link>
@@ -570,7 +461,7 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
               reloadOrg();
             }}>adopt the latest role version</button>
           ) : isOpen(check) && WHERE_TO[check.where ?? ""] ? (
-            <Link to={`/projects/${projectId}/${WHERE_TO[check.where!][0]}`}>{WHERE_TO[check.where!][1]} →</Link>
+            <Link to={`/projects/${projectId}${WHERE_TO[check.where!][0]}`}>{WHERE_TO[check.where!][1]} →</Link>
           ) : null}
           {check.status === "warn" && (
             <button className="small" onClick={() => ack(check, !check.acked_at)}>
@@ -586,20 +477,20 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
 /** Where a health check says the fix lives — a check that names a place the
     reader cannot click is read once and then skipped. */
 const WHERE_TO: Record<string, [string, string]> = {
-  settings: ["settings", "fix in Settings"],
-  plan: ["roadmap", "open the Roadmap"],
-  boardroom: ["chat", "open the chat"],
-  team: ["team", "open the Team"],
+  settings: ["/details/settings", "fix in Settings"],
+  plan: ["/details/roadmap", "open the Roadmap"],
+  boardroom: ["/chat", "open the chat"],
+  team: ["", "see the team"],
 };
 
 /** Where each problem verdict is fixed: page under the project, and the link. */
 const FIX_AT: Record<string, [string, string]> = {
-  blocked: ["settings?s=money", "Add a key"],
-  failing: ["activity/runs", "See the runs"],
-  late: ["roadmap", "Cut scope or move the date"],
-  at_risk: ["roadmap", "See the plan"],
-  stalled: ["team", "See who is stuck"],
-  spinning: ["activity/runs", "See what the runs did"],
+  blocked: ["/details/settings?s=money", "Add a key"],
+  failing: ["/details/activity/runs", "See the runs"],
+  late: ["/details/roadmap", "Cut scope or move the date"],
+  at_risk: ["/details/roadmap", "See the plan"],
+  stalled: ["", "See who is stuck"],
+  spinning: ["/details/activity/runs", "See what the runs did"],
 };
 
 export default function Overview({
@@ -611,17 +502,15 @@ export default function Overview({
   setupBadge: ReactNode;
   goalLead: string;
 }) {
-  const { projectId, dash, seats, hypotheses } = ctx;
-  const navigate = useNavigate();
+  const { projectId, dash } = ctx;
   const desk = useDesk();
   const [brief, setBrief] = useState(false);
   const { data: flagsView, reload: reloadFlags } = usePoll(
     () => get<FlagsView>(`/observe/projects/${projectId}/flags`), 15000);
-  // Three rows and a count, asked of the same index the Deliverables page
-  // reads — not the whole workspace walk, every twenty seconds, to show three.
+  // A count, asked of the same index the Deliverables page reads.
   const { data: shelf } = usePoll(
-    () => get<ShelfView>(`/observe/projects/${projectId}/files/browse/rows?state=published&sort=at&desc=true&limit=3`),
-    20000);
+    () => get<ShelfView>(`/observe/projects/${projectId}/files/browse/rows?state=published&limit=1&lean=true`),
+    30000);
 
   // The same rows the Inbox and the sidebar badge count, for this project. A
   // paused project is not counted there (pausing is a state, not a request),
@@ -754,19 +643,49 @@ export default function Overview({
           {full ? "new entries there are being refused, and only " : "at the cap, new entries get refused until "}
           {m.scope === "project" ? "the CEO" : (m.curator ?? "a lead nobody has named")} can fold entries to make room.
         </div>
-        <Link to={`${base}/activity/memory`}>see what it keeps →</Link>
+        <Link to={`${base}/details/activity/memory`}>see what it keeps →</Link>
       </div>,
     );
   }
 
-  const people = [...seats].filter((s) => s.state !== "stood_down")
-    .sort((a, b) => SEAT_ORDER.indexOf(a.state) - SEAT_ORDER.indexOf(b.state));
-  const reqs = (ctx.plan?.requirements ?? []).filter((r) => r.status !== "cut");
-  const rank: Record<string, number> = { in_progress: 0, proposed: 1, accepted: 2, pending: 3, met: 4 };
-  const shownReqs = [...reqs].sort((a, b) => (rank[a.status] ?? 3) - (rank[b.status] ?? 3) || a.stage - b.stage).slice(0, 7);
-  const bets = hypotheses.filter((h) => h.status === "active" || h.status === "expired")
-    .sort((a, b) => a.kill_date.localeCompare(b.kill_date)).slice(0, 5);
-  const usdMode = dash.billing_mode === "api_key";
+  const steer = dash.can_steer !== false;
+  const chairName = dash.my_role === "chairman" ? "You" : (dash.chairman?.display_name ?? "The chairman");
+
+  // The chairman sits at the top of his own org chart, and what waits on him
+  // sits in his box — not in a card beside the team, as if it were a
+  // different subject. The people below are why the decisions exist.
+  const chair = (
+    <div className={`onode chair you${needs.length ? " waiting" : ""}`}>
+      <span className="on-id">
+        <Avatar name={dash.chairman?.display_name ?? "You"} team="chair" size="lg" />
+        <span className="on-name">
+          <b>{chairName}</b>
+          <span>
+            {dash.my_role === "chairman" ? "Owner" : "Chairman"} · money, dates, scope
+            {needs.length > 0 && <> · <span className="warn">{needs.length} waiting on you</span></>}
+          </span>
+        </span>
+        <span className="grow" />
+        <Link className="card-link" to="/inbox">Inbox <Icon name="arrow" size={13} /></Link>
+      </span>
+      {needs.length > 0 ? (
+        <div className="needs">
+          {needs}
+          {soonest && <span className="help">The soonest decides itself {fmtSoon(new Date(soonest.at).toISOString())}.</span>}
+        </div>
+      ) : (
+        <span className="on-doing">
+          <span className="good"><Icon name="check" size={14} strokeWidth={2.2} /></span>{" "}
+          Nothing needs a decision from you.{" "}
+          <span className="help">
+            {fullyAutonomous(dash)
+              ? `You set this project to run itself, so scope, dates and verdicts are ${ceo}'s to call.`
+              : "Money, legal questions and credentials always come here first."}
+          </span>
+        </span>
+      )}
+    </div>
+  );
 
   return (
     <>
@@ -802,7 +721,7 @@ export default function Overview({
               <p className={`ov-status${WARN_VERDICTS.includes(deskProject.status_line.verdict) ? " warn" : ""}`}>
                 {deskProject.status_line.sentence}
                 {FIX_AT[deskProject.status_line.verdict] && (
-                  <> <Link to={`${base}/${FIX_AT[deskProject.status_line.verdict][0]}`}>
+                  <> <Link to={`${base}${FIX_AT[deskProject.status_line.verdict][0]}`}>
                     {FIX_AT[deskProject.status_line.verdict][1]}</Link></>
                 )}
               </p>
@@ -815,17 +734,12 @@ export default function Overview({
             </p>
           </div>
           <div className="ov-acts">
-            <button className="avstack" onClick={() => navigate(`${base}/team`)} title="The team">
-              {people.slice(0, 6).map((s) => (
-                <Avatar key={s.id} name={s.name} team={s.ceo ? "leadership" : s.team} size="sm" />
-              ))}
-            </button>
-            {dash.can_steer !== false && dash.status !== "running" && dash.status !== "stopped" && (
+            {steer && dash.status !== "running" && dash.status !== "stopped" && (
               // Starting a project nothing can pay for used to succeed and show
               // "Running" while its first run died: the platform allows it (a
               // keyless project is "not configured yet"), so the button says it.
               unpaid ? (
-                <Link to={`${base}/settings?s=money`} className="btnlink primary"
+                <Link to={`${base}/details/settings?s=money`} className="btnlink primary"
                   title="Agents cannot run without a billing credential">
                   <Icon name="play" size={15} />Add a key to start
                 </Link>
@@ -833,8 +747,8 @@ export default function Overview({
                 <Btn kind="primary" icon="play" onClick={async () => { await post(`/admin/projects/${projectId}/start`); ctx.reload(); }}>Start</Btn>
               )
             )}
-            {dash.can_steer !== false && dash.status === "running" && <Btn icon="pause" onClick={onPause}>Pause</Btn>}
-            {dash.can_steer !== false && dash.status !== "stopped" && <Btn kind="danger" icon="stop" onClick={onStop}>Stop</Btn>}
+            {steer && dash.status === "running" && <Btn icon="pause" onClick={onPause}>Pause the team</Btn>}
+            {steer && dash.status !== "stopped" && <Btn kind="danger" icon="stop" onClick={onStop}>Stop</Btn>}
             <Link to={`${base}/chat`} className="btnlink primary"><Icon name="message" size={15} />Message {ceo}</Link>
           </div>
         </div>
@@ -846,150 +760,32 @@ export default function Overview({
         )}
       </header>
 
-      <Kpis ctx={ctx} />
       <ModeStrip dash={dash} reload={ctx.reload} />
       <LateBanner ctx={ctx} />
 
+      <TeamSection ctx={ctx} chair={chair} foot={<TeamFoot ctx={ctx} published={shelf?.matched ?? null} />} />
+
       <div className="ov-grid">
         <div className="ov-col">
-          <section className="card ov-card">
-            <div className="card-h">
-              <h3>Needs you</h3>
-              {needs.length > 0 && <span className="count warn">{needs.length}</span>}
-              <span className="grow" />
-              {soonest && <span className="help">soonest decides itself {fmtSoon(new Date(soonest.at).toISOString())}</span>}
-              <Link className="card-link" to="/inbox">Inbox <Icon name="arrow" size={13} /></Link>
-            </div>
-            {needs.length > 0 ? <div className="needs">{needs}</div> : (
-              <div className="quiet-line">
-                <span className="good"><Icon name="check" size={16} strokeWidth={2.2} /></span>
-                <span>
-                  <b>Nothing needs a decision from you.</b>{" "}
-                  <span className="help">
-                    {fullyAutonomous(dash)
-                      ? `You set this project to run itself, so scope, dates and verdicts are ${ceo}'s to call.`
-                      : dash.runs.running > 0
-                        ? `${dash.runs.running} ${dash.runs.running === 1 ? "run is" : "runs are"} in flight right now.`
-                        : dash.runs.queued > 0
-                          ? `${dash.runs.queued} ${dash.runs.queued === 1 ? "run is" : "runs are"} queued to start.`
-                          : "Nobody is working at this moment — Coming up says when the next thing wakes."}
-                  </span>
-                </span>
-              </div>
-            )}
-          </section>
-
-          <section className="card ov-card">
-            <div className="card-h">
-              <h3>Team right now</h3>
-              <span className="grow" />
-              <Link className="card-link" to={`${base}/team`}>Org chart <Icon name="arrow" size={13} /></Link>
-            </div>
-            {people.length === 0 ? <p className="help">Nobody is on this project yet.</p> : (
-              <div className="people">
-                {people.slice(0, 8).map((s) => (
-                  <button key={s.id} className="person-row" onClick={() => ctx.openAgent(s.id)}>
-                    <span className="av-wrap">
-                      <Avatar name={s.name} team={s.ceo ? "leadership" : s.team} />
-                      <span className={`seat-dot ring ${s.state}`} />
-                    </span>
-                    <span className="grow">
-                      <span className="pr-name"><b>{s.name}</b> <span className="help">{s.ceo ? "CEO" : `${s.team}${s.lead ? " lead" : ""}`}</span></span>
-                      <span className="pr-doing">{s.doing}</span>
-                    </span>
-                    <span className="pr-right">
-                      <SeatPill state={s.state} />
-                      {s.since && <span className="help">{heldFor(s.since)}</span>}
-                    </span>
-                  </button>
-                ))}
-                {people.length > 8 && <Link className="more-row" to={`${base}/team`}>and {people.length - 8} more on the org chart</Link>}
-              </div>
-            )}
-          </section>
-
-          {dash.mode === "explore" ? (
+          <CeoCard ctx={ctx} news={news} />
+          {watch.length > 0 && (
             <section className="card ov-card">
               <div className="card-h">
-                <h3>Bets</h3>
-                <span className="help">hunches with a deadline</span>
+                <h3>Watching</h3>
+                <span className="count">{watch.length}</span>
                 <span className="grow" />
-                <Link className="card-link" to={`${base}/tasks?view=list`}>All bets <Icon name="arrow" size={13} /></Link>
+                <span className="help">clocks {ceo} is handling — nothing here waits on you</span>
               </div>
-              {bets.length === 0 ? <p className="help">No live bets.</p> : bets.map((h) => (
-                <div className="rm-row" key={h.id}>
-                  <Icon name="target" size={14} />
-                  <span className="grow">{clip(h.statement, 140)}</span>
-                  <span className={`badge${h.status === "expired" ? " serious" : ""}`}>
-                    {h.status === "expired" ? "expired" : `ends ${fmtLeft(h.kill_date).replace(" left", "")}`}
-                  </span>
-                </div>
-              ))}
-            </section>
-          ) : (
-            <section className="card ov-card">
-              <div className="card-h">
-                <h3>Roadmap</h3>
-                {ctx.plan?.open_stage !== undefined && <span className="help">stage {ctx.plan.open_stage} is open</span>}
-                <span className="grow" />
-                <Link className="card-link" to={`${base}/roadmap`}>Open the roadmap <Icon name="arrow" size={13} /></Link>
-              </div>
-              {shownReqs.length === 0 ? (
-                <p className="help">No requirements yet — {ceo} proposes what “done” means once it has planned.</p>
-              ) : shownReqs.map((r) => (
-                <div className="rm-row" key={r.id}>
-                  <span className="mono rm-key">{r.key}</span>
-                  <span className="grow rm-st">{requirementName(r)}</span>
-                  <span className={`badge${r.status === "met" ? " good" : r.status === "in_progress" ? " accent" : r.status === "proposed" ? " warn" : ""}`}>
-                    {r.status === "met" ? "Met" : r.status === "in_progress" ? "In progress" : r.status === "proposed" ? "Proposed" : `Stage ${r.stage}`}
-                  </span>
-                </div>
-              ))}
-              <p className="rm-foot help">
-                {dash.open_tasks} of {dash.queue_ceiling} tasks open at once ·{" "}
-                <Term means="Of the bets the CEO has placed, how many produced proof from outside the project.">
-                  how often the CEO is right
-                </Term>
-                : {dash.ceo_judgment.conversion === null ? "—" : `${Math.round(dash.ceo_judgment.conversion * 100)}%`}
-              </p>
+              <div className="wbox">{watch}</div>
             </section>
           )}
         </div>
-
         <aside className="ov-col">
-          <CeoCard ctx={ctx} news={news} />
           <ComingUp projectId={projectId} />
-          <section className="card ov-card">
-            <div className="card-h">
-              <h3>Where this month's money went</h3>
-              <span className="grow" />
-              <Link className="card-link" to={`${base}/spend`}>Spend <Icon name="arrow" size={13} /></Link>
-            </div>
-            <SpendByTeam projectId={projectId} usdMode={usdMode} compact />
-          </section>
-          <section className="card ov-card">
-            <div className="card-h">
-              <h3>Latest deliverables</h3>
-              <span className="grow" />
-              <Link className="card-link" to={`${base}/deliverables`}>All {shelf?.matched ?? ""} <Icon name="arrow" size={13} /></Link>
-            </div>
-            {(shelf?.rows ?? []).length === 0 ? (
-              <p className="help">
-                Nothing published yet. Deliverables appear here the moment a team publishes one.
-              </p>
-            ) : (shelf?.rows ?? []).map((a) => (
-              <Link className="file-row" key={a.key} to={`${base}/deliverables?open=${encodeURIComponent(a.key)}`}>
-                <span className="file-ic"><Icon name="file" size={15} /></span>
-                <span className="grow">
-                  <span className="file-n">{a.name}</span>
-                  <span className="help">{fmtSize(a.size)} · {a.at ? fmtWhen(a.at) : "—"}</span>
-                </span>
-                {a.receipt ? <span className="badge good">published</span> : <span className="badge warn">no receipt</span>}
-              </Link>
-            ))}
-          </section>
         </aside>
       </div>
+
+      <ScheduleStrip ctx={ctx} />
 
       {health.early.length > 0 && (
         <div className={`strip${health.ratio >= 0.2 ? " serious" : ""}`} style={{ marginTop: "var(--s4)" }}>
@@ -1003,18 +799,8 @@ export default function Overview({
                   : "That is within normal wear for unattended work."}
             </div>
           </div>
-          <Link to={`${base}/activity/runs`}>see what happened →</Link>
+          <Link to={`${base}/details/activity/runs`}>see what happened →</Link>
         </div>
-      )}
-
-      {watch.length > 0 && (
-        <>
-          <h2 className="zone">Watching <span className="cnt">{watch.length}</span></h2>
-          <p className="help" style={{ margin: "0 0 var(--s3)" }}>
-            Clocks {ceo} is handling. Nothing here waits on you; it is here so nothing happens silently.
-          </p>
-          <div className="wbox">{watch}</div>
-        </>
       )}
 
       <HealthLine ctx={ctx} />

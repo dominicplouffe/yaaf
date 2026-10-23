@@ -576,7 +576,7 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
 
       <p className="help" style={{ marginTop: 12 }}>
         Every claim the agents made and what the platform could check about it is the record in{" "}
-        <Link to={`/projects/${projectId}/activity/evidence`}>Activity → Proof →</Link>
+        <Link to={`/projects/${projectId}/details/activity/evidence`}>Activity → Proof →</Link>
       </p>
     </>
   );

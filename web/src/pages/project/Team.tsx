@@ -1,10 +1,9 @@
-import { useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { ReactNode, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { OrgView, post, SeatWork } from "../../api";
-import { useDesk } from "../../desk";
 import { firstName, ProjectCtx } from "../../projectCtx";
 import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
-import { fmtUnit } from "../../ui";
+import { clip, fmtAgo, fmtUnit } from "../../ui";
 import { Avatar, Seg } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
 import { heldFor, Seat, SEAT_LABEL, SEAT_TONE, SeatState } from "../../ui/team";
@@ -149,13 +148,26 @@ function TeamHead({ ctx, team, onRepinned }: {
   const behind = team.role_version !== null && team.role_latest_version !== null
     && team.role_version < team.role_latest_version;
   const steer = ctx.dash.can_steer !== false;
+  // A team the CEO hired (or brought back) this week is drawn as new, with
+  // its reason beside it. Hiring is the CEO's own verb — no approval waits —
+  // so the chart is where the chairman sees it happened and why, and the
+  // Stand down button below is how he disagrees.
+  const change = team.last_change;
+  const fresh = change?.recent && change.action !== "stand_down" ? change : null;
   return (
-    <div className="team-h">
+    <div className={`team-h${fresh ? " new" : ""}`}>
       <div className="team-t">
         <Avatar name={team.name} team={team.name} size="sm" />
         <b>{team.name}</b>
         {!team.running && <span className="badge">stood down</span>}
+        {fresh && <span className="badge accent">new</span>}
       </div>
+      {fresh && (
+        <div className="team-why">
+          {fresh.action === "hire" ? "Hired" : "Brought back"} {fmtAgo(fresh.at)} by {fresh.by}
+          {fresh.reason ? <>: <q>{clip(fresh.reason, 220)}</q></> : "."}
+        </div>
+      )}
       <div className="team-role">
         {team.role_name && (
           <span className="chip" title={team.role_slug ?? undefined}>{team.role_name} v{team.role_version}</span>
@@ -282,47 +294,27 @@ function AddTeam({ ctx }: { ctx: ProjectCtx }) {
   );
 }
 
-function OrgChart({ ctx }: { ctx: ProjectCtx }) {
+function OrgChart({ ctx, chair }: { ctx: ProjectCtx; chair: ReactNode }) {
   const { org, seats, dash } = ctx;
-  const { mine } = useDesk();
   const [repinMsg, setRepinMsg] = useState<string | null>(null);
   const ceo = seats.find((s) => s.ceo);
-  const waiting = mine.filter((i) => i.project.id === ctx.projectId).length;
   return (
     <>
       {repinMsg && <div className="notice-box">{repinMsg}</div>}
       <div className="org-scroll">
         <div className="org">
-          <div className="org-level">
-            <div className="onode chair">
-              <span className="on-id">
-                <Avatar name={dash.chairman?.display_name ?? "You"} team="chair" size="lg" />
-                <span className="on-name">
-                  <b>{dash.chairman?.display_name ?? "The chairman"}</b>
-                  <span>Chairman{dash.my_role === "chairman" ? " · you" : ""}</span>
-                </span>
-              </span>
-              <span className="on-doing">
-                Decides money, legal questions, credentials, and whatever the autonomy dial leaves
-                with the chair.
-              </span>
-              <Link className="btnlink small" to="/inbox">
-                <Icon name="inbox" size={14} />
-                {waiting > 0 ? `${waiting} waiting in the Inbox` : "Nothing waiting on the chair"}
-              </Link>
-            </div>
-          </div>
+          <div className="org-level">{chair}</div>
           <div className="org-v" />
           {ceo && (
             <div className="org-level">
               <SeatNode seat={ceo} onOpen={ctx.openAgent} wide work={org?.ceo ?? undefined}
-                extra={<span className="on-ceo"><Icon name="message" size={13} /> The only agent you talk to</span>} />
+                extra={<span className="on-ceo"><Icon name="message" size={13} /> Reports to you · the only agent you talk to</span>} />
             </div>
           )}
           <div className="org-v" />
           <div className="org-branches">
-            {(org?.teams ?? []).map((team) => (
-              <div className="org-branch" key={team.id}>
+            {(org?.teams ?? []).filter((t) => t.running || t.last_change?.recent).map((team) => (
+              <div className={`org-branch${team.running ? "" : " gone"}`} key={team.id}>
                 <TeamHead ctx={ctx} team={team} onRepinned={setRepinMsg} />
                 <div className="team-members">
                   {seats.filter((s) => s.teamId === team.id).map((s) => (
@@ -334,9 +326,35 @@ function OrgChart({ ctx }: { ctx: ProjectCtx }) {
             ))}
             {dash.can_steer !== false && <AddTeam ctx={ctx} />}
           </div>
+          <StoodDown ctx={ctx} />
         </div>
       </div>
     </>
+  );
+}
+
+/** Teams whose job is done, folded to one line: they are history, not staff,
+    and drawing them at full size beside the people working made the chart
+    say the project was bigger than it is. Recall is one click away. */
+function StoodDown({ ctx }: { ctx: ProjectCtx }) {
+  const [open, setOpen] = useState(false);
+  const gone = (ctx.org?.teams ?? []).filter((t) => !t.running && !t.last_change?.recent);
+  if (gone.length === 0) return null;
+  return (
+    <div className="org-gone">
+      <button className="linkish" onClick={() => setOpen(!open)} aria-expanded={open}>
+        {gone.length} team{gone.length === 1 ? "" : "s"} stood down: {gone.map((t) => t.name).join(", ")}
+      </button>
+      {open && (
+        <div className="org-branches">
+          {gone.map((team) => (
+            <div className="org-branch gone" key={team.id}>
+              <TeamHead ctx={ctx} team={team} onRepinned={() => ctx.reloadOrg()} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -372,36 +390,44 @@ function SeatTable({ ctx }: { ctx: ProjectCtx }) {
   );
 }
 
-export default function Team({ ctx }: { ctx: ProjectCtx }) {
+/** "Your team": the org chart with the chairman at the top and what waits
+    on him in his own box, or the same people as a table. The project's home
+    page is built around it. */
+export function TeamSection({ ctx, chair, foot }: {
+  ctx: ProjectCtx; chair: ReactNode; foot?: ReactNode;
+}) {
   const [params, setParams] = useSearchParams();
   const view = params.get("view") === "list" ? "list" : "chart";
   const ceo = firstName(ctx.ceoName);
+  const people = ctx.seats.filter((s) => s.state !== "stood_down");
+  const working = people.filter((s) => s.state === "working").length;
+  const teams = (ctx.org?.teams ?? []).filter((t) => t.running).length;
   const counts = new Map<SeatState, number>();
   for (const s of ctx.seats) counts.set(s.state, (counts.get(s.state) ?? 0) + 1);
   return (
-    <>
-      <div className="relay">
-        <Icon name="message" size={16} />
-        <span>
-          You direct the team through {ceo}. To change what someone is working on, tell {ceo} and
-          the plan changes with it.
+    <section className="card team-card" aria-label="Your team">
+      <div className="team-card-h">
+        <h2>Your team</h2>
+        <span className="help">
+          {people.length} {people.length === 1 ? "person" : "people"} in {teams} {teams === 1 ? "team" : "teams"},
+          reporting to {ceo} · {working} working now · click anyone
         </span>
-        <Link to={`/projects/${ctx.projectId}/chat`} className="btnlink small">Message {ceo}</Link>
-      </div>
-      <div className="viewbar">
-        <Seg<"chart" | "list">
-          value={view}
-          onPick={(v) => setParams(v === "list" ? { view: "list" } : {}, { replace: true })}
-          options={[{ key: "chart", label: "Org chart" }, { key: "list", label: "List" }]}
-        />
         <span className="grow" />
         <span className="legend">
-          {STATE_ORDER.filter((s) => counts.get(s)).map((s) => (
+          {STATE_ORDER.filter((s) => counts.get(s) && s !== "stood_down").map((s) => (
             <span key={s} className="legend-i"><span className={`seat-dot ${s}`} />{counts.get(s)} {SEAT_LABEL[s].toLowerCase()}</span>
           ))}
         </span>
+        <Seg<"chart" | "list">
+          value={view}
+          onPick={(v) => setParams(v === "list" ? { view: "list" } : {}, { replace: true })}
+          options={[{ key: "chart", label: "Chart" }, { key: "list", label: "List" }]}
+        />
       </div>
-      {!ctx.org ? <p className="subtitle">Loading…</p> : view === "chart" ? <OrgChart ctx={ctx} /> : <SeatTable ctx={ctx} />}
-    </>
+      {!ctx.org ? <p className="subtitle">Loading…</p>
+        : view === "chart" ? <OrgChart ctx={ctx} chair={chair} />
+        : <SeatTable ctx={ctx} />}
+      {foot}
+    </section>
   );
 }

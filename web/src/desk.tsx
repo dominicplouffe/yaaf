@@ -158,7 +158,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "The CEO pivots. You hold the one extension.",
-      to: `${to}/tasks`, toLabel: "Decide on the Tasks page",
+      to: `${to}/details/tasks`, toLabel: "Decide on the Tasks page",
     });
   }
   if (p.frozen_threads > 0) {
@@ -173,7 +173,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "Those agents stay stuck until you unfreeze the thread.",
-      to: `${to}/activity/messages`, toLabel: "Review the thread",
+      to: `${to}/details/activity/messages`, toLabel: "Review the thread",
     });
   }
 
@@ -194,7 +194,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "It stays open. Nobody on the project can mark it met.",
-      to: `${to}/roadmap`, toLabel: "Judge it on the Roadmap",
+      to: `${to}/details/roadmap`, toLabel: "Judge it on the Roadmap",
     });
   }
   if (w.plan > 0) {
@@ -209,7 +209,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "Proposed scope is not scope: no work can be built against it.",
-      to: `${to}/roadmap`, toLabel: "Review on the Roadmap",
+      to: `${to}/details/roadmap`, toLabel: "Review on the Roadmap",
     });
   }
   if (w.commitment) {
@@ -225,7 +225,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "The project keeps working, but it is promising nothing until you sign.",
-      to: `${to}/roadmap`, toLabel: "Sign or move it on the Roadmap",
+      to: `${to}/details/roadmap`, toLabel: "Sign or move it on the Roadmap",
     });
   }
 
@@ -245,7 +245,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: `It is ${a.if_silent ?? "declined"} ${fmtSoon(a.expires_at)}. Silence is a decision here.`,
-      to: `${to}/activity/decisions`, toLabel: "Read the full request",
+      to: `${to}/details/activity/decisions`, toLabel: "Read the full request",
       actions: <DecideButtons approval={a} onDone={reload} />,
     });
   }
@@ -270,7 +270,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
       title: `A bet expires ${fmtSoon(bet.kill_date)}: “${clip(bet.statement, 70)}”`,
       what: <>“{clip(bet.statement, 160)}”</>,
       consequence: "Then its tasks block and the CEO re-plans.",
-      to: `${to}/tasks`, toLabel: "See the bet",
+      to: `${to}/details/tasks`, toLabel: "See the bet",
     });
   }
 
@@ -287,7 +287,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
       title: `Nothing outside the project has verified anything in ${d.window_hours}h`,
       what: <>No verified external evidence in <b>{d.window_hours}h</b>.</>,
       consequence: "Happening now: new internal-only work is refused until proof lands.",
-      to: `${to}/activity/evidence`, toLabel: "See the proof",
+      to: `${to}/details/activity/evidence`, toLabel: "See the proof",
     });
   } else if (droughtShown && d.last_countable_at) {
     const startsAt = new Date(d.last_countable_at).getTime() + d.window_hours * 3_600_000;
@@ -302,7 +302,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: `The platform starts refusing internal work ${fmtSoon(new Date(startsAt).toISOString())}.`,
-      to: `${to}/activity/evidence`, toLabel: "See the proof",
+      to: `${to}/details/activity/evidence`, toLabel: "See the proof",
     });
   }
 
@@ -326,7 +326,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
       ),
       consequence: `Over the budget the CEO must account for it; the platform pauses the `
         + `project at ${fmtUnit(b.cap * b.hard_stop_multiple, b.unit)}, the hard stop.`,
-      to: `${to}/spend`, toLabel: "See the spend",
+      to: `${to}/details/spend`, toLabel: "See the spend",
     });
   } else if (frac < 1 && frac >= b.warn_ratio) {
     items.push({
@@ -340,7 +340,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "Nothing yet: at this rate the cap holds to the end of the month.",
-      to: `${to}/spend`, toLabel: "See the spend",
+      to: `${to}/details/spend`, toLabel: "See the spend",
     });
   }
 
@@ -362,7 +362,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "Nothing breaks. The work may be real, but only the agents say so.",
-      to: `${to}/tasks`, toLabel: "See what it bought",
+      to: `${to}/details/tasks`, toLabel: "See what it bought",
     });
   }
 

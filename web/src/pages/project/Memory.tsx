@@ -81,12 +81,12 @@ function Slots({ usage, projectId }: { usage?: MemoryScopeUsage; projectId: stri
                 ? `${usage.curator} curates this and has been asked to compact it.`
                 : "This team has no lead, so nobody may compact it — name one, or "}
               {!usage.curator && "raise the cap "}
-              <Link to={`/projects/${projectId}/settings`}>in Rules in force</Link>.
+              <Link to={`/projects/${projectId}/details/settings`}>in Rules in force</Link>.
             </>
           ) : (
             <>
               Nearly full — {usage.curator ?? "its curator"} has been asked to compact. You can
-              also <Link to={`/projects/${projectId}/settings`}>give it more room</Link>, which
+              also <Link to={`/projects/${projectId}/details/settings`}>give it more room</Link>, which
               takes effect on the next run.
             </>
           )}

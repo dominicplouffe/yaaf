@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { get, post } from "../../api";
+import { Fragment, useState } from "react";
+import { Link, NavLink, Navigate, Route, Routes, useSearchParams } from "react-router-dom";
+import { get, post, RecordLine, RecordView } from "../../api";
 import { ProjectBrief, BriefBody } from "../../briefing";
 import { usePoll } from "../../hooks";
 import { Skeleton } from "../../ui";
@@ -18,6 +18,7 @@ import Evidence from "./Evidence";
 // miss?" is the question this page is opened with, and the five tables are
 // where that sentence's evidence lives.
 const VIEWS = [
+  ["record", "Everything", "every line, filterable by person and kind, each saying on whose authority it happened"],
   ["summary", "What happened", "the briefing: what moved, what is worth your eye"],
   ["runs", "Runs", "every model call, why it woke, what it cost"],
   ["decisions", "Decisions", "everything you decided, and everything that decided itself"],
@@ -80,6 +81,118 @@ function Summary({ ctx }: { ctx: ProjectCtx }) {
   );
 }
 
+const KIND_LABEL: Record<RecordLine["kind"], string> = {
+  message: "Message",
+  run: "Run",
+  yours: "Your decision",
+  ceo: "CEO decided",
+  rule: "By a rule",
+  proof: "Proof",
+};
+
+const FILTERS: { key: "all" | RecordLine["kind"]; label: string }[] = [
+  { key: "all", label: "Everything" },
+  { key: "message", label: "Messages" },
+  { key: "run", label: "Runs" },
+  { key: "yours", label: "Your decisions" },
+  { key: "ceo", label: "What the CEO decided" },
+  { key: "rule", label: "By your rules" },
+  { key: "proof", label: "Proof" },
+];
+
+/** The record: every line, newest first, filtered by person and kind — and
+    each action saying on whose authority it happened. Filters live in the
+    address, so "Ada's runs this week" is a link you can send. */
+function Record({ ctx }: { ctx: ProjectCtx }) {
+  const { projectId } = ctx;
+  const [params, setParams] = useSearchParams();
+  const kind = (params.get("kind") ?? "all") as "all" | RecordLine["kind"];
+  const person = params.get("person") ?? "";
+  const days = params.get("days") ?? "7";
+  const query = new URLSearchParams({ kind, days, limit: "500" });
+  if (person) query.set("agent_id", person);
+  const { data, error } = usePoll(
+    () => get<RecordView>(`/observe/projects/${projectId}/record?${query}`), 30000,
+    [projectId, kind, person, days]);
+  const set = (key: string, value: string, fallback: string) => {
+    const next = new URLSearchParams(params);
+    if (value === fallback) next.delete(key); else next.set(key, value);
+    setParams(next, { replace: true });
+  };
+  const csv = new URLSearchParams(query);
+  csv.set("format", "csv");
+  csv.set("limit", "2000");
+
+  let day = "";
+  return (
+    <div className="card record" style={{ marginTop: "var(--s3)" }}>
+      <div className="record-bar">
+        <div className="seg" role="group" aria-label="Show">
+          {FILTERS.map((f) => (
+            <button key={f.key} type="button" aria-pressed={kind === f.key}
+              className={kind === f.key ? "on" : ""} onClick={() => set("kind", f.key, "all")}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <span className="grow" />
+        <label className="record-pick">
+          <span className="sr-only">Person</span>
+          <select value={person} onChange={(e) => set("person", e.target.value, "")}>
+            <option value="">Everyone</option>
+            {(data?.people ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </label>
+        <label className="record-pick">
+          <span className="sr-only">When</span>
+          <select value={days} onChange={(e) => set("days", e.target.value, "7")}>
+            <option value="1">Today</option>
+            <option value="7">7 days</option>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+          </select>
+        </label>
+        <a className="btnlink small" href={`/observe/projects/${projectId}/record?${csv}`} download>
+          Export CSV
+        </a>
+      </div>
+      {error && <div className="error">{error}</div>}
+      {!data ? <Skeleton rows={6} /> : data.lines.length === 0 ? (
+        <p className="help">Nothing of that kind{person ? " by that person" : ""} in this window.</p>
+      ) : (
+        <div className="record-lines">
+          {data.lines.map((line, i) => {
+            const label = new Date(line.at).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+            const header = label !== day ? (day = label) : null;
+            return (
+              <Fragment key={`${line.at}-${i}`}>
+                {header && <div className="record-day">{header}</div>}
+                <div className={`record-line k-${line.kind}`}>
+                  <span className="mono help">{new Date(line.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                  <span className="record-kind">{KIND_LABEL[line.kind]}</span>
+                  <span className="record-what">
+                    <b>{line.who_id
+                      ? <button type="button" className="linkish inline" onClick={() => ctx.openAgent(line.who_id!)}>{line.who}</button>
+                      : line.who}</b>{" "}
+                    {line.text}
+                    {line.authority && <span className="record-why">On whose authority: {line.authority}</span>}
+                  </span>
+                  {line.run_id && (
+                    <Link className="small record-run" to={`/projects/${projectId}/details/activity/runs?run=${encodeURIComponent(line.run_id)}`}>
+                      View run
+                    </Link>
+                  )}
+                </div>
+              </Fragment>
+            );
+          })}
+          {data.more > 0 && <p className="help">and {data.more} older — narrow the window or export the CSV.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Activity({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, dash } = ctx;
   return (
@@ -88,7 +201,7 @@ export default function Activity({ ctx }: { ctx: ProjectCtx }) {
         {VIEWS.map(([path, label, means]) => (
           <NavLink
             key={path}
-            to={`/projects/${projectId}/activity/${path}`}
+            to={`/projects/${projectId}/details/activity/${path}`}
             title={means}
             className={({ isActive }) => (isActive ? "active" : "")}
           >
@@ -103,7 +216,8 @@ export default function Activity({ ctx }: { ctx: ProjectCtx }) {
       </div>
 
       <Routes>
-        <Route index element={<Navigate to="summary" replace />} />
+        <Route index element={<Navigate to="record" replace />} />
+        <Route path="record" element={<Record ctx={ctx} />} />
         <Route path="summary" element={<Summary ctx={ctx} />} />
         <Route path="runs" element={<Runs projectId={projectId} dash={dash} />} />
         <Route path="inbox" element={<AgentInbox ctx={ctx} />} />

@@ -60,14 +60,14 @@ export const GROUPS: [NonNullable<BriefLine["group"]>, string][] = [
     the page that replaced it. */
 const WHERE: Record<string, string> = {
   overview: "",
-  plan: "roadmap",
-  work: "tasks",
-  review: "reviews",
-  deliverables: "deliverables",
-  decisions: "activity/decisions",
-  "records/decisions": "activity/decisions",
-  "records/messages": "activity/messages",
-  "records/runs": "activity/runs",
+  plan: "details/roadmap",
+  work: "details/tasks",
+  review: "details/reviews",
+  deliverables: "results",
+  decisions: "details/activity/decisions",
+  "records/decisions": "details/activity/decisions",
+  "records/messages": "details/activity/messages",
+  "records/runs": "details/activity/runs",
 };
 
 export function whereTo(projectId: string, where: string | null): string | null {

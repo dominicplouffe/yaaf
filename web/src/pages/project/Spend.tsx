@@ -81,7 +81,7 @@ export function BudgetCard({ ctx }: { ctx: ProjectCtx }) {
       </ul>
       <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode} />
       {dash.can_steer !== false && (
-        <Link className="btnlink small" to={`/projects/${projectId}/settings?s=money`}>
+        <Link className="btnlink small" to={`/projects/${projectId}/details/settings?s=money`}>
           Change the budget…
         </Link>
       )}
@@ -191,7 +191,7 @@ export default function Spend({ ctx }: { ctx: ProjectCtx }) {
       <h2 className="zone">The last 30 days, in detail</h2>
       <SpendBreakdown projectId={projectId} usdMode={usdMode} />
       <p className="help">
-        Every run with its own cost is on <Link to={`/projects/${projectId}/activity/runs`}>Activity → Runs</Link>.
+        Every run with its own cost is on <Link to={`/projects/${projectId}/details/activity/runs`}>Activity → Runs</Link>.
       </p>
     </>
   );

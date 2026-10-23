@@ -362,7 +362,7 @@ function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
           }}>Mark as read</button>
         )}
         <span className="grow" />
-        <Link to={`/projects/${u.project.id}/activity/summary`}>Everything that happened →</Link>
+        <Link to={`/projects/${u.project.id}/details/activity/summary`}>Everything that happened →</Link>
       </div>
     </div>
   );
@@ -395,7 +395,7 @@ function DecidedDetail({ d }: { d: Decided }) {
         )}
       </dl>
       <div className="ib-acts">
-        <Link to={`/projects/${d.project.id}/activity/decisions`}>The full record →</Link>
+        <Link to={`/projects/${d.project.id}/details/activity/decisions`}>The full record →</Link>
       </div>
     </div>
   );

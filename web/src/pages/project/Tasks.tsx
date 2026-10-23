@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from "react-router-dom";
-import { TaskRow } from "../../api";
+import { requirementName, TaskRow } from "../../api";
 import { fmtWhen } from "../../hooks";
 import { firstName, ProjectCtx } from "../../projectCtx";
 import { clip, Skeleton } from "../../ui";
@@ -37,10 +37,13 @@ const COLUMNS: Column[] = [
 /** Done grows for ever; the newest are the ones a reader came to see. */
 const DONE_SHOWN = 12;
 
-function TaskCard({ task, parent, bet, onPerson }: {
+function TaskCard({ task, parent, bet, requirement, onPerson }: {
   task: TaskRow;
   parent: TaskRow | undefined;
   bet: string | undefined;
+  /** The requirement this work is for, "R-04 · statement" — the middle link
+      between the project's goal and the card. */
+  requirement: string | undefined;
   onPerson: (agentId: string) => void;
 }) {
   const holder = task.claimed_by ?? task.assignee;
@@ -48,6 +51,7 @@ function TaskCard({ task, parent, bet, onPerson }: {
     <div className="tcard">
       {parent && <div className="tc-parent">↳ part of {clip(parent.title, 48)}</div>}
       <div className="tc-t">{task.title}</div>
+      {requirement && <div className="tc-bet" title="What this work is for"><Icon name="flag" size={12} /> {clip(requirement, 70)}</div>}
       {bet && <div className="tc-bet"><Icon name="target" size={12} /> {clip(bet, 60)}</div>}
       {task.status === "blocked" && task.blocked_reason && (
         <div className="tc-note serious">{clip(task.blocked_reason, 140)}</div>
@@ -84,6 +88,7 @@ function Board({ ctx }: { ctx: ProjectCtx }) {
   if (!tasks) return <Skeleton rows={4} />;
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const bets = new Map(hypotheses.map((h) => [h.id, h.statement]));
+  const reqs = new Map((ctx.plan?.requirements ?? []).map((r) => [r.id, `${r.key} · ${requirementName(r)}`]));
   const killed = tasks.filter((t) => t.status === "killed").length;
   if (tasks.length === 0) {
     return (
@@ -110,6 +115,7 @@ function Board({ ctx }: { ctx: ProjectCtx }) {
                 <TaskCard key={t.id} task={t}
                   parent={t.parent_task_id ? byId.get(t.parent_task_id) : undefined}
                   bet={t.hypothesis_id ? bets.get(t.hypothesis_id) : undefined}
+                  requirement={t.requirement_id ? reqs.get(t.requirement_id) : undefined}
                   onPerson={ctx.openAgent} />
               ))}
               {all.length === 0 && <div className="bcol-empty">Nothing here</div>}

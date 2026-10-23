@@ -8,24 +8,19 @@ import { Btn, PageHead } from "../ui/kit";
 import { Icon } from "../ui/Icon";
 import Overview from "./project/Overview";
 import Boardroom from "./project/Boardroom";
-import Plan from "./project/Plan";
-import Tasks from "./project/Tasks";
-import Deliverables from "./project/Deliverables";
-import Team from "./project/Team";
-import Spend from "./project/Spend";
-import Review from "./project/Review";
-import Activity from "./project/Activity";
-import Settings from "./project/Settings";
-import AgentDrawer from "./project/AgentDrawer";
+import Details from "./project/Details";
+import Member from "./project/Member";
+import Results from "./project/Results";
 
 export type { ProjectCtx } from "../projectCtx";
 
-// Ten pages in the sidebar, where there were four tabs and a utility. The
-// tabs were economical and unlearnable: Progress hid three lenses and a
-// meeting behind a segmented control, Records hid five views behind pills,
-// and Settings hid behind a gear. A reader who has never been told what a
-// "lens" is can now find the Roadmap by reading the word Roadmap. Every old
-// address still lands somewhere — see the redirects at the foot of the routes.
+// Four pages: Team, Chat, Results, Details. Ten sidebar pages, before
+// that, were learnable but flat — they put the Roadmap, the Spend and the
+// Settings on the same footing as the team doing the work, and the team
+// was the sixth line. A project is a team at work, so the team is its front
+// page; what it made is the second thing anyone asks; how it works inside is
+// one page with tabs. Every old address still lands somewhere — see the
+// redirects at the foot of the routes.
 
 /** Pause wants a recorded reason; stop is terminal and requires typing the
     project's name. In-context confirmation, never a browser dialog. */
@@ -170,7 +165,7 @@ function StandingNotice({ dash }: { dash: Dashboard }) {
   return (
     <div className="notice-box" style={{ display: "flex", gap: "var(--s2)", alignItems: "baseline", flexWrap: "wrap" }}>
       <span style={{ flex: 1, minWidth: 0 }}>{said}</span>
-      <NavLink to={`/projects/${dash.id}/settings?s=people`}>Who chairs it</NavLink>
+      <NavLink to={`/projects/${dash.id}/details/settings?s=people`}>Who chairs it</NavLink>
     </div>
   );
 }
@@ -251,7 +246,7 @@ function StatusBriefBox({ dash, projectId, reload }: {
             {dash.can_steer && (
               <RaiseInboxReads projectId={projectId} reading={dash.activity.inbox_runs} onDone={reload} />
             )}
-            <NavLink to={`/projects/${projectId}/activity/inbox`}>
+            <NavLink to={`/projects/${projectId}/details/activity/inbox`}>
               <Btn small icon="inbox">See the unread messages</Btn>
             </NavLink>
           </div>
@@ -276,7 +271,7 @@ function ReviewBanner({ projectId, number }: { projectId: string; number: number
           are what they are, and the six things you can do about it.
         </div>
       </div>
-      <NavLink to={`/projects/${projectId}/reviews`}>
+      <NavLink to={`/projects/${projectId}/details/reviews`}>
         <Btn kind="primary">Open review #{number}</Btn>
       </NavLink>
     </div>
@@ -284,61 +279,26 @@ function ReviewBanner({ projectId, number }: { projectId: string; number: number
 }
 
 /** Each page's name, and — only where the page does not already say it —
-    one sentence on what it is for. A page that explains itself twice is a
-    page that was not sure the first explanation worked. */
-function pageHead(path: string, ctx: ProjectCtx): { title: string; lede?: string } {
+    one sentence on what it is for. Team draws its own head (it is the
+    project's front page), Results, Member and Details theirs. */
+function pageHead(path: string, ctx: ProjectCtx): { title: string; lede?: string } | null {
   const ceo = firstName(ctx.ceoName);
-  switch (path) {
-    case "chat":
-      return {
-        title: `Chat with ${ceo}`,
-        lede: `${ceo} runs this project and is the one agent you speak to. Give direction, ask why, `
-          + "or set a rule with “from now on…”. Don't ask for decisions it already holds.",
-      };
-    case "roadmap":
-      return {
-        title: "Roadmap",
-        lede: `What has to be true for this project to be done, in the order it can happen. ${ceo} `
-          + "proposes each requirement; only the platform can mark one met.",
-      };
-    case "tasks":
-      return { title: "Tasks" };
-    case "deliverables":
-      return { title: "Deliverables" };
-    case "team": {
-      const people = ctx.seats.filter((s) => s.state !== "stood_down").length;
-      const teams = ctx.org?.teams.length ?? 0;
-      return {
-        title: "Team",
-        lede: `${people} ${people === 1 ? "person" : "people"} across ${teams} ${teams === 1 ? "team" : "teams"}. `
-          + "Click anyone to see what they are doing right now.",
-      };
-    }
-    case "spend":
-      return {
-        title: "Spend",
-        lede: "Every run is metered by the platform. The budget is the plan; no agent can talk "
-          + "its way past the hard stop, where the project pauses itself.",
-      };
-    case "reviews":
-      return { title: "Reviews" };
-    case "activity":
-      return {
-        title: "Activity",
-        lede: `Everything that happened on this project. You can read every channel; you speak only to ${ceo}.`,
-      };
-    case "settings":
-      return { title: "Settings" };
-    default:
-      return { title: ctx.dash.name };
+  if (path === "chat") {
+    return {
+      title: `Chat with ${ceo}`,
+      lede: `${ceo} runs this project and is the one agent you speak to. Give direction, ask why, `
+        + "or set a rule with “from now on…”. Don't ask for decisions it already holds.",
+    };
   }
+  return null;
 }
 
 /** An old address, kept working: everything after the old prefix lands in
     the same place under the new one. */
 function Moved({ to }: { to: string }) {
   const { "*": rest = "" } = useParams();
-  return <Navigate to={rest ? `${to}/${rest}` : to} replace />;
+  const { search } = useLocation();
+  return <Navigate to={`${rest ? `${to}/${rest}` : to}${search}`} replace />;
 }
 
 export default function ProjectPage() {
@@ -346,12 +306,7 @@ export default function ProjectPage() {
   const location = useLocation();
   const [confirming, setConfirming] = useState<"pause" | "stop" | null>(null);
 
-  // Leaving a project's page closes the drawer of someone on it.
   const ctx = frame?.ctx ?? null;
-  const openAgent = ctx?.openAgent;
-  useEffect(() => {
-    if (openAgent) openAgent(null);
-  }, [location.pathname, openAgent]);
 
   if (!ctx) {
     return frame?.error ? <div className="error">{frame.error}</div> : <p className="subtitle">Loading…</p>;
@@ -361,10 +316,11 @@ export default function ProjectPage() {
   const sub = location.pathname.slice(base.length).replace(/^\//, "").split("/")[0];
   const onOverview = sub === "";
   const head = pageHead(sub, ctx);
+  const onRoadmap = location.pathname.startsWith(`${base}/details/roadmap`);
 
   return (
     <>
-      {!onOverview && <PageHead title={head.title} lede={head.lede} />}
+      {head && <PageHead title={head.title} lede={head.lede} />}
 
       <StandingNotice dash={dash} />
 
@@ -389,7 +345,7 @@ export default function ProjectPage() {
           Not refreshing — {ctx.error}. The numbers below are the last that landed.
         </div>
       )}
-      {ctx.reviews?.open && (onOverview || sub === "roadmap") && (
+      {ctx.reviews?.open && (onOverview || onRoadmap) && (
         <ReviewBanner projectId={projectId} number={ctx.reviews.open.number} />
       )}
 
@@ -398,39 +354,43 @@ export default function ProjectPage() {
           <Overview ctx={ctx} onPause={() => setConfirming("pause")} onStop={() => setConfirming("stop")}
             setupBadge={setupBadge(ctx.health)} goalLead={goalLead(dash.goal)} />
         } />
+        <Route path="team/:agentId" element={<Member ctx={ctx} />} />
         <Route path="chat" element={<Boardroom projectId={projectId} dash={dash} org={ctx.org} />} />
-        <Route path="roadmap" element={<Plan ctx={ctx} />} />
-        <Route path="tasks" element={<Tasks ctx={ctx} />} />
-        <Route path="deliverables" element={<Deliverables projectId={projectId} />} />
-        <Route path="team" element={<Team ctx={ctx} />} />
-        <Route path="spend" element={<Spend ctx={ctx} />} />
-        <Route path="reviews" element={<Review ctx={ctx} />} />
-        <Route path="activity/*" element={<Activity ctx={ctx} />} />
-        <Route path="settings" element={<Settings projectId={projectId} dash={dash} org={ctx.org} reload={ctx.reload} />} />
+        <Route path="results" element={<Results ctx={ctx} />} />
+        <Route path="details/*" element={<Details ctx={ctx} />} />
 
         {/* Old bookmarks, emails and links from outside the app. Every page
-            that moved keeps working; nobody relearns a URL they wrote down. */}
+            that moved keeps working, query and all; nobody relearns a URL
+            they wrote down. Ten sidebar pages became four: Overview and Team
+            are the Team page, the rest are tabs of Details. */}
+        <Route path="team" element={<Navigate to={base} replace />} />
+        <Route path="roadmap" element={<Moved to={`${base}/details/roadmap`} />} />
+        <Route path="tasks" element={<Moved to={`${base}/details/tasks`} />} />
+        <Route path="deliverables" element={<Moved to={`${base}/details/deliverables`} />} />
+        <Route path="spend" element={<Moved to={`${base}/details/spend`} />} />
+        <Route path="reviews" element={<Moved to={`${base}/details/reviews`} />} />
+        <Route path="activity/*" element={<Moved to={`${base}/details/activity`} />} />
+        <Route path="settings" element={<Moved to={`${base}/details/settings`} />} />
         <Route path="boardroom" element={<Navigate to={`${base}/chat`} replace />} />
-        <Route path="progress" element={<Navigate to={`${base}/roadmap`} replace />} />
-        <Route path="progress/board" element={<Navigate to={`${base}/tasks`} replace />} />
-        <Route path="progress/proof" element={<Navigate to={`${base}/activity/evidence`} replace />} />
-        <Route path="progress/review" element={<Navigate to={`${base}/reviews`} replace />} />
-        <Route path="records/*" element={<Moved to={`${base}/activity`} />} />
-        <Route path="plan" element={<Navigate to={`${base}/roadmap`} replace />} />
-        <Route path="work" element={<Navigate to={`${base}/tasks`} replace />} />
-        <Route path="board" element={<Navigate to={`${base}/tasks`} replace />} />
-        <Route path="review" element={<Navigate to={`${base}/reviews`} replace />} />
-        <Route path="evidence" element={<Navigate to={`${base}/activity/evidence`} replace />} />
-        <Route path="files" element={<Navigate to={`${base}/deliverables`} replace />} />
-        <Route path="approvals" element={<Navigate to={`${base}/activity/decisions`} replace />} />
-        <Route path="runs" element={<Navigate to={`${base}/activity/runs`} replace />} />
-        <Route path="channels" element={<Navigate to={`${base}/activity/messages`} replace />} />
-        <Route path="inbox" element={<Navigate to={`${base}/activity/inbox`} replace />} />
-        <Route path="memory" element={<Navigate to={`${base}/activity/memory`} replace />} />
+        <Route path="progress" element={<Navigate to={`${base}/details/roadmap`} replace />} />
+        <Route path="progress/board" element={<Navigate to={`${base}/details/tasks`} replace />} />
+        <Route path="progress/proof" element={<Navigate to={`${base}/details/activity/evidence`} replace />} />
+        <Route path="progress/review" element={<Navigate to={`${base}/details/reviews`} replace />} />
+        <Route path="records/*" element={<Moved to={`${base}/details/activity`} />} />
+        <Route path="plan" element={<Navigate to={`${base}/details/roadmap`} replace />} />
+        <Route path="work" element={<Navigate to={`${base}/details/tasks`} replace />} />
+        <Route path="board" element={<Navigate to={`${base}/details/tasks`} replace />} />
+        <Route path="review" element={<Navigate to={`${base}/details/reviews`} replace />} />
+        <Route path="evidence" element={<Navigate to={`${base}/details/activity/evidence`} replace />} />
+        <Route path="files" element={<Navigate to={`${base}/details/deliverables`} replace />} />
+        <Route path="approvals" element={<Navigate to={`${base}/details/activity/decisions`} replace />} />
+        <Route path="runs" element={<Navigate to={`${base}/details/activity/runs`} replace />} />
+        <Route path="channels" element={<Navigate to={`${base}/details/activity/messages`} replace />} />
+        <Route path="inbox" element={<Navigate to={`${base}/details/activity/inbox`} replace />} />
+        <Route path="memory" element={<Navigate to={`${base}/details/activity/memory`} replace />} />
         <Route path="*" element={<Navigate to={base} replace />} />
       </Routes>
 
-      {ctx.agentOpen && <AgentDrawer ctx={ctx} agentId={ctx.agentOpen} onClose={() => ctx.openAgent(null)} />}
     </>
   );
 }

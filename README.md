@@ -41,7 +41,18 @@ true at once — [PLAN.md](docs/PLAN.md) says which claims are load-bearing and
 what would falsify them, and [SECURITY.md](SECURITY.md) says what contains an
 agent and what does not.
 
-<img src="docs/screenshots/cockpit-overview.png" alt="A project's Overview: delivery against the promised date, progress, spend against the cap and who is working now; the decisions waiting on the chairman with their buttons; each agent's status and what it is doing; the CEO's latest message and flags; what is coming up; and spend by team">
+<img src="docs/screenshots/cockpit-overview.png" alt="A project's home page is its team: the chairman at the top of the org chart with the decision waiting on them, the CEO beneath, and each team with what every person is doing, the model they run on, and what they have cost">
+
+Three things to know before anything else:
+
+- **Open source, Apache-2.0.** You run it, on your machine or your server. [LICENSE](LICENSE)
+- **Any model, per person.** Anthropic, OpenAI, Google, Mistral, xAI, DeepSeek,
+  Qwen, Moonshot, OpenRouter, or any OpenAI-compatible endpoint — and each seat
+  on the org chart can run a different one. The chart says which, and what each
+  person has cost this month.
+- **Your data, through MCP.** The project reads the systems you connect as MCP
+  data sources, scoped per role, and the whole cockpit is itself an MCP server —
+  so the record of what your team did is yours to query from any client.
 
 A CEO sets the priorities. Teams of specialists argue with each other. A budget
 stops itself and a delivery date nobody can quietly move. **You are the

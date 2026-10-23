@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useMemo } from "react";
 import {
   ActivityView,
   ApprovalRow,
@@ -13,6 +13,7 @@ import {
   RunRow,
   TaskRow,
 } from "./api";
+import { useNavigate } from "react-router-dom";
 import { usePoll } from "./hooks";
 import { Seat, seatsOf } from "./ui/team";
 import { useProjectLive } from "./ws";
@@ -51,8 +52,7 @@ export interface ProjectCtx {
   reloadHealth: () => void;
   reloadPlan: () => void;
   reloadTasks: () => void;
-  /** The agent drawer is the frame's, so any screen can open it on anyone. */
-  agentOpen: string | null;
+  /** Open one person's page — any screen can, on anyone. */
   openAgent: (agentId: string | null) => void;
 }
 
@@ -92,8 +92,12 @@ export function ProjectProvider({ projectId, children }: { projectId: string; ch
     () => get<ActivityView>(`${base}/activity?since=today`), 15000, [projectId]);
   const { data: reviews } = usePoll(() => get<ReviewsView>(`${base}/reviews`), 30000, [projectId]);
 
-  const [agentOpen, setAgentOpen] = useState<string | null>(null);
-  const openAgent = useCallback((id: string | null) => setAgentOpen(id), []);
+  // A person on the team is a page of their own now, not a drawer, so
+  // "open" is a navigation — and a link to them is something you can send.
+  const navigate = useNavigate();
+  const openAgent = useCallback((id: string | null) => {
+    if (id) navigate(`/projects/${projectId}/team/${id}`);
+  }, [navigate, projectId]);
 
   const seats = useMemo(
     () => (dash ? seatsOf({ org, dash, tasks, runs, approvals: approvals ?? [], seats: today?.seats }) : []),
@@ -114,12 +118,12 @@ export function ProjectProvider({ projectId, children }: { projectId: string; ch
         asOf: at,
         error,
         reload, reloadApprovals, reloadOrg, reloadHealth, reloadPlan, reloadTasks,
-        agentOpen, openAgent,
+        openAgent,
       },
     };
   }, [projectId, dash, plan, org, health, tasks, runs, today, reviews, seats, approvals, asks,
     hypotheses, at, error, reload, reloadApprovals, reloadOrg, reloadHealth, reloadPlan,
-    reloadTasks, agentOpen, openAgent]);
+    reloadTasks, openAgent]);
 
   return <ProjectContext.Provider value={frame}>{children}</ProjectContext.Provider>;
 }

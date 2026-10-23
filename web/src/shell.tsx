@@ -7,7 +7,7 @@ import { CommandPalette, Cheatsheet, useShortcuts } from "./palette";
 import { OfferHost } from "./precedent";
 import { UndoHost } from "./undo";
 import { firstName, useProjectFrame } from "./projectCtx";
-import { PROJECT_PAGES } from "./nav";
+import { DETAIL_TABS, PROJECT_PAGES } from "./nav";
 import { Icon, IconName } from "./ui/Icon";
 import { Avatar, Person, ThemeToggle } from "./ui/kit";
 import { SEAT_LABEL } from "./ui/team";
@@ -87,22 +87,15 @@ function ProjectNav({
   // Each page carries the one number that says whether it is worth opening.
   const aside: Record<string, ReactNode> = {};
   if (ctx) {
-    const { dash, plan, seats, reviews } = ctx;
-    if (plan?.burnup) aside.roadmap = `${plan.burnup.settled}/${plan.burnup.scope_total}`;
-    aside.tasks = `${dash.open_tasks} open`;
+    const { seats, reviews } = ctx;
     const people = seats.filter((s) => s.state !== "stood_down");
     const busy = people.filter((s) => s.state === "working").length;
-    aside.team = people.length ? `${busy}/${people.length}` : undefined;
-    const cap = dash.billing_mode === "api_key" ? dash.caps.monthly_usd_cap : dash.caps.monthly_token_cap;
-    const spent = dash.billing_mode === "api_key"
-      ? dash.month_to_date.usd
-      : dash.month_to_date.tokens_in + dash.month_to_date.tokens_out
-        + dash.month_to_date.cache_creation + dash.month_to_date.cache_read;
-    if (cap > 0) aside.spend = `${Math.round((spent / cap) * 100)}%`;
-    if (reviews?.open) aside.reviews = <span className="sb-pill">open</span>;
+    // Team carries who is at it; Details only flags the one thing inside it
+    // that is an occasion rather than a reference — an open review.
+    aside[""] = people.length ? `${busy}/${people.length}` : undefined;
+    if (reviews?.open) aside.details = <span className="sb-pill">review open</span>;
   }
   const unread = ctx?.dash.boardroom_unread ?? 0;
-  const explore = ctx?.dash.mode === "explore";
   const ceo = ctx ? firstName(ctx.ceoName) : null;
   const base = `/projects/${project.id}`;
 
@@ -124,7 +117,7 @@ function ProjectNav({
         </span>
         <Icon name="updown" size={14} />
       </button>
-      {PROJECT_PAGES.filter((p) => !(explore && p.path === "roadmap")).map((p) => (
+      {PROJECT_PAGES.map((p) => (
         <NavItem
           key={p.path}
           to={p.path ? `${base}/${p.path}` : base}
@@ -168,7 +161,7 @@ function LiveNow() {
         </button>
       ))}
       {live.length > 6 && (
-        <Link className="sb-more" to={`/projects/${ctx.projectId}/team`}>and {live.length - 6} more</Link>
+        <Link className="sb-more" to={`/projects/${ctx.projectId}`}>and {live.length - 6} more</Link>
       )}
     </>
   );
@@ -187,7 +180,16 @@ function Crumbs() {
     parts.push({ label: "Projects", to: "/projects" });
     parts.push({ label: frame.ctx.dash.name, to: `/projects/${project[1]}` });
     if (page && page.path) {
-      parts.push({ label: page.path === "chat" ? `Chat with ${firstName(frame.ctx.ceoName)}` : page.label });
+      const tab = page.path === "details"
+        ? DETAIL_TABS.find((t) => path.startsWith(`/projects/${project[1]}/details/${t.path}`))
+        : undefined;
+      parts.push({
+        label: page.path === "chat" ? `Chat with ${firstName(frame.ctx.ceoName)}` : page.label,
+        to: tab ? `/projects/${project[1]}/details` : undefined,
+      });
+      if (tab) parts.push({ label: tab.label });
+    } else if (project[2] === "team") {
+      parts.push({ label: "Team" });
     }
   } else if (path.startsWith("/projects/new")) {
     parts.push({ label: "Projects", to: "/projects" }, { label: "New project" });
