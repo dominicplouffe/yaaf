@@ -202,6 +202,7 @@ def seed_roles(
     them arrives at New Project with its team's role blank. That flag loads
     exactly those, leaving every role already in the library untouched.
     """
+    failed = 0
     with _client() as client:
         have: set[str] = set()
         if only_missing:
@@ -230,7 +231,15 @@ def seed_roles(
                            f"alone, {filed} as {body.get('category') or 'uncategorised'}")
                 continue
             response = client.post("/admin/roles", json=body)
+            if response.status_code == 401:
+                # Not signed in fails every file the same way: say it once, with
+                # the fix, rather than 38 times and an exit of 0.
+                _fail(response)
             typer.echo(f"{path.name}: {response.status_code} {response.text[:120]}")
+            failed += response.status_code >= 400
+        if failed:
+            typer.echo(f"{failed} file(s) were refused — see above.", err=True)
+            raise typer.Exit(1)
 
 
 @app.command()
@@ -253,6 +262,7 @@ def seed_crews(
     accepted and listed with that slug marked missing, but the picker is more
     use when everything resolves.
     """
+    failed = 0
     with _client() as client:
         have: set[str] = set()
         if only_missing:
@@ -268,7 +278,15 @@ def seed_crews(
                 typer.echo(f"{path.name}: already in the library, left alone")
                 continue
             response = client.post("/admin/crews", json=body)
+            if response.status_code == 401:
+                # Not signed in fails every file the same way: say it once, with
+                # the fix, rather than 17 times and an exit of 0.
+                _fail(response)
             typer.echo(f"{path.name}: {response.status_code} {response.text[:120]}")
+            failed += response.status_code >= 400
+        if failed:
+            typer.echo(f"{failed} file(s) were refused — see above.", err=True)
+            raise typer.Exit(1)
 
 
 @app.command()

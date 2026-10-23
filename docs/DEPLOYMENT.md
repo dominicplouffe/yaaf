@@ -47,10 +47,14 @@ export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
 .venv/bin/yaaf users bootstrap --email you@example.com --name "You"
 .venv/bin/yaaf login --email you@example.com
 .venv/bin/yaaf seed-roles roles/
+.venv/bin/yaaf seed-crews crews/   # the "start from a crew" picker reads these
+.venv/bin/yaaf doctor              # checks all of the above, names any fix
 ```
 
-Then `yaaf doctor` checks every one of these at once — and `seed-crews`,
-which the picker needs — and prints the fix for anything missing.
+If the API is not on port 8080, also export `YAAF_API_BASE_URL`: it is what
+the runner calls and what the bootstrap link is built from, and it defaults to
+`http://localhost:8080` — so on another port the runner talks to nothing, or
+to somebody else's server, without an error you would notice.
 
 Open the link `bootstrap` printed, choose a password, and you are in the
 dashboard at **http://localhost:8080/app**. See [AUTH.md](AUTH.md) for who

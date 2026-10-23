@@ -129,3 +129,16 @@ def test_the_drill_report_is_the_first_thing_printed():
         capture_output=True, text=True, timeout=120, check=False)
     assert done.stdout.startswith("Fire drill — "), done.stdout[:300]
     assert done.stderr.strip() == "", done.stderr[:500]
+
+
+def test_seeding_while_signed_out_says_so_once_and_fails(client, monkeypatch, tmp_path):
+    """It printed one `401 sign in first` per file — 38 of them — and exited 0,
+    so a setup script carried on into a library with nothing in it."""
+    signed_out = TestClient(client.app)
+    monkeypatch.setattr(cli, "_client", lambda: contextlib.nullcontext(signed_out))
+    for slug in ("one", "two", "three"):
+        (tmp_path / f"{slug}.json").write_text(json.dumps({"slug": slug}))
+    result = runner.invoke(cli.app, ["seed-roles", str(tmp_path)])
+    assert result.exit_code == 1
+    assert result.output.count("401") == 1
+    assert "yaaf login" in result.output
