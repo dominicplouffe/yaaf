@@ -115,7 +115,7 @@ export const needsYou = (i: Item) => i.yours === true;
 const NEEDS = new WeakMap<DeskProject, number>();
 /** Status-line verdicts that are a problem, in the warning tone wherever the
     sentence appears (yaaf.server.status_line decides the verdict). */
-export const WARN_VERDICTS = ["blocked", "failing", "late", "at_risk", "stalled", "needs_you"];
+export const WARN_VERDICTS = ["blocked", "failing", "late", "at_risk", "spinning", "stalled", "needs_you"];
 
 export function needsYouCount(p: DeskProject): number {
   const hit = NEEDS.get(p);

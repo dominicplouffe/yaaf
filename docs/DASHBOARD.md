@@ -144,7 +144,9 @@ per project that moved, from the same briefing your morning mail carries.
 
 The sentence on each card is the project's one-line status — finished,
 stopped, cannot run, paused, failing (its last three runs died), late, at
-risk, decisions waiting, gone quiet, on track — decided once on the server,
+risk, decisions waiting, busy with nothing to show (twenty or more paid runs in
+a week, from a project at least a week old, with nothing finished, met,
+published or proven), gone quiet, on track — decided once on the server,
 so the Projects page, the project's Overview, `yaaf projects`, `yaaf status`
 and Claude's `desk` and `project` say exactly the same thing.
 

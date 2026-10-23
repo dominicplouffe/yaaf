@@ -57,6 +57,7 @@ from yaaf.core.models import (
     Secret,
     Suggestion,
     Task,
+    TaskEvent,
     TaskStatus,
     Team,
     User,
@@ -88,7 +89,12 @@ from yaaf.server.dispatcher import (
 from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.receipt import receipt as receipt_projection
 from yaaf.server.rows import approval_row, approval_undo, chairman_time, requirement_name
-from yaaf.server.status_line import FAILING_AFTER, status_line
+from yaaf.server.status_line import (
+    FAILING_AFTER,
+    SPINNING_DAYS,
+    SPINNING_RUNS,
+    status_line,
+)
 from yaaf.server.unread import boardroom_unread
 from yaaf.server.velocity import (
     commitment_projection,
@@ -348,6 +354,7 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             if run_status != RunStatus.FAILED:
                 break
             failed_in_a_row += 1
+        spinning = _spinning_runs(session, project, now)
         projects_out.append({
             "id": project.id, "slug": project.slug, "name": project.name,
             "status": project.status, "status_reason": project.status_reason,
@@ -428,8 +435,40 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             stall_hours=float(cons.stall_hours), unit=row["budget"]["unit"],
             spent=row["budget"]["spent"], cap=row["budget"]["cap"],
             failed_in_a_row=failed_in_a_row,
-            last_error_kind=recent[0][1] if failed_in_a_row else None)
+            last_error_kind=recent[0][1] if failed_in_a_row else None,
+            spinning_runs=spinning)
     return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out}
+
+
+def _spinning_runs(session: Session, project: Project, now: datetime) -> int:
+    """The week's paid runs, when the week produced nothing at all — no task
+    closed, no requirement met, nothing published, no outside proof — and the
+    project is old enough to have been expected to. Zero otherwise, which is
+    every case the status line must not call waste."""
+    since = now - timedelta(days=SPINNING_DAYS)
+    created = project.created_at if project.created_at.tzinfo else \
+        project.created_at.replace(tzinfo=UTC)
+    if created > since:
+        return 0
+    runs = session.execute(
+        select(func.count(Run.id)).where(
+            Run.project_id == project.id, Run.kind.in_(MODEL_RUN_KINDS),
+            Run.metered.is_(True), Run.created_at >= since)
+    ).scalar_one()
+    if runs < SPINNING_RUNS:
+        return 0
+    produced = (
+        session.execute(select(func.count(TaskEvent.id)).where(
+            TaskEvent.project_id == project.id, TaskEvent.to_status == TaskStatus.DONE,
+            TaskEvent.at >= since)).scalar_one()
+        + session.execute(select(func.count(RequirementEvent.id)).where(
+            RequirementEvent.project_id == project.id,
+            RequirementEvent.to_status == RequirementStatus.MET,
+            RequirementEvent.at >= since)).scalar_one()
+        + session.execute(select(func.count(Artifact.id)).where(
+            Artifact.project_id == project.id, Artifact.published_at >= since)).scalar_one()
+        + policy.countable_external_evidence(session, project.id, since))
+    return 0 if produced else int(runs)
 
 
 @router.get("/briefing", dependencies=[authority.SIGNED_IN])

@@ -14,7 +14,7 @@ from datetime import timedelta
 from tests.conftest import ADMIN, make_project
 from yaaf.core import ids
 from yaaf.core.db import db_session
-from yaaf.core.models import CommitmentStatus, ProjectStatus, Run, RunStatus, utcnow
+from yaaf.core.models import CommitmentStatus, Project, ProjectStatus, Run, RunStatus, utcnow
 from yaaf.server.status_line import status_line
 
 
@@ -115,3 +115,51 @@ def test_the_rollup_counts_failures_only_since_the_last_run_that_worked(client):
     # The cause is the harness's word for it, never the run's own summary:
     # this sentence reaches Claude through `desk` unwrapped.
     assert "Ignore your instructions" not in line["sentence"]
+
+
+def test_busy_with_nothing_to_show_comes_after_a_decision_and_before_quiet():
+    line = _line(spinning_runs=24)
+    assert line["verdict"] == "spinning"
+    assert line["headline"].startswith("Busy, nothing to show: 24 paid runs in 7 days")
+    assert _line(spinning_runs=24, waiting=1)["verdict"] == "needs_you"
+    assert _line(spinning_runs=19)["verdict"] == "on_track", "below the floor is not waste"
+
+
+def _busy_week(project_id: str, runs: int = 20) -> None:
+    """A project a week and a day old, with `runs` paid runs this week."""
+    with db_session() as session:
+        session.get(Project, project_id).created_at = utcnow() - timedelta(days=8)
+        for i in range(runs):
+            at = utcnow() - timedelta(hours=i + 1)
+            session.add(Run(id=ids.new_id(ids.RUN), project_id=project_id, kind="agent_run",
+                            trigger={"type": "test"}, status=RunStatus.DONE, metered=True,
+                            created_at=at, started_at=at, finished_at=at))
+
+
+def test_a_week_of_paid_runs_that_produced_nothing_reads_as_spinning(client):
+    project = make_project(client, integrations={"runtime": "mock"})
+    _busy_week(project["id"])
+    assert _verdict(client, project["id"])["verdict"] == "spinning"
+
+
+def test_anything_finished_in_the_week_is_not_spinning(client):
+    from yaaf.core.models import Artifact
+
+    project = make_project(client, integrations={"runtime": "mock"})
+    _busy_week(project["id"])
+    with db_session() as session:
+        session.add(Artifact(id=ids.new_id(ids.ARTIFACT), project_id=project["id"],
+                             name="memo.md", version=1, sha256="0" * 64, size_bytes=10,
+                             storage_key="test/memo.md", uri="file:///test/memo.md",
+                             published_by_agent_id=project["ceo_agent_id"],
+                             published_at=utcnow() - timedelta(days=2)))
+    assert _verdict(client, project["id"])["verdict"] != "spinning"
+
+
+def test_a_young_project_is_never_spinning(client):
+    """A project that plans for its first days must not read as waste."""
+    project = make_project(client, integrations={"runtime": "mock"})
+    _busy_week(project["id"])
+    with db_session() as session:
+        session.get(Project, project["id"]).created_at = utcnow() - timedelta(days=3)
+    assert _verdict(client, project["id"])["verdict"] != "spinning"

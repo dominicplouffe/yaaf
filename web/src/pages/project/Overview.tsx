@@ -599,6 +599,7 @@ const FIX_AT: Record<string, [string, string]> = {
   late: ["roadmap", "Cut scope or move the date"],
   at_risk: ["roadmap", "See the plan"],
   stalled: ["team", "See who is stuck"],
+  spinning: ["activity/runs", "See what the runs did"],
 };
 
 export default function Overview({

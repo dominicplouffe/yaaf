@@ -21,12 +21,19 @@ from yaaf.core.models import CommitmentStatus, ProjectStatus, utcnow
 
 #: The verdicts, in the words a filter or a colour can key on.
 VERDICTS = ("done", "stopped", "not_started", "blocked", "paused", "failing", "late",
-            "at_risk", "needs_you", "stalled", "on_track", "idle")
+            "at_risk", "needs_you", "spinning", "stalled", "on_track", "idle")
 
 #: How many runs in a row must fail before the project's line says so. One
 #: failure is retried and usually gone; three is a project that is spending
 #: and producing nothing — the same count the credential pause uses.
 FAILING_AFTER = 3
+
+#: "Busy, nothing to show": this many paid runs in a week with nothing
+#: finished, met, published or proven in it. High on purpose — a project that
+#: plans for a day, or reads before it writes, must never read as wasting
+#: money; one that has spent twenty runs and produced nothing at all is.
+SPINNING_RUNS = 20
+SPINNING_DAYS = 7
 
 
 def _date(at: datetime | None) -> str:
@@ -50,7 +57,8 @@ def status_line(*, status: str, status_reason: str | None, unpaid: bool,
                 commitment, waiting: int, open_tasks: int, runs_running: int,
                 last_run_at: datetime | None, stall_hours: float,
                 unit: str, spent: float, cap: float,
-                failed_in_a_row: int = 0, last_error_kind: str | None = None) -> dict:
+                failed_in_a_row: int = 0, last_error_kind: str | None = None,
+                spinning_runs: int = 0) -> dict:
     """{verdict, headline, sentence} for one project, from the facts the desk
     holds. The headline is the verdict in words; the sentence adds the money,
     for a surface that has no money column of its own."""
@@ -58,14 +66,15 @@ def status_line(*, status: str, status_reason: str | None, unpaid: bool,
         status=status, status_reason=status_reason, unpaid=unpaid, commitment=commitment,
         waiting=waiting, open_tasks=open_tasks, runs_running=runs_running,
         last_run_at=last_run_at, stall_hours=stall_hours,
-        failed_in_a_row=failed_in_a_row, last_error_kind=last_error_kind)
+        failed_in_a_row=failed_in_a_row, last_error_kind=last_error_kind,
+        spinning_runs=spinning_runs)
     sentence = f"{headline} {_money(unit, spent, cap)}" if with_money else headline
     return {"verdict": verdict, "headline": headline, "sentence": sentence}
 
 
 def _verdict(*, status, status_reason, unpaid, commitment, waiting, open_tasks,
              runs_running, last_run_at, stall_hours, failed_in_a_row=0,
-             last_error_kind=None) -> tuple[str, str, bool]:
+             last_error_kind=None, spinning_runs=0) -> tuple[str, str, bool]:
     if status == ProjectStatus.COMPLETED:
         return "done", "Finished.", True
     if status == ProjectStatus.STOPPED:
@@ -99,6 +108,12 @@ def _verdict(*, status, status_reason, unpaid, commitment, waiting, open_tasks,
     if waiting:
         plural = "decision" if waiting == 1 else "decisions"
         return "needs_you", f"{waiting} {plural} waiting on you.", True
+    if spinning_runs >= SPINNING_RUNS:
+        # Activity is not achievement: the one question a busy project's
+        # "Working." could not answer was whether any of it bought anything.
+        return ("spinning", f"Busy, nothing to show: {spinning_runs} paid runs in "
+                f"{SPINNING_DAYS} days, and nothing finished, met, published or proven.",
+                True)
     quiet_for = (utcnow() - last_run_at) if last_run_at else None
     if (open_tasks and not runs_running and stall_hours > 0 and quiet_for is not None
             and quiet_for > timedelta(hours=stall_hours)):
