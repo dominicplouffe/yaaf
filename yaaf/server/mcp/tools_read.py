@@ -229,11 +229,25 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
                              if not isinstance(row, dict)
                              or row.get("project_id", row.get("id")) in reachable
                              or "project_id" not in row and "id" not in row]
-    filtered["also_yours"] = _also_yours(session, reachable)
-    # First, and written before the trim: a long desk loses rows to the
-    # context budget, and the project that needed him must not be one of them.
-    summary = portfolio_summary(filtered.get("projects") or [], filtered["also_yours"])
-    return envelope.fit({"summary": summary, **filtered}, arguments.get("detail"))
+    also = _also_yours(session, reachable)
+    summary = portfolio_summary(filtered.get("projects") or [], also)
+    # Both added AFTER the trim. The summary is what must survive it — a long
+    # desk loses rows to the context budget, and the project that needed him
+    # must still be named. And the trim cuts strings blind, so a wrapped
+    # heads-up title cut mid-envelope would lose its closing tag and leave
+    # everything after it reading as agent text; `also_yours` is bounded by
+    # construction instead (short titles, a capped list).
+    out = envelope.fit(filtered, arguments.get("detail"))
+    shown = also[:ALSO_YOURS_LISTED]
+    rest = {"also_yours_more": len(also) - len(shown)} if len(also) > len(shown) else {}
+    return {"summary": summary, **out, "also_yours": shown, **rest}
+
+
+#: How many of `also_yours` a desk reply lists; the rest are a count, and the
+#: summary already counts every one of them by kind.
+ALSO_YOURS_LISTED = 20
+#: An agent-written title is cut to this BEFORE it is wrapped, never after.
+_TITLE_CHARS = 160
 
 
 def _also_yours(session: Session, reachable: set[str]) -> list[dict]:
@@ -249,15 +263,20 @@ def _also_yours(session: Session, reachable: set[str]) -> list[dict]:
             select(Project).where(Project.id.in_(reachable))).scalars():
         for flag in flag_lib.open_flags(session, project.id):
             if flag.raised_at is not None and flag.acknowledged_at is None:
+                # Platform-written, but it quotes agent text — a requirement's
+                # statement, a team's name, a cycle's goal — so it is data too.
                 out.append({"project": project.slug, "kind": "flag", "id": flag.id,
-                            "what": flag.summary, "answer_with": "flag_ack"})
+                            "what": envelope.untrusted(
+                                flag.summary[:_TITLE_CHARS],
+                                author="platform, quoting CEO text", kind="flag"),
+                            "answer_with": "flag_ack"})
         for note in session.execute(select(HeadsUp).where(
                 HeadsUp.project_id == project.id,
                 HeadsUp.acknowledged_at.is_(None))).scalars():
             # The CEO wrote this title: data, never instruction (rule 5).
             out.append({"project": project.slug, "kind": "heads_up", "id": note.id,
-                        "what": envelope.untrusted(note.title, author="CEO",
-                                                   kind="heads_up"),
+                        "what": envelope.untrusted(note.title[:_TITLE_CHARS],
+                                                   author="CEO", kind="heads_up"),
                         "answer_with": "heads_up_ack"})
         for review in session.execute(select(Review).where(
                 Review.project_id == project.id,
@@ -307,6 +326,13 @@ def project(principal: Principal, session: Session, arguments: dict) -> dict:
         payload = _observe(observe.project_briefing, project_id=row.id,
                            hours=arguments.get("hours"), since=arguments.get("since"),
                            session=session)
+        # A deliverable's name is the agent's choice of words: data. Cut
+        # before it is wrapped, so the trim can never split the envelope.
+        payload = _as_dict(payload)
+        payload["delivered"] = [
+            {**item, "name": envelope.untrusted(str(item.get("name", ""))[:_TITLE_CHARS],
+                                                author="agent", kind="deliverable_name")}
+            for item in payload.get("delivered") or []]
     else:
         payload = _observe(observe.dashboard, project_id=row.id, session=session)
         # The sentence every other surface leads with (Home, the Overview,
