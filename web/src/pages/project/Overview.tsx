@@ -519,6 +519,23 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+  // The missing seat, hired the way the Team page hires one: on the role's
+  // own model, with its own channel, disclosed in the audit trail.
+  const hire = async (check: HealthCheck) => {
+    if (check.action?.kind !== "hire") return;
+    setError(null);
+    try {
+      await post(`/admin/projects/${projectId}/teams`, {
+        role_slug: check.action.role_slug,
+        name: check.action.team_name,
+        employees: [check.action.employee],
+      });
+      reloadHealth();
+      reloadOrg();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   // Keeping is the project's answer, not one reader's tidying, so it is a
   // decision on the record and the row leaves every chair's card.
   const keepTempo = async () => {
@@ -565,12 +582,18 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
               reloadHealth();
               reloadOrg();
             }}>adopt the latest role version</button>
+          ) : check.action?.kind === "hire" && !check.acked_at ? (
+            <button className="small" onClick={() => hire(check)}>
+              {check.action.label}
+            </button>
           ) : check.action?.kind === "tempo" && !check.acked_at ? (
             <button className="small" onClick={() => switchTempo(check)}>
               Switch to “{check.action.to_label}”
             </button>
           ) : isOpen(check) && WHERE_TO[check.where ?? ""] ? (
-            <Link to={`/projects/${projectId}/${WHERE_TO[check.where!][0]}`}>{WHERE_TO[check.where!][1]} →</Link>
+            <Link to={WHERE_TO[check.where!][0].startsWith("/")
+              ? WHERE_TO[check.where!][0]
+              : `/projects/${projectId}/${WHERE_TO[check.where!][0]}`}>{WHERE_TO[check.where!][1]} →</Link>
           ) : null}
           {check.action?.kind === "tempo" && !check.acked_at ? (
             <button className="small" onClick={() => keepTempo()}>
@@ -594,6 +617,8 @@ const WHERE_TO: Record<string, [string, string]> = {
   plan: ["roadmap", "open the Roadmap"],
   boardroom: ["chat", "open the chat"],
   team: ["team", "open the Team"],
+  // A price is the install's, not the project's, so it is set where prices live.
+  prices: ["/settings?section=prices", "open Model prices"],
 };
 
 export default function Overview({

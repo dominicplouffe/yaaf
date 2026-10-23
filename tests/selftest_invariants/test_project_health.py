@@ -3,6 +3,8 @@ misconfiguration class gets a named, plain-language finding."""
 
 from __future__ import annotations
 
+import re
+
 from tests.conftest import ADMIN, make_project, seed_role
 
 
@@ -73,3 +75,76 @@ def test_role_drift_warns_with_one_click_action(client):
 
     client.post(f"/admin/teams/{team['id']}/repin", headers=ADMIN)
     assert _by_key(_health(client, project["id"]), f"role-drift:{team['name']}") is None
+
+
+# ── what a suggestion may say ───────────────────────────────────────────────────
+
+#: Words for the platform's insides. A chairman who reads "`recurrence:
+#: standing`" or "yaaf/runtimes/catalog.py" on his project's health card has
+#: been handed someone else's job, and learns to press past the card unread.
+_INSIDE = re.compile(r"`|\.py\b|\b[a-z]+_[a-z_]+\b")
+#: About three lines on the card. A row past this is a paragraph, and a
+#: paragraph on this card is not read.
+_LONGEST = 360
+
+
+def test_every_suggestion_is_said_in_the_readers_words(client):
+    """Each row names what is happening and what to do, briefly, in words a
+    chairman uses. Rewriting the rows once does not keep them that way; this
+    does, for every warning a project can light here at once."""
+    from datetime import timedelta
+
+    from yaaf.core import ids
+    from yaaf.core.constitution import TEMPO_PRESETS
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Project, Run, RunStatus, utcnow
+
+    seen: dict[str, str] = {}
+
+    def collect(project: dict) -> None:
+        for check in _health(client, project["id"])["checks"]:
+            if check["status"] == "warn":
+                seen[check["key"].split(":")[0]] = check["detail"]
+
+    operate = make_project(client, slug="desk", mode="operate",
+                           controlled_domains=["github:acme"],
+                           constitution={"cycle_frequency": "weekly",
+                                         **TEMPO_PRESETS["live"], "monthly_usd_cap": 75.0})
+    with db_session() as session:
+        for _ in range(6):
+            session.add(Run(id=ids.new_id(ids.RUN), project_id=operate["id"],
+                            agent_id=operate["ceo_agent_id"], kind="agent_run", trigger={},
+                            status=RunStatus.DONE, cost_usd=0.15,
+                            started_at=utcnow() - timedelta(days=9),
+                            finished_at=utcnow() - timedelta(days=9)))
+        # Provisioned at birth now; a project from before that has none.
+        row = session.get(Project, operate["id"])
+        row.integrations = {k: v for k, v in (row.integrations or {}).items()
+                            if k != "github_webhook_secret"}
+    seed_role(client, "worker", description="Checks its sources before it writes.")
+    collect(operate)
+    explore = make_project(client, slug="study", mode="explore",
+                           constitution={"monthly_usd_cap": 75.0})
+    collect(explore)
+
+    assert {"tempo-vs-rhythm", "tempo-vs-budget", "no-adversary", "no-standing-scope",
+            "connectors", "role-drift"} <= set(seen), sorted(seen)
+    for key, detail in seen.items():
+        assert not _INSIDE.search(detail), f"{key} speaks the platform's words: {detail}"
+        assert len(detail) <= _LONGEST, f"{key} is {len(detail)} characters: {detail}"
+
+
+def test_the_missing_reviewer_is_one_click_away(client):
+    """"Nobody disagrees with the plan" has one fix, a hire, so the row offers
+    it, and hiring it is what clears the row."""
+    project = make_project(client, slug="noadv", mode="deliver")
+    seed_role(client, "plan-adversary", category="challenge")
+    row = _by_key(_health(client, project["id"]), "no-adversary")
+    action = row["action"]
+    assert action["kind"] == "hire" and action["role_slug"] == "plan-adversary"
+
+    hired = client.post(f"/admin/projects/{project['id']}/teams", json={
+        "role_slug": action["role_slug"], "name": action["team_name"],
+        "employees": [action["employee"]]}, headers=ADMIN)
+    assert hired.status_code == 200, hired.text
+    assert _by_key(_health(client, project["id"]), "no-adversary") is None

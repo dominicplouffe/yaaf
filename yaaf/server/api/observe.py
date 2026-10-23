@@ -783,9 +783,9 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             f"{abs(gap['drift']):.0%} {'above' if over else 'below'} what the last "
             f"{gap['runs']} runs were actually billed (${gap['priced_usd']:.2f} against "
             f"${gap['reported_usd']:.2f}), so budgets for seats on "
-            f"{', '.join(sorted(metered[gap['model']]))} are off by as much. Whoever "
-            "runs this yaaf install should update the price list.",
-            "runs")
+            f"{', '.join(sorted(metered[gap['model']]))} are off by as much. Set its "
+            "current price under Model prices.",
+            "prices")
 
     secrets = session.execute(
         select(Secret).where(or_(Secret.project_id == project.id,
@@ -853,18 +853,11 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             # Say what moved, not just that something did. A drift warning with
             # no content is a number nobody acts on: it reports that a newer
             # version exists and gives the reader nothing to decide with, so it
-            # sits on the screen for months. each version's `description` is what
+            # sits on the screen for months. A version's `description` is what
             # its author already wrote when publishing it.
-            behind = session.execute(
-                select(RoleVersion).where(
-                    RoleVersion.role_id == role.id,
-                    RoleVersion.version > pinned.version,
-                ).order_by(RoleVersion.version)
-            ).scalars().all()
-            changes = "; ".join(
-                f"v{v.version}: {(v.description or 'no description').strip()[:160]}"
-                for v in behind[:4]
-            )
+            # The newest version's own words, once. Every version's notes in a
+            # row made the line a changelog nobody read to the end.
+            changes = (latest.description or "no description given").strip()[:160]
             add(f"role-drift:{team.name}", "warn",
                 f"A newer version of the '{role.slug}' role is out for team "
                 f"'{team.name}' (v{pinned.version} → v{latest.version}): {changes}.",
@@ -905,11 +898,22 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 ).scalars()
             }
             if "challenge" not in categories:
+                # The fix is one hire, so the row offers it: the library's own
+                # plan reviewer when the install has it, otherwise the Team
+                # page, where any challenge role can be hired.
+                reviewer = session.execute(
+                    select(Role).where(Role.slug == PLAN_REVIEWER_ROLE)
+                ).scalar_one_or_none()
                 add("no-adversary", "warn",
                     "Nobody on this team is there to disagree with the CEO's plan, so "
-                    "the only one who checks it is the CEO who wrote it. Add a role "
-                    "whose job is to challenge the plan.",
-                    "settings")
+                    "the only one who checks it is the CEO who wrote it."
+                    + (" Adding a plan reviewer puts one more agent on the team whose "
+                       "job is to find what the plan is missing." if reviewer else
+                       " Hire a role whose job is to challenge the plan."),
+                    "team",
+                    {"kind": "hire", "role_slug": PLAN_REVIEWER_ROLE,
+                     "team_name": "Plan review", "employee": "Plan Reviewer",
+                     "label": "Add a plan reviewer"} if reviewer else None)
 
         # An Operate project with no standing scope is re-creating the same
         # obligation by hand every cycle. `Recurrence.STANDING` exists for
@@ -1034,15 +1038,22 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             # wallpaper. A mismatch born at creation cannot be told apart, so
             # it is asked once, and "Keep" is the answer, for the whole project.
             per_run = policy.avg_usd_per_run_box(session)
+            cap = rules["monthly_usd_cap"] if project.billing_mode == "api_key" else None
+            switch_fits_budget = False
             if project.mode == ProjectMode.OPERATE:
                 wanted = tempo_for("operate", rules.get("cycle_frequency"))
                 moved = _rhythm_moved_after_pace(session, project.id)
                 if (on is not None and on != wanted and moved is not False
                         and not tempo_kept(session, project.id,
                                            rules["cycle_frequency"], on)):
+                    # Switching is also the answer to the budget row below when
+                    # the usual pace fits the budget, and two rows quoting the
+                    # same $855 read as two problems. Then it is one row.
+                    switch_fits_budget = bool(
+                        per_run and cap and _month_ceiling(wanted, per_run) <= cap)
                     add("tempo-vs-rhythm", "warn",
                         _tempo_mismatch(rules["cycle_frequency"], on, wanted, moved,
-                                        per_run),
+                                        per_run, cap if switch_fits_budget else None),
                         "settings",
                         {"kind": "tempo", "to": wanted,
                          "to_label": TEMPO_COPY[wanted]["label"],
@@ -1054,7 +1065,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             # answers None under five of them, because a fresh install saying
             # nothing is the honest behaviour and a guess here would be quoted
             # back as arithmetic.
-            if per_run and project.billing_mode == "api_key" and rules["monthly_usd_cap"]:
+            if per_run and cap and not switch_fits_budget:
                 # Both lanes. The inbox ceiling is a SEPARATE additive allowance
                 # — `daily_runs_used` excludes those runs from the work total on
                 # purpose — so a `live` project's real ceiling is 190 a day, not
@@ -1065,7 +1076,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 per_day = (rules["runs_per_project_per_day"]
                            + rules["inbox_runs_per_project_per_day"])
                 ceiling = per_day * 30 * per_run
-                if ceiling > rules["monthly_usd_cap"]:
+                if ceiling > cap:
                     add("tempo-vs-budget", "warn",
                         f"Your pace allows up to {per_day} runs a day "
                         f"({rules['runs_per_project_per_day']} of work plus "
@@ -1148,8 +1159,20 @@ def _rhythm_moved_after_pace(session: Session, project_id: str) -> datetime | bo
     return rhythm
 
 
+#: The library role the "nobody disagrees" row offers to hire. DESIGN_DOCTRINE
+#: names it as the challenge seat every Deliver and Operate project carries.
+PLAN_REVIEWER_ROLE = "plan-adversary"
+
+
+def _month_ceiling(tempo: str, per_run: float) -> float:
+    """What a month at a pace's full allowance costs, both lanes counted."""
+    rules = TEMPO_PRESETS[tempo]
+    return (rules["runs_per_project_per_day"]
+            + rules["inbox_runs_per_project_per_day"]) * 30 * per_run
+
+
 def _tempo_mismatch(cycle: str, on: str, wanted: str, moved: datetime | None,
-                    per_run: float | None) -> str:
+                    per_run: float | None, budget: float | None = None) -> str:
     """The tempo row in one breath: what the pace allows, what a project of this
     rhythm usually runs, and the money between them when the install knows it.
     The cards in Settings say the rest; a row that restates them is not read."""
@@ -1163,13 +1186,13 @@ def _tempo_mismatch(cycle: str, on: str, wanted: str, moved: datetime | None,
             f"{cycle} cycle.")
     cost = ""
     if per_run:
-        def month(name: str) -> float:
-            rules = TEMPO_PRESETS[name]
-            return (rules["runs_per_project_per_day"]
-                    + rules["inbox_runs_per_project_per_day"]) * 30 * per_run
-        cost = f", about ${month(wanted):,.0f} a month instead of ${month(on):,.0f}"
+        cost = (f", about ${_month_ceiling(wanted, per_run):,.0f} a month instead of "
+                f"${_month_ceiling(on, per_run):,.0f}")
+    over = (f" Your budget is ${budget:,.0f} a month, so the current pace could "
+            "outspend it." if budget and per_run and _month_ceiling(on, per_run) > budget
+            else "")
     return (f"{lead} {cycle.capitalize()} projects usually run {usual} "
-            f"(up to {runs(wanted)} runs a day{cost}).")
+            f"(up to {runs(wanted)} runs a day{cost}).{over}")
 
 
 def tempo_kept(session: Session, project_id: str, cycle: str, tempo: str) -> bool:

@@ -522,11 +522,14 @@ export interface HealthCheck {
   /** A fix the row can apply itself. `repin` adopts a team's latest role
       version; `tempo` amends the pace to the card a project of this rhythm
       usually runs, and its other answer — keep the pace — is recorded for the
-      whole project (POST /admin/projects/{id}/tempo/keep). */
+      whole project (POST /admin/projects/{id}/tempo/keep); `hire` adds the
+      one team the row says is missing. */
   action:
     | { kind: "repin"; team_id: string }
     | { kind: "tempo"; to: string; to_label: string; keep_label: string;
         changes: Record<string, unknown> }
+    | { kind: "hire"; role_slug: string; team_name: string; employee: string;
+        label: string }
     | null;
   /** This finding's identity: its kind and words with the numbers masked, so
       it survives a count ticking over and changes when the finding does. */

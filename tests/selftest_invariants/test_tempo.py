@@ -786,3 +786,28 @@ def test_the_brief_names_both_cards(client):
             since=utcnow() - timedelta(hours=1))
     assert brief["tempo"] == "few_times_daily"
     assert "bar" in brief
+
+
+def test_one_problem_is_one_row(client):
+    """A weekly desk on Live with a $75 budget had two rows quoting the same
+    $855: the pace and the budget. Switching the pace answers both, so it is
+    one row that says so, and the budget row stays for a budget the switch
+    would not fix."""
+    project = make_project(client, mode="operate",
+                           constitution={"cycle_frequency": "weekly",
+                                         **TEMPO_PRESETS["live"], "monthly_usd_cap": 75.0})
+    with db_session() as session:
+        for _ in range(5):
+            session.add(Run(
+                id=ids.new_id(ids.RUN), project_id=project["id"],
+                agent_id=project["ceo_agent_id"], kind="agent_run", trigger={},
+                status=RunStatus.DONE, cost_usd=0.15,
+                started_at=utcnow(), finished_at=utcnow()))
+    found = _checks(client, project)
+    assert "tempo-vs-budget" not in found
+    assert "$75" in found["tempo-vs-rhythm"]["detail"]
+
+    assert _amend(client, project, {"monthly_usd_cap": 20.0},
+                  reason="A smaller budget for the quiet months.").status_code == 200
+    found = _checks(client, project)
+    assert "tempo-vs-budget" in found and "tempo-vs-rhythm" in found
