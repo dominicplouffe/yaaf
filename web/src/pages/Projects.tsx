@@ -4,7 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { DeskProject, DeskView, get } from "../api";
 import { usePoll } from "../hooks";
 import { AsOf, Skeleton, clip, fmtAgo, fmtUnit } from "../ui";
-import { needsYouCount } from "../desk";
+import { needsYouCount, WARN_VERDICTS } from "../desk";
 
 export function statusBadge(status: string, unpaid = false) {
   // A project that cannot pay for a run is not running, whatever its row says:
@@ -478,14 +478,20 @@ function ProjectCard({ p }: { p: DeskProject }) {
         <span className="mono help">{p.slug}</span>
       </div>
 
-      <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
-        {clip(p.goal, 220)}
-      </p>
-      {p.status_reason && p.status !== "running" && (
+      {/* The sentence every surface says about it (its pause or stop reason
+          included), then what it is for. */}
+      {p.status_line ? (
+        <p className={`pcard-status${WARN_VERDICTS.includes(p.status_line.verdict) ? " warn" : ""}`}>
+          {p.status_line.sentence}
+        </p>
+      ) : p.status_reason && p.status !== "running" && (
         <p className="help" style={{ margin: "6px 0 0" }}>
           {p.status}: {clip(p.status_reason, 120)}
         </p>
       )}
+      <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
+        {clip(p.goal, 220)}
+      </p>
 
       <div className="pcard-vitals">
         <span>
@@ -521,10 +527,11 @@ function ProjectRow({ p }: { p: DeskProject }) {
       <div className="grow">
         <Link to={`/projects/${p.id}`}><strong>{p.name}</strong></Link>{" "}
         <span className="mono help">{p.slug}</span>
-        <div className="sb">
-          {p.status_reason && p.status !== "running"
-            ? `${p.status}: ${clip(p.status_reason, 160)}`
-            : clip(p.goal, 160)}
+        <div className={`sb${p.status_line && WARN_VERDICTS.includes(p.status_line.verdict) ? " warn" : ""}`}>
+          {p.status_line?.sentence
+            ?? (p.status_reason && p.status !== "running"
+              ? `${p.status}: ${clip(p.status_reason, 160)}`
+              : clip(p.goal, 160))}
         </div>
       </div>
       <WaitingChip p={p} />
