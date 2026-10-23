@@ -812,6 +812,8 @@ export function SplitAction({
   primary = true,
   small = true,
   disabled = false,
+  exposed,
+  confirm,
 }: {
   label: string;
   run: () => Promise<void>;
@@ -819,8 +821,16 @@ export function SplitAction({
   primary?: boolean;
   small?: boolean;
   disabled?: boolean;
+  /** A choice that also gets a button of its own beside the split — the "no"
+      of a decision, so the safer answer is never the one you have to hunt for
+      behind an arrow. */
+  exposed?: number;
+  /** When set, the one click asks first, with this line: for outcomes that
+      cannot be taken back, like spending money. */
+  confirm?: string;
 }) {
   const [menu, setMenu] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [picked, setPicked] = useState<SplitChoice | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -906,10 +916,26 @@ export function SplitAction({
     );
   }
 
+  if (confirming) {
+    return (
+      <span className="split-confirm">
+        <span className="help">{confirm}</span>{" "}
+        <button className={`primary${size}`} disabled={busy} autoFocus
+          onClick={() => go(run).then(() => setConfirming(false))}>
+          {label}
+        </button>{" "}
+        <button className={size.trim()} disabled={busy}
+          onClick={() => setConfirming(false)}>Cancel</button>
+        {error && <span className="help" style={{ color: "var(--critical)" }}>{error}</span>}
+      </span>
+    );
+  }
+
+  const shown = exposed === undefined ? null : choices[exposed];
   return (
     <span className="split" ref={wrap} onKeyDown={menu ? onMenuKey : undefined}>
       <button className={`split-main${tone}${size}`} disabled={disabled || busy}
-        onClick={() => go(run)}>
+        onClick={() => (confirm ? setConfirming(true) : go(run))}>
         {label}
       </button>
       <button ref={caret} className={`split-caret${tone}${size}`} disabled={disabled || busy}
@@ -917,6 +943,12 @@ export function SplitAction({
         onClick={() => setMenu(!menu)}>
         <Icon name="down" size={13} />
       </button>
+      {shown && (
+        <button className={`split-exposed${size}`} disabled={disabled || busy}
+          style={{ marginLeft: 6 }} onClick={() => setPicked(shown)}>
+          {shown.label}
+        </button>
+      )}
       {menu && (
         <span className="split-menu" role="menu">
           {choices.map((c) => (
@@ -1006,8 +1038,14 @@ export function DecideButtons({ approval, onDone, small = true }: {
     });
     onDone();
   };
+  // Money that leaves cannot be called back, so that one yes asks first.
+  const spends = approval.kind === "spend" && (approval.amount_usd ?? 0) > 0;
   return (
-    <SplitAction small={small} label={l.yes} run={() => decide(true, "")} choices={[
+    <SplitAction small={small} label={l.yes} run={() => decide(true, "")} exposed={1}
+      confirm={spends
+        ? `This spends $${(approval.amount_usd ?? 0).toLocaleString()} — a purchase cannot be taken back.`
+        : undefined}
+      choices={[
       { label: l.yesMore, hint: l.yesHint, send: l.yes, placeholder: l.yesPlaceholder,
         run: (note) => decide(true, note) },
       { label: `${l.no}…`, hint: "Say why; the CEO re-plans from it", send: l.no,
