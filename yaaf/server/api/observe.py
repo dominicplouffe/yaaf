@@ -85,7 +85,7 @@ from yaaf.server.dispatcher import (
 )
 from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.receipt import receipt as receipt_projection
-from yaaf.server.rows import approval_row, requirement_name
+from yaaf.server.rows import approval_row, chairman_time, requirement_name
 from yaaf.server.status_line import status_line
 from yaaf.server.unread import boardroom_unread
 from yaaf.server.velocity import (
@@ -1020,7 +1020,8 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         soonest = min(a.answer_by for a in pending_asks)
         add("asks", "ok",
             f"{len(pending_asks)} question(s) from your CEO waiting on you, the first "
-            f"stopping at {soonest.isoformat(timespec='minutes')}. Nothing is blocked: "
+            f"stopping {chairman_time(soonest, effective(session, project.id).timezone)}. "
+            "Nothing is blocked: "
             "each one names what it will do unanswered, and it will tell you when it "
             "does.",
             "boardroom")

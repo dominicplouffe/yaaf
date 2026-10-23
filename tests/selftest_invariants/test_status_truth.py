@@ -59,3 +59,19 @@ def test_the_roadmap_tells_the_chairman_scope_waits_on_him_in_his_own_words(clie
     pack = client.get("/agent/context", headers={
         "Authorization": f"Bearer {ceo_token(project)}"}).json()
     assert "waiting on him, not on you" in str(pack)
+
+
+def test_the_health_card_reads_a_question_s_deadline_as_a_time_not_a_timestamp(client):
+    """It read "the first stopping at 2026-10-25T12:04+00:00". Every other clock
+    the chairman is held to is said in his timezone; this one now is too."""
+    import re
+
+    from tests.selftest_invariants.test_asks import _ask
+
+    project = make_project(client, constitution={"timezone": "America/Toronto"})
+    assert _ask(client, project).status_code == 200
+    health = client.get(f"/observe/projects/{project['id']}/health", headers=ADMIN).json()
+    text = str(health)
+    assert "question(s) from your CEO waiting on you" in text
+    assert not re.search(r"stopping at \d{4}-\d{2}-\d{2}T", text)
+    assert re.search(r"stopping (?:\w{3} )?\d{1,2} \w{3}|stopping \w{3}", text), text[:600]
