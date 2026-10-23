@@ -1,6 +1,6 @@
 # Governance — the constitution, rule by rule
 
-Each project runs under a **constitution**: 62 numbers and switches the agents
+Each project runs under a **constitution**: 63 numbers and switches the agents
 cannot edit, argue with, or talk their way around. Every one is enforced
 server-side in [`yaaf/server/policy.py`](../yaaf/server/policy.py) as an HTTP
 refusal or an automatic state change. The schema itself lives in
@@ -90,6 +90,7 @@ Also enforced here, and not tunable because they're structural:
 | `approval_threshold_usd` | 250.0 | Spends at or above this — and anything legally ambiguous — wait for you. |
 | `approval_timeout_days` | 7 | An unanswered approval decides itself here, so a vacationing chairman degrades the project instead of deadlocking it. |
 | `approval_timeout_decision` | `"deny"` | What that expiry decides. Default-deny: silence is not consent. |
+| `complete_after_hours` | 24.0 | A Deliver project whose every requirement is settled tells you, then completes itself this long afterwards — the same receipt your Complete button writes — unless its scope moves first. Reopen it from the project page (or `lifecycle reopen` over MCP) for 14 days; a reopened delivery does not close again until its scope has moved. `0`: it waits for your Complete. |
 | `ask_window_hours_max` | 72.0 | The longest window your CEO may give you to answer a question. It names a shorter one when the work has a deadline. There is no setting for what an unanswered question decides — the CEO writes that down before it asks, and you see it in your Inbox. |
 | `max_open_asks` | 3 | How many unanswered questions your CEO may have on your desk at once. Asking is cheap for it and expensive for you. |
 | `plan_authority` | `"chairman"` | Who accepts proposed scope. `"ceo"`: the CEO accepts its own proposals — the plan gate runs the same arithmetic, every acceptance is audited and sent to you. |

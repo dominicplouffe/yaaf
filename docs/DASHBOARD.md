@@ -331,6 +331,13 @@ Chosen once, at creation, and frozen — the rules differ by shape.
 | **Deliver** | Ship one thing, then stop. You accept what done means; the platform proves it. | "A security audit of our AWS estate." |
 | **Operate** | A Deliver that starts again on a rhythm, and gets better each cycle. | "A weekly market brief, tracked and improved." |
 
+A Deliver project whose every requirement is true tells you so, and then closes
+itself after `complete_after_hours` (24 by default; Settings → Rules in force →
+Autonomy) unless its scope moves: the Overview's strip says when, and **Complete
+the project…** does it now. A completed delivery's Overview offers **Reopen…** for
+14 days; a reopened one runs again and will not close itself until its scope has
+moved.
+
 Outside Explore, a task that serves no requirement is refused, and the project
 starts owing a plan before any work may be created.
 

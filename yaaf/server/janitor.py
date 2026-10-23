@@ -1183,6 +1183,8 @@ def check_delivery_ready(session: Session, project: Project) -> None:
                 RequirementEvent.at > last)
         ).scalar_one()
         if not moved:
+            if _complete_itself(session, project, last):
+                return
             _nag_delivery_ready(session, project)
             return
 
@@ -1193,27 +1195,83 @@ def check_delivery_ready(session: Session, project: Project) -> None:
         action="project.completion_ready", entity="project", entity_id=project.id,
         detail={"met": [r.key for r in met]},
     ))
+    cons = effective(session, project.id)
+    at = chairman_time(utcnow() + timedelta(hours=cons.complete_after_hours), cons.timezone)
+    closes = ("Confirm completion on the project page — it writes the delivery receipt "
+              "and closes the project down cleanly"
+              + (f" — or it completes itself {at} unless scope moves first. Either way "
+                 "you can reopen it for 14 days. "
+                 if cons.complete_after_hours > 0 else ". "))
     body = (
         f"Every requirement is settled and {len(met)} of them are true: "
-        f"{', '.join(r.key for r in met)}. Confirm completion on the project page — "
-        "it writes the delivery receipt and closes the project down cleanly. "
-        "Nothing will run until you do: a delivered project stops waking for its "
+        f"{', '.join(r.key for r in met)}. {closes}"
+        "Nothing runs in the meantime: a delivered project stops waking for its "
         "own agents' traffic, so it is not spending while it waits."
+        + project_link(project.id, "", "Open it")
     )
     chairman_notify(session, project, "ready to complete", body, attention=Attention.ACTION)
     boardroom_line(session, project.id, body)
     _notice_ceo(
         session, project, NoticeKind.DELIVERY_READY,
         f"Delivery is complete: {len(met)} requirement(s) in scope are true and "
-        "nothing is open. The chairman has been told and the project is now waiting "
-        "on his confirmation — it will not wake for agent-to-agent messages until "
-        "he decides, and new scope is refused. Do not invent work to fill the "
+        "nothing is open. The chairman has been told; the project now waits for his "
+        "confirmation"
+        + (f", and closes itself in {cons.complete_after_hours:g}h if scope does not move"
+           if cons.complete_after_hours > 0 else "")
+        + " — it will not wake for agent-to-agent messages meanwhile, and new scope "
+        "is refused. Do not invent work to fill the "
         "quiet. If you believe something is genuinely missing, say so in the "
         "boardroom; reopening the plan is his call, not yours.",
     )
     # The beat starts now, so the first chase lands a full window from the
     # announcement rather than on the janitor's next tick.
     _touch_delivery_beat(session, project)
+
+
+def _complete_itself(session: Session, project: Project, announced_at) -> bool:
+    """Close a delivery that has stood finished for `complete_after_hours`
+    since he was told, with the receipt his own Complete writes. Not when the
+    rule is 0, not on a project he paused, and not after he reopened it: a
+    reopened delivery closes again only once its scope has moved, which starts
+    a new announcement and a new clock."""
+    from yaaf.server.api.admin import REOPEN_DAYS, complete_delivery
+
+    cons = effective(session, project.id)
+    if cons.complete_after_hours <= 0 or project.status != ProjectStatus.RUNNING:
+        return False
+    if announced_at.tzinfo is None:
+        announced_at = announced_at.replace(tzinfo=UTC)
+    if utcnow() - announced_at < timedelta(hours=cons.complete_after_hours):
+        return False
+    reopened = session.execute(
+        select(func.count(AuditLog.id)).where(
+            AuditLog.project_id == project.id, AuditLog.action == "project.reopen",
+            AuditLog.at > announced_at)
+    ).scalar_one()
+    if reopened:
+        return False
+    told = chairman_time(announced_at, cons.timezone)
+    done = complete_delivery(
+        session, project, by_user_id=None,
+        how=(f"Completed by the platform: every requirement had stood settled for "
+             f"{cons.complete_after_hours:g}h since you were told ({told}), and the "
+             "rules close a finished delivery then."))
+    receipt = done["receipt"]
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+        action="project.auto_complete", entity="project", entity_id=project.id,
+        detail={**receipt, "voided_approvals": done["voided_approvals"]},
+    ))
+    money = f"${receipt['cost_usd']:,.2f}"
+    body = (f"Delivered: {receipt['met']} requirement(s) true, {receipt['cut']} cut, "
+            f"{receipt['runs_total']} runs, {money}, {receipt['duration_days']} days. "
+            f"It had stood finished since {told}, so it closed itself and wrote the "
+            f"receipt. If something is missing, reopen it on the project page within "
+            f"{REOPEN_DAYS} days." + project_link(project.id, "deliverables", "See what was delivered"))
+    chairman_notify(session, project, "delivered and closed", body, attention=Attention.ACTION)
+    boardroom_line(session, project.id, body)
+    log.info("delivery %s completed itself", project.slug)
+    return True
 
 
 def _delivery_beat(session: Session, project: Project) -> Heartbeat | None:
@@ -1256,8 +1314,10 @@ def _nag_delivery_ready(session: Session, project: Project) -> None:
         session, project.id,
         f"Still waiting on you: all {met} requirement(s) are true and this delivery "
         "has not been confirmed. Complete it on the project page to write the receipt "
-        "and close it, or reopen scope if something is missing. The project is not "
-        "spending while it waits.",
+        "and close it, or reopen scope if something is missing"
+        + (" — otherwise it closes itself when your rules say"
+           if effective(session, project.id).complete_after_hours > 0 else "")
+        + ". The project is not spending while it waits.",
     )
 
 

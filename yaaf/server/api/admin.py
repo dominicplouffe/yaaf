@@ -3062,36 +3062,21 @@ def stop_project(
             "voided_approvals": voided}
 
 
-@router.post("/projects/{project_id}/complete", dependencies=[authority.STEER])
-def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
-    """The chairman confirms a delivery. One of the three gates he chose to be
-    asked at — the janitor only detects readiness and emails; this button
-    decides. Refused with the same outstanding list the janitor checks, so
-    the email and the refusal can never disagree.
+#: How long after it completes a delivery can be reopened, whoever completed it.
+REOPEN_DAYS = 14
+
+
+def complete_delivery(session: Session, project: Project, *, by_user_id: str | None,
+                      how: str) -> dict:
+    """Close a Deliver project whose every requirement is settled, and write
+    its receipt. ONE implementation for both doors — the chairman's Complete
+    and the janitor's `complete_after_hours` — so a project that closed itself
+    reads exactly like one he closed, bar the first line of its record.
 
     The receipt's load-bearing row is "failed once before": every requirement
     that ate dead runs on its way to true says so, because a delivery that
     looked effortless in the receipt would teach the wrong lesson about what
-    it cost.
-    """
-    from yaaf.server.janitor import delivery_outstanding
-
-    project = _get_project(session, project_id)
-    if project.mode != ProjectMode.DELIVER:
-        raise HTTPException(
-            status_code=422,
-            detail="only a Deliver project completes: Explore is judged and stopped, "
-                   "Operate finishes and starts again.",
-        )
-    if project.status == ProjectStatus.COMPLETED:
-        raise HTTPException(status_code=409, detail="already completed")
-    outstanding = delivery_outstanding(session, project)
-    if outstanding:
-        raise HTTPException(
-            status_code=409,
-            detail="not everything is true yet — " + "; ".join(outstanding),
-        )
-
+    it cost."""
     scope = policy.scope_requirements(session, project.id)
     accepted = [r for r in scope if r.status != RequirementStatus.PROPOSED]
     rows = []
@@ -3145,15 +3130,88 @@ def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
     session.add(Decision(
         id=ids.new_id(ids.DECISION),
         project_id=project.id,
-        by_user_id=_decider(project),
+        by_user_id=by_user_id,
         subject=f"delivery receipt: {receipt['met']} true, {receipt['cut']} cut",
-        body=("Confirmed complete by the chairman.\n\n" + "\n".join(lines)
+        body=(f"{how}\n\n" + "\n".join(lines)
               + f"\n\nTotals: {receipt['runs_total']} runs, "
                 f"${receipt['cost_usd']:,.2f}, {receipt['duration_days']} days."
               + (f"\nCommitment {'KEPT' if receipt['commitment']['kept'] else 'missed'}: "
                  f"promised {receipt['commitment']['deliver_by'][:10]}."
                  if receipt["commitment"] else "")),
     ))
+    return {"receipt": receipt, "revoked_runs": revoked, "voided_approvals": voided}
+
+
+@router.post("/projects/{project_id}/reopen", dependencies=[authority.STEER])
+def reopen_project(project_id: str, session: Session = Depends(db)) -> dict:
+    """Undo a completion, within REOPEN_DAYS. Completing is safe to automate
+    only because it can be taken back: the project runs again, the CEO is told
+    something is missing and to ask what, and it will not close itself again
+    until scope has moved — a reopened delivery is not the same one twice."""
+    project = _get_project(session, project_id)
+    if project.status != ProjectStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="only a completed project reopens")
+    completed_at = session.execute(
+        select(AuditLog.at).where(
+            AuditLog.project_id == project.id,
+            AuditLog.action.in_(("project.complete", "project.auto_complete")))
+        .order_by(AuditLog.at.desc()).limit(1)
+    ).scalar_one_or_none()
+    if completed_at is not None:
+        at = completed_at if completed_at.tzinfo else completed_at.replace(tzinfo=UTC)
+        if utcnow() - at > timedelta(days=REOPEN_DAYS):
+            raise HTTPException(
+                status_code=409,
+                detail=f"completed more than {REOPEN_DAYS} days ago; duplicate it to "
+                       "carry on from where it stopped")
+    project.status = ProjectStatus.RUNNING
+    project.status_reason = None
+    from yaaf.core.models import Decision
+
+    session.add(Decision(
+        id=ids.new_id(ids.DECISION), project_id=project.id, by_user_id=_decider(project),
+        subject="delivery reopened",
+        body="Reopened by the chairman: something the delivery needs is still missing."))
+    ceo = policy.ceo_of(session, project.id)
+    if ceo is not None:
+        session.add(Notice(
+            id=ids.new_id(ids.NOTICE), project_id=project.id, agent_id=ceo.id,
+            kind=NoticeKind.DELIVERY_REOPENED,
+            body=("The chairman reopened this delivery after it completed: something is "
+                  "still missing. Ask him in the boardroom what, then propose the "
+                  "requirement that captures it. The project will not close itself "
+                  "again until scope has moved.")))
+    _audit(session, project.id, "project.reopen", "project", project.id, {})
+    return {"id": project.id, "status": project.status}
+
+
+@router.post("/projects/{project_id}/complete", dependencies=[authority.STEER])
+def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
+    """The chairman confirms a delivery, now rather than when it would close
+    itself (`complete_after_hours`; 0 leaves this button the only door).
+    Refused with the same outstanding list the janitor checks, so the email
+    and the refusal can never disagree."""
+    from yaaf.server.janitor import delivery_outstanding
+
+    project = _get_project(session, project_id)
+    if project.mode != ProjectMode.DELIVER:
+        raise HTTPException(
+            status_code=422,
+            detail="only a Deliver project completes: Explore is judged and stopped, "
+                   "Operate finishes and starts again.",
+        )
+    if project.status == ProjectStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="already completed")
+    outstanding = delivery_outstanding(session, project)
+    if outstanding:
+        raise HTTPException(
+            status_code=409,
+            detail="not everything is true yet — " + "; ".join(outstanding),
+        )
+
+    done = complete_delivery(session, project, by_user_id=_decider(project),
+                             how="Confirmed complete by the chairman.")
+    receipt, revoked, voided = done["receipt"], done["revoked_runs"], done["voided_approvals"]
     _audit(session, project.id, "project.complete", "project", project.id,
            {**receipt, "voided_approvals": voided})
     return {"id": project.id, "status": project.status, "receipt": receipt,

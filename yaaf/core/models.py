@@ -540,6 +540,9 @@ class NoticeKind(enum.StrEnum):
     # Not urgent: it can wait out a batching window, because the one thing it
     # must not do is buy a run on every tick of a project that has finished.
     DELIVERY_READY = "delivery_ready"
+    # The chairman took a completed delivery back: something is missing. Urgent
+    # in the ordinary sense — the project is running again for this reason.
+    DELIVERY_REOPENED = "delivery_reopened"
 
     # Memory pressure warns the scope's curator early enough to curate on a wake
     # it was having anyway; MEMORY_FULL is urgent because the scope has stopped

@@ -489,7 +489,7 @@ def heads_up_ack(principal: Principal, session: Session, arguments: dict) -> dic
 # ── lifecycle ───────────────────────────────────────────────────────────────────
 
 
-LIFECYCLE_VERBS = ("start", "pause", "stop", "complete", "pause_agent", "resume_agent",
+LIFECYCLE_VERBS = ("start", "pause", "stop", "complete", "reopen", "pause_agent", "resume_agent",
                    "stand_down", "recall", "set_schedule", "unfreeze_thread",
                    "briefing_seen")
 
@@ -498,7 +498,7 @@ LIFECYCLE_VERBS = ("start", "pause", "stop", "complete", "pause_agent", "resume_
     "lifecycle",
     scope="steer",
     description=(
-        "Run the project's switches: start, pause, stop or complete it, pause or "
+        "Run the project's switches: start, pause, stop, complete or reopen it, pause or "
         "resume one agent, stand a whole team down or recall it, set an agent's daily "
         "wake, unfreeze a frozen thread, or mark a briefing read. "
         "stand_down/recall are the STAFFING verbs and take `team`: a role whose job is "
@@ -541,6 +541,9 @@ def lifecycle(principal: Principal, session: Session, arguments: dict) -> dict:
                         body=admin.LifecycleReason(reason=reason), session=session)
     elif verb == "complete":
         outcome = _call(principal, admin.complete_project, project_id=project.id,
+                        session=session)
+    elif verb == "reopen":
+        outcome = _call(principal, admin.reopen_project, project_id=project.id,
                         session=session)
     elif verb in ("pause_agent", "resume_agent"):
         agent = _owned(session, project, Agent, str(arguments.get("agent") or ""), "agent")

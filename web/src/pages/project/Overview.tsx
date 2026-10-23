@@ -249,16 +249,47 @@ function ModeStrip({ dash, reload }: { dash: Dashboard; reload: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const closesAfter = Number(dash.constitution?.["complete_after_hours"] ?? 0);
+  if (dash.mode === "deliver" && dash.status === "completed") {
+    // Completing is automatic only because it can be taken back.
+    return (
+      <div className="strip good">
+        <div className="grow">
+          <b>Delivered.</b>
+          <div className="sb">
+            The receipt is under Activity → Decisions. If something is missing, reopen it — up
+            to 14 days after it closed — and tell the CEO what.
+          </div>
+          {error && <div className="error">{error}</div>}
+        </div>
+        {dash.can_steer !== false && (confirming ? (
+          <>
+            <button className="small primary" onClick={async () => {
+              try {
+                await post(`/admin/projects/${dash.id}/reopen`);
+                reload();
+              } catch (e) { setError((e as Error).message); }
+            }}>Yes, reopen it</button>
+            <button className="small" onClick={() => setConfirming(false)}>Cancel</button>
+          </>
+        ) : (
+          <button className="small" onClick={() => setConfirming(true)}>Reopen…</button>
+        ))}
+      </div>
+    );
+  }
   if (dash.mode === "deliver" && dash.delivery_outstanding !== null
       && dash.delivery_outstanding.length === 0) {
     return (
       <div className="strip good">
         <div className="grow">
-          <b>Everything is true. This delivery is ready for your confirmation.</b>
+          <b>Everything is true.{closesAfter > 0
+            ? ` It completes itself about ${closesAfter} hours after you were told, unless its scope moves.`
+            : " This delivery is ready for your confirmation."}</b>
           <div className="sb">
             Completing writes the receipt — including which requirements failed before they
-            passed — and closes the project down cleanly. Until you do, it keeps running and
-            spending.
+            passed — and closes the project down. It is not spending while it waits, and you
+            can reopen it for 14 days afterwards.
           </div>
           {error && <div className="error">{error}</div>}
         </div>

@@ -96,7 +96,9 @@ URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
                        # emptied its own board to wait for this answer, so there
                        # is no next wake to batch into. This notice IS the wake
                        # that makes the CEO's stated default happen.
-                       NoticeKind.ASK_LAPSED}
+                       NoticeKind.ASK_LAPSED,
+                       # The project is running again for exactly this reason.
+                       NoticeKind.DELIVERY_REOPENED}
 
 # What still buys a run on a project the chairman has been told is finished.
 # Everything else waits for his click: a CEO reading an amendment note or a
@@ -867,10 +869,11 @@ def _activity_brief(state: dict) -> dict:
             "ok", "delivered",
             "everything is true; waiting on your confirmation",
             "Everything is true. This delivery is waiting on your confirmation.",
-            "Nothing will run until you complete it — the project has stopped waking "
+            "Nothing will run until it completes — the project has stopped waking "
             "for its own agents' messages, so it is not spending while it waits. "
-            "Confirm it on the project page to write the receipt and close it, or "
-            "reopen scope if something is still missing.")
+            "Confirm it on the project page to write the receipt and close it now, "
+            "or let it close itself when your rules say (Complete after, in "
+            "Settings); reopen scope first if something is still missing.")
 
     if gate == "daily_runs":
         d = state["daily_runs"]

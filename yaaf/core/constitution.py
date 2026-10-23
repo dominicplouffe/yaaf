@@ -225,6 +225,12 @@ class ConstitutionDoc(BaseModel):
         "deny", group="Autonomy", label="What an expired approval decides",
         choices=["deny", "approve"],
         help="'deny' or 'approve'. Default-deny: silence is not consent.")
+    complete_after_hours: float = _rule(
+        24.0, ge=0, group="Autonomy", label="Hours before a finished delivery closes itself",
+        help="When everything a Deliver project must make is true, you are told, and it "
+             "completes itself this long afterwards — the same receipt your Complete "
+             "button writes — unless its scope moves first. You can reopen it for 14 "
+             "days. 0: it waits for you to press Complete.")
     ask_window_hours_max: float = _rule(
         72.0, gt=0, group="Autonomy", label="Longest window your CEO may wait on an answer",
         help="A question to you carries the moment it stops waiting and what it will do "

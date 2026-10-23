@@ -49,6 +49,7 @@ REACHED = {
     "POST /admin/projects/{project_id}/pause": "lifecycle",
     "POST /admin/projects/{project_id}/stop": "lifecycle",
     "POST /admin/projects/{project_id}/complete": "lifecycle",
+    "POST /admin/projects/{project_id}/reopen": "lifecycle",
     "POST /admin/agents/{agent_id}/pause": "lifecycle",
     "PATCH /admin/agents/{agent_id}/schedule": "lifecycle",
     "POST /admin/threads/{message_id}/unfreeze": "lifecycle",
