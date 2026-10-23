@@ -1847,14 +1847,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             </div>
           )}
           <p className="help" style={{ marginTop: 10 }}>
-            Money, proof and how finished the work has to be — a card just fills the
-            numbers in the Constitution section below. Adjust any of them there, now or
-            later in Settings. Every card asks for the work to be read by somebody who
-            did not write it, which means the roster needs a reviewing seat; the
-            {" "}<b>Full send</b> card also hires the writing and checking seats on the
-            strongest model, and raises the per-run ceiling so a long piece survives.
-            How often the project runs is the card above — these two used to be one, and
-            the pace half of it never actually moved.
+            Money, proof and how finished the work has to be. A card fills in the numbers
+            in the Constitution section below; change any of them there, now or later in
+            Settings. Every card has the work read by someone who did not write it, so a
+            review team is added if you have none. <b>Full send</b> also hires the writing
+            and checking seats on the strongest model and allows longer runs.
           </p>
           <p className="help" style={{ marginTop: 6 }}>
             {/* The rehearsal's own argument, reused: do not invent a price, invert
