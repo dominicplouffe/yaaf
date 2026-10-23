@@ -2524,6 +2524,71 @@ def check_external_spend(
     return committed
 
 
+#: How many yeses make a precedent, and how far back they count.
+PRECEDENT_YESES = 3
+PRECEDENT_DAYS = 90
+#: The lines a precedent offer rounds up to. A limit of $49.99 reads as a
+#: number somebody computed; $50 reads as one somebody chose.
+_ROUND_LINES = (10, 25, 50, 100, 150, 200, 250, 500, 750, 1000, 1500, 2000, 2500,
+                5000, 7500, 10000)
+
+
+def spend_precedent(session: Session, project_id: str, cons: ConstitutionDoc) -> dict | None:
+    """After the chairman has said yes to the same kind of spend often enough,
+    the offer to stop asking him: the two lines that made each of those
+    purchases an approval, raised to just above the largest one he approved.
+
+    It is an offer, never a change — taking it is an amendment he makes, with
+    the reason filled in, like any other. Nothing is offered when he has said
+    no to a spend inside the proposed line in the same window (that is not a
+    precedent, it is a judgment he is still making), when the lines already sit
+    above it, or when the month's wall would refuse the purchase anyway.
+    """
+    since = utcnow() - timedelta(days=PRECEDENT_DAYS)
+    decided = session.execute(
+        select(Approval.status, Approval.amount_usd).where(
+            Approval.project_id == project_id,
+            Approval.kind == ApprovalKind.SPEND,
+            Approval.decided_by_user_id.is_not(None),
+            Approval.decided_at >= since,
+            Approval.amount_usd.is_not(None),
+        )
+    ).all()
+    yeses = [float(usd) for status, usd in decided if status == ApprovalStatus.APPROVED]
+    if len(yeses) < PRECEDENT_YESES:
+        return None
+    largest = max(yeses)
+    line = next((n for n in _ROUND_LINES if n > largest), None)
+    if line is None:
+        return None
+    if any(status == ApprovalStatus.DENIED and float(usd) < line
+           for status, usd in decided):
+        return None
+    if 0 < cons.external_monthly_usd_cap < line:
+        return None
+    changes: dict[str, float] = {}
+    if cons.approval_threshold_usd < line:
+        changes["approval_threshold_usd"] = float(line)
+    if 0 < cons.max_usd_per_purchase < line:
+        changes["max_usd_per_purchase"] = float(line)
+    if not changes:
+        return None
+    biggest = f"${largest:,.0f}" if largest == int(largest) else f"${largest:,.2f}"
+    return {
+        "changes": changes,
+        "question": (f"You have approved {len(yeses)} purchases on this project, the "
+                     f"largest {biggest}. Let the CEO buy anything under "
+                     f"${line:,} without asking you?"),
+        "reason": (f"Precedent: approved {len(yeses)} spends up to {biggest} in "
+                   f"{PRECEDENT_DAYS} days; purchases under ${line:,} no longer ask."),
+        "keeps": (f"The month's real-world wall stays at "
+                  f"${cons.external_monthly_usd_cap:,.0f}, and every purchase is still "
+                  "booked and shown on Spend."
+                  if cons.external_monthly_usd_cap > 0 else
+                  "Every purchase is still booked and shown on Spend."),
+    }
+
+
 def check_roles_exist(session: Session, slugs: list[str]) -> None:
     """One IN query; refused with the unknown names spelled out."""
     from yaaf.core.models import Role

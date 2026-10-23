@@ -3559,7 +3559,13 @@ def decide_approval(
                      f"{'APPROVED' if body.approve else 'DENIED'}"
                      + (f": {body.note}" if body.note else ".")),
     )
-    return {"id": approval.id, "status": approval.status}
+    out = {"id": approval.id, "status": approval.status}
+    if body.approve and approval.kind == ApprovalKind.SPEND:
+        session.flush()
+        offer = policy.spend_precedent(session, project.id, effective(session, project.id))
+        if offer is not None:
+            out["offer"] = {**offer, "project_id": project.id}
+    return out
 
 
 def _decide_brief(session: Session, approval: Approval, project: Project,

@@ -7,6 +7,7 @@ import type React from "react";
 import { Icon } from "./ui/Icon";
 import { useEffect, useId, useRef, useState } from "react";
 import { Activity, Dashboard, get, post, RunRow, SpendBucket } from "./api";
+import { announceOffer, SpendOffer } from "./precedent";
 
 // ── time ────────────────────────────────────────────────────────────────────────
 
@@ -1049,11 +1050,12 @@ export function DecideButtons({ approval, onDone, small = true }: {
 }) {
   const l = decideLabels(approval);
   const decide = async (approve: boolean, note: string) => {
-    await post(`/admin/approvals/${approval.id}/decide`, {
+    const decided = await post<{ offer?: SpendOffer }>(`/admin/approvals/${approval.id}/decide`, {
       approve, note,
       ...(approve && approval.capacity ? { to: approval.capacity.to } : {}),
     });
     onDone();
+    announceOffer(decided?.offer);
   };
   // Money that leaves cannot be called back, so that one yes asks first.
   const spends = approval.kind === "spend" && (approval.amount_usd ?? 0) > 0;
@@ -1107,10 +1109,13 @@ export function ExportCsv({ onClick, label }: { onClick: () => void; label?: str
     show a table of what is about to change. Escape and the backdrop both
     cancel, so the safe exit is the reflexive one. */
 export function ConfirmModal({
-  title, confirmLabel, danger, busy, onConfirm, onCancel, children,
+  title, confirmLabel, cancelLabel = "Cancel", danger, busy, onConfirm, onCancel, children,
 }: {
   title: string;
   confirmLabel: string;
+  /** For a question rather than a confirmation, where the other answer is a
+      real choice and "Cancel" would not say what it chooses. */
+  cancelLabel?: string;
   danger?: boolean;
   busy?: boolean;
   onConfirm: () => void;
@@ -1147,7 +1152,7 @@ export function ConfirmModal({
             {busy ? "Saving…" : confirmLabel}
           </button>
           <button className="small" disabled={busy} onClick={onCancel}>
-            Cancel
+            {cancelLabel}
           </button>
         </div>
       </div>

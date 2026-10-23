@@ -4,6 +4,7 @@ import { DeskProject } from "./api";
 import { useDesk } from "./desk";
 import { useMe } from "./me";
 import { CommandPalette, Cheatsheet, useShortcuts } from "./palette";
+import { OfferHost } from "./precedent";
 import { firstName, useProjectFrame } from "./projectCtx";
 import { PROJECT_PAGES } from "./nav";
 import { Icon, IconName } from "./ui/Icon";
@@ -331,6 +332,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </button>
         </header>
         <main className="main">{children}</main>
+        <OfferHost />
       </div>
       {palette.open && (
         <CommandPalette
