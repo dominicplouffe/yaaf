@@ -1156,8 +1156,8 @@ def _disclose_self_action(session: Session, ctx: RunContext, kind: str,
     chairman_notify(
         session, ctx.project,
         f"CEO decision: {detail}",
-        f"{detail}\n\nIts reason: {reason}\n\nExercised under the authority dial you "
-        "set in the constitution. Everything here is reversible — reopen what was "
+        f"{detail}\n\nIts reason: {reason}\n\nThe CEO may decide this itself because "
+        "of how you set this project's say-so dial. Everything here is reversible — reopen what was "
         "cut, cut what was accepted — and the dial itself is yours to turn back.",
         attention=Attention.FYI,
     )

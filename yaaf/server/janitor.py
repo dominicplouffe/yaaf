@@ -632,8 +632,9 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
         chairman_notify(
             session, project, "commitment met",
             f"Every requirement in scope is true — {len(scope_keys)} requirement(s), "
-            f"promised by {commitment.deliver_by:%Y-%m-%d}, finished "
-            f"{now:%Y-%m-%d %H:%M} UTC.",
+            f"promised by {commitment.deliver_by.day} {commitment.deliver_by:%b}, finished "
+            f"{chairman_time(now, cons.timezone)}."
+            + project_link(project.id, "deliverables", "See what was delivered"),
             attention=Attention.FYI,
         )
     elif status == CommitmentStatus.BREACHED:
@@ -670,7 +671,8 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
             session, project, "commitment at risk",
             f"The projection now lands about {projected:%Y-%m-%d} against the promised "
             f"{commitment.deliver_by:%Y-%m-%d} ({basis['note']}).{ground}\n\n"
-            "New scope is frozen for the CEO. " + _slip_moves_for_chairman(cons),
+            "New scope is frozen for the CEO. " + _slip_moves_for_chairman(cons)
+            + project_link(project.id, "roadmap", "Cut scope or move the date"),
             attention=Attention.ACTION,
         )
     else:  # recovered to ACCEPTED
