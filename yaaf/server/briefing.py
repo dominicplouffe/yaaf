@@ -617,6 +617,46 @@ def _deliverable_lines(session: Session, project: Project, since, until) -> list
     )]
 
 
+#: How many results the letter lists by name. The rest are counted, not listed:
+#: one window held twenty, and a letter that is a file listing is not read.
+DELIVERED_LISTED = 5
+
+
+def _delivered(session: Session, project: Project, since, until) -> list[dict]:
+    """What the project produced in the window, newest first, one row per
+    document — the result itself, with a link to open it.
+
+    The record of users asking "where are my deliverables?" and "can you push
+    to me every morning instead of me going to look for a file" is in the
+    `Artifact` model. A publish never mails (it is a notice of something done),
+    so the morning letter is where results reach somebody who did not open the
+    app — and it said only "3 deliverables published (a.md, b.md, …)".
+    """
+    from urllib.parse import quote
+
+    from yaaf.core.config import settings
+
+    origin = (settings().public_base_url or "").rstrip("/")
+    seen: set[str] = set()
+    out: list[dict] = []
+    for artifact in session.execute(
+        select(Artifact).where(
+            Artifact.project_id == project.id,
+            Artifact.published_at > since,
+            Artifact.published_at <= until,
+        ).order_by(Artifact.published_at.desc())
+    ).scalars():
+        if artifact.name in seen:
+            continue
+        seen.add(artifact.name)
+        out.append({
+            "name": artifact.name, "version": artifact.version,
+            "link": (f"{origin}/app/#/projects/{project.id}/deliverables"
+                     f"?open={quote(artifact.storage_key, safe='')}") if origin else None,
+        })
+    return out
+
+
 def _money(session: Session, project: Project, cons: ConstitutionDoc,
            since, until) -> dict:
     """What the window cost, in the project's native unit, against the cap the
@@ -1365,6 +1405,7 @@ def project_briefing(session: Session, project: Project,
         "pulse": pulse,
         "waiting": waiting,
         "next_up": next_up,
+        "delivered": _delivered(session, project, since, until),
     }
 
 
@@ -1408,9 +1449,20 @@ def render_text(brief: dict) -> str:
            else f"{money['month_to_date']:,.0f} tokens")
     cap = (f"${money['cap']:,.0f}" if money["unit"] == "usd"
            else f"{money['cap']:,.0f} tokens")
-    body = [
-        brief["headline"],
-        "",
+    body = [brief["headline"], ""]
+    # Results before the account of how they were made: what the project
+    # produced is what the reader opened the letter for.
+    delivered = brief.get("delivered") or []
+    if delivered:
+        body.append("Delivered")
+        for item in delivered[:DELIVERED_LISTED]:
+            version = f" (v{item['version']})" if item["version"] > 1 else ""
+            body.append(f"  + {item['name']}{version}"
+                        + (f" — {item['link']}" if item.get("link") else ""))
+        if len(delivered) > DELIVERED_LISTED:
+            body.append(f"  … and {len(delivered) - DELIVERED_LISTED} more in Deliverables")
+        body.append("")
+    body += [
         f"Window: {brief['window_source']} — {brief['since'][:16].replace('T', ' ')} "
         f"to {brief['until'][:16].replace('T', ' ')} UTC ({brief['window_hours']}h)",
         "",

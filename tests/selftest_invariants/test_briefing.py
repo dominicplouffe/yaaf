@@ -815,3 +815,47 @@ def test_the_morning_letter_names_its_window_the_way_a_person_would(client, monk
     assert _fire(project) is True
     assert "the window you asked for" not in sent[0]
     assert "since this project started" in sent[0]
+
+
+def _publish(client, project: dict, filename: str, content: bytes) -> None:
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    response = client.post("/agent/artifacts", headers=bearer(token), json={
+        "filename": filename, "content_base64": b64encode(content).decode()})
+    assert response.status_code == 200, response.text
+
+
+def test_the_letter_opens_on_what_was_delivered_with_a_way_to_open_it(client, monkeypatch):
+    """A publish never mails, so the morning letter is where a result reaches
+    somebody who did not open the app. It used to say "1 deliverable
+    published (memo.md)" halfway down; it now leads with the result."""
+    from yaaf.core import config
+
+    monkeypatch.setattr(config.settings(), "public_base_url", "https://yaaf.example.com")
+    project = make_project(client, slug="results")
+    _publish(client, project, "memo.md", b"# The answer\nPause Generic - broad.")
+    _publish(client, project, "memo.md", b"# The answer, v2\nPause Generic - broad.")
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        brief = briefing.project_briefing(session, row)
+    delivered = brief["delivered"]
+    assert [d["name"] for d in delivered] == ["memo.md"]
+    assert delivered[0]["version"] == 2
+    assert delivered[0]["link"].startswith(
+        f"https://yaaf.example.com/app/#/projects/{project['id']}/deliverables?open=")
+
+    text = briefing.render_text(brief)
+    assert text.index("Delivered") < text.index("Window:")
+    assert "memo.md (v2) — https://yaaf.example.com/app/#/projects/" in text
+
+
+def test_without_a_public_origin_the_letter_names_results_and_links_nowhere(client, monkeypatch):
+    from yaaf.core import config
+
+    monkeypatch.setattr(config.settings(), "public_base_url", "")
+    project = make_project(client, slug="nolink")
+    _publish(client, project, "memo.md", b"# The answer")
+    with db_session() as session:
+        brief = briefing.project_briefing(session, session.get(Project, project["id"]))
+    assert brief["delivered"][0]["link"] is None
+    assert "+ memo.md\n" in briefing.render_text(brief)
