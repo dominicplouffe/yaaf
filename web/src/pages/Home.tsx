@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { DeskProject, get } from "../api";
 import { DeskBrief } from "../briefing";
-import { ItemActions, needsYouCount, soonestClock, useDesk } from "../desk";
+import { ItemActions, needsYouCount, soonestClock, useDesk, WARN_VERDICTS } from "../desk";
 import { usePoll } from "../hooks";
 import { useMe } from "../me";
 import { clip, fmtAgo, fmtSoon, fmtUnit } from "../ui";
@@ -37,8 +37,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
       {/* Is it OK, and if not why — before what it is for. The goal is a
           paragraph the reader wrote; the sentence is what they came to learn. */}
       {p.status_line
-        ? <span className={`hcard-goal${["blocked", "failing", "late", "at_risk", "stalled", "needs_you"]
-            .includes(p.status_line.verdict) ? " warn" : ""}`} title={p.goal}>
+        ? <span className={`hcard-goal${WARN_VERDICTS.includes(p.status_line.verdict) ? " warn" : ""}`} title={p.goal}>
             {p.status_line.sentence}</span>
         : <span className="hcard-goal">{clip(p.goal, 160)}</span>}
       <span className="hcard-stats">

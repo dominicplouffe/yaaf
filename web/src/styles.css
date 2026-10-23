@@ -2456,6 +2456,8 @@ button.linkish.inline { min-height: 0; padding: 0; border: 0; background: none; 
 .ov-title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0; font-size: 34px; }
 .ov-title .badge { font-family: var(--font); letter-spacing: 0; }
 .ov-goal { margin: 8px 0 0; color: var(--ink-2); font-size: var(--t-lead); max-width: 80ch; }
+.ov-status { margin: 8px 0 0; font-weight: 600; color: var(--ink); max-width: 80ch; }
+.ov-status.warn, .hcard-goal.warn { color: var(--warning); }
 .ov-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .avstack { display: inline-flex; padding: 0 4px 0 0; border: 0; background: none; min-height: 0; }
 .avstack:hover { background: none; }

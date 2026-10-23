@@ -1971,9 +1971,11 @@ export default function Settings({
         </div>
       ) : (
         <div className="error">
-          {!billingReady
-            ? "⚠ Agents have no way to pay for Claude yet — connect a credential below or every real run will fail."
-            : "⚠ This project runs FAKE test agents (mock runtime) — nothing real will happen. Switch it under Advanced below."}
+          {/* Mock first: a mock project needs nothing to pay with, and telling
+              it to add a key sent the reader after the wrong fix. */}
+          {runtimeNow === "mock"
+            ? "⚠ This project runs FAKE test agents (mock runtime) — nothing real will happen. Switch it under Advanced below."
+            : "⚠ Agents have no way to pay for their model yet — connect a credential below or every real run will fail."}
         </div>
       )}
 

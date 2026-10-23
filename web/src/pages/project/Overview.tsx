@@ -12,7 +12,7 @@ import {
   RunRow,
 } from "../../api";
 import Agenda from "../../agenda";
-import { ItemActions, itemsFor, needsYou, soonestClock, useDesk } from "../../desk";
+import { ItemActions, itemsFor, needsYou, soonestClock, useDesk, WARN_VERDICTS } from "../../desk";
 import { fmtWhen, usePoll } from "../../hooks";
 import Markdown from "../../Markdown";
 import { firstName, ProjectCtx } from "../../projectCtx";
@@ -561,6 +561,15 @@ const WHERE_TO: Record<string, [string, string]> = {
   team: ["team", "open the Team"],
 };
 
+/** Where each problem verdict is fixed: page under the project, and the link. */
+const FIX_AT: Record<string, [string, string]> = {
+  blocked: ["settings?s=money", "Add a key"],
+  failing: ["activity/runs", "See the runs"],
+  late: ["roadmap", "Cut scope or move the date"],
+  at_risk: ["roadmap", "See the plan"],
+  stalled: ["team", "See who is stuck"],
+};
+
 export default function Overview({
   ctx, onPause, onStop, setupBadge, goalLead,
 }: {
@@ -752,6 +761,17 @@ export default function Overview({
               )}
               {setupBadge}
             </h1>
+            {deskProject?.status_line && (
+              // The sentence Home, the CLI and Claude's desk all say about this
+              // project, with the one page that changes it.
+              <p className={`ov-status${WARN_VERDICTS.includes(deskProject.status_line.verdict) ? " warn" : ""}`}>
+                {deskProject.status_line.sentence}
+                {FIX_AT[deskProject.status_line.verdict] && (
+                  <> <Link to={`${base}/${FIX_AT[deskProject.status_line.verdict][0]}`}>
+                    {FIX_AT[deskProject.status_line.verdict][1]}</Link></>
+                )}
+              </p>
+            )}
             <p className="ov-goal">
               {goalLead}{" "}
               <button className="linkish inline" onClick={() => setBrief(!brief)} aria-expanded={brief}>
