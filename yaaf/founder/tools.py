@@ -1,10 +1,12 @@
 """What the Founder can do besides talk.
 
-Six tools, and the split between them is deliberate. Three are *lookups* over
-things this install already has (the role library, the crew library, the
-outside world). Two are *judgement* delegated to something that judges better
-than a single pass of prose can — the goal grade and the fire drill. One,
-`propose_bundle`, is the deliverable.
+Eight tools, and the split between them is deliberate. Four are *lookups*
+over things this install already has (the role library, the crew library, the
+credentials, the outside world). Two are *judgement* delegated to something
+that judges better than a single pass of prose can — the goal grade and the
+fire drill. One, `propose_bundle`, is the deliverable. And one, `ask`, is the
+interview: the questions still open, each with the Founder's answer already
+written in, and the decisions already settled.
 
 There is no `derive_roster` tool, on purpose. Choosing a team from a goal is
 reasoning over what `search_roles` returns, and a scoring function in Python
@@ -43,12 +45,12 @@ FETCH_TIMEOUT_S = 20.0
 SERVER = "founder"
 
 TOOL_NAMES = ("search_roles", "search_crews", "read_source",
-              "grade_goal", "list_credentials", "propose_bundle", "rehearse")
+              "grade_goal", "list_credentials", "propose_bundle", "rehearse", "ask")
 
-#: What the CLI is allowed to run. Only these seven — no Bash, no file writes,
-#: no web tools of its own. The Founder drafts a project; it does not act on
-#: the world, and the one tool that touches the outside (`read_source`) reads
-#: and labels what it reads as data.
+#: What the CLI is allowed to run. Only these eight — no Bash, no file writes,
+#: no web tools of its own. The Founder drafts a project and asks about it; it
+#: does not act on the world, and the one tool that touches the outside
+#: (`read_source`) reads and labels what it reads as data.
 ALLOWED_TOOLS = [f"mcp__{SERVER}__{name}" for name in TOOL_NAMES]
 
 
@@ -205,10 +207,144 @@ def rehearse(session: Session, bundle: dict | None, days: int = 30) -> dict:
         return {"error": str(exc.detail)}
 
 
+# ── the interview ───────────────────────────────────────────────────────────────
+
+#: A round is the frontier — every decision whose prerequisites are settled —
+#: not the tree. More than this in one go is a questionnaire, which is the thing
+#: the chairman said he did not want before he had seen work.
+MAX_QUESTIONS = 6
+
+#: Numbers bind where adjectives do not (see the verbosity work): a question the
+#: chairman has to scroll is a question he skims.
+TITLE_CHARS = 80
+QUESTION_CHARS = 600
+LABEL_CHARS = 140
+
+SOURCES = ("brief", "answer", "assumed")
+
+#: The full JSON schema, rather than `{name: type}`, so the model is shown the
+#: shape of a question instead of being told "a list" and guessing at it.
+ASK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "questions": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "short and stable, e.g. 'reader'"},
+                "title": {"type": "string"},
+                "question": {"type": "string",
+                             "description": "worded so that 'yes' accepts your recommendation"},
+                "options": {"type": "array", "items": {
+                    "type": "object",
+                    "properties": {"label": {"type": "string"}, "detail": {"type": "string"}},
+                    "required": ["label"]}},
+                "recommended": {"type": ["integer", "null"],
+                                "description": "index into options; null only for who pays"},
+                "affects": {"type": "string",
+                            "description": "what in the draft the answer moves, e.g. 'the goal, the stakes'"},
+            },
+            "required": ["id", "title", "question", "options", "recommended"]}},
+        "settled": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"topic": {"type": "string"}, "decision": {"type": "string"},
+                           "source": {"type": "string", "enum": list(SOURCES)}},
+            "required": ["topic", "decision", "source"]}},
+        "done": {"type": "boolean"},
+    },
+    "required": ["questions", "settled", "done"],
+}
+
+
+def ask_round(args: dict) -> tuple[dict | None, list[str]]:
+    """Check one round of the interview: (the round, problems).
+
+    Refused rather than repaired, the way `propose_bundle` is: a question the
+    page cannot draw — no options, a recommendation that points nowhere — is a
+    question the chairman cannot answer in one click, and one click is the
+    whole promise of the format.
+    """
+    def listed(value):
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                return None
+        return value if isinstance(value, list) else None
+
+    questions, settled = listed(args.get("questions", [])), listed(args.get("settled", []))
+    done = bool(args.get("done"))
+    if questions is None or settled is None:
+        return None, ["questions and settled must both be lists"]
+
+    problems: list[str] = []
+    if done and questions:
+        problems.append("done means the frontier is empty — send no questions with it")
+    if not done and not questions:
+        problems.append("no questions left means done: true, with the whole ledger in settled")
+    if len(questions) > MAX_QUESTIONS:
+        problems.append(
+            f"{len(questions)} questions in one round — ask only the frontier, at most "
+            f"{MAX_QUESTIONS}: a question whose answer depends on another one still open "
+            "belongs to a later round")
+
+    clean_questions, seen = [], set()
+    for n, q in enumerate(questions, 1):
+        if not isinstance(q, dict):
+            problems.append(f"Q{n} is not an object")
+            continue
+        qid = str(q.get("id") or "").strip()
+        title = str(q.get("title") or "").strip()
+        body = str(q.get("question") or "").strip()
+        options = q.get("options") if isinstance(q.get("options"), list) else []
+        options = [o if isinstance(o, dict) else {"label": str(o)} for o in options]
+        recommended = q.get("recommended")
+        if not qid or qid in seen:
+            problems.append(f"Q{n} needs an id of its own")
+        seen.add(qid)
+        if not title or len(title) > TITLE_CHARS:
+            problems.append(f"Q{n}'s title must be 1-{TITLE_CHARS} characters")
+        if not body or len(body) > QUESTION_CHARS:
+            problems.append(f"Q{n}'s question must be 1-{QUESTION_CHARS} characters — "
+                            "put the reasoning in the draft, not the question")
+        if not 2 <= len(options) <= 4:
+            problems.append(f"Q{n} needs 2-4 options; the chairman can always write his own")
+        if any(not str(o.get("label") or "").strip() or len(str(o.get("label"))) > LABEL_CHARS
+               for o in options):
+            problems.append(f"Q{n}'s options each need a label under {LABEL_CHARS} characters")
+        if recommended is not None and (isinstance(recommended, bool)
+                                        or not isinstance(recommended, int)
+                                        or not 0 <= recommended < len(options)):
+            problems.append(f"Q{n}'s recommended must index one of its options")
+        clean_questions.append({
+            "id": qid, "title": title, "question": body,
+            "options": [{"label": str(o.get("label")).strip(),
+                         **({"detail": str(o["detail"]).strip()} if o.get("detail") else {})}
+                        for o in options],
+            "recommended": recommended,
+            **({"affects": str(q["affects"]).strip()} if q.get("affects") else {}),
+        })
+
+    clean_settled = []
+    for entry in settled:
+        if not isinstance(entry, dict) or not entry.get("topic") or not entry.get("decision"):
+            problems.append("every settled entry needs a topic and a decision")
+            continue
+        source = entry.get("source") if entry.get("source") in SOURCES else "assumed"
+        clean_settled.append({"topic": str(entry["topic"]).strip(),
+                              "decision": str(entry["decision"]).strip(),
+                              "source": source})
+    if done and not clean_settled:
+        problems.append("done needs the whole ledger in settled — it is what the chairman confirms")
+
+    if problems:
+        return None, problems
+    return {"questions": clean_questions, "settled": clean_settled, "done": done}, []
+
+
 class FounderTools(NamedTuple):
     """The tools, in the forms their callers need.
 
-    `server` is what the CLI is given. `handlers` is the same six functions by
+    `server` is what the CLI is given. `handlers` is the same eight functions by
     name, so a test — or anything else in-process — can call one without
     reaching into the MCP server's internals to find it. Exposing them costs
     nothing and is the difference between a test that asserts behaviour and one
@@ -224,12 +360,13 @@ class FounderTools(NamedTuple):
 
 def build_server(session: Session, state: dict, env: dict[str, str],
                  model: str, thread_id: str = "") -> FounderTools:
-    """The six tools, as an in-process MCP server the CLI can call.
+    """The eight tools, as an in-process MCP server the CLI can call.
 
-    `state` is the one mutable thing here — the draft. `propose_bundle` writes
-    it and the caller reads it back after the turn, so there is exactly one
-    place a draft can change, and the tool bodies above stay pure functions
-    that a test can call directly.
+    `state` is the one mutable thing here — the draft, and the round of
+    questions. `propose_bundle` writes the first and `ask` the second, and the
+    caller reads both back after the turn, so there is exactly one place each
+    can change, and the tool bodies above stay pure functions that a test can
+    call directly.
 
     `env` and `model` are captured because `grade_goal` runs a model of its
     own, and it must run on the same credential as everything else.
@@ -381,8 +518,35 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         return await step("rehearse", lambda: rehearse(
             session, state.get("draft"), int(args.get("days") or 30)))
 
+    @tool("ask", "Put the next round of the interview in front of the chairman. "
+          "`questions` is the frontier: every decision whose prerequisites are "
+          "settled, each with 2-4 options and your recommended one, worded so that "
+          "'yes' accepts it — the page preselects it, so agreeing costs one click. "
+          "`settled` is the WHOLE ledger of what is already decided, each with where "
+          "it came from: his brief, his answer, or your assumption. Send "
+          "done: true with no questions when the frontier is empty; he confirms the "
+          "ledger and goes to review. Call it BEFORE propose_bundle — he reads the "
+          "questions while you revise the draft.",
+          ASK_SCHEMA)
+    async def _ask(args):
+        progress.start_step(thread_id, progress.LABELS["ask"])
+        try:
+            asked, problems = ask_round(args)
+            if problems:
+                return ok({"ok": False, "problems": problems,
+                           "hint": "fix these and call ask again"})
+            state["round"] = asked
+            # Mid-turn, so the page can show the questions while the draft is
+            # still being rewritten — minutes of reading time the chairman
+            # would otherwise spend watching a step list.
+            progress.set_round(thread_id, asked)
+            return ok({"ok": True, "questions": len(asked["questions"]),
+                       "settled": len(asked["settled"]), "done": asked["done"]})
+        finally:
+            progress.finish_step(thread_id)
+
     built = [_search_roles, _search_crews, _read_source,
-             _grade_goal, _list_credentials, _propose_bundle, _rehearse]
+             _grade_goal, _list_credentials, _propose_bundle, _rehearse, _ask]
     from yaaf.founder.loop import schema
 
     return FounderTools(

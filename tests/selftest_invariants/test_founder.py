@@ -68,9 +68,14 @@ def founder(client, monkeypatch):
     monkeypatch.setattr("yaaf.founder.tools.build_server", spy_build)
 
     def script(reply="Explore, because you are still choosing what to build.",
-               tool_calls=(), raises=None, blocks_on=None):
+               tool_calls=(), raises=None, blocks_on=None, blocks_after=()):
         async def fake_run(prompt, opts, stderr_sink=None, thread_id=""):
             calls.append({"prompt": prompt, "opts": opts, "env": dict(opts.env)})
+            # Tools called before the hold, so a test can see what a turn has
+            # already put on the page while the rest of it is still working.
+            for name, args in blocks_after:
+                calls.append({"tool": name,
+                              "result": await state["tools"].handlers[name]({**args})})
             if blocks_on is not None:
                 # Held open so a test can look at a turn while it is in flight —
                 # which is the state the whole change exists to make legible.
@@ -409,11 +414,12 @@ def test_the_platform_credential_never_becomes_a_project_secret(client, founder)
 # ── the tool surface ────────────────────────────────────────────────────────────
 
 
-def test_the_founder_gets_seven_tools_and_no_way_to_act(client, founder):
+def test_the_founder_gets_eight_tools_and_no_way_to_act(client, founder):
     """The Founder drafts a project; it does not act on the world. Built-in
-    tools are off and only these seven are allowed — the restriction is the
-    design, not a default. The seventh reads credential *names*; the value
-    stays where every other value stays."""
+    tools are off and only these eight are allowed — the restriction is the
+    design, not a default. One reads credential *names*; the value stays where
+    every other value stays. The eighth, `ask`, puts questions on the page and
+    touches nothing else."""
     from yaaf.founder import tools
 
     calls = founder()
@@ -421,7 +427,7 @@ def test_the_founder_gets_seven_tools_and_no_way_to_act(client, founder):
     opts = calls[0]["opts"]
 
     assert opts.allowed_tools == tools.ALLOWED_TOOLS
-    assert len(tools.ALLOWED_TOOLS) == 7
+    assert len(tools.ALLOWED_TOOLS) == 8
     assert all(name.startswith("mcp__founder__") for name in opts.allowed_tools)
     # No Bash, no file writes, no browsing of its own.
     assert opts.tools == []
@@ -1095,3 +1101,162 @@ def test_a_draft_paid_by_another_provider_moves_its_seats_or_is_refused(client, 
     created = client.post("/admin/projects", headers=ADMIN, json={
         **thread["draft_bundle"]["project"], "chairman_email": "chair@example.com"})
     assert created.status_code == 200, created.text
+
+
+# ── the interview ───────────────────────────────────────────────────────────────
+
+ROUND = {
+    "questions": [
+        {"id": "reader", "title": "Who reads this",
+         "question": "The seller whose account it is, judged against an agency audit?",
+         "options": [{"label": "The seller"}, {"label": "You"}], "recommended": 0,
+         "affects": "the goal, the stakes"},
+        {"id": "shape", "title": "Shape", "question": "Deliver, because it ends?",
+         "options": [{"label": "Deliver"}, {"label": "Operate"}, {"label": "Explore"}],
+         "recommended": 0},
+        {"id": "pays", "title": "Who pays", "question": "Which key pays?",
+         "options": [{"label": "Main"}, {"label": "Side"}], "recommended": None},
+    ],
+    "settled": [{"topic": "Finish line", "decision": "A signed audit", "source": "brief"}],
+    "done": False,
+}
+
+
+def test_a_round_reaches_the_page_with_the_draft(client, founder):
+    """The interview is the draft split into decisions: the round and the draft
+    arrive on the same turn, so the chairman is never asked anything before he
+    can see work."""
+    founder(tool_calls=[("ask", ROUND), ("propose_bundle", {"project": PROJECT})])
+    thread = start(client, "Audit my PPC account.")
+
+    asked = thread["turns"][-1]["round"]
+    assert asked["number"] == 1
+    assert [q["id"] for q in asked["questions"]] == ["reader", "shape", "pays"]
+    assert asked["settled"][0]["source"] == "brief"
+    assert thread["draft_bundle"]["project"]["slug"] == "sell-something"
+
+
+def test_a_round_is_on_the_page_before_the_draft_finishes(client, founder):
+    """The draft takes minutes; the questions are reading time. They are served
+    mid-turn from the moment `ask` is called."""
+    gate = threading.Event()
+    calls = founder(blocks_after=[("ask", ROUND)], blocks_on=gate)
+
+    response = client.post("/admin/founder/threads",
+                           json={"message": "Audit my PPC account."}, headers=ADMIN)
+    thread_id = response.json()["id"]
+    try:
+        for _ in range(200):
+            if any(c.get("tool") == "ask" for c in calls):
+                break
+            time.sleep(0.02)
+        live = client.get(f"/admin/founder/threads/{thread_id}/progress",
+                          headers=ADMIN).json()
+        assert live["running"]
+        assert live["round"]["questions"][0]["id"] == "reader"
+    finally:
+        gate.set()
+
+
+@pytest.mark.parametrize("bad, says", [
+    ({**ROUND, "questions": [{**ROUND["questions"][0], "options": [{"label": "Only one"}]}]},
+     "2-4 options"),
+    ({**ROUND, "questions": [{**ROUND["questions"][0], "recommended": 5}]},
+     "recommended must index"),
+    ({**ROUND, "done": True}, "frontier is empty"),
+    ({**ROUND, "questions": []}, "done: true"),
+    ({**ROUND, "questions": [{**ROUND["questions"][0], "id": f"q{i}"} for i in range(7)]},
+     "at most 6"),
+])
+def test_a_round_the_page_cannot_draw_is_refused(bad, says):
+    """One click is the whole promise of the format: a question with nothing to
+    click, or a recommendation pointing nowhere, cannot keep it."""
+    from yaaf.founder.tools import ask_round
+
+    asked, problems = ask_round(bad)
+    assert asked is None
+    assert any(says in p for p in problems), problems
+
+
+def test_answers_are_words_for_every_reader_that_reads_words(client, founder):
+    """The next turn's prompt and the CEO's briefing both read a transcript as
+    text. A round answered by clicks has to read as an answer there too —
+    including the questions he never touched, which he accepted."""
+    founder(tool_calls=[("ask", ROUND), ("propose_bundle", {"project": PROJECT})])
+    thread = start(client, "Audit my PPC account.")
+
+    calls = founder(reply="Operate it is; the tempo moved with it.")
+    response = client.post(f"/admin/founder/threads/{thread['id']}/say", json={
+        "answers": [{"id": "shape", "choice": 1}, {"id": "pays", "text": "the side key"}],
+        "message": "Keep it cheap.",
+    }, headers=ADMIN)
+    assert response.status_code == 202, response.text
+    for _ in range(200):
+        state = client.get(f"/admin/founder/threads/{thread['id']}", headers=ADMIN).json()
+        if not state["running"]:
+            break
+        time.sleep(0.05)
+
+    said = state["turns"][-2]
+    assert said["answers"][0] == {"id": "shape", "choice": 1, "text": None}
+    assert "Who reads this — yes — The seller" in said["text"]
+    assert "Shape — not your recommendation — Operate" in said["text"]
+    assert 'Who pays — in my own words: "the side key"' in said["text"]
+    assert "Keep it cheap." in said["text"]
+
+    prompt = next(c["prompt"] for c in reversed(calls) if "prompt" in c)
+    assert "[your recommendation]" in prompt, "the model must see what it asked"
+    assert "Shape — not your recommendation — Operate" in prompt
+
+
+def test_answers_need_a_round_to_answer(client, founder):
+    founder(tool_calls=[("propose_bundle", {"project": PROJECT})])
+    thread = start(client, "Audit my PPC account.")
+
+    stale = client.post(f"/admin/founder/threads/{thread['id']}/say",
+                        json={"answers": [{"id": "reader", "choice": 0}]}, headers=ADMIN)
+    assert stale.status_code == 409
+
+    founder(tool_calls=[("ask", ROUND)])
+    thread = start(client, "Ask me things.", thread["id"])
+    stray = client.post(f"/admin/founder/threads/{thread['id']}/say",
+                        json={"answers": [{"id": "nope", "choice": 0}]}, headers=ADMIN)
+    assert stray.status_code == 422
+    empty = client.post(f"/admin/founder/threads/{thread['id']}/say", json={}, headers=ADMIN)
+    assert empty.status_code == 422
+
+
+def test_a_turn_says_which_parts_of_the_draft_its_answers_moved(client, founder):
+    """Answers are only worth giving if they visibly change the project. The
+    turn records which parts moved; the first draft marks nothing, because
+    marking everything marks nothing."""
+    founder(tool_calls=[("ask", ROUND), ("propose_bundle", {"project": PROJECT})])
+    thread = start(client, "Audit my PPC account.")
+    assert "changed" not in thread["turns"][-1]
+
+    founder(tool_calls=[("propose_bundle", {"project": {
+        **PROJECT, "goal": PROJECT["goal"] + " The reader is the seller.",
+        "constitution": {"monthly_usd_cap": 60.0}}})])
+    thread = start(client, "Cheaper, and it's for the seller.", thread["id"])
+    assert thread["turns"][-1]["changed"] == ["goal", "rules"]
+
+
+def test_what_was_settled_reaches_the_ceo(client, founder):
+    """The interview's verdicts, not only its argument: a CEO should not have
+    to reconstruct from a long transcript what the chairman decided."""
+    from yaaf.core.db import db_session
+    from yaaf.core.models import FoundingThread
+    from yaaf.founder.agent import briefing
+
+    done = {"questions": [], "done": True,
+            "settled": [{"topic": "Reader", "decision": "The seller", "source": "answer"}]}
+    founder(tool_calls=[("ask", ROUND), ("propose_bundle", {"project": PROJECT})])
+    thread = start(client, "Audit my PPC account.")
+    founder(reply="Nothing left to ask.", tool_calls=[("ask", done)])
+    thread = start(client, "yes to all", thread["id"])
+    assert thread["turns"][-1]["round"]["done"] is True
+
+    with db_session() as session:
+        text = briefing(session.get(FoundingThread, thread["id"]))
+    assert "Q1 Who reads this" in text
+    assert "WHAT WAS SETTLED:\n- Reader: The seller" in text

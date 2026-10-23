@@ -1,19 +1,43 @@
 // The founding conversation: you talk, a project gets drafted.
 //
-// The chairman writes a brief; the Founder answers with a whole project. So
+// The chairman writes a brief; the Founder answers with a whole project and a
+// round of questions about it, each with its own answer already chosen. So
 // this page is a conversation on the left and the draft it is producing on the
-// right, and there is no form anywhere on it. "Review & create" hands the
-// draft to the New Project screen through the same path a setup file takes.
+// right, and there is no form anywhere on it — a round he agrees with is one
+// button. "Review & create" hands the draft to the New Project screen through
+// the same path a setup file takes.
 
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, del, get, post, ProjectBundle, put } from "../api";
 import Markdown from "../Markdown";
 import { SecretInput, SEND_HINT, sendOnEnter } from "../ui";
+import { Badge } from "../ui/kit";
+import {
+  Aligned,
+  Answer,
+  initialPicks,
+  Ledger,
+  Pick,
+  Picks,
+  Round,
+  RoundForm,
+  roundKey,
+  RoundRecap,
+  toAnswers,
+} from "../interview";
 
 interface Turn {
   role: "chairman" | "founder";
   text: string;
+  /** The Founder's round of questions, and the ledger as it stood. */
+  round?: Round;
+  /** The chairman's answers to the round before, as clicked. */
+  answers?: Answer[];
+  /** What he wrote beside them. */
+  note?: string;
+  /** Which parts of the draft this turn rewrote. */
+  changed?: string[];
 }
 
 interface Thread {
@@ -50,6 +74,8 @@ interface Progress {
   running: boolean;
   seconds: number;
   steps: Step[];
+  /** The round, as soon as the Founder asked it — before the draft is done. */
+  round?: Round | null;
 }
 
 interface FounderStatus {
@@ -61,8 +87,8 @@ interface FounderStatus {
 const PLACEHOLDER =
   "Tell me what you want to exist that doesn't yet.\n\n" +
   "Write it the way you'd brief a competent person you've just hired — messy is " +
-  "fine, and you don't have to be complete. I'll draft the whole project and you " +
-  "can argue with it.";
+  "fine, and you don't have to be complete. I'll draft the whole project, then ask " +
+  "about anything I had to guess, with my answer already picked.";
 
 /** What the Founder is doing, while it does it.
  *
@@ -163,7 +189,13 @@ function CredentialGate({ onSaved }: { onSaved: () => void }) {
 }
 
 /** What the Founder has drafted so far, at a glance. */
-function DraftPanel({ bundle }: { bundle: ProjectBundle | null }) {
+/** "Updated" beside a part of the draft the last answers rewrote — the proof
+ *  that answering was worth it. */
+function Moved({ on }: { on: boolean }) {
+  return on ? <> <Badge tone="accent">Updated</Badge></> : null;
+}
+
+function DraftPanel({ bundle, changed = [] }: { bundle: ProjectBundle | null; changed?: string[] }) {
   if (!bundle) {
     return (
       <div className="card muted">
@@ -185,19 +217,20 @@ function DraftPanel({ bundle }: { bundle: ProjectBundle | null }) {
       <p className="muted">
         {p.mode} · {p.teams?.length ?? 0} teams · {headcount} people
         {p.deadline ? ` · by ${p.deadline.slice(0, 10)}` : ""}
+        <Moved on={changed.includes("shape")} />
       </p>
 
-      <h4>Goal</h4>
+      <h4>Goal<Moved on={changed.includes("goal")} /></h4>
       <pre className="goal-preview">{p.goal}</pre>
 
-      <h4>Who pays</h4>
+      <h4>Who pays<Moved on={changed.includes("pays")} /></h4>
       <p className="muted">
         {p.billing_secret_name
           ? <>{p.billing_secret_name} — {p.billing_mode === "subscription" ? "a Claude subscription, metered in tokens" : "an Anthropic API key, billed in USD"}</>
           : "Not chosen yet. The Founder asks when there is more than one credential; you can also pick one on the form."}
       </p>
 
-      <h4>Who it hires</h4>
+      <h4>Who it hires<Moved on={changed.includes("team")} /></h4>
       <ul>
         {(p.teams ?? []).map((t) => (
           <li key={t.name}>
@@ -208,7 +241,7 @@ function DraftPanel({ bundle }: { bundle: ProjectBundle | null }) {
 
       {knobs.length > 0 && (
         <>
-          <h4>Rules it set</h4>
+          <h4>Rules it set<Moved on={changed.includes("rules")} /></h4>
           <p className="muted">
             {knobs.length} of the constitution's rules; everything else takes its
             default.
@@ -234,7 +267,21 @@ export default function Founding() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
+  // The open round's answers, held here rather than in the form: the round
+  // first arrives mid-turn from the progress poll and then again on the saved
+  // thread, and what he had already clicked must survive the hand-over.
+  const [picks, setPicks] = useState<{ key: string; picks: Picks }>({ key: "", picks: {} });
+  const [roundNote, setRoundNote] = useState("");
+  // Answers sent while the Founder was still writing the draft. They go the
+  // moment it finishes, so he never waits on the slow half of a turn to
+  // start the next one.
+  const [queued, setQueued] = useState<{ answers: Answer[]; message: string } | null>(null);
+  // At the end the page has one question left — is this the project? — and a
+  // composer under it would be a second answer competing with the first.
+  // "Something's off" is what opens it.
+  const [reopening, setReopening] = useState(false);
   const bottom = useRef<HTMLDivElement | null>(null);
+  const composer = useRef<HTMLTextAreaElement | null>(null);
 
   async function loadStatus() {
     try {
@@ -276,10 +323,6 @@ export default function Founding() {
     void resume();
   }, []);
 
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [thread?.turns.length, busy, progress?.steps.length]);
-
   // The turn belongs to the server, so this is the only thing waiting on it.
   // A turn started a second ago and one found still running after a reload are
   // the same case, which is what makes a refresh mid-draft survivable.
@@ -314,6 +357,55 @@ export default function Founding() {
     };
   }, [running, thread?.id]);
 
+  const turns = thread?.turns ?? [];
+  const last = turns[turns.length - 1];
+  // The round on the table: the one the Founder just asked on a saved turn,
+  // or — mid-turn, before the draft is finished — the one it has already asked.
+  const savedRound = last?.role === "founder" && last.round ? last.round : null;
+  const liveRound = busy && last?.role === "chairman" && progress?.round ? progress.round : null;
+  const tableRound = liveRound ?? savedRound;
+  const asking = tableRound && !tableRound.done && tableRound.questions.length ? tableRound : null;
+  const aligned = !busy && savedRound?.done ? savedRound : null;
+  const ledgerRound =
+    liveRound ?? [...turns].reverse().find((t) => t.role === "founder" && t.round)?.round ?? null;
+  const lastChanged = [...turns].reverse().find((t) => t.role === "founder")?.changed ?? [];
+
+  // A new round starts from the Founder's own picks.
+  const key = asking ? roundKey(asking) : "";
+  useEffect(() => {
+    if (asking && picks.key !== key) {
+      setPicks({ key, picks: initialPicks(asking) });
+      setRoundNote("");
+    }
+  }, [key]);
+
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ behavior: "smooth" });
+  }, [turns.length, busy, progress?.steps.length, key]);
+
+  async function post_(payload: { message: string; answers?: Answer[] }) {
+    if (!thread) return;
+    setBusy(true);
+    setError(null);
+    setProgress(null);
+    try {
+      setThread(await post<Thread>(`/admin/founder/threads/${thread.id}/say`, payload));
+    } catch (err) {
+      setBusy(false);
+      if (err instanceof ApiError && err.status === 422) void loadStatus();
+      setError((err as Error).message);
+      throw err;
+    }
+  }
+
+  // Answers queued during the slow half of a turn go the moment it ends.
+  useEffect(() => {
+    if (busy || !queued) return;
+    const payload = queued;
+    setQueued(null);
+    void post_(payload).catch(() => {});
+  }, [busy, queued]);
+
   async function send() {
     const text = message.trim();
     if (!text || busy) return;
@@ -331,12 +423,34 @@ export default function Founding() {
         ? await post<Thread>(`/admin/founder/threads/${thread.id}/say`, { message: text })
         : await post<Thread>("/admin/founder/threads", { message: text });
       setThread(next);
+      setReopening(false);
     } catch (err) {
       setMessage(text);
       setBusy(false);
       if (err instanceof ApiError && err.status === 422) void loadStatus();
       setError((err as Error).message);
     }
+  }
+
+  function answer() {
+    if (!asking) return;
+    const payload = { answers: toAnswers(asking, picks.picks), message: roundNote.trim() };
+    if (busy) {
+      setQueued(payload);
+      return;
+    }
+    void post_(payload).catch(() => {});
+  }
+
+  function pick(id: string, value: Pick) {
+    setPicks((cur) => ({ ...cur, picks: { ...cur.picks, [id]: value } }));
+  }
+
+  /** Reopen a settled decision: the composer, already addressed to it. */
+  function reopen(topic?: string) {
+    setReopening(true);
+    setMessage(topic ? `About ${topic.toLowerCase()}: ` : "");
+    setTimeout(() => composer.current?.focus(), 0);
   }
 
   async function startOver() {
@@ -351,6 +465,8 @@ export default function Founding() {
     setThread(null);
     setMessage("");
     setError(null);
+    setQueued(null);
+    setReopening(false);
   }
 
   function review() {
@@ -371,7 +487,7 @@ export default function Founding() {
     );
   }
 
-  const turns = thread?.turns ?? [];
+  const openCount = asking?.questions.length ?? 0;
 
   return (
     <div className="founding">
@@ -381,8 +497,9 @@ export default function Founding() {
           <h1>Describe it, and yaaf drafts it</h1>
           <p className="subtitle">
             Describe what you want. The Founder drafts the whole thing — goal,
-            shape, roster, rules — and then you argue with it. Nothing here is
-            created until you say so on the next screen.
+            shape, roster, rules — then asks about everything it had to guess,
+            a few questions at a time, with its own answer already picked.
+            Nothing is created until you say so on the next screen.
           </p>
         </div>
         <div className="founding-head-acts">
@@ -408,61 +525,120 @@ export default function Founding() {
               <h3>Start anywhere</h3>
               <p>
                 A paragraph is plenty. Say what should be true at the end, who
-                it is for, what you will and won't do yourself, and roughly what
-                you are willing to spend. Anything you leave out, the Founder
-                will assume and tell you what it assumed.
+                it is for, and roughly what you are willing to spend. Whatever
+                you leave out, the Founder asks about — with its recommended
+                answer already chosen, so agreeing is one click.
               </p>
             </div>
           )}
-          {turns.map((turn, i) => (
-            <div key={i} className={`turn turn-${turn.role}`}>
-              <div className="turn-who">{turn.role === "chairman" ? "You" : "The Founder"}</div>
-              <div className="turn-text">
-                {/* The Founder writes markdown — headings, bold, lists, backticked
-                    constitution keys. Rendering it as source was making the most
-                    carefully written thing on the page the hardest to read. The
-                    chairman types plain text, so his turns stay verbatim. */}
-                {turn.role === "founder" ? <Markdown>{turn.text}</Markdown> : turn.text}
+          {turns.map((turn, i) => {
+            const next = turns[i + 1];
+            // Answers are read back on the round they answer, as question →
+            // answer; the chairman's own turn then only carries his note.
+            if (turn.answers) {
+              return turn.note ? (
+                <div key={i} className="turn turn-chairman">
+                  <div className="turn-who">You</div>
+                  <div className="turn-text">{turn.note}</div>
+                </div>
+              ) : null;
+            }
+            const round = turn.round;
+            return (
+              <div key={i} className={`turn turn-${turn.role}`}>
+                <div className="turn-who">{turn.role === "chairman" ? "You" : "The Founder"}</div>
+                {turn.text && (
+                  <div className="turn-text">
+                    {/* The Founder writes markdown — headings, bold, lists, backticked
+                        constitution keys. Rendering it as source was making the most
+                        carefully written thing on the page the hardest to read. The
+                        chairman types plain text, so his turns stay verbatim. */}
+                    {turn.role === "founder" ? <Markdown>{turn.text}</Markdown> : turn.text}
+                  </div>
+                )}
+                {round && round.questions.length > 0 && next && (
+                  <RoundRecap round={round} answers={next.answers ?? null} />
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
+
+          {liveRound && asking && <div className="turn-who">The Founder</div>}
+          {asking && (
+            <RoundForm
+              round={asking}
+              picks={picks.key === key ? picks.picks : initialPicks(asking)}
+              onPick={pick}
+              note={roundNote}
+              onNote={setRoundNote}
+              onSubmit={answer}
+              waiting={busy}
+              queued={queued !== null}
+            />
+          )}
+          {aligned && (
+            <Aligned
+              round={aligned}
+              onConfirm={review}
+              onReopen={() => reopen()}
+              disabled={!thread?.draft_bundle}
+            />
+          )}
+
           {busy && <Steps progress={progress} />}
           <div ref={bottom} />
 
           {error && <p className="error">{error}</p>}
 
-          <div className="founding-compose">
-            <textarea
-              rows={turns.length ? 3 : 8}
-              value={message}
-              placeholder={turns.length ? "Push back, or answer its questions…" : PLACEHOLDER}
-              disabled={busy}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={sendOnEnter(() => void send(), {
-                disabled: busy || !message.trim(),
-              })}
-            />
-            <div className="founding-actions">
-              <span className="muted">{SEND_HINT}</span>
-              <button className="primary" disabled={busy || !message.trim()} onClick={send}>
-                {busy ? "Working (minutes)…" : turns.length ? "Send" : "Draft the project"}
-              </button>
+          {/* One place to type at a time: while a round is open, its own note
+              box is that place, and a second composer would be a second way
+              to say the same thing with a different effect. */}
+          {!asking && (!aligned || reopening) && (
+            <div className="founding-compose">
+              <textarea
+                ref={composer}
+                rows={turns.length ? 3 : 8}
+                value={message}
+                placeholder={
+                  turns.length
+                    ? aligned
+                      ? "What's off? Name it and the Founder reopens whatever it touches…"
+                      : "Push back, or tell it something it should know…"
+                    : PLACEHOLDER
+                }
+                disabled={busy}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyDown={sendOnEnter(() => void send(), {
+                  disabled: busy || !message.trim(),
+                })}
+              />
+              <div className="founding-actions">
+                <span className="muted">{SEND_HINT}</span>
+                <button className="primary" disabled={busy || !message.trim()} onClick={send}>
+                  {busy ? "Working (minutes)…" : turns.length ? "Send" : "Draft the project"}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </section>
 
         <aside className="founding-draft">
-          <DraftPanel bundle={thread?.draft_bundle ?? null} />
+          {ledgerRound && (
+            <Ledger settled={ledgerRound.settled} open={openCount} onReopen={reopen} />
+          )}
+          <DraftPanel bundle={thread?.draft_bundle ?? null} changed={busy ? [] : lastChanged} />
           {thread?.draft_bundle && (
-            <button className="primary" onClick={review} disabled={busy}>
+            <button className={asking || aligned ? "" : "primary"} onClick={review} disabled={busy}>
               Review &amp; create →
             </button>
           )}
           {thread?.draft_bundle && (
             <p className="muted">
-              This opens the New Project screen with everything filled in, where
-              you can change anything, run the fire drill for nothing, and
-              create it.
+              {openCount
+                ? `${openCount} ${openCount === 1 ? "question is" : "questions are"} still open. ` +
+                  "You can review now — the draft uses the Founder's picks for them."
+                : "This opens the New Project screen with everything filled in, where " +
+                  "you can change anything, run the fire drill for nothing, and create it."}
             </p>
           )}
         </aside>
