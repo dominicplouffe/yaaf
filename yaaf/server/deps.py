@@ -92,7 +92,23 @@ def run_auth(
     if run.kind == RunKind.CHAT_SESSION:
         run.heartbeat_at = utcnow()
     _count_production(request, run)
+    _clear_refusal_on_retry(request, run)
     return RunContext(run=run, agent=agent, project=project)
+
+
+def _clear_refusal_on_retry(request: Request, run: Run) -> None:
+    """Mark the run's last refusal got past when the same call is made again.
+
+    Stamped optimistically on the request's own session: if this call is
+    refused too, the session rolls back and the refusal handler writes the new
+    wall, so the stamp only survives a call that went through. Same URL path,
+    not same route template — "a task was refused" is not answered by a
+    different task succeeding.
+    """
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    if run.last_refusal_cleared_at is None and run.last_refusal_route == request.url.path:
+        run.last_refusal_cleared_at = utcnow()
 
 
 #: Agent routes whose mutating calls change nothing about the project.

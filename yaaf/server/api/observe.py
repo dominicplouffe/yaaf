@@ -1668,6 +1668,9 @@ def runs(project_id: str, limit: int = 50, session: Session = Depends(db)) -> li
             "model": r.model, "effort": r.effort, "cost_usd": r.cost_usd,
             "priced_usd": r.priced_usd, "harness": r.harness,
             "refusals": r.refusal_count, "last_refusal": r.last_refusal,
+            "last_refusal_at": r.last_refusal_at.isoformat() if r.last_refusal_at else None,
+            "last_refusal_cleared_at": (r.last_refusal_cleared_at.isoformat()
+                                        if r.last_refusal_cleared_at else None),
             "summary": r.summary,
             "has_trace": r.trace_path is not None,
             "has_context": r.context_path is not None,

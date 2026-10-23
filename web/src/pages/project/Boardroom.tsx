@@ -411,6 +411,11 @@ export default function Boardroom({ projectId, dash, org }: {
     (r) => r.kind === "chat_session" && r.status === "running",
   );
   const lastRefusal = chatSession?.last_refusal ?? null;
+  const refusedAt = chatSession?.last_refusal_at ?? null;
+  // The CEO retries. A brief refused for length and refiled shorter left the
+  // warning below sitting beside a true "done" — so once the same call has
+  // gone through, say that instead of telling him to doubt it.
+  const refusalCleared = chatSession?.last_refusal_cleared_at ?? null;
   const today = new Date().toDateString();
   const todayRuns = (runs ?? []).filter(
     (r) => r.started_at && new Date(r.started_at).toDateString() === today,
@@ -568,13 +573,19 @@ export default function Boardroom({ projectId, dash, org }: {
               </div>
               {lastRefusal && (
                 <div className="help" style={{ marginTop: 8 }}>
-                  <span className="chip serious">last refused</span>{" "}
+                  <span className={`chip ${refusalCleared ? "" : "serious"}`}>
+                    {refusalCleared ? "refused, then got through" : "last refused"}
+                  </span>{" "}
+                  {refusedAt && <span style={{ opacity: 0.75 }}>{fmtWhen(refusedAt)}</span>}
                   <span style={{ display: "block", marginTop: 4 }}>
                     {clip(lastRefusal, 220)}
                   </span>
                   <span style={{ display: "block", marginTop: 4, opacity: 0.75 }}>
-                    A rule stopped something it tried. If it told you the thing was
-                    done, check the board before believing it.
+                    {refusalCleared
+                      ? `It made the same call again (${fmtWhen(refusalCleared)}) and that `
+                        + "one went through, so this wall is behind it."
+                      : "A rule stopped something it tried. If it told you the thing was "
+                        + "done, check the board before believing it."}
                   </span>
                 </div>
               )}

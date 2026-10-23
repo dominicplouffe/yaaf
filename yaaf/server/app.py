@@ -22,7 +22,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
-from yaaf.core.models import Run, RunKind
+from yaaf.core.models import Run, RunKind, utcnow
 from yaaf.server.policy import Refusal
 
 log = logging.getLogger("yaaf.api")
@@ -159,6 +159,9 @@ def create_app() -> FastAPI:
                 if run is not None:
                     run.refusal_count += 1
                     run.last_refusal = exc.message[:500]
+                    run.last_refusal_route = request.url.path[:200]
+                    run.last_refusal_at = utcnow()
+                    run.last_refusal_cleared_at = None
                     try:
                         cap = effective(session, run.project_id).refusal_cap_per_run
                     except LookupError:

@@ -1871,6 +1871,14 @@ class Run(Base):
     # The most recent Refusal message — a storm banner that can't say which
     # wall was hit isn't actionable.
     last_refusal: Mapped[str | None] = mapped_column(Text)
+    # Which call that wall was hit on, when, and when the same call then went
+    # through. A resident chat session lives for days and retries: a brief
+    # refused for length and refiled shorter left "last refused" on the
+    # boardroom beside a CEO truthfully saying it was done, telling the
+    # chairman to doubt the one report that was right.
+    last_refusal_route: Mapped[str | None] = mapped_column(String(200))
+    last_refusal_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_refusal_cleared_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
