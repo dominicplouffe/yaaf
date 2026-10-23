@@ -94,6 +94,11 @@ WITHHELD = {
         "with its put-away state beside it. A model clearing warnings off the "
         "chairman's card on his behalf is the one use this verb has that he did "
         "not ask for.",
+    "POST /admin/projects/{project_id}/tempo/keep":
+        "keeping the pace is the chairman declining advice about how often his "
+        "own money is spent, for everyone on the project at once. A model "
+        "answering that for him is the one use of it he did not ask for; the "
+        "other answer, switching, is an amendment `configure` already reaches.",
     "POST /admin/projects/{project_id}/regrade-goal":
         "grading goal prose calls a model, so this verb spends every time it is "
         "used — and unlike the rest of the drift picture it answers a question "

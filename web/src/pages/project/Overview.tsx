@@ -519,6 +519,17 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+  // Keeping is the project's answer, not one reader's tidying, so it is a
+  // decision on the record and the row leaves every chair's card.
+  const keepTempo = async () => {
+    setError(null);
+    try {
+      await post(`/admin/projects/${projectId}/tempo/keep`, {});
+      reloadHealth();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   // Problems, then suggestions, then what passes, then what was put away.
   const rank = (c: HealthCheck) =>
     c.status === "fail" ? 0 : c.status === "warn" ? (c.acked_at ? 3 : 1) : 2;
@@ -556,16 +567,18 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
             }}>adopt the latest role version</button>
           ) : check.action?.kind === "tempo" && !check.acked_at ? (
             <button className="small" onClick={() => switchTempo(check)}>
-              Switch to {check.action.to_label}
+              Switch to “{check.action.to_label}”
             </button>
           ) : isOpen(check) && WHERE_TO[check.where ?? ""] ? (
             <Link to={`/projects/${projectId}/${WHERE_TO[check.where!][0]}`}>{WHERE_TO[check.where!][1]} →</Link>
           ) : null}
-          {check.status === "warn" && (
+          {check.action?.kind === "tempo" && !check.acked_at ? (
+            <button className="small" onClick={() => keepTempo()}>
+              Keep “{check.action.keep_label}”
+            </button>
+          ) : check.status === "warn" && (
             <button className="small" onClick={() => ack(check, !check.acked_at)}>
-              {check.acked_at
-                ? "Show again"
-                : check.action?.kind === "tempo" ? `Keep ${check.action.keep_label}` : "Got it"}
+              {check.acked_at ? "Show again" : "Got it"}
             </button>
           )}
         </div>

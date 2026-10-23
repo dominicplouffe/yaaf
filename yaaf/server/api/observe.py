@@ -776,18 +776,15 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             metered.setdefault(seat.model, set()).add(harness.label)
     for gap in price_gaps(session, sorted(metered)):
         price = catalog.price(gap["model"])
+        over = gap["drift"] > 0
         add(f"price-gap:{gap['model']}", "warn",
-            f"yaaf prices {gap['model']} {abs(gap['drift']):.0%} "
-            f"{'above' if gap['drift'] > 0 else 'below'} what it is billed at: the "
-            f"harnesses that report their own cost charged "
-            f"${gap['reported_usd']:.2f} over its last {gap['runs']} runs on this "
-            f"install, and the price table puts the same tokens at "
-            f"${gap['priced_usd']:.2f}. Seats on "
-            f"{', '.join(sorted(metered[gap['model']]))} are metered by that table, so "
-            f"their budget is {'over' if gap['drift'] > 0 else 'under'}-counted by as "
-            f"much — the prices in yaaf/runtimes/catalog.py"
-            f"{f' (as of {price.as_of})' if price else ''} need checking against the "
-            "provider's current list.",
+            f"Spending on {gap['model']} is {'over' if over else 'under'}-counted: "
+            f"yaaf's price list{f' (as of {price.as_of})' if price else ''} is "
+            f"{abs(gap['drift']):.0%} {'above' if over else 'below'} what the last "
+            f"{gap['runs']} runs were actually billed (${gap['priced_usd']:.2f} against "
+            f"${gap['reported_usd']:.2f}), so budgets for seats on "
+            f"{', '.join(sorted(metered[gap['model']]))} are off by as much. Whoever "
+            "runs this yaaf install should update the price list.",
             "runs")
 
     secrets = session.execute(
@@ -869,9 +866,8 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 for v in behind[:4]
             )
             add(f"role-drift:{team.name}", "warn",
-                f"team '{team.name}' runs role '{role.slug}' v{pinned.version}; "
-                f"v{latest.version} exists. What changed since — {changes}. "
-                "Adopting it repins this team to the current charter.",
+                f"A newer version of the '{role.slug}' role is out for team "
+                f"'{team.name}' (v{pinned.version} → v{latest.version}): {changes}.",
                 "overview", {"kind": "repin", "team_id": team.id})
 
     # ── what the Founder has learned since ───────────────────────────────────
@@ -910,10 +906,9 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             }
             if "challenge" not in categories:
                 add("no-adversary", "warn",
-                    "no seat on this project exists to disagree with the plan. The CEO "
-                    "wrote it and, on an autonomous project, accepted it too — so it is "
-                    "the only reader of that plan with no distance from it. Hiring one "
-                    "`challenge` role is the whole fix.",
+                    "Nobody on this team is there to disagree with the CEO's plan, so "
+                    "the only one who checks it is the CEO who wrote it. Add a role "
+                    "whose job is to challenge the plan.",
                     "settings")
 
         # An Operate project with no standing scope is re-creating the same
@@ -929,11 +924,11 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             ).scalar_one()
             if not standing:
                 add("no-standing-scope", "warn",
-                    "this project runs on a rhythm and owns no standing requirements, so "
-                    "whatever it owes again next cycle is being re-proposed by hand every "
-                    "time — and a burn-down of work that recurs reads as nearly finished. "
-                    "`recurrence: standing` is what that shape is for.",
-                    "plan")
+                    "Nothing in this project's plan is marked as repeating, so the CEO "
+                    "re-plans the same work by hand every cycle and progress looks "
+                    "nearly done when it isn't. Ask the CEO to mark the work that "
+                    "comes back each cycle as standing.",
+                    "boardroom")
 
     # Slack: config present implies its secrets exist.
     slack = integrations.get("slack") or {}
@@ -958,9 +953,9 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 "in seconds", None)
         else:
             add("chat", "warn",
-                "CEO chat session is not live — boardroom replies fall back to "
-                "queued runs (minutes). It starts within seconds of the runner "
-                "seeing the project; if this persists, check the runner's logs.",
+                "The CEO's live chat isn't running, so boardroom replies take "
+                "minutes instead of seconds. It normally restarts by itself; if this "
+                "stays, check the runner's logs.",
                 "runs")
 
     # News the CEO has been told to deliver and has not. Loud on purpose: the
@@ -970,10 +965,8 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     unraised = flag_lib.unraised_count(session, project.id)
     if unraised:
         add("flags", "warn",
-            f"{unraised} flag(s) opened by the platform that your CEO has not yet "
-            "raised with you — each one is arithmetic or a failed check, not an "
-            "opinion. It is required to bring them to the boardroom with a proposal, "
-            "and the reporting cadence does not hold it back from doing so.",
+            f"The platform found {unraised} issue(s) your CEO has not yet raised "
+            "with you. It has to bring each one to the boardroom with a proposal.",
             "boardroom")
 
     # Questions the CEO put to you and is still waiting on. Not a warning: it
@@ -984,10 +977,9 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     if pending_asks:
         soonest = min(a.answer_by for a in pending_asks)
         add("asks", "ok",
-            f"{len(pending_asks)} question(s) from your CEO waiting on you, the first "
-            f"stopping at {soonest.isoformat(timespec='minutes')}. Nothing is blocked: "
-            "each one names what it will do unanswered, and it will tell you when it "
-            "does.",
+            f"Your CEO has {len(pending_asks)} question(s) waiting on you; the first stops "
+            f"waiting at {soonest:%b} {soonest.day}, {soonest:%H:%M} UTC. Nothing is "
+            "blocked: each says what the CEO will do if you don't answer.",
             "boardroom")
 
     # Liveness. Every other check on this page asks "is this project set up
@@ -1040,12 +1032,14 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             # did. A pace picked in Settings after the rhythm last moved is a
             # decision, and re-raising it on every load is how advice becomes
             # wallpaper. A mismatch born at creation cannot be told apart, so
-            # it is asked once, and "Keep" is the answer that puts it away.
+            # it is asked once, and "Keep" is the answer, for the whole project.
             per_run = policy.avg_usd_per_run_box(session)
             if project.mode == ProjectMode.OPERATE:
                 wanted = tempo_for("operate", rules.get("cycle_frequency"))
                 moved = _rhythm_moved_after_pace(session, project.id)
-                if on is not None and on != wanted and moved is not False:
+                if (on is not None and on != wanted and moved is not False
+                        and not tempo_kept(session, project.id,
+                                           rules["cycle_frequency"], on)):
                     add("tempo-vs-rhythm", "warn",
                         _tempo_mismatch(rules["cycle_frequency"], on, wanted, moved,
                                         per_run),
@@ -1073,13 +1067,12 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 ceiling = per_day * 30 * per_run
                 if ceiling > rules["monthly_usd_cap"]:
                     add("tempo-vs-budget", "warn",
-                        f"{per_day} runs a day — {rules['runs_per_project_per_day']} of "
-                        f"work plus {rules['inbox_runs_per_project_per_day']} of reading "
-                        f"— at the ${per_run:.2f} a run this install has averaged is "
-                        f"about ${ceiling:,.0f} a month, against a budget of "
-                        f"${rules['monthly_usd_cap']:,.0f}. The budget is a plan rather "
-                        "than a wall so neither number is wrong, but they describe "
-                        "different projects — one of the two is the one you meant.",
+                        f"Your pace allows up to {per_day} runs a day "
+                        f"({rules['runs_per_project_per_day']} of work plus "
+                        f"{rules['inbox_runs_per_project_per_day']} of reading). At "
+                        f"${per_run:.2f} a run that could cost about ${ceiling:,.0f} a "
+                        f"month, but your budget is ${rules['monthly_usd_cap']:,.0f}. "
+                        "Lower the pace or raise the budget.",
                         "settings")
 
             act = activity_state(session, project, live_cons)
@@ -1101,18 +1094,17 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                                                  key=lambda kv: names.get(kv[0], ""))]
             seats = "1 seat hasn't" if len(each) == 1 else f"{len(each)} seats haven't"
             add("dormant-seats", "warn",
-                f"{seats} run in over a week: {', '.join(each)}. A seat that never "
-                "wakes isn't doing its part, and messages to it pile up unread. Ask "
-                "the CEO to give it work or stand it down, or pause it from the Team "
-                "page.",
+                f"{seats} run in over a week: {', '.join(each)}. Messages to them pile "
+                "up unread. Ask the CEO to give them work or stand them down, or "
+                "pause them on the Team page.",
                 "team")
 
     # Connectors: controlled GitHub accounts registered but webhooks unprovisioned.
     if any(str(d).startswith("github:") for d in (project.controlled_domains or [])) \
             and not integrations.get("github_webhook_secret"):
         add("connectors", "warn",
-            "controlled GitHub accounts are registered but webhook secrets are not "
-            "provisioned — GitHub events cannot become attested evidence yet",
+            "Your GitHub accounts are added, but GitHub can't send its events to "
+            "yaaf yet, so work done on GitHub can't count as proof.",
             "settings")
 
     # Each finding gets a name that outlives its numbers, so a suggestion the
@@ -1156,34 +1148,44 @@ def _rhythm_moved_after_pace(session: Session, project_id: str) -> datetime | bo
     return rhythm
 
 
-def _pace_words(name: str) -> str:
-    rules = TEMPO_PRESETS[name]
-    wakes = ("agents waking whenever a message arrives"
-             if rules["inbox_runs_per_project_per_day"]
-             else "agents reading messages only when they wake on schedule")
-    return (f"up to {rules['runs_per_project_per_day']} runs a day, the CEO planning "
-            f"every {rules['ceo_heartbeat_hours']:g} hours, {wakes}")
-
-
 def _tempo_mismatch(cycle: str, on: str, wanted: str, moved: datetime | None,
                     per_run: float | None) -> str:
-    """The tempo row in the reader's words: what the project is doing, what a
-    project of its rhythm usually does, what each costs, and when each is right."""
+    """The tempo row in one breath: what the pace allows, what a project of this
+    rhythm usually runs, and the money between them when the install knows it.
+    The cards in Settings say the rest; a row that restates them is not read."""
+    def runs(name: str) -> int:
+        return TEMPO_PRESETS[name]["runs_per_project_per_day"]
+
     now, usual = (f"“{TEMPO_COPY[name]['label']}”" for name in (on, wanted))
-    lead = (f"You changed this project's cycle to {cycle} on {moved:%b} {moved.day}, and its "
-            f"pace stayed on {now}" if moved else
-            f"This project works on a {cycle} cycle but is paced {now}")
+    lead = (f"You changed the cycle to {cycle} on {moved:%b} {moved.day}, but the pace "
+            f"is still {now} (up to {runs(on)} runs a day)." if moved else
+            f"Paced {now} (up to {runs(on)} runs a day), but this project works on a "
+            f"{cycle} cycle.")
     cost = ""
     if per_run:
         def month(name: str) -> float:
             rules = TEMPO_PRESETS[name]
             return (rules["runs_per_project_per_day"]
                     + rules["inbox_runs_per_project_per_day"]) * 30 * per_run
-        cost = (f" At the ${per_run:.2f} a run this install averages, that is a ceiling "
-                f"of about ${month(on):,.0f} a month against ${month(wanted):,.0f}.")
-    return (f"{lead}: {_pace_words(on)}. Projects on a {cycle} cycle are usually paced {usual}: "
-            f"{_pace_words(wanted)}.{cost} Keep {now} if it has to react during the "
-            f"day; switch if it mostly works to its {cycle} schedule.")
+        cost = f", about ${month(wanted):,.0f} a month instead of ${month(on):,.0f}"
+    return (f"{lead} {cycle.capitalize()} projects usually run {usual} "
+            f"(up to {runs(wanted)} runs a day{cost}).")
+
+
+def tempo_kept(session: Session, project_id: str, cycle: str, tempo: str) -> bool:
+    """Whether a chair has already decided to keep this pace on this rhythm.
+
+    A project's decision, not one reader's tidying: once a chair says "keep",
+    nobody else on the project is asked again. Kept on the audit trail, which
+    is where a decision about the project's pace belongs, and matched on both
+    values so a later change to either is a new question.
+    """
+    kept = session.execute(
+        select(AuditLog).where(AuditLog.project_id == project_id,
+                               AuditLog.action == "tempo.keep")
+        .order_by(AuditLog.at.desc()).limit(1)
+    ).scalar_one_or_none()
+    return bool(kept) and (kept.detail or {}) == {"cycle_frequency": cycle, "tempo": tempo}
 
 
 def health_sig(key: str, detail: str) -> str:

@@ -495,7 +495,7 @@ def test_a_pace_chosen_after_the_rhythm_is_a_decision_not_news(client):
 def test_the_pace_row_carries_both_answers(client):
     """A mismatch born at creation cannot be told apart from a choice, so it is
     asked once with both answers on the row: switching is the amendment the row
-    carries, and keeping is putting the row away. Either one ends the question."""
+    carries, and keeping is recorded for the project. Either one ends it."""
     project = make_project(client, mode="operate",
                            constitution={"cycle_frequency": "weekly",
                                          **TEMPO_PRESETS["live"]})
@@ -503,13 +503,30 @@ def test_the_pace_row_carries_both_answers(client):
     action = check["action"]
     assert action["kind"] == "tempo" and action["to"] == "few_times_daily"
     assert (action["to_label"], action["keep_label"]) == ("A few times a day", "Live")
-    assert "weekly cycle" in check["detail"] and "paced “Live”" in check["detail"]
+    assert "weekly cycle" in check["detail"] and "Paced “Live”" in check["detail"]
 
     switched = _amend(client, project, action["changes"],
                       reason="Pace set to A few times a day from Setup & health.")
     assert switched.status_code == 200, switched.text
     assert tempo_name(_rules(client, project)) == "few_times_daily"
     assert "tempo-vs-rhythm" not in _checks(client, project)
+
+
+def test_keeping_the_pace_answers_for_the_whole_project(client):
+    """"Keep" is a decision about the project, so it is asked once, not once per
+    chair. It holds until the cycle or the pace moves, and then it is a new
+    question."""
+    project = make_project(client, mode="operate",
+                           constitution={"cycle_frequency": "weekly",
+                                         **TEMPO_PRESETS["live"]})
+    kept = client.post(f"/admin/projects/{project['id']}/tempo/keep", headers=ADMIN)
+    assert kept.status_code == 200, kept.text
+    assert "tempo-vs-rhythm" not in _checks(client, project)
+
+    assert _amend(client, project, {"cycle_frequency": "monthly", "cycle_day": 1},
+                  reason="Monthly reviews from now on.").status_code == 200
+    check = _checks(client, project).get("tempo-vs-rhythm")
+    assert check and "monthly" in check["detail"]
 
 
 def test_a_budget_that_cannot_buy_the_ceiling_is_reported(client):

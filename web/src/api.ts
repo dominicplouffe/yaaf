@@ -521,7 +521,8 @@ export interface HealthCheck {
   where: string | null;
   /** A fix the row can apply itself. `repin` adopts a team's latest role
       version; `tempo` amends the pace to the card a project of this rhythm
-      usually runs, and its other answer — keep the pace — puts the row away. */
+      usually runs, and its other answer — keep the pace — is recorded for the
+      whole project (POST /admin/projects/{id}/tempo/keep). */
   action:
     | { kind: "repin"; team_id: string }
     | { kind: "tempo"; to: string; to_label: string; keep_label: string;

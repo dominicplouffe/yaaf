@@ -125,7 +125,7 @@ def test_an_operate_project_with_no_standing_scope_is_reported(client):
     project = make_project(client, slug="operate", mode=ProjectMode.OPERATE)
     check = checks(client, project).get("no-standing-scope")
     assert check and check["status"] == "warn"
-    assert "re-proposed by hand" in check["detail"]
+    assert "re-plans the same work by hand" in check["detail"]
 
 
 def test_standing_scope_clears_it(client):
