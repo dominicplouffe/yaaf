@@ -648,7 +648,7 @@ def hire(body: HireIn, ctx: RunContext = Depends(run_auth),
         + (f"Standing down when {_condition_words(condition)}. "
            if condition else "No stand-down condition set. ")
         + "Your CEO decides who to hire, up to the number of teams this project "
-          "allows; if you disagree, stand the team down on the Overview roster.")
+          "allows; if you disagree, stand the team down on the Team page.")
     session.flush()
     chairman_notify(
         session, ctx.project, f"The project hired {body.name} ({body.role_slug})",
@@ -697,7 +697,7 @@ def stand_down_team(team_id: str, body: StandDownIn,
         session, ctx.project.id,
         f"🚪 STOOD DOWN: {team.name} — {body.reason[:400]}\n"
         "Those seats wake for nothing now and cost nothing. Recall them on the "
-        "Overview roster if you disagree; nothing about their record is lost.")
+        "Team page if you disagree; nothing about their record is lost.")
     session.flush()
     chairman_notify(
         session, ctx.project, f"The project stood down {team.name}",

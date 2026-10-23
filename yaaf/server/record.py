@@ -19,6 +19,7 @@ Read-only and built from rows that already exist; it adds no state.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -101,7 +102,10 @@ def _aware(at: datetime) -> datetime:
 def _clip(text: str | None) -> str:
     # One line of plain words: the markdown emphasis an agent writes in Chat
     # reads as stray asterisks once it is cut down to a line.
-    text = " ".join((text or "").replace("**", "").replace("__", "").replace("`", "").split())
+    # A markdown link reads as its words; the address behind it is the
+    # platform's, and as text it is a long line of noise.
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text or "")
+    text = " ".join(text.replace("**", "").replace("__", "").replace("`", "").split())
     return text if len(text) <= TEXT_CHARS else text[:TEXT_CHARS - 1] + "…"
 
 
@@ -146,7 +150,8 @@ def project_record(session: Session, project: Project, *, kind: str = "all",
             if not mine(run.agent_id):
                 continue
             cost = f" · ${run.cost_usd:.2f}" if run.cost_usd else ""
-            what = _clip(run.summary) if run.summary else "ran"
+            what = _clip(run.summary) if run.summary else (
+                "working now" if run.status == "running" else "ran")
             lines.append(Line(run.started_at or run.created_at, "run", run.agent_id,
                               name(run.agent_id), f"{what} · {run.status}{cost}",
                               _woken(run.trigger), run.id))

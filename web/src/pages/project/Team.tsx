@@ -198,7 +198,7 @@ function TeamHead({ ctx, team, onRepinned }: {
 /** Hiring onto a project that already exists. Here the chairman is not
     browsing — they know the symptom ("nothing gets checked"), so this opens on
     the gaps its own roster implies before it offers the library. */
-function AddTeam({ ctx }: { ctx: ProjectCtx }) {
+function AddTeam({ ctx, onClose }: { ctx: ProjectCtx; onClose: () => void }) {
   const { projectId, org } = ctx;
   const { roles, crews, loaded, error: libraryError } = useRoleLibrary();
   const [open, setOpen] = useState(false);
@@ -238,6 +238,7 @@ function AddTeam({ ctx }: { ctx: ProjectCtx }) {
       setEmployees("");
       setPicked([]);
       ctx.reloadOrg();
+      onClose();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -246,9 +247,11 @@ function AddTeam({ ctx }: { ctx: ProjectCtx }) {
   }
 
   return (
-    <div className="org-branch add">
+    <div className="add-team">
       <div className="team-h">
-        <div className="team-t"><b>Add a team</b></div>
+        <div className="team-t"><b>Add a team</b>
+          <span className="grow" />
+          <button className="small" onClick={onClose}>Close</button></div>
         <div className="team-sub">From the role library</div>
       </div>
       <div className="onode addnode">
@@ -295,7 +298,7 @@ function AddTeam({ ctx }: { ctx: ProjectCtx }) {
 }
 
 function OrgChart({ ctx, chair }: { ctx: ProjectCtx; chair: ReactNode }) {
-  const { org, seats, dash } = ctx;
+  const { org, seats } = ctx;
   const [repinMsg, setRepinMsg] = useState<string | null>(null);
   const ceo = seats.find((s) => s.ceo);
   return (
@@ -324,7 +327,6 @@ function OrgChart({ ctx, chair }: { ctx: ProjectCtx; chair: ReactNode }) {
                 </div>
               </div>
             ))}
-            {dash.can_steer !== false && <AddTeam ctx={ctx} />}
           </div>
           <StoodDown ctx={ctx} />
         </div>
@@ -397,6 +399,7 @@ export function TeamSection({ ctx, chair, foot }: {
   ctx: ProjectCtx; chair: ReactNode; foot?: ReactNode;
 }) {
   const [params, setParams] = useSearchParams();
+  const [adding, setAdding] = useState(false);
   const view = params.get("view") === "list" ? "list" : "chart";
   const ceo = firstName(ctx.ceoName);
   const people = ctx.seats.filter((s) => s.state !== "stood_down");
@@ -423,7 +426,11 @@ export function TeamSection({ ctx, chair, foot }: {
           onPick={(v) => setParams(v === "list" ? { view: "list" } : {}, { replace: true })}
           options={[{ key: "chart", label: "Chart" }, { key: "list", label: "List" }]}
         />
+        {ctx.dash.can_steer !== false && !adding && (
+          <button className="small" onClick={() => setAdding(true)}>+ Add a team</button>
+        )}
       </div>
+      {adding && <AddTeam ctx={ctx} onClose={() => setAdding(false)} />}
       {!ctx.org ? <p className="subtitle">Loading…</p>
         : view === "chart" ? <OrgChart ctx={ctx} chair={chair} />
         : <SeatTable ctx={ctx} />}

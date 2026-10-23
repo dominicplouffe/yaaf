@@ -107,7 +107,7 @@ export function RoleTicks({ options, selected, onChange, emptyHint }: {
   if (options.length === 0)
     return (
       <p className="help">
-        {emptyHint ?? "No teams yet — add a team on the Overview tab first."}
+        {emptyHint ?? "No teams yet — add one with “+ Add a team” on the Team page first."}
       </p>
     );
   return (

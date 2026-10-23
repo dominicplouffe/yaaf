@@ -349,7 +349,7 @@ def stand_down_due_teams(session: Session, project: Project) -> list[str]:
             session, project.id,
             f"🚪 STOOD DOWN: {team.name} — the condition your CEO set when it planned "
             f"({_condition_words(team.stand_down_when)}) came true, so the platform "
-            "stood the role down. Recall it on the Overview roster if you disagree.")
+            "stood the role down. Recall it on the Team page if you disagree.")
         stood_down.append(outcome["team"])
     if stood_down:
         notify(session, "yaaf_wake", project.id)
@@ -504,7 +504,7 @@ def void_operate_commitments(session: Session, project: Project) -> None:
                 "a single delivery date for it meant nothing — and it should never have "
                 "been accepted. The platform has withdrawn it. The project is judged "
                 "cycle by cycle instead: each turn's results, and what carried over, "
-                "are on its Overview. Nothing about the work itself changed.",
+                "are on its Team page. Nothing about the work itself changed.",
                 attention=Attention.FYI,
             )
 

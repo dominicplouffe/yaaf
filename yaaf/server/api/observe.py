@@ -2547,8 +2547,15 @@ def project_results(project_id: str, agent_id: str | None = None,
         strongest = next((c["kind"] for c in checks if c["kind"] in ("platform", "reviewer", "judged")),
                          "unchecked")
         tally[strongest] += 1
-        usd, n_runs, failed = spent.get(task.id, (0.0, 0, 0)) if task else (
-            (float(run.cost_usd or 0.0), 1, 0) if run else (0.0, 0, 0))
+        # What its task's runs cost; where those runs were not woken for the
+        # task (one claimed it mid-run), the run that published it is the
+        # honest floor rather than a dash.
+        if task is not None and task.id in spent:
+            usd, n_runs, failed = spent[task.id]
+        elif run is not None:
+            usd, n_runs, failed = float(run.cost_usd or 0.0), 1, 0
+        else:
+            usd, n_runs, failed = 0.0, 0, 0
         out.append({
             "name": a.name, "key": a.storage_key, "version": a.version,
             "versions": versions.get(a.name, 1), "size": a.size_bytes,

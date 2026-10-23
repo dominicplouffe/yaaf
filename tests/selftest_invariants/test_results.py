@@ -131,3 +131,4 @@ def test_a_read_names_the_reader_and_keeps_their_words(client):
     read = row["checks"][0]
     assert read["label"] == "read by Juno"
     assert read["note"] == "Checked both claims against the sources."
+    assert row["cost"]["runs"] >= 1, "a result always says what made it, even mid-run claims"

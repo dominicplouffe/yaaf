@@ -101,3 +101,14 @@ def test_over_mcp_every_line_an_agent_wrote_is_wrapped(client):
     assert view["lines"]
     for line in view["lines"]:
         assert line["text"].startswith(OPEN_TAG) and line["text"].endswith(CLOSE_TAG)
+
+
+def test_a_link_in_a_line_reads_as_its_words(client):
+    project = make_project(client)
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    client.post("/agent/messages", headers=bearer(token), json={
+        "channel_id": channel_of(client, project["id"], "boardroom"),
+        "body": "Published [week-7.md](#/projects/x/details/deliverables?open=a%2Fb) for **you**."})
+    line = _record(client, project, kind="message")["lines"][0]
+    assert "Published week-7.md for you." in line["text"]
+    assert "](" not in line["text"] and "**" not in line["text"]

@@ -737,7 +737,7 @@ def _staffing_lines(session: Session, project: Project, cons, since, until) -> l
             "staffing", f"The roster changed: {said}",
             count=len(moves), where="overview",
             note="Your CEO staffs this project itself, inside the `max_teams` rule. "
-                 "Stand a role down or recall one yourself on the Overview roster.",
+                 "Stand a role down or recall one yourself on the Team page.",
         ))
 
     # And the seats nobody has decided about. Read from the open flags rather

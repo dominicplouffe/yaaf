@@ -174,7 +174,6 @@ export default function Member({ ctx }: { ctx: ProjectCtx }) {
             {seat.task && (
               <div className="help member-for">
                 For: <TaskChain ctx={ctx} task={seat.task} withTask={false} />
-                {seat.since && ` · ${heldFor(seat.since)}`}
               </div>
             )}
             {seat.task?.blocked_reason && <div className="warn-line">{clip(seat.task.blocked_reason, 240)}</div>}

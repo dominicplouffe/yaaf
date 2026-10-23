@@ -3034,3 +3034,6 @@ button.rt-row:hover { background: var(--hover); }
   .record-kind { display: none; }
   .record-run { grid-column: 2; }
 }
+.add-team { margin-bottom: 14px; padding: 12px 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); }
+.add-team .team-t { display: flex; align-items: center; gap: 8px; }
+.add-team .onode.addnode { width: auto; }

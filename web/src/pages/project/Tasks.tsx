@@ -51,7 +51,7 @@ function TaskCard({ task, parent, bet, requirement, onPerson }: {
     <div className="tcard">
       {parent && <div className="tc-parent">↳ part of {clip(parent.title, 48)}</div>}
       <div className="tc-t">{task.title}</div>
-      {requirement && <div className="tc-bet" title="What this work is for"><Icon name="flag" size={12} /> {clip(requirement, 70)}</div>}
+      {requirement && <div className="tc-bet" title={`What this work is for: ${requirement}`}><Icon name="flag" size={12} /> {clip(requirement, 40)}</div>}
       {bet && <div className="tc-bet"><Icon name="target" size={12} /> {clip(bet, 60)}</div>}
       {task.status === "blocked" && task.blocked_reason && (
         <div className="tc-note serious">{clip(task.blocked_reason, 140)}</div>
