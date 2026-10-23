@@ -210,11 +210,14 @@ def _awaiting_chairman(session: Session, project: Project, cons) -> dict:
 
 
 @router.get("/desk", dependencies=[authority.SIGNED_IN])
-def desk(live: bool = False, session: Session = Depends(db),
+def desk(live: bool = False, only: str | None = None, session: Session = Depends(db),
          person: Person = Depends(person_auth)) -> dict:
     """Cross-project rollup: decisions waiting on the chairman, countdowns
     worth watching, and one comparable row per project — in one request, so a
     page answers "what needs me?" without fanning out per project.
+
+    `only` narrows the rows to one project, for a reader that wants one
+    project's line without paying for everyone's.
 
     `live=true` drops the terminal projects (stopped, completed) entirely,
     which is what the Desk wants: a project that is over cannot need anything,
@@ -238,7 +241,8 @@ def desk(live: bool = False, session: Session = Depends(db),
     # mind, and the day it bypassed it is the day it listed a stranger's work.
     reachable = _reachable(session, person)
     finished = sum(1 for p in reachable if p.status in TERMINAL)
-    listing = [p for p in reachable if not (live and p.status in TERMINAL)]
+    listing = [p for p in reachable if not (live and p.status in TERMINAL)
+               and (only is None or p.id == only)]
 
     projects_out: list[dict] = []
     for project in listing:

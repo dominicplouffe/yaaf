@@ -343,6 +343,11 @@ def project(principal: Principal, session: Session, arguments: dict) -> dict:
                            session=session)
     else:
         payload = _observe(observe.dashboard, project_id=row.id, session=session)
+        # The sentence every other surface leads with (Home, the Overview,
+        # `yaaf projects`, `desk`), written by the platform, before the trim.
+        rows = _observe(observe.desk, only=row.id, session=session)["projects"]
+        if rows:
+            payload = {"summary": rows[0]["status_line"]["sentence"], **_as_dict(payload)}
     return envelope.fit({"project": row.slug, "view": view, **_as_dict(payload)},
                         arguments.get("detail"))
 

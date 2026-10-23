@@ -78,3 +78,12 @@ def test_the_desk_leads_with_a_sentence_naming_what_is_not_fine(client):
     assert summary.endswith("Also yours: 1 heads-up.")
     # Platform words only; the CEO's title stays in the rows, wrapped.
     assert "No trade tomorrow" not in summary
+
+
+def test_one_projects_overview_leads_with_the_same_sentence(client):
+    make_project(client, slug=SLUG)
+    reader = mint(client)
+    overview = payload(call(client, reader["token"], "project", {"project": SLUG}))
+    desk = payload(call(client, reader["token"], "desk", {}))
+    row = next(p for p in desk["projects"] if p["slug"] == SLUG)
+    assert overview["summary"] == row["status_line"]["sentence"]
