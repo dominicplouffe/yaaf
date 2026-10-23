@@ -92,7 +92,8 @@ export interface Item {
   /** Present on the two kinds a row can settle in place. */
   approvalId?: string;
   approval?: DeskApproval;
-  ask?: { id: string; body: string; defaultAction: string };
+  ask?: { id: string; body: string; defaultAction: string; options: string[];
+    recommendation: string | null };
   amountUsd?: number | null;
   actions?: ReactNode;
 }
@@ -253,10 +254,13 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
       key: ask.id, type: "ask", tier: 2, at: new Date(ask.answer_by).getTime(), clocked: true,
       yours: true, project: p, kind: "Question",
       title: ask.title,
-      ask: { id: ask.id, body: ask.body, defaultAction: ask.default_action },
+      ask: { id: ask.id, body: ask.body, defaultAction: ask.default_action,
+        options: ask.options ?? [], recommendation: ask.recommendation ?? null },
       what: <>{ask.title}</>,
       consequence: `It stops waiting ${fmtSoon(ask.answer_by)}, then: ${clip(ask.default_action, 160)}`,
-      to: `${to}/chat`, toLabel: "Answer in the chat",
+      // With options it is answered with one click, in the Inbox.
+      to: ask.options?.length ? `/inbox?item=${encodeURIComponent(ask.id)}` : `${to}/chat`,
+      toLabel: ask.options?.length ? "Answer" : "Answer in the chat",
     });
   }
   for (const bet of p.kill_dates_soon) {

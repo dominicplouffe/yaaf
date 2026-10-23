@@ -2161,6 +2161,11 @@ class Ask(Base):
     # back verbatim in the lapse notice: the CEO is held to the sentence it
     # wrote when it still did not know which way he would go.
     default_action: Mapped[str] = mapped_column(Text)
+    # The choices, kept apart from the prose so the owner can answer with one
+    # click instead of typing one of them back. Null on a question of fact and
+    # on every ask filed before they were kept.
+    options: Mapped[list | None] = mapped_column(JSONVariant)
+    recommendation: Mapped[str | None] = mapped_column(Text)
     asked_in_message_id: Mapped[str] = mapped_column(String(40))
     # He is nagged before the window closes, for the same reason an approval
     # nags: degrading is fine, degrading silently is not.

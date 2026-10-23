@@ -288,7 +288,8 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
         pending_asks = [
             {"id": a.id, "title": a.title, "body": a.body,
              "answer_by": aware(a.answer_by).isoformat(),
-             "default_action": a.default_action}
+             "default_action": a.default_action,
+             "options": a.options or [], "recommendation": a.recommendation}
             for a in ask_lib.open_asks(session, project.id)
         ]
         hyps = list(

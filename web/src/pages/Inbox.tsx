@@ -5,6 +5,7 @@ import { BriefBody, DeskBrief, ProjectBrief } from "../briefing";
 import { isLive, Item, ItemType, needsYou, SnoozeMenu, soonestClock, useDesk, wake } from "../desk";
 import { fmtWhen, usePoll } from "../hooks";
 import { clip, DecideButtons, fmtAgo, fmtSoon, NotedButton, SEND_HINT, sendOnEnter } from "../ui";
+import { holdDecision } from "../undo";
 import { Avatar, EmptyState, Seg } from "../ui/kit";
 import { Icon, IconName } from "../ui/Icon";
 import { flagPlain } from "../ui/project";
@@ -136,9 +137,41 @@ function AskAnswer({ item, others, onDone }: { item: Item; others: number; onDon
       setBusy(false);
     }
   }
+  const options = item.ask?.options ?? [];
+  const rec = (item.ask?.recommendation ?? "").toLowerCase();
+  const recommended = (o: string) => !!rec
+    && (rec.includes(o.toLowerCase()) || o.toLowerCase().includes(rec));
+  // One click, held for the same few seconds as a decision so it can be undone;
+  // it reaches the CEO as the same chat line typing it would have sent.
+  const choose = (option: string) => holdDecision({
+    key: item.key,
+    label: `Answered: ${clip(option, 60)}`,
+    path: `/admin/projects/${item.project.id}/boardroom`,
+    body: { body: `Re: “${item.title}” — ${option}` },
+    after: onDone,
+  });
   return (
     <div className="answer">
-      <label className="field" htmlFor="ib-answer">Your answer — it goes to the CEO in the chat</label>
+      {options.length > 0 && (
+        <div className="answer-options">
+          {item.ask?.recommendation && (
+            <p className="help" style={{ margin: "0 0 8px" }}>
+              The CEO recommends: {item.ask.recommendation}
+            </p>
+          )}
+          <div className="answer-choices">
+            {[...options].sort((x, y) => Number(recommended(y)) - Number(recommended(x))).map((o) => (
+              <button key={o} className={`small${recommended(o) ? " primary" : ""}`}
+                onClick={() => choose(o)}>
+                {o}{recommended(o) ? " · recommended" : ""}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <label className="field" htmlFor="ib-answer">
+        {options.length ? "Or answer in your own words" : "Your answer — it goes to the CEO in the chat"}
+      </label>
       <textarea id="ib-answer" value={text} onChange={(e) => setText(e.target.value)}
         onKeyDown={sendOnEnter(send, { disabled: busy || !text.trim() })}
         placeholder="e.g. Split it out, and footnote the reconciliation to the filing." />

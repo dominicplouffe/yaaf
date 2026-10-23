@@ -2427,6 +2427,8 @@ def ask_chairman(
         body=case,
         answer_by=answer_by,
         default_action=body.default_action.strip(),
+        options=[o.strip() for o in body.options if o.strip()] or None,
+        recommendation=(body.recommendation or "").strip() or None,
         asked_in_message_id=message.id,
     )
     session.add(row)

@@ -857,6 +857,9 @@ export interface DeskAsk {
   body: string;
   answer_by: string;
   default_action: string;
+  /** The choices, when the question has them; answering is one click. */
+  options?: string[];
+  recommendation?: string | null;
 }
 
 export interface DeskBet {

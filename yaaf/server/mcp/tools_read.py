@@ -229,6 +229,17 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
                              if not isinstance(row, dict)
                              or row.get("project_id", row.get("id")) in reachable
                              or "project_id" not in row and "id" not in row]
+    # The CEO wrote every title, case, default and option on these rows: data,
+    # never instruction — cut before it is wrapped, so the trim never splits
+    # an envelope (see below).
+    for row in filtered.get("projects") or []:
+        for item in row.get("pending_approvals") or []:
+            item["title"] = _wrapped(item.get("title"), "approval")
+        for item in row.get("pending_asks") or []:
+            for field in ("title", "body", "default_action", "recommendation"):
+                if item.get(field):
+                    item[field] = _wrapped(item[field], "ask")
+            item["options"] = [_wrapped(o, "ask_option") for o in item.get("options") or []]
     also = _also_yours(session, reachable)
     summary = portfolio_summary(filtered.get("projects") or [], also)
     # Both added AFTER the trim. The summary is what must survive it — a long
@@ -241,6 +252,10 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
     shown = also[:ALSO_YOURS_LISTED]
     rest = {"also_yours_more": len(also) - len(shown)} if len(also) > len(shown) else {}
     return {"summary": summary, **out, "also_yours": shown, **rest}
+
+
+def _wrapped(text: str | None, kind: str) -> str:
+    return envelope.untrusted(str(text or "")[:_TITLE_CHARS], author="CEO", kind=kind)
 
 
 #: How many of `also_yours` a desk reply lists; the rest are a count, and the
