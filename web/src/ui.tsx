@@ -6,8 +6,9 @@
 import type React from "react";
 import { Icon } from "./ui/Icon";
 import { useEffect, useId, useRef, useState } from "react";
-import { Activity, Dashboard, get, post, RunRow, SpendBucket } from "./api";
+import { Activity, Dashboard, get, RunRow, SpendBucket } from "./api";
 import { announceOffer, SpendOffer } from "./precedent";
+import { holdDecision } from "./undo";
 
 // ── time ────────────────────────────────────────────────────────────────────────
 
@@ -1005,6 +1006,7 @@ export function NotedButton({ onSubmit, primary = true }: {
 export interface Decidable {
   id: string;
   kind: string;
+  title?: string;
   amount_usd?: number | null;
   capacity?: { from: number; to: number } | null;
   grant?: unknown;
@@ -1049,13 +1051,19 @@ export function DecideButtons({ approval, onDone, small = true }: {
   small?: boolean;
 }) {
   const l = decideLabels(approval);
+  // Held for a few seconds with an Undo before it is sent (yaaf/web/src/undo):
+  // once it reaches the server it cannot honestly be taken back.
   const decide = async (approve: boolean, note: string) => {
-    const decided = await post<{ offer?: SpendOffer }>(`/admin/approvals/${approval.id}/decide`, {
-      approve, note,
-      ...(approve && approval.capacity ? { to: approval.capacity.to } : {}),
+    holdDecision({
+      key: approval.id,
+      label: `${approve ? "Approved" : "Declined"}${approval.title ? `: ${clip(approval.title, 60)}` : ""}`,
+      path: `/admin/approvals/${approval.id}/decide`,
+      body: { approve, note, ...(approve && approval.capacity ? { to: approval.capacity.to } : {}) },
+      after: (decided) => {
+        onDone();
+        announceOffer((decided as { offer?: SpendOffer } | null)?.offer);
+      },
     });
-    onDone();
-    announceOffer(decided?.offer);
   };
   // Money that leaves cannot be called back, so that one yes asks first.
   const spends = approval.kind === "spend" && (approval.amount_usd ?? 0) > 0;

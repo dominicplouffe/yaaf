@@ -930,6 +930,8 @@ export interface DeskView {
       `?live=true` has kept them out of `projects`. */
   finished: number;
   projects: DeskProject[];
+  /** The reader's own snoozes still running (yaaf/server/api/me.py). */
+  snoozed?: { item_key: string; project_id: string; until: string }[];
 }
 
 // ── the fire drill: the project, run for nothing ───────────────────────────────

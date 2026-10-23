@@ -234,6 +234,16 @@ fires. *Nothing is wrong* and *nothing is happening* are different screens — i
 you have projects that could be working and none is, the Inbox says so instead
 of congratulating you.
 
+**Snooze and Undo.** Every row you own has **Snooze ▾**: for an hour, until
+tomorrow morning, or — for an approval or a question — until two hours before
+it decides itself. A snoozed row leaves your Inbox, your badge and Home until
+then, and waits under **Snoozed** at the foot of the list with **Wake now**.
+It is yours alone (a co-chair's snooze hides nothing from you), and it can
+never run past the moment the decision makes itself: the platform refuses a
+later time. **Approve** and **Decline** wait 8 seconds before they are sent,
+with an **Undo** in the corner; once sent, a decision is final, as it always
+was. Decisions made from the CLI or over MCP are sent at once.
+
 ### Updates — what happened while you were away
 
 Each project's briefing, composed from the record at zero tokens: scope that

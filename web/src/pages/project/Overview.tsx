@@ -631,7 +631,10 @@ export default function Overview({
     () => (deskProject ? itemsFor(deskProject, desk.reload) : []),
     [deskProject, desk.reload],
   );
-  const soonest = soonestClock(items.filter(needsYou));
+  // Snoozed rows and decisions still in their undo window leave this list as
+  // they leave the Inbox and the badge.
+  const yours = items.filter((i) => needsYou(i) && !desk.hidden.has(i.key));
+  const soonest = soonestClock(yours);
   const health = runHealth(ctx.runs ?? []);
   const ceo = firstName(ctx.ceoName);
   const auto = autonomyWord(dash);
@@ -644,7 +647,7 @@ export default function Overview({
   // here, the count in the sidebar and the count in the Inbox are one count.
   const rawFlags = flagsView?.flags ?? [];
   const needs: React.ReactNode[] = [];
-  for (const it of items.filter(needsYou)) {
+  for (const it of yours) {
     needs.push(
       <div className="need" key={it.key}>
         <span className={`kind-ic k-${it.type}`}><Icon name={KIND_ICON[it.type]} size={15} /></span>

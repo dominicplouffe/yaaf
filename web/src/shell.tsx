@@ -5,6 +5,7 @@ import { useDesk } from "./desk";
 import { useMe } from "./me";
 import { CommandPalette, Cheatsheet, useShortcuts } from "./palette";
 import { OfferHost } from "./precedent";
+import { UndoHost } from "./undo";
 import { firstName, useProjectFrame } from "./projectCtx";
 import { PROJECT_PAGES } from "./nav";
 import { Icon, IconName } from "./ui/Icon";
@@ -333,6 +334,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </header>
         <main className="main">{children}</main>
         <OfferHost />
+        <UndoHost />
       </div>
       {palette.open && (
         <CommandPalette

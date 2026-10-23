@@ -1,7 +1,8 @@
-import { createContext, ReactNode, useContext, useMemo } from "react";
+import { createContext, ReactNode, useContext, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { DeskApproval, DeskProject, DeskView, get } from "./api";
+import { del, DeskApproval, DeskProject, DeskView, get, post } from "./api";
 import { usePoll } from "./hooks";
+import { useHeldKeys } from "./undo";
 import { clip, DecideButtons, fmtSoon, fmtUnit, fmtWhenShort, hoursSince, paceDate } from "./ui";
 
 /** What needs the chairman, decided once for every screen that says so.
@@ -376,8 +377,12 @@ interface DeskState {
   reload: () => void;
   /** Every row, running projects only, ranked by time to consequence. */
   items: Item[];
-  /** The subset the badge counts. */
+  /** The subset the badge counts: yours, not snoozed, not just decided. */
   mine: Item[];
+  /** Yours, snoozed by you, with when each comes back. */
+  snoozed: { item: Item; until: string }[];
+  /** Keys every list leaves out: snoozed, or decided and still in its undo window. */
+  hidden: Set<string>;
 }
 
 const DeskContext = createContext<DeskState | null>(null);
@@ -392,10 +397,21 @@ export function DeskProvider({ children }: { children: ReactNode }) {
     () => (data ? buildItems(data.projects, reload) : []),
     [data, reload],
   );
-  const value = useMemo(
-    () => ({ data, error, at, reload, items, mine: items.filter(needsYou) }),
-    [data, error, at, reload, items],
-  );
+  const held = useHeldKeys();
+  const value = useMemo(() => {
+    // A snooze that has ended stops hiding at once, not on the next poll.
+    const now = Date.now();
+    const until = new Map((data?.snoozed ?? [])
+      .filter((s) => new Date(s.until).getTime() > now)
+      .map((s) => [s.item_key, s.until] as const));
+    const hidden = new Set<string>([...until.keys(), ...held]);
+    return {
+      data, error, at, reload, items, hidden,
+      mine: items.filter((i) => needsYou(i) && !hidden.has(i.key)),
+      snoozed: items.filter((i) => needsYou(i) && until.has(i.key) && !held.has(i.key))
+        .map((item) => ({ item, until: until.get(item.key)! })),
+    };
+  }, [data, error, at, reload, items, held]);
   return <DeskContext.Provider value={value}>{children}</DeskContext.Provider>;
 }
 
@@ -403,6 +419,67 @@ export function useDesk(): DeskState {
   const state = useContext(DeskContext);
   if (!state) throw new Error("useDesk() outside <DeskProvider>");
   return state;
+}
+
+/** How close to its own deadline a snooze may run (yaaf/server/api/me.py). */
+const SNOOZE_MARGIN_MS = 2 * 3_600_000;
+
+function tomorrowMorning(): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(8, 0, 0, 0);
+  return d;
+}
+
+/** "Not now" on one row of your own Inbox — never past the moment it decides
+    itself: a row with a clock comes back at least two hours before it. */
+export function SnoozeMenu({ item, onDone }: { item: Item; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!item.yours) return null;
+  const now = Date.now();
+  const latest = item.clocked ? item.at - SNOOZE_MARGIN_MS : now + 7 * 86_400_000 - 60_000;
+  if (latest <= now + 5 * 60_000) {
+    return <span className="help">Too close to its deadline to snooze</span>;
+  }
+  const options: { label: string; at: number }[] = [
+    { label: "For 1 hour", at: now + 3_600_000 },
+    { label: "Until tomorrow morning", at: tomorrowMorning().getTime() },
+    ...(item.clocked
+      ? [{ label: "Until 2 hours before it decides", at: latest - 60_000 }]
+      : [{ label: "For a week", at: latest }]),
+  ].filter((o) => o.at <= latest);
+  const snooze = async (at: number) => {
+    setError(null);
+    try {
+      await post("/me/snoozes", { project_id: item.project.id, item_key: item.key,
+        until: new Date(at).toISOString() });
+      setOpen(false);
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  return (
+    <span className="snooze">
+      <button className="small" aria-expanded={open} onClick={() => setOpen(!open)}>Snooze ▾</button>
+      {open && (
+        <span className="snooze-menu" role="menu">
+          {options.map((o) => (
+            <button key={o.label} role="menuitem" onClick={() => snooze(o.at)}>
+              {o.label}<span className="help"> · back {fmtSoon(new Date(o.at).toISOString())}</span>
+            </button>
+          ))}
+        </span>
+      )}
+      {error && <span className="help" style={{ color: "var(--critical)" }}>{error}</span>}
+    </span>
+  );
+}
+
+/** Bring a snoozed row back now. */
+export async function wake(itemKey: string) {
+  await del(`/me/snoozes/${encodeURIComponent(itemKey)}`);
 }
 
 /** The row's own verb, or the way to it. Shared by the Inbox, Home and the

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApprovalRow, AskRow, DeskProject, get, HeadsUpRow, HeldNote, post, splitWithout } from "../api";
 import { BriefBody, DeskBrief, ProjectBrief } from "../briefing";
-import { isLive, Item, ItemType, needsYou, soonestClock, useDesk } from "../desk";
+import { isLive, Item, ItemType, needsYou, SnoozeMenu, soonestClock, useDesk, wake } from "../desk";
 import { fmtWhen, usePoll } from "../hooks";
 import { clip, DecideButtons, fmtAgo, fmtSoon, NotedButton, SEND_HINT, sendOnEnter } from "../ui";
 import { Avatar, EmptyState, Seg } from "../ui/kit";
@@ -170,6 +170,7 @@ function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDes
         <span className="ib-kind">{item.kind}</span>
         <ProjectTag p={item.project} />
         <span className="grow" />
+        <SnoozeMenu item={item} onDone={desk.reload} />
         {item.clocked && (
           <span className={`clockpill${item.at - Date.now() < 6 * 3_600_000 ? " warn" : ""}`}>
             <Icon name="clock" size={13} />
@@ -499,6 +500,7 @@ export default function Inbox() {
 
   const inProject = <T extends { project: DeskProject }>(xs: T[]) => (only ? xs.filter((x) => x.project.id === only) : xs);
   const needs = inProject(desk.mine);
+  const snoozed = only ? desk.snoozed.filter((s) => s.item.project.id === only) : desk.snoozed;
   const watching = inProject(desk.items.filter((i) => !needsYou(i)));
   const acks = inProject(updates.filter(isAck));
   const news = inProject(updates.filter((u) => !isAck(u)));
@@ -656,6 +658,22 @@ export default function Inbox() {
                   {r.render()}
                 </button>
               ))}
+          {tab === "needs" && snoozed.length > 0 && (
+            <div className="ib-snoozed">
+              <div className="ib-snoozed-h help">Snoozed · {snoozed.length}</div>
+              {snoozed.map(({ item: it, until }) => (
+                <div className="ib-snoozed-row" key={it.key}>
+                  <span className="grow">
+                    <span className="ib-t">{it.title}</span>
+                    <br /><span className="help">back {fmtSoon(until)}</span>
+                  </span>
+                  <button className="small" onClick={async () => { await wake(it.key); desk.reload(); }}>
+                    Wake now
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <div className="ib-keys help"><kbd>J</kbd><kbd>K</kbd> move · decisions take a click, never a key</div>
       </div>
