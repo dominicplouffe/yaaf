@@ -405,6 +405,31 @@ decision; see docs/AUTONOMY.md). It still isolates stacks from each other.
 `deploy/sandbox/Dockerfile` builds the image agent runs execute inside. **They
 are separate — rebuild both** when you change something that affects each.
 
+### Providers, and what they need from the network
+
+Every provider is reached from two places: the **sandbox**, where a seat's run
+calls its provider's API (yaaf's loop copies `yaaf/runtimes/wire.py` into the
+image for that), and the **control plane**, which calls the same APIs for the
+Founder, a credential's **Check**, model discovery and `yaaf smoke`. Both need
+outbound HTTPS to the providers an install pays — and the control plane needs
+it to `oauth2.googleapis.com` too if Vertex AI is one of them, because it mints
+Vertex's tokens there (the service account key never enters a sandbox).
+
+- **A local model server** (Ollama, LM Studio, vLLM) is reached *from the
+  sandbox*, so its credential's address is the server's name on the sandbox
+  network — `http://ollama:11434/v1`, not `localhost` — and the server must be
+  attached to that network (`YAAF_SANDBOX_NETWORK`).
+- **The price feed** is read by the control plane when an administrator
+  imports prices (Settings → Model prices → Import). An install with no route
+  to `raw.githubusercontent.com` imports the snapshot shipped with yaaf, or
+  points the feed at a mirror of its own.
+- **The web search backend**, when one is configured, is called from the
+  sandbox, like the providers.
+
+After deploying, `yaaf smoke <credential>` makes one real, trivial call per
+credential through the wire its seats will use — the quickest proof that a
+key, an address and a network path all work before a project depends on them.
+
 ---
 
 ## Exposing the MCP server to claude.ai

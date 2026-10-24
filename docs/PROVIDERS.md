@@ -1,6 +1,8 @@
 # Providers — any model, from the first screen
 
-**Status: M7, the provider-neutral rebuild.** [RUNTIMES.md](RUNTIMES.md) made a
+**Status: M7 is built** — every section below, with the attacks listed at the
+end; what remains is `yaaf smoke` on a deployment with real keys, which nothing
+offline can do. [RUNTIMES.md](RUNTIMES.md) made a
 seat *able* to run on another vendor: the registries, the harnesses, the rules
 R1–R7. This document is what it takes for a chairman who has never held an
 Anthropic key to install yaaf, paste an OpenAI, Gemini, Mistral or Bedrock
@@ -96,19 +98,30 @@ role is worth thinking about. Models expose that dial differently: Claude
 takes all five, GPT takes most, Gemini 3 takes `low` and `high`, Gemini 2.5
 and most open-weights models have no dial at all.
 
-**R6, restated.** Each model's catalog row lists the rungs it actually takes.
-A seat's effort runs at **the lowest rung at or above the one it was hired at**,
-and at the model's top rung when it asked for more than the model has. It never
-runs *below* what it was hired at while a higher rung exists, which was the
-point of the original rule ("`max` sent as `high` is a seat run cheaper than it
-was hired at"). The rung it runs at is shown on the seat and handed to the
-harness; `runs.effort` keeps what was asked for, so a report reads in yaaf's
-vocabulary. An effort outside yaaf's vocabulary is still refused at every door.
+**R6, restated — two cases, because they are two different statements.**
+
+- **A pinned model is held to its own list, exactly as before.** Pinning is
+  the chairman naming *this* model, so an effort it does not take is a mistake
+  worth a refusal at the door, with the list it does take. The original rule's
+  attacks stand unchanged.
+- **A class seat runs at its model's published rung.** The role was written
+  for no model in particular, so its effort is a statement of intent in yaaf's
+  vocabulary, and the seat runs at **the lowest rung at or above the one it was
+  hired at** — at the model's top rung when it asked for more than the model
+  has. It never runs *below* what it was hired at while a higher rung exists,
+  which was the point of the original rule ("`max` sent as `high` is a seat run
+  cheaper than it was hired at"). A model with one rung, or none (Gemini 2.5,
+  most open-weights models), is sent no effort at all.
+
+Either way the rung a seat runs at is what the harness is handed, and
+`runs.effort` keeps what was asked for, so a report reads in yaaf's
+vocabulary. An effort outside yaaf's vocabulary is refused at every door.
 
 The original rule refused instead of rounding because every model in the
-catalog then shared Anthropic's ladder, so a mismatch meant a typo. With
-provider-neutral roles it means "this role was written once and hired onto a
-different vendor", which is the whole feature.
+catalog then shared Anthropic's ladder, so a mismatch meant a typo. For a
+class seat a mismatch means "this role was written once and hired onto a
+different vendor", which is the whole feature; for a pinned one it still means
+a typo.
 
 ### 3. One loop, many wires
 
@@ -123,7 +136,7 @@ speaks:
 |---|---|---|---|
 | `anthropic` | Anthropic | `web_search` server tool | `output_config.effort` |
 | `openai_responses` | OpenAI, Azure OpenAI | `web_search` tool | `reasoning.effort` |
-| `gemini` | Google, Vertex AI | `google_search` grounding | `thinkingConfig.thinkingLevel` |
+| `gemini` | Google, Vertex AI | a call of its own grounded in Google Search | `thinkingConfig.thinkingLevel` |
 | `bedrock` | AWS Bedrock | — | — |
 | `openai_chat` | DeepSeek, OpenRouter, Mistral, xAI, Groq, Together, Fireworks, Cerebras, Perplexity, Cohere, NVIDIA, Hugging Face, Z.ai, Moonshot, Qwen, Ollama, LM Studio, any custom server | — (platform search, §6) | `reasoning_effort` where the model takes it |
 
@@ -213,9 +226,11 @@ An install may configure one **search backend** (Settings → Web search):
 Brave Search, Tavily, Exa, Serper, or a self-hosted SearXNG, with its key and
 its price per query. Then:
 
-- `yaaf_loop` offers `WebSearch` from the provider where the wire has a server
-  tool (Anthropic, OpenAI, Gemini) and from the platform backend everywhere
-  else;
+- `yaaf_loop` searches on the provider's own wire where it has a server tool
+  (Anthropic, OpenAI, Azure), answers `WebSearch` with a call grounded in
+  Google Search on Gemini — which does not take a server search tool beside
+  function declarations on every model — and offers it from the platform
+  backend everywhere else;
 - CLI harnesses with no search of their own (OpenCode) get it as a yaaf tool
   over the same stdio MCP server that carries the rest;
 - every query is billed into the run at the configured price, so search spend
@@ -269,7 +284,7 @@ they ran on; role versions stay immutable.
 | `Provider.default_harness` → `CredentialKind.default_harness` | in code; a seat with no harness named moves to its credential's default on its next run. OpenAI and Google API-key seats move from their CLIs to `yaaf_loop` — exact metering and full withholding, which is the improvement |
 | `craft_model` → lineup `frontier` | in code |
 | `DEFAULT_MODEL`, `DEFAULT_FOUNDER_MODEL` → classes | an install that set a Founder model keeps it; one that never did resolves `@frontier` on its credential's provider, which is `claude-opus-5-5` on Anthropic — unchanged |
-| R6 rounds upward | in code; no seat that ran before runs differently (every catalog model then took every effort its seats used) |
+| R6 translates a class seat's effort | in code; no seat that ran before runs differently — a pinned seat is held exactly as it was, and the shipped roles' classes resolve on Anthropic to models that take every effort |
 | `model_prices.source` | migration `0054`; existing rows read as hand-set |
 | lineups, default provider, search backend, provider ceilings | platform settings; absent means the shipped defaults |
 
@@ -290,7 +305,40 @@ R1–R7 are RUNTIMES.md's. M7 changes two and adds one.
 | # | Rule | Change |
 |---|---|---|
 | R2 | A grant the harness cannot withhold or honour is refused | `web` is honoured by the platform search backend where the harness and the provider cannot search |
-| R6 | An effort runs at its model's published rung — never lower while a higher rung exists | was: refuse any effort the model does not list |
+| R6 | A pinned model's efforts are held to its list; a class seat runs at its model's published rung — never lower while a higher rung exists | was: refuse any effort the model does not list, pinned or not |
 | R8 | **A class seat on a provider with no model for that class is refused** — at every door R5 is at, and at the lease — naming the class, the provider and Settings → Models | new |
 
 Each ships with its attack in `tests/selftest_invariants/`.
+
+---
+
+## Where it lives, and what attacks it
+
+| Piece | Code | Attacked in |
+|---|---|---|
+| Classes, lineups, R8, R6 rungs, the stakes lift, provider ceilings | `yaaf/runtimes/catalog.py`, `seats.py`, `yaaf/core/model_policy.py`, `daemon.lease_and_prepare` | `test_model_classes.py` |
+| Every wire through the loop: usage, tools, replay, errors, search, token refresh | `yaaf/runtimes/wire.py`, `yaaf/runner/loop_entry.py`, `loop_harness.py` | `test_wire_protocols.py`, `test_loop_harness.py`, `test_openai_compatible_harness.py` |
+| The provider registry, the harness registry, the image | `yaaf/runtimes/providers.py`, `harnesses.py`, `deploy/sandbox/Dockerfile` | `test_runtime_registries.py`, `test_harness_contract.py` |
+| Live checks, discovery, the credential door, Vertex minting, search settings and R2 | `yaaf/server/api/admin.py` (`live_check`), `settings.py`, `yaaf/core/model_tokens.py`, `web_search.py` | `test_provider_operations.py` |
+| OpenCode's search through the tool server | `yaaf/runner/yaaf_tools.py`, `opencode_cli_entry.py`, `sandbox_entry.SearchLedger` | `test_opencode_harness.py` |
+| The price feed, the snapshot, the smoke call | `yaaf/core/price_feed.py`, `yaaf/runtimes/price_snapshot.json`, `settings.smoke_credential` | `test_price_feed.py` |
+| The Founder and the grader on any provider | `yaaf/founder/loop.py`, `tools.py`, `yaaf/core/platform.py` | `test_founder_providers.py`, `test_conversations.py` |
+
+## Not built, and why
+
+- **Claude on Bedrock or Vertex through the Claude CLI.** Claude Code can run
+  on either cloud, which would let the Agent SDK serve `bedrock/` and
+  `vertex/` Claude models. It needs those clouds' model ids priced and the CLI's
+  cloud switches verified against a live account; until then a Claude model on
+  Bedrock runs on `yaaf_loop` over Converse like any other Bedrock model.
+- **AWS access keys (SigV4).** Bedrock is paid with a Bedrock API key, which
+  AWS issues for exactly this. Signing requests with an IAM access key is a
+  second credential kind on the same provider, and waits for an install that
+  cannot use the first.
+- **A plan meter for a ChatGPT plan.** Codex reads its rate-limit windows off
+  the Responses API's headers, but the streams this repo records were made
+  against a stand-in API that sends none — a meter built from them would be a
+  guess, which this design refuses everywhere else. `Provider.plan_meter` is
+  the seat it plugs into.
+- **Mixed meters** (RUNTIMES.md open question 1) — unchanged, and for the
+  reason given there.
