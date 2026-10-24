@@ -264,19 +264,33 @@ def test_every_text_ink_clears_4_5_on_every_neutral_ground():
     every screen, under the workspace and project headings and the signed-in
     address. An audit of every page in both themes found it there; nothing in
     the suite looked.
+
+    A ground includes what a pointer puts on it. Every hovered row, menu item
+    and the palette's selected entry lays `--hover-strong` over its ground, and
+    the second audit, of hover states and overlays, found `--muted` at 4.33:1
+    on a hovered sidebar row and 4.44:1 on the palette's selected shortcut.
     """
     css = (WEB_SRC / "styles.css").read_text()
     themes = re.findall(r"\{([^{}]*--on-accent:[^{}]*)\}", css)
     assert len(themes) == 3, "expected the dark, OS-light and chosen-light token sets"
 
-    def rgb(value: str) -> tuple[int, ...]:
+    def rgb(value: str) -> tuple[float, ...]:
         return tuple(int(value.strip()[i : i + 2], 16) for i in (1, 3, 5))
+
+    def hovered(ground: tuple[float, ...], tint: str) -> tuple[float, ...]:
+        *wash, alpha = (float(c) for c in re.findall(r"[\d.]+", tint))
+        return tuple(alpha * w + (1 - alpha) * g for w, g in zip(wash, ground, strict=True))
 
     for theme in themes:
         tokens = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", theme))
-        for ink in ("--ink", "--ink-2", "--muted"):
-            for ground in ("--page", "--surface", "--surface-2", "--sunken"):
-                ratio = _contrast(rgb(tokens[ink]), rgb(tokens[ground]))
-                assert ratio >= 4.5, (
-                    f"{ink} {tokens[ink]} is {ratio:.2f}:1 on {ground} {tokens[ground]}"
-                )
+        grounds: dict[str, tuple[float, ...]] = {}
+        for name in ("--page", "--surface", "--surface-2", "--sunken"):
+            grounds[name] = rgb(tokens[name])
+            grounds[f"{name} under --hover-strong"] = hovered(
+                grounds[name], tokens["--hover-strong"]
+            )
+        inks = ("--ink", "--ink-2", "--muted", "--accent", "--good", "--warning", "--serious")
+        for ink in (*inks, "--critical"):
+            for name, ground in grounds.items():
+                ratio = _contrast(rgb(tokens[ink]), ground)
+                assert ratio >= 4.5, f"{ink} {tokens[ink]} is {ratio:.2f}:1 on {name}"
