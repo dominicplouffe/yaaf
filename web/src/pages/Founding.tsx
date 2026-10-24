@@ -97,7 +97,11 @@ const PLACEHOLDER =
  *  grades that goal against the grammar, and runs the fire drill on what it
  *  came up with. A spinner over five minutes of that is indistinguishable from
  *  a hang, which is exactly how it was first reported. */
-function Steps({ progress }: { progress: Progress | null }) {
+function Steps({ progress, onStop, stopping }: {
+  progress: Progress | null;
+  onStop: () => void;
+  stopping: boolean;
+}) {
   const steps = progress?.steps ?? [];
   return (
     <div className="turn turn-founder">
@@ -118,10 +122,17 @@ function Steps({ progress }: { progress: Progress | null }) {
             <span className="step-label">Starting up</span>
           </li>}
         </ul>
-        <p className="muted">
-          {Math.round(progress?.seconds ?? 0)}s so far. It takes minutes — it is
-          doing the work you would otherwise do on the form.
-        </p>
+        <div className="steps-foot">
+          <p className="muted">
+            {Math.round(progress?.seconds ?? 0)}s so far. It takes minutes — it is
+            doing the work you would otherwise do on the form.
+          </p>
+          {/* Minutes is a long time to watch a typo being taken seriously. */}
+          <button onClick={onStop} disabled={stopping}
+            title="Stop the Founder and put what you sent back in the box">
+            {stopping ? "Stopping…" : "Stop"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -312,6 +323,11 @@ export default function Founding() {
   // composer under it would be a second answer competing with the first.
   // "Something's off" is what opens it.
   const [reopening, setReopening] = useState(false);
+  // What he sent, kept from the moment he pressed Stop until the server takes
+  // it off the thread — then it goes back where he typed it, to be fixed. A
+  // ref, because the poll that sees the turn end is a closure from before.
+  const stopped = useRef<{ turns: number; message: string; note: string } | null>(null);
+  const [stopping, setStopping] = useState(false);
   const composer = useRef<HTMLTextAreaElement | null>(null);
 
   async function loadStatus() {
@@ -373,6 +389,14 @@ export default function Founding() {
         if (!next.running) {
           setThread(next);
           setBusy(false);
+          const was = stopped.current;
+          stopped.current = null;
+          setStopping(false);
+          // Withdrawn, rather than answered in the instant before the press.
+          if (was && next.turns.length < was.turns) {
+            setMessage(was.message);
+            setRoundNote(was.note);
+          }
           // The turn's own failure, which outlived the request that started it.
           if (next.last_error) setError(next.last_error);
         }
@@ -508,10 +532,33 @@ export default function Founding() {
     setTimeout(() => composer.current?.focus(), 0);
   }
 
+  async function stop() {
+    if (!thread || stopping) return;
+    // Answers come back as the round they answered, picks and all; only a
+    // message typed into the composer needs putting back there.
+    const sent = last?.role === "chairman" ? last : null;
+    stopped.current = {
+      turns: turns.length,
+      message: sent && !sent.answers ? sent.text : "",
+      note: sent?.answers ? sent.note ?? "" : "",
+    };
+    setStopping(true);
+    setQueued(null);
+    try {
+      await post(`/admin/founder/threads/${thread.id}/stop`, {});
+    } catch (err) {
+      stopped.current = null;
+      setStopping(false);
+      setError((err as Error).message);
+    }
+  }
+
   async function startOver() {
     if (thread && !confirm("Throw this conversation away and start again?")) return;
     if (thread) {
       try {
+        // Deleting a thread stops its turn on the server, so this is also the
+        // way out of a turn that should never have started.
         await del(`/admin/founder/threads/${thread.id}`);
       } catch {
         /* it is going away from the screen either way */
@@ -522,6 +569,10 @@ export default function Founding() {
     setError(null);
     setQueued(null);
     setReopening(false);
+    setBusy(false);
+    setProgress(null);
+    stopped.current = null;
+    setStopping(false);
   }
 
   function review() {
@@ -559,7 +610,7 @@ export default function Founding() {
         </div>
         <div className="founding-head-acts">
           {thread && (
-            <button onClick={startOver} disabled={busy}>
+            <button onClick={startOver}>
               Start over
             </button>
           )}
@@ -640,7 +691,7 @@ export default function Founding() {
             />
           )}
 
-          {busy && <Steps progress={progress} />}
+          {busy && <Steps progress={progress} onStop={stop} stopping={stopping} />}
 
           {error && <p className="error">{error}</p>}
 
