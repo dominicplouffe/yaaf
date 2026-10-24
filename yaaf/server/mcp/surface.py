@@ -199,6 +199,9 @@ WITHHELD = {
         "over the account it was issued for.",
     "POST /admin/roles": "the role library is product-wide; a project client edits no part of it.",
     "PATCH /admin/roles/{slug}": "editing the shared role library changes every project pinned to it.",
+    "POST /admin/roles/{slug}/adopt-class":
+        "moving a library role onto a model class is the update script's step, above "
+        "every project.",
     "GET /admin/roles/{slug}": "`catalog` serves what a drafting client needs of it.",
     "POST /admin/crews": "the crew library is shared the same way the role library is.",
     "GET /admin/projects/{project_id}/accounts":

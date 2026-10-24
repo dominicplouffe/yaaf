@@ -1059,10 +1059,11 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         role = session.get(Role, pinned.role_id) if pinned else None
         if pinned is None or role is None:
             continue
-        latest = session.execute(
-            select(RoleVersion).where(RoleVersion.role_id == role.id)
-            .order_by(RoleVersion.version.desc()).limit(1)
-        ).scalar_one()
+        from yaaf.core import role_versions
+
+        # Only a version that would change what the team runs: one that
+        # moves a model to the class that resolves to it here asks nothing.
+        latest = role_versions.offered(session, project, pinned, team.id)
         if latest.version > pinned.version:
             # Say what moved, not just that something did. A drift warning with
             # no content is a number nobody acts on: it reports that a newer
@@ -1708,10 +1709,12 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
         # answered by opening the role library and guessing. The slug alone
         # was not enough: it is not what the library shows, and it carries no
         # version.
-        latest = session.execute(
-            select(RoleVersion).where(RoleVersion.role_id == role.id)
-            .order_by(RoleVersion.version.desc()).limit(1)
-        ).scalar_one() if role else None
+        from yaaf.core import role_versions
+
+        # The newest version that would change what this team runs — not one
+        # that only renames its model to the class resolving to it here.
+        latest = role_versions.offered(session, project, role_version, team.id) \
+            if role and role_version else None
         teams.append(
             {
                 "id": team.id,

@@ -548,6 +548,53 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
     return {"role_id": role.id, "role_version_id": row.id, "version": version}
 
 
+class AdoptClassIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The class the library's file now names: @frontier, @balanced or @fast.
+    model: str
+
+
+@router.post("/roles/{slug}/adopt-class", dependencies=[authority.INSTANCE_ADMIN])
+def adopt_class(slug: str, body: AdoptClassIn, session: Session = Depends(db)) -> dict:
+    """Move a library role onto the model class its shipped file now names —
+    the step an update runs for roles an install already has, which a re-seed
+    leaves alone so as not to overwrite an administrator's edits.
+
+    A new version identical to the newest but for its model, and only where
+    the newest still names the Claude model that class resolves to on
+    Anthropic — the model the file named before. A role an administrator moved
+    to another model is theirs, and is left as it is (409). Teams stay pinned;
+    on a project paying Anthropic nothing is even offered (yaaf.core.
+    role_versions), because nothing a team runs would change."""
+    from yaaf.core import role_versions
+
+    provider, cls = catalog.parse(body.model)
+    if cls not in catalog.CLASSES or provider is not None:
+        raise HTTPException(status_code=422, detail=(
+            f"'{body.model}' is not one of {', '.join(catalog.class_ref(c) for c in catalog.CLASSES)}"))
+    role = session.scalar(select(Role).where(Role.slug == slug))
+    latest = role_versions.newest(session, role.id) if role else None
+    if role is None or latest is None:
+        raise HTTPException(status_code=404, detail="unknown role")
+    if latest.model == body.model:
+        return {"slug": slug, "changed": False, "version": latest.version}
+    was = catalog.lineup_of(runtime_providers.DEFAULT_PROVIDER, {}).get(cls)
+    if latest.model != was:
+        raise HTTPException(status_code=409, detail=(
+            f"'{slug}' names {latest.model}, not {was} — it was moved by hand, so it is left "
+            "as it is"))
+    row = RoleVersion(
+        id=ids.new_id(ids.ROLE_VERSION), role_id=role.id, version=latest.version + 1,
+        description=latest.description, system_prompt=latest.system_prompt,
+        model=body.model, effort=latest.effort, harness=latest.harness,
+        tool_permissions=latest.tool_permissions, secret_scopes=latest.secret_scopes)
+    session.add(row)
+    _audit(session, None, "role.adopt_class", "role", role.id,
+           {"from": latest.model, "to": body.model, "version": row.version})
+    return {"slug": slug, "changed": True, "version": row.version}
+
+
 @router.get("/roles/{slug}", dependencies=[authority.SIGNED_IN])
 def get_role(slug: str, session: Session = Depends(db)) -> dict:
     role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
@@ -637,14 +684,19 @@ def list_roles(session: Session = Depends(db)) -> list[dict]:
         latest = versions[0] if versions else None
         # Blast radius: every team pinned to any version of this role. Editing
         # a role is only scary when you can't see who runs it.
+        from yaaf.core import role_versions
+
         usage = [
             {
-                "project_name": project_name,
+                "project_name": project.name,
                 "team_name": team_name,
-                "pinned_version": pinned,
+                "pinned_version": pinned.version,
+                # Behind only where adopting would change what the team runs.
+                "behind": role_versions.offered(session, project, pinned, team_id).version
+                > pinned.version,
             }
-            for team_name, project_name, pinned in session.execute(
-                select(Team.name, Project.name, RoleVersion.version)
+            for team_name, team_id, project, pinned in session.execute(
+                select(Team.name, Team.id, Project, RoleVersion)
                 .join(RoleVersion, RoleVersion.id == Team.role_version_id)
                 .join(Project, Project.id == Team.project_id)
                 .where(RoleVersion.role_id == role.id)

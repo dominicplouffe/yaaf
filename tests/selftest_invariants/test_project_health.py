@@ -121,7 +121,10 @@ def test_every_suggestion_is_said_in_the_readers_words(client):
         row = session.get(Project, operate["id"])
         row.integrations = {k: v for k, v in (row.integrations or {}).items()
                             if k != "github_webhook_secret"}
-    seed_role(client, "worker", description="Checks its sources before it writes.")
+    # A version that changes what the seat runs: one that changes only its
+    # note is nothing to adopt, and is not offered (yaaf.core.role_versions).
+    seed_role(client, "worker", description="Checks its sources before it writes.",
+              system_prompt="You are a test agent. Check your sources before you write.")
     collect(operate)
     explore = make_project(client, slug="study", mode="explore",
                            constitution={"monthly_usd_cap": 75.0})

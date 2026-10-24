@@ -250,7 +250,7 @@ export default function Roles() {
       </h2>
       <div className="role-grid">
         {group.rows.map((role) => {
-          const behind = role.usage.filter((u) => u.pinned_version < role.latest_version).length;
+          const behind = role.usage.filter((u) => u.behind ?? u.pinned_version < role.latest_version).length;
           const projects = new Set(role.usage.map((u) => u.project_name)).size;
           return (
             <div
@@ -530,7 +530,7 @@ export default function Roles() {
                       <td>{u.team_name}</td>
                       <td className="num">
                         v{u.pinned_version}
-                        {u.pinned_version < editing.version && (
+                        {(u.behind ?? u.pinned_version < editing.version) && (
                           <span className="chip warn" style={{ marginLeft: 6 }}>behind</span>
                         )}
                       </td>

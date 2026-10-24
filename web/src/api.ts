@@ -1325,6 +1325,8 @@ export interface RoleUsage {
   project_name: string;
   team_name: string;
   pinned_version: number;
+  /** Whether adopting the newest version would change what the team runs. */
+  behind?: boolean;
 }
 
 export interface RoleSummary {
