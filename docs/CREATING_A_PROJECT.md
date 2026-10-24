@@ -164,7 +164,7 @@ on approvals and boardroom messages, and if the server has SMTP configured
 alerts get mailed. Remembered for your next project.
 
 **Billing.** Pick which **LLM credential** pays — one an administrator
-created under Settings → LLM credentials: an **Anthropic API key** (budget in
+created under Settings → Providers: an **Anthropic API key** (budget in
 dollars, the normal choice) or a **Claude subscription token** (budget in
 tokens). The credential decides the budget's unit; nothing is pasted here and
 no value ever enters a sandbox. Leave it unselected and the project can be
@@ -300,7 +300,7 @@ needs a credential — without one the project is created stopped.)
 Open your new project → **Settings** → "How agents pay for Claude". Pick a
 credential from the list, click **Save assignment**, then **Test connection**
 — if the key is bad, you find out now, not at 9am tomorrow. No credentials in
-the list? An administrator adds one under Settings → LLM credentials; a
+the list? An administrator adds one under Settings → Providers; a
 subscription credential also shows there what Anthropic says is left on its
 plan.
 

@@ -190,7 +190,7 @@ def use_llm_credential(session: Session, credential_id: str) -> Secret:
     row = llm_credentials.resolve(session, credential_id=credential_id)
     if row is None:
         raise NoPlatformCredential(
-            "no such LLM credential — pick one listed under Settings → LLM credentials")
+            "no such LLM credential — pick one listed under Settings → Providers")
     own = _own_row(session)
     if own is not None:
         session.delete(own)

@@ -989,7 +989,9 @@ def provider_credentials_view(session: Session, project: Project) -> list[dict]:
         out.append({"provider": provider_name,
                     "label": seller.label if seller else provider_name,
                     "credential_id": secret.id, "name": secret.name, "bills": bills(secret),
-                    "billing": secret.id == project.billing_secret_id})
+                    "billing": secret.id == project.billing_secret_id,
+                    # Held only while a failover has moved seats onto it.
+                    "fallback": secret.id == project.fallback_secret_id})
     return sorted(out, key=lambda c: (not c["billing"], c["label"]))
 
 
@@ -1811,7 +1813,7 @@ def export_project(project_id: str, include_values: bool = False,
             # travels: an import resolves the names against what exists there.
             "credential_names": {c["provider"]: c["name"]
                                  for c in provider_credentials_view(session, project)
-                                 if not c["billing"]},
+                                 if not c["billing"] and not c["fallback"]},
             # The fallback, by name, for the same reason.
             "fallback_credential_name": (fallback.name if (fallback := session.get(
                 Secret, project.fallback_secret_id)) else None)

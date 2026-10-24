@@ -373,6 +373,26 @@ export interface Activity {
   }[];
 }
 
+/** A credential's circuit breaker (yaaf.core.breakers): open while its
+    provider keeps failing, half-open while a run tries it again. */
+export interface BreakerState {
+  status: "open" | "half_open" | "closed";
+  failures: number;
+  opened_at: string | null;
+  open_until: string | null;
+  last_error: string | null;
+}
+
+export interface FallbackView {
+  credential_id: string | null;
+  name: string | null;
+  provider: string | null;
+  /** Class seats are on the fallback right now. */
+  active: boolean;
+  /** The billing credential's breaker; null while it has never failed. */
+  breaker: BreakerState | null;
+}
+
 export interface Dashboard {
   id: string;
   slug: string;
@@ -459,6 +479,9 @@ export interface Dashboard {
   /** What pays each provider, the billing credential first. Never a value. */
   credentials?: { provider: string; label: string; credential_id: string; name: string;
                   bills: string; billing: boolean }[];
+  /** Where class seats move while the billing credential's provider is
+      failing, and whether they are there now. */
+  fallback?: FallbackView;
   /** Drought-clock anchors: the UI counts toward the refusal. */
   created_at: string;
   last_countable_evidence_at: string | null;
@@ -1362,6 +1385,8 @@ export interface ProjectBundle {
     billing_secret_name?: string | null;
     /** What pays each other provider, by credential name: {deepseek: "DeepSeek key"}. */
     credential_names?: Record<string, string>;
+    /** Where class seats moved while the billing provider failed, by name. */
+    fallback_credential_name?: string | null;
     ceo_role_slug: string;
     ceo_name: string;
     ceo_daily_at?: string | null;

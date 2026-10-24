@@ -235,3 +235,24 @@ def test_a_login_is_not_smoked_from_the_control_plane(client):
         "value": "sk-ant-oat-test-placeholder"}).json()["id"]
     body = client.post(f"{CREDENTIALS}/{credential}/smoke", headers=ADMIN, json={}).json()
     assert body["ok"] is None and "only its own CLI" in body["detail"]
+
+
+def test_a_window_corrected_alone_leaves_a_shipped_price_shipped(client):
+    """The loop compacts against a model's window; correcting it must not turn
+    the catalog's checked price into one typed by hand, which a later release's
+    corrected price would then no longer reach."""
+    from tests.conftest import headers_of, person
+
+    set_window = client.put("/admin/settings/model-context/claude-sonnet-5-5", headers=ADMIN,
+                            json={"context_window": 500_000})
+    assert set_window.status_code == 200 and set_window.json()["context_window"] == 500_000
+    table = {r["model"]: r for r in client.get(PRICES, headers=ADMIN).json()}
+    assert table["claude-sonnet-5-5"]["own"] is None
+    assert table["claude-sonnet-5-5"]["context_window"] == 500_000
+    client.put("/admin/settings/model-context/claude-sonnet-5-5", headers=ADMIN,
+               json={"context_window": None})
+    table = {r["model"]: r for r in client.get(PRICES, headers=ADMIN).json()}
+    assert table["claude-sonnet-5-5"]["context_window"] != 500_000
+    member = headers_of(person("member@example.com"))
+    assert client.put("/admin/settings/model-context/claude-sonnet-5-5", headers=member,
+                      json={"context_window": 1000}).status_code == 403

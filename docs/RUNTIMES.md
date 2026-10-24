@@ -538,7 +538,7 @@ touches, and whether a new provider edits it:
 
 | Surface | Change | Per provider? |
 |---|---|---|
-| Settings → LLM credentials, New Project picker, Founder's list, MCP `catalog`/`create_project` | provider + kind from the registry, via `llm_credentials.choices` | no |
+| Settings → Providers, New Project picker, Founder's list, MCP `catalog`/`create_project` | provider + kind from the registry, via `llm_credentials.choices` | no |
 | Role editor, `roles/*.json`, `seed-roles` | `harness` beside `model`; pickers and validation from manifests and the catalog | no |
 | Roster / agent overrides | `harness_override` beside `model_override` | no |
 | Project Settings → runtime | per seat; project-wide only for `mock` | no |

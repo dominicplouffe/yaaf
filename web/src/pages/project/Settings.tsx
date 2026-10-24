@@ -1,3 +1,4 @@
+import { FallbackCard } from "../../fallback";
 import { CredentialPicker, PlanMeter, ProviderCredentials } from "../../llmCredentials";
 import { useProviders } from "../../providers";
 import { plainStatus } from "../../ui/kit";
@@ -2153,7 +2154,9 @@ export default function Settings({
         <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode}
           meters={!!billingSeller?.plan_meter}
           title={`Plan usage for ${dash.billing_secret_name ?? "this credential"}`} />
-        <ProviderCredentials projectId={projectId} disabled={busy} />
+        <FallbackCard projectId={projectId} dash={dash} disabled={busy} onChanged={reload} />
+        <ProviderCredentials projectId={projectId} disabled={busy}
+          fallbackId={dash.fallback?.credential_id ?? null} />
       </div>
 
       </Section>

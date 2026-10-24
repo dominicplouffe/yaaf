@@ -130,7 +130,7 @@ def _founder_model_problem(session: Session, ref: str, provider_name: str) -> st
         label = catalog.class_label(ref)
         return (f"the Founder runs on the {label} class, and {seller.label} has no {label} "
                 f"model set — name the Founder's model ({seller.name}/<model>), or set "
-                f"{seller.label}'s lineup in Settings → Models")
+                f"{seller.label}'s lineup on its card in Settings → Providers")
     if catalog.provider_of(model) == seller.name:
         return None
     owner = PROVIDERS[catalog.provider_of(model)].label
@@ -185,7 +185,7 @@ def borrow_llm_credential(session: Session, credential_id: str) -> dict:
     row = llm_credentials.resolve(session, credential_id=credential_id)
     if row is None:
         raise HTTPException(status_code=422, detail=(
-            "no such LLM credential — pick one listed under Settings → LLM credentials"))
+            "no such LLM credential — pick one listed under Settings → Providers"))
     provider = row.provider or DEFAULT_PROVIDER
     problem = (refusal(provider, row.llm_mode)
                or _founder_model_problem(session, platform.founder_model_ref(session), provider))
@@ -485,7 +485,11 @@ def _llm_summary(session: Session, row: Secret, projects: list | None = None,
         from yaaf.core.project_credentials import projects_using
 
         projects = projects_using(session, row.id)
-    out = [{"id": p.id, "name": p.name, "status": p.status, "live": p.status not in TERMINAL}
+    # How it serves each: pays it, or stands by as its fallback — in use
+    # either way (it cannot be deleted from under either), said apart.
+    out = [{"id": p.id, "name": p.name, "status": p.status, "live": p.status not in TERMINAL,
+            "as": "fallback" if p.fallback_secret_id == row.id and p.billing_secret_id != row.id
+            else "pays"}
            for p in projects]
     if groups is None:
         groups = _token_groups(session)
@@ -974,7 +978,7 @@ def put_model_price(model: str, body: ModelPriceIn, session: Session = Depends(d
     if catalog.is_class(model):
         raise HTTPException(status_code=422, detail=(
             f"{model} is a class, not a model — price the model it resolves to "
-            "(Settings → Models shows each provider's lineup)"))
+            "(each provider's card in Settings → Providers shows its lineup)"))
     row = session.get(ModelPrice, model) or ModelPrice(model=model)
     row.input, row.output = body.input, body.output
     row.cache_read, row.cache_write = body.cache_read, body.cache_write
@@ -989,6 +993,33 @@ def put_model_price(model: str, body: ModelPriceIn, session: Session = Depends(d
     # Which provider the name resolves to, said back: a typo in the provider
     # part lands on the default provider, and the screen should show that.
     return {"model": model, "provider": catalog.provider_of(model), **body.model_dump()}
+
+
+class ContextWindowIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Tokens the model reads at once; null goes back to the imported or
+    #: shipped figure.
+    context_window: int | None = Field(default=None, ge=1_000, le=100_000_000)
+
+
+@router.put("/model-context/{model:path}", dependencies=[authority.INSTANCE_ADMIN])
+def put_context_window(model: str, body: ContextWindowIn,
+                       session: Session = Depends(db)) -> dict:
+    """A model's input window, apart from its price — which yaaf's own loop
+    compacts a run's history against. Setting it never turns a shipped price
+    into a hand-typed one."""
+    from yaaf.core import prices
+    from yaaf.runtimes import catalog
+    from yaaf.server.api.admin import _audit
+
+    model = model.strip()
+    if not model or len(model) > 128 or catalog.is_class(model):
+        raise HTTPException(status_code=422, detail="Name the model, as a seat names it")
+    prices.set_window(session, model, body.context_window)
+    _audit(session, None, "model_context.set", "model", model,
+           {"context_window": body.context_window})
+    return {"model": model, "context_window": prices.context_window(session, model)}
 
 
 @router.delete("/model-prices/{model:path}", dependencies=[authority.INSTANCE_ADMIN])
@@ -1240,7 +1271,7 @@ def smoke_credential(credential_id: str, body: SmokeIn | None = None,
     if model is None:
         raise HTTPException(status_code=422, detail=(
             f"{seller.label} has no Fast model set — name one to call (model), or set its "
-            "lineup in Settings → Models"))
+            "lineup on its card in Settings → Providers"))
     key = decrypt(row.ciphertext)
     if seller.mints_tokens:
         try:
@@ -1503,7 +1534,7 @@ def doctor(session: Session = Depends(db)) -> dict:
                "yaaf seed-crews crews/ — the 'start from a crew' picker is empty without it",
                problem=False),
         _check("a key to pay with", keys > 0, f"{keys} LLM credential(s)",
-               "add one under Settings → LLM credentials, or `yaaf create-llm-credential "
+               "connect one under Settings → Providers, or `yaaf create-llm-credential "
                "NAME` — a project with none is created unable to start"),
         _check("the Founder's key", platform.has_credential(session),
                "the Founder can draft" if platform.has_credential(session)

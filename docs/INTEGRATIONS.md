@@ -17,7 +17,7 @@ enter a sandbox at all.
 ## Billing — how agents pay for Claude
 
 Two screens. An administrator creates **LLM credentials** once, under the
-sidebar's **Settings → LLM credentials**; each project is then **assigned**
+sidebar's **Settings → Providers**; each project is then **assigned**
 one, under its own **Settings → Money**. Required; nothing runs without it.
 
 Two kinds of credential, and the kind decides the project's billing mode and

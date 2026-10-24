@@ -318,6 +318,10 @@ VERTEX = Provider(
     base_url_template=("https://{region}-aiplatform.googleapis.com/v1/projects/{project}"
                        "/locations/{region}/publishers/google"),
     mints_tokens=True,
+    # Grounding with Google Search, as on the Gemini API: the same call on
+    # the same wire, at Vertex's grounding price per prompt.
+    search=True,
+    search_usd=0.035,
     console_url="https://console.cloud.google.com/iam-admin/serviceaccounts",
     failure_markers=("request had invalid authentication credentials", "permission_denied",
                      "unauthenticated"),

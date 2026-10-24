@@ -78,9 +78,16 @@ export function BudgetCard({ ctx }: { ctx: ProjectCtx }) {
             ? <>Paid with <b>{dash.billing_secret_name}</b> ({billing ? `${billing.label} ` : ""}{usdMode ? "API key" : "subscription"})</>
             : <span className="serious">No payment credential connected — real runs will fail</span>}
         </li>
-        {(dash.credentials ?? []).filter((c) => !c.billing).map((c) => (
+        {(dash.credentials ?? []).filter((c) => !c.billing && c.credential_id !== dash.fallback?.credential_id).map((c) => (
           <li key={c.credential_id}><Icon name="shield" size={14} /> {c.label}: {c.name}</li>
         ))}
+        {/* The fallback pays only while a failover is on, so it is said as the
+            fallback — not as one more provider this project pays. */}
+        {dash.fallback?.credential_id && (
+          <li><Icon name="shield" size={14} /> Fallback: <b>{dash.fallback.name}</b>
+            {dash.fallback.active ? <span className="serious"> — class seats are on it now, while the billing provider recovers</span>
+              : " — used only if the billing provider keeps failing"}</li>
+        )}
       </ul>
       <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode}
         meters={!!seller?.plan_meter} />

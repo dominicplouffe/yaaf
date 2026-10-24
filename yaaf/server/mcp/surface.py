@@ -307,6 +307,9 @@ WITHHELD = {
         "where the install reads prices from is install-wide.",
     "PUT /admin/settings/price-feed":
         "repointing the price feed changes what every future import trusts.",
+    "PUT /admin/settings/model-context/{model}":
+        "a model's window decides when every seat on it compacts its history — an "
+        "administrator's setting, beside the prices.",
     "GET /admin/settings/model-prices":
         "the install's price table is above every project a client is scoped to; a "
         "seat refused for want of a price says so in the refusal.",

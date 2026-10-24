@@ -241,7 +241,10 @@ def scoreboard(session: Session) -> list[dict]:
     out = []
     for row in seen.values():
         found = render(row)
-        tasks = [o for o in row.outcomes if o.get("kind") == "task" and o.get("ok") is not None]
+        # Averaged over tasks that ran: one refused before its first call says
+        # nothing about what a task costs.
+        tasks = [o for o in row.outcomes if o.get("kind") == "task" and o.get("ok") is not None
+                 and o.get("calls")]
         found["task_calls"] = (round(sum(o["calls"] for o in tasks) / len(tasks), 1)
                                if tasks else None)
         found["task_cost_usd"] = (round(sum(o.get("cost_usd") or 0 for o in tasks) / len(tasks),

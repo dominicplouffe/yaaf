@@ -1,4 +1,6 @@
 import { CredentialPicker, resolveCredential } from "../llmCredentials";
+import { ProviderReadinessInline } from "../readiness";
+import { FallbackPicker } from "../fallback";
 import {
   CLASS_ORDER, DEFAULT_PROVIDER, isPriced, ModelSelect, parseRef, providerOf as refProvider,
   resolveRef, useModels, useProviders,
@@ -182,6 +184,9 @@ export default function NewProject() {
   // What pays each provider the billing credential does not: {provider: id}.
   // A seat on another provider's model needs one, and is refused without it.
   const [otherCredentials, setOtherCredentials] = useState<Record<string, string>>({});
+  // Where class seats move while the billing provider is failing. Optional,
+  // and refused at create unless every class seat could run there.
+  const [fallbackId, setFallbackId] = useState("");
   const [otherProvider, setOtherProvider] = useState("");
   const registry = useProviders();
   // Which provider the billing credential pays — the project's own provider,
@@ -191,7 +196,10 @@ export default function NewProject() {
   // both are the chairman's to make.
   const [billingProvider, setBillingProvider] = useState(DEFAULT_PROVIDER);
   const [seatModel, setSeatModel] = useState("");
-  const catalog = useModels();
+  // Moved when a readiness fix (a price import) changes what the catalog says
+  // is priced, so the lineup sentence below stops saying "no price yet".
+  const [catalogNonce, setCatalogNonce] = useState(0);
+  const catalog = useModels(catalogNonce);
   // The install's own prices, for a model the catalog does not list (an
   // administrator's table — empty for anyone else, who reads the catalog's).
   const [modelTable, setModelTable] = useState<{
@@ -639,6 +647,13 @@ export default function NewProject() {
           }
         });
       });
+      // The fallback travels by name as well, and is checked again at create.
+      setFallbackId("");
+      if (p.fallback_credential_name) {
+        resolveCredential(null, p.fallback_credential_name).then((found) => {
+          if (found) setFallbackId(found.id);
+        });
+      }
       // The file's whole job here is review-and-supply-keys, so land on the
       // step that shows the project it describes rather than the first field
       // of eleven sections it already filled.
@@ -893,6 +908,7 @@ export default function NewProject() {
           ...(Object.values(otherCredentials).some(Boolean)
             ? { credentials: Object.fromEntries(
                 Object.entries(otherCredentials).filter(([, id]) => id)) } : {}),
+          ...(fallbackId && billingCredentialId ? { fallback_secret_id: fallbackId } : {}),
           mode,
           ...(mode === "explore" && exploreDeadline
             ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
@@ -1630,6 +1646,17 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             setBillingProvider(provider);
           }} />
           <p className="help">The selected credential determines the budget unit. Without a credential, the project can be saved as a draft but cannot run models.</p>
+          {billingCredentialId && runtime !== "mock" && <ProviderReadinessInline provider={billingProvider}
+            onChanged={() => setCatalogNonce((n) => n + 1)} />}
+          {billingCredentialId && runtime !== "mock" && <div className="wiz-fallback">
+            <label className="field" htmlFor="wiz-fallback">Fallback credential <span className="help">optional</span></label>
+            <FallbackPicker id="wiz-fallback" value={fallbackId} onChange={setFallbackId}
+              billingProvider={billingProvider} billingMode={billingMode} />
+            <p className="help">If {registry.find((r) => r.name === billingProvider)?.label ?? "the billing provider"} keeps
+              failing, class seats move here until it recovers; seats pinned to a model wait. It must be
+              another provider&apos;s credential, metered the same way, with a model for every class the
+              team names — the project is refused at create otherwise, with the reason.</p>
+          </div>}
           {Object.entries(otherCredentials).map(([provider]) => (
             <div key={provider} style={{ marginTop: 6 }}>
               <CredentialPicker provider={provider} value={otherCredentials[provider]}
@@ -1675,8 +1702,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                   {dollars && l.model && l.priced === false ? " (no price yet)" : ""}</span>)}.
                 {(lineup.some((l) => !l.model) || (dollars && lineup.some((l) => l.priced === false))) && <>
                   {" "}A seat on an unset class, or on an unpriced model under an API key, is refused:{" "}
-                  set the lineup under <Link to="/settings?section=models" target="_blank"
-                    rel="noreferrer">Settings → Models ↗</Link> and import prices under{" "}
+                  set the lineup on <Link to={`/settings?section=providers&provider=${billingProvider}`} target="_blank"
+                    rel="noreferrer">{labelOf(billingProvider)}&apos;s card in Settings → Providers ↗</Link> and import prices under{" "}
                   <Link to="/settings?section=prices" target="_blank"
                     rel="noreferrer">Settings → Model prices ↗</Link>.</>}
               </p>}
@@ -1687,16 +1714,17 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               </label>
               {seatModel && !effective && <p className="help">
                 {labelOf(parseRef(seatModel).provider ?? billingProvider)} has no model set for
-                that class — choose another, or set one under Settings → Models.</p>}
+                that class — choose another, or set one on its card under Settings → Providers.</p>}
               {effective && dollars && pricedModel(effective) === false && <p className="help">
                 {effective} has no price on this install, and a seat metered in dollars
                 needs one: import or set it under <Link to="/settings?section=prices" target="_blank"
                 rel="noreferrer">Settings → Model prices ↗</Link> first.</p>}
               {unmodelled.length > 0 && <p className="notice-box">
                 {unmodelled.slice(0, 4).map((s) => s.who).join(", ")}
-                {unmodelled.length > 4 ? ` and ${unmodelled.length - 4} more` : ""} name a class{" "}
-                {labelOf(billingProvider)} has no model for. Set its lineup under Settings → Models,
-                or run every seat on a model above.</p>}
+                {unmodelled.length > 4 ? ` and ${unmodelled.length - 4} more` : ""}{" "}
+                {unmodelled.length === 1 ? "names a class" : "name classes"}{" "}
+                {labelOf(billingProvider)} has no model for. Pick one on its card under
+                Settings → Providers, or run every seat on a model above.</p>}
               {unpaid.length > 0 && <p className="notice-box">
                 This project pays {paid.map(labelOf).join(" and ")}, and{" "}
                 {unpaid.slice(0, 4).map((s) => `${s.who} (${s.model})`).join(", ")}

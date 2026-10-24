@@ -184,7 +184,7 @@ def test_a_class_on_a_provider_with_no_lineup_is_refused_and_a_lineup_fixes_it(c
     refused = client.post("/admin/projects", headers=ADMIN, json=_body("on-groq", groq))
     assert refused.status_code == 422
     assert "Groq has no Frontier model set" in refused.text
-    assert "Settings → Models" in refused.text
+    assert "Settings → Providers" in refused.text
     for cls, model in (("frontier", "groq/kimi-k2"), ("balanced", "groq/llama-4"),
                        ("fast", "groq/llama-4-scout")):
         named = client.put(f"{MODELS}/lineup", headers=ADMIN,

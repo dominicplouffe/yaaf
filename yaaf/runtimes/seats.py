@@ -153,7 +153,7 @@ def unmodelled(model: str) -> str:
     named, cls = catalog.parse(model)
     seller = providers.provider(named)
     return (f"{seller.label} has no {catalog.CLASS_LABELS.get(cls or '', cls)} model set — "
-            f"name one for it in Settings → Models (its lineup), or put this seat on a "
+            f"pick one on {seller.label}'s card in Settings → Providers, or put this seat on a "
             f"model of its own")
 
 

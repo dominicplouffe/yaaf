@@ -4,6 +4,7 @@ import { DeskBrief } from "../briefing";
 import { ItemActions, needsYouCount, soonestClock, useDesk, WARN_VERDICTS } from "../desk";
 import { usePoll } from "../hooks";
 import { useMe } from "../me";
+import { SetupChecklist } from "../setupChecklist";
 import { clip, fmtAgo, fmtSoon, fmtUnit } from "../ui";
 import { Avatar, EmptyState } from "../ui/kit";
 import { Icon } from "../ui/Icon";
@@ -73,6 +74,7 @@ export default function Home() {
     return (
       <>
         <div className="pagehead"><div className="ph"><h1>{greeting()}{name ? `, ${name}` : ""}</h1></div></div>
+        {me?.is_admin && <SetupChecklist hasProjects={false} />}
         <EmptyState icon="plus" title={desk.data.finished > 0 ? "Every project has finished." : "You don't chair a project yet."}
           foot={<Link className="btnlink primary" to="/projects/new">Start a project</Link>}>
           {desk.data.finished > 0
@@ -106,6 +108,7 @@ export default function Home() {
         <div className="pacts"><Link className="btnlink" to="/projects/new"><Icon name="plus" size={14} /> New project</Link></div>
       </div>
 
+      {me?.is_admin && <SetupChecklist hasProjects />}
       <div className="home-grid">
         <div className="ov-col">
           {desk.mine.length > 0 && (

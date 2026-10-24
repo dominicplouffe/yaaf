@@ -58,7 +58,7 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
     names = set(listed["models"]) if listed else None
     snapshot = price_feed.snapshot()["models"]
     tiers, issues = [], []
-    unpriced, importable = [], []
+    unpriced, importable, unset, failed = [], [], [], []
     for cls in reversed(catalog.CLASSES):
         model = lineup.get(cls)
         price = prices.price(session, model) if model else None
@@ -76,11 +76,7 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
             "check": ({"status": check["status"], "summary": check["summary"],
                        "at": check["finished_at"]} if check else None)})
         if not model:
-            issues.append(_issue(
-                "no_model", "block",
-                f"no {catalog.CLASS_LABELS[cls]} model is set — seats on that class are refused "
-                "here. Pick one from the models the key can call.",
-                {"action": "set_lineup", "class": cls}))
+            unset.append(cls)
             continue
         if not covered and model not in unpriced:
             unpriced.append(model)
@@ -92,11 +88,21 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
                 f"{model} is not among the models {seller.label} lists for this key — the "
                 "key may lack access, or the model was retired.",
                 {"action": "set_lineup", "class": cls}))
-        if check and check["status"] in ("failed", "error"):
+        if check and check["status"] in ("failed", "error") and model not in failed:
+            failed.append(model)
             issues.append(_issue(
                 "check_failed", "warn",
                 f"{model} failed its last check ({check['summary']}) — seats on it may get "
                 "little done.", {"action": "check", "models": [model]}))
+    if unset:
+        labels = [catalog.CLASS_LABELS[c] for c in unset]
+        named = labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " or " + labels[-1]
+        issues.insert(0, _issue(
+            "no_model", "block",
+            f"no {named} model is set — seats on "
+            f"{'that class' if len(unset) == 1 else 'those classes'} are refused here. Pick "
+            f"{'one' if len(unset) == 1 else 'them'} from the models the key can call.",
+            {"action": "set_lineup", "class": unset[0], "classes": unset}))
     if unpriced:
         issues.insert(0, _issue(
             "unpriced", "block",
@@ -108,12 +114,16 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
     searches = "own" if seller.search else (
         "platform" if web_search.configured(session) else "none")
     web, total = web_roles
-    if searches == "none" and web:
+    if searches == "none" and (web or not total):
+        # An empty library still gets the warning: the roles it will be seeded
+        # with browse (35 of the 38 shipped ones do).
         issues.append(_issue(
             "no_search", "warn",
             f"{seller.label}'s API cannot search the web and this install has no search "
-            f"backend, so {web} of the {total} roles in the library — every one that browses "
-            "— are refused here.", {"action": "web_search"}))
+            "backend, so "
+            + (f"{web} of the {total} roles in the library — every one that browses — are "
+               "refused here." if total else "every role that browses will be refused here."),
+            {"action": "web_search"}))
     blocked = any(i["severity"] == "block" for i in issues)
     return {
         "provider": name, "label": seller.label, "local": seller.local,
@@ -122,7 +132,10 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
         "credentials": [{"id": s.id, "name": s.name, "mode": s.llm_mode or "api_key",
                          "kind": seller.kind(s.llm_mode).label} for s in credentials],
         "tiers": tiers,
-        "served": {"at": listed["at"], "count": len(listed["models"])} if listed else None,
+        # The key's own list as last read: the tier editor offers it without
+        # asking the provider again.
+        "served": {"at": listed["at"], "count": len(listed["models"]),
+                   "models": listed["models"]} if listed else None,
         "ceiling": model_policy.ceilings(session).get(name),
         "issues": issues,
         "ready": not blocked,

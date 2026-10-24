@@ -898,7 +898,9 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     from yaaf.runtimes.providers import PROVIDERS
 
     for provider_name, secret in project_credentials.held(session, project).items():
-        if secret.id == project.billing_secret_id:
+        # The fallback has its own line, below: it pays only while seats are
+        # moved onto it.
+        if secret.id in (project.billing_secret_id, project.fallback_secret_id):
             continue
         seller = PROVIDERS.get(provider_name)
         add(f"billing:{provider_name}", "ok",
@@ -984,8 +986,8 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             f"{found['at'][:10]} — {', '.join(names[:3])}"
             f"{f' and {len(names) - 3} more' if len(names) > 3 else ''} would be refused "
             "by the provider. Check the key's access, or move the class to a model it "
-            "lists (Settings → Models).",
-            "models")
+            "lists (its card in Settings → Providers).",
+            "providers")
     for gap in price_gaps(session, sorted(metered)):
         price = catalog.price(gap["model"])
         over = gap["drift"] > 0

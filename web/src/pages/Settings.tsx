@@ -21,13 +21,16 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { del, get, post, put, UserRow } from "../api";
 import { PasswordCard, SessionsCard, TokensCard } from "../account";
-import { Credential, LlmCredentials, ModelPrices } from "../llmCredentials";
+import { Credential, ModelPrices } from "../llmCredentials";
 import { useMe } from "../me";
 import { People } from "../people";
+import { ProvidersSection } from "../providerCards";
 import {
   BaseUrlFields, DEFAULT_PROVIDER, KeyHelp, KeyInput, ModelSelect, ProviderInfo, useModels,
   useProviders,
 } from "../providers";
+import { providerStatus, Readiness, READINESS } from "../readiness";
+import { ModelsSection } from "../settingsModels";
 import { SecretInput } from "../ui";
 
 interface PlatformSettings {
@@ -512,162 +515,6 @@ function SlackCard({
   );
 }
 
-// ── models: lineups, the default provider, per-provider ceilings ────────────────
-//
-// A role names a class — Frontier, Balanced, Fast — and a project's provider
-// says whose model that is. This is where an install says what each class is
-// on each provider: the shipped lineup where yaaf has one, the install's own
-// where it does not or should not. A provider with no model for a class
-// refuses every class seat on it (R8), so the gaps are drawn as gaps.
-
-interface LineupCellInfo { model: string | null; shipped: string | null; source: "install" | "shipped" | null }
-interface LineupRow { provider: string; label: string; classes: Record<string, LineupCellInfo> }
-interface ModelsSettings { default_provider: string; lineups: LineupRow[]; ceilings: Record<string, number> }
-
-const CLASS_NAMES: [string, string][] = [["frontier", "Frontier"], ["balanced", "Balanced"], ["fast", "Fast"]];
-
-/** One class on one provider: what it names, and the door to change it. */
-function LineupCell({ provider, cls, label, cell, options, onSaved }: {
-  provider: string; cls: string; label: string; cell: LineupCellInfo;
-  options: string[]; onSaved: (said: ModelsSettings & { unrunnable?: string[] }) => void;
-}) {
-  const [value, setValue] = useState(cell.model ?? "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  useEffect(() => { setValue(cell.model ?? ""); }, [cell.model]);
-  async function save(model: string | null) {
-    setBusy(true); setError("");
-    try {
-      onSaved(await put<ModelsSettings & { unrunnable?: string[] }>(
-        "/admin/settings/models/lineup", { provider, class: cls, model }));
-    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
-  }
-  const listId = `lineup-${provider}-${cls}`;
-  return <div className="lineup-cell">
-    <label className="field">{label}
-      <input list={listId} value={value} disabled={busy} maxLength={128}
-        placeholder={`none set — a ${label} seat on this provider is refused`}
-        onChange={(e) => setValue(e.target.value)} />
-      <datalist id={listId}>{options.map((o) => <option key={o} value={o} />)}</datalist>
-    </label>
-    <span className="help">
-      {cell.source === "install" ? `this install's${cell.shipped ? ` (shipped: ${cell.shipped})` : ""}`
-        : cell.source === "shipped" ? "shipped with yaaf" : "not set"}
-    </span>{" "}
-    <button type="button" className="small" disabled={busy || !value.trim() || value.trim() === cell.model}
-      onClick={() => save(value.trim())}>Save</button>{" "}
-    {cell.source === "install" && <button type="button" className="small" disabled={busy}
-      onClick={() => save(null)}>{cell.shipped ? "Back to shipped" : "Clear"}</button>}
-    {error && <p className="error" role="alert">{error}</p>}
-  </div>;
-}
-
-/** One provider's lineup and ceiling, with discovery from one of its keys. */
-function ProviderLineup({ row, ceiling, catalog, credentials, onSaved }: {
-  row: LineupRow; ceiling: number | undefined; catalog: string[];
-  credentials: Credential[]; onSaved: (said: ModelsSettings & { unrunnable?: string[] }) => void;
-}) {
-  const [discovered, setDiscovered] = useState<string[]>([]);
-  const [limit, setLimit] = useState(ceiling ? String(ceiling) : "");
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
-  useEffect(() => { setLimit(ceiling ? String(ceiling) : ""); }, [ceiling]);
-  const options = [...new Set([...catalog, ...discovered])];
-  const key = credentials.find((c) => c.mode === "api_key");
-  async function discover() {
-    if (!key) return;
-    setBusy(true); setNote(null);
-    try {
-      const found = await get<{ models: { id: string }[] }>(
-        `/admin/settings/llm-credentials/${key.id}/models`);
-      setDiscovered(found.models.map((m) => m.id));
-      setNote({ ok: true, text: `${found.models.length} models answer to ${key.name}; they are offered in the boxes above.` });
-    } catch (e) { setNote({ ok: false, text: (e as Error).message }); } finally { setBusy(false); }
-  }
-  async function saveCeiling() {
-    setBusy(true); setNote(null);
-    try {
-      onSaved(await put<ModelsSettings>("/admin/settings/models/ceiling",
-        { provider: row.provider, limit: limit.trim() ? Number(limit) : null }));
-      setNote({ ok: true, text: limit.trim() ? `At most ${limit} runs on ${row.label} at once.`
-        : `No ceiling on ${row.label}.` });
-    } catch (e) { setNote({ ok: false, text: (e as Error).message }); } finally { setBusy(false); }
-  }
-  const gaps = CLASS_NAMES.filter(([c]) => !row.classes[c]?.model).length;
-  return <details className="card" open={credentials.length > 0}>
-    <summary><strong>{row.label}</strong>{" "}
-      {credentials.length > 0 && <span className="chip accent">{credentials.length} credential{credentials.length === 1 ? "" : "s"}</span>}{" "}
-      {gaps > 0 && <span className="chip">{gaps === 3 ? "no lineup" : `${gaps} class${gaps === 1 ? "" : "es"} unset`}</span>}
-    </summary>
-    <div className="row" style={{ flexWrap: "wrap", gap: 12 }}>
-      {CLASS_NAMES.map(([cls, label]) => <LineupCell key={cls} provider={row.provider} cls={cls}
-        label={label} cell={row.classes[cls] ?? { model: null, shipped: null, source: null }}
-        options={options} onSaved={onSaved} />)}
-    </div>
-    <div className="actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
-      {key && <button type="button" className="small" disabled={busy} onClick={discover}>
-        List the models {key.name} can call</button>}
-      <label className="field" style={{ maxWidth: 220 }}>Runs at once, across every project
-        <input type="number" min={1} value={limit} disabled={busy} placeholder="no ceiling"
-          onChange={(e) => setLimit(e.target.value)} /></label>
-      <button type="button" className="small" disabled={busy || limit === (ceiling ? String(ceiling) : "")}
-        onClick={saveCeiling}>Save ceiling</button>
-    </div>
-    <Flash note={note} />
-  </details>;
-}
-
-function ModelsSection() {
-  const [data, setData] = useState<ModelsSettings | null>(null);
-  const [error, setError] = useState("");
-  const [stranded, setStranded] = useState<string[]>([]);
-  const [credentials, setCredentials] = useState<Credential[]>([]);
-  const [nonce, setNonce] = useState(0);
-  const catalog = useModels(nonce);
-  const registry = useProviders();
-  useEffect(() => {
-    get<ModelsSettings>("/admin/settings/models").then(setData).catch((e) => setError(e.message));
-    get<Credential[]>("/admin/settings/llm-credentials").then(setCredentials).catch(() => {});
-  }, []);
-  const saved = (said: ModelsSettings & { unrunnable?: string[] }) => {
-    setData(said); setStranded(said.unrunnable ?? []); setNonce((n) => n + 1);
-  };
-  async function setDefault(provider: string) {
-    setError("");
-    try { saved(await put<ModelsSettings>("/admin/settings/models/default-provider", { provider })); }
-    catch (e) { setError((e as Error).message); }
-  }
-  if (!data) return error ? <p className="error">{error}</p> : <div className="card muted">Loading…</div>;
-  const held = (name: string) => credentials.filter((c) => (c.provider ?? DEFAULT_PROVIDER) === name);
-  const rows = [...data.lineups].sort((a, b) =>
-    Number(held(b.provider).length > 0) - Number(held(a.provider).length > 0));
-  const reachable = new Set(registry.filter((p) => p.protocol).map((p) => p.name));
-  return <>
-    <h2 style={{ marginTop: 0 }}>Models</h2>
-    <p className="help">A role names a class of model — <b>Frontier</b>, <b>Balanced</b> or{" "}
-      <b>Fast</b> — and the provider a project pays says whose model that is. Change a class
-      here and every seat naming it on every project that provider pays moves with it on its
-      next run. A provider with nothing set for a class refuses that class&apos;s seats rather
-      than quietly running another vendor&apos;s model.</p>
-    {error && <p className="error" role="alert">{error}</p>}
-    {stranded.length > 0 && <div className="notice-box" role="alert">
-      <b>That change leaves seats unable to run:</b>
-      <ul>{stranded.map((line) => <li key={line}>{line}</li>)}</ul></div>}
-    <div className="card">
-      <label className="field" style={{ maxWidth: 340 }}>Default provider
-        <select value={data.default_provider} onChange={(e) => setDefault(e.target.value)}>
-          {data.lineups.map((r) => <option key={r.provider} value={r.provider}>{r.label}</option>)}
-        </select></label>
-      <p className="help">Where a project that pays nobody yet resolves its classes, and what
-        the Founder&apos;s Frontier model means before it has a key.</p>
-    </div>
-    {rows.filter((r) => reachable.has(r.provider) || held(r.provider).length > 0).map((row) =>
-      <ProviderLineup key={row.provider} row={row} ceiling={data.ceilings[row.provider]}
-        catalog={(catalog?.models ?? []).filter((m) => m.provider === row.provider).map((m) => m.id)}
-        credentials={held(row.provider)} onSaved={saved} />)}
-  </>;
-}
-
 // ── web search: the install's own backend ───────────────────────────────────────
 
 interface SearchBackend { name: string; label: string; base_url: string | null;
@@ -776,11 +623,11 @@ function WebSearchSection({ reload: reloadRail }: { reload: () => void }) {
   </>;
 }
 
-type SectionKey = "credentials" | "prices" | "models" | "search" | "founder" | "slack" | "people" | "account";
+type SectionKey = "providers" | "prices" | "models" | "search" | "founder" | "slack" | "people" | "account";
 
 const SECTIONS: ({ group: string; admin: boolean } | { key: SectionKey; label: string; admin: boolean })[] = [
   { group: "This box", admin: true },
-  { key: "credentials", label: "LLM credentials", admin: true },
+  { key: "providers", label: "Providers", admin: true },
   { key: "models", label: "Models", admin: true },
   { key: "prices", label: "Model prices", admin: true },
   { key: "search", label: "Web search", admin: true },
@@ -799,6 +646,7 @@ function railNote(
   s: AppSettings | null,
   users: UserRow[] | null,
   email: string,
+  readiness: Readiness | null,
 ): { text: string; tone: string } {
   if (key === "account") return { text: email, tone: "" };
   if (key === "people") {
@@ -809,14 +657,18 @@ function railNote(
       ? { text: `${waiting} not set up yet`, tone: "warn" }
       : { text: `${active.length} ${active.length === 1 ? "person" : "people"}`, tone: "good" };
   }
-  if (!s) return { text: "…", tone: "" };
-  if (key === "credentials") {
-    const { total, in_use, hidden, offerable } = s.llm_credentials;
-    if (total === 0) return { text: "none yet", tone: "warn" };
-    if (in_use === 0) return { text: `${offerable} offered · none in use`, tone: "warn" };
-    return { text: `${in_use} in use of ${offerable}${hidden ? ` · ${hidden} hidden` : ""}`,
-             tone: "good" };
+  if (key === "providers") {
+    if (!readiness) return { text: "…", tone: "" };
+    const rows = readiness.providers;
+    if (rows.length === 0) return { text: "none connected", tone: "warn" };
+    const blocked = rows.filter((p) => providerStatus(p).tone === "critical").length;
+    if (blocked) return { text: `${blocked} of ${rows.length} blocked`, tone: "warn" };
+    const attention = rows.filter((p) => providerStatus(p).tone === "warn").length;
+    return attention
+      ? { text: `${rows.length - attention} ready · ${attention} to look at`, tone: "good" }
+      : { text: `${rows.length} ready`, tone: "good" };
   }
+  if (!s) return { text: "…", tone: "" };
   if (key === "prices") return { text: "what models cost", tone: "" };
   if (key === "models") return { text: "what each class runs on", tone: "" };
   if (key === "search") return { text: "for providers that cannot", tone: "" };
@@ -844,12 +696,18 @@ export default function Settings() {
   const keys = visible.flatMap((s) => ("key" in s ? [s.key] : []));
   // An admin still lands where they always did; everybody else has one place
   // to land, and it is their own account.
-  const asked = params.get("section") as SectionKey | null;
-  const section: SectionKey = asked && keys.includes(asked) ? asked : admin ? "credentials" : "account";
+  // "credentials" is what the section was called before it was Providers; old
+  // links, and the refusal texts that still say "Settings → LLM credentials",
+  // land on the same place.
+  const raw = params.get("section");
+  const asked = (raw === "credentials" ? "providers" : raw) as SectionKey | null;
+  const section: SectionKey = asked && keys.includes(asked) ? asked : admin ? "providers" : "account";
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
 
   const reload = useCallback(() => {
     if (!admin) return;
     get<AppSettings>("/admin/settings").then(setSettings).catch((e) => setError(e.message));
+    get<Readiness>(READINESS).then(setReadiness).catch(() => {});
   }, [admin]);
 
   const reloadUsers = useCallback(() => {
@@ -865,7 +723,7 @@ export default function Settings() {
   useEffect(reload, [reload]);
   useEffect(reloadUsers, [reloadUsers]);
 
-  const platform = section === "credentials" || section === "founder" || section === "slack";
+  const platform = section === "founder" || section === "slack";
 
   return (
     <>
@@ -894,7 +752,7 @@ export default function Settings() {
               // One heading over one entry is a label for nothing.
               return admin ? <div className="grp" key={item.group}>{item.group}</div> : null;
             }
-            const note = railNote(item.key, settings, users, me?.email ?? "");
+            const note = railNote(item.key, settings, users, me?.email ?? "", readiness);
             return (
               <button
                 key={item.key}
@@ -913,7 +771,7 @@ export default function Settings() {
             <div className="card muted">Loading…</div>
           ) : (
             <>
-              {section === "credentials" && <LlmCredentials onChanged={reload} />}
+              {section === "providers" && <ProvidersSection onChanged={reload} />}
               {section === "prices" && <ModelPrices />}
               {section === "models" && <ModelsSection />}
               {section === "search" && <WebSearchSection reload={reload} />}

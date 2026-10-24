@@ -668,7 +668,7 @@ difference. Three things are worth knowing:
 - **The names are placeholders.** A migrated key is called
   `Migrated <old name> (<id>)`, because two projects could each have had a key
   named `anthropic-api-key` and the shared list needs distinct names. Open
-  Settings → LLM credentials once and rename them; the Team page of every
+  Settings → Providers once and rename them; the Team page of every
   project on a credential shows the name.
 - **Its billing mode is read from the project it paid for.** A key no project
   was attached to is decrypted to tell an API key from a subscription token —
