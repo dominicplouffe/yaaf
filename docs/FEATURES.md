@@ -194,7 +194,7 @@ dates are its cycles' (§4).
   "completed" work and evidence to check yourself, and records your verdict —
   because AI reviewers approve nearly everything, and you don't.
 - **CEO-judgment metric.** The platform tracks how much of what the CEO called
-  progress actually survived verification, and shows it on the Team page.
+  progress actually survived verification, and shows it on the project's Inbox.
 
 ## 7. Money that can't run away
 
@@ -375,7 +375,7 @@ absence, what the CEO decided on its own authority, what you decided, and what
 that leaves waiting on you. It reads in the app under **Inbox → Updates** and
 **Activity → What happened**, from `yaaf briefing`, over MCP, and — with
 `brief_daily_at` set — in your email every morning. It is deliberately not a
-panel on the Team page or the Inbox's Needs-you tab: both of those are the
+panel on the project's Inbox or the Inbox's Needs-you tab: both of those are the
 present tense, and a narrative sitting on top of them restated their own counts
 back at them. It has a tab of its own beside them instead.
 
@@ -425,7 +425,7 @@ costs you the interrupt and never the news: everything in that class is a
 section. Both what was sent and what was held are on the record.
 
 **The agenda — what it is going to do next.** A fourteen-day strip on each
-project's Team page (and `yaaf agenda`): the wall-clock wakes, the standing
+project's Inbox (and `yaaf agenda`): the wall-clock wakes, the standing
 review, the cycle roll, bet kill dates, approval and spot-check expiries, the
 budget reset, and the promised delivery date with the platform's own projection
 beside it. Recurring wakes are drawn as *rhythms* — one fact with a cadence and
@@ -546,13 +546,18 @@ evidence at all about your *project*.
 
 ## 16. Setup that can't silently fail
 
-- **Health checklist** on each project's Team page names anything misconfigured
+- **Health checklist** on each project's Inbox names anything misconfigured
   — dead billing, a credential that isn't a URL, an untested data source, a
   team running an outdated role version — in plain language, with a fix link. A
   healthy project shows nothing at all.
-- **Data sources prove themselves.** An MCP server is a one-form add (name,
-  URL, roles, Save): the URL is validated at the door, you can run a live check
-  against it, and the granted roles' sandboxes mount it as real tools.
+- **Data sources prove themselves.** An MCP server is a one-form add that asks
+  for the address first and checks it before anything is stored, including how
+  it wants you to sign in. Every source then shows one state in words with the
+  button that fixes it, and the granted roles' sandboxes mount it as real tools.
+- **Secrets & variables on one line each.** Plain settings show as they are;
+  secrets show their last four characters; an access map shows every grant,
+  variables and data sources alike, against every team, and saves ticks as one
+  batch. Rotating a key keeps who has it.
 - **Project export** downloads the whole project as one JSON file — goal,
   teams and their schedules, constitution, config, data sources, and every
   project service credential *value* (Slack tokens and webhook signing keys

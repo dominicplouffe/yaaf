@@ -21,7 +21,8 @@ REACHED = {
     "GET /admin/projects/{project_id}/requirements": "plan",
     "GET /admin/projects/{project_id}/amendments": "amend (list)",
     "GET /admin/constitution/schema": "amend (schema)",
-    "GET /admin/secrets": "credential (list) — names and scopes only",
+    "GET /admin/secrets": "credential (list) — names and scopes; plain values and hints "
+                          "are stripped",
     "GET /admin/harnesses": "catalog (harnesses)",
     "GET /admin/providers": "catalog (providers)",
     "GET /admin/models": "catalog (models)",
@@ -143,6 +144,10 @@ WITHHELD = {
     "GET /admin/secrets/{secret_id}/value":
         "reading a credential back into a model's context is exfiltration, whatever "
         "the scope. The only direction values move on this surface is in.",
+    "GET /admin/secrets/{secret_id}/history":
+        "the history lists every reveal by name and time — who read which credential "
+        "is the chairman's audit of the people on his project, and a model reading it "
+        "learns exactly when a value was last looked at. The drawer shows it.",
     "DELETE /admin/secrets/{secret_id}":
         "deleting a credential can silently break a data source or a project's "
         "billing; the browser shows what depends on it and this cannot.",
@@ -159,6 +164,14 @@ WITHHELD = {
     "POST /admin/approvals/{approval_id}/fulfill":
         "fulfilling a need means supplying a secret value to satisfy an agent's "
         "request; that stays in the browser.",
+    "POST /admin/projects/{project_id}/mcp_servers/{name}/roles":
+        "the browser's access map moves one tick without re-sending the address; a "
+        "model already changes who receives a source through `data_source` (add), "
+        "which re-checks it in the same motion — one door for a model is enough.",
+    "POST /admin/projects/{project_id}/mcp_servers/probe":
+        "it is the add form's first step — reach an address and say how it signs in — "
+        "and stores nothing. A model adding a source gets the same check, and the "
+        "same answer, from `data_source` (add) and (check).",
     "POST /admin/projects/{project_id}/mcp_servers/{name}/oauth/start":
         "returns a sign-in URL a browser must open, carrying a single-use state. A "
         "model holding it can do nothing with it.",

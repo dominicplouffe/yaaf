@@ -20,8 +20,8 @@
 - Model columns widen to 128, the width `model_prices.model` already had: a
   Bedrock inference profile or an OpenRouter route does not fit in 64.
 
-Revision ID: 0054
-Revises: 0053
+Revision ID: 0055
+Revises: 0054
 """
 import sqlalchemy as sa
 from alembic import op
@@ -34,8 +34,8 @@ from yaaf.core.migration_ops import (
 )
 from yaaf.core.models import JSONVariant, UTCDateTime
 
-revision = "0054"
-down_revision = "0053"
+revision = "0055"
+down_revision = "0054"
 branch_labels = None
 depends_on = None
 

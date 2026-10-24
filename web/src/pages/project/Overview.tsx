@@ -11,7 +11,7 @@ import {
 } from "../../api";
 import { FailoverBanner } from "../../fallback";
 import Agenda from "../../agenda";
-import { ItemActions, itemsFor, needsYou, soonestClock, useDesk, WARN_VERDICTS } from "../../desk";
+import { itemsFor, needsYou, useDesk, WARN_VERDICTS } from "../../desk";
 import { fmtWhen, usePoll } from "../../hooks";
 import Markdown from "../../Markdown";
 import { firstName, ProjectCtx } from "../../projectCtx";
@@ -32,22 +32,20 @@ import { Avatar, Badge, Btn, Term, Verdict } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
 import { chairmanDecides, deliveryVerdict, cycleOverdue, flagPlain, fmtDate, fmtRoll, fullyAutonomous } from "../../ui/project";
 import { statusBadge } from "../Projects";
-import ScheduleStrip from "./Schedule";
-import { TeamSection } from "./Team";
+import { InboxView } from "../Inbox";
 
-/** The first page of a project answers three questions, in the order a
-    chairman asks them, in about five seconds:
+/** A project's home is its Inbox: what it needs from you and what you
+    should know, in about five seconds.
 
-      is it on track?            four tiles — delivery, progress, money, people
-      does anything need me?     the decisions only you can make, with their clocks
-      what is the team doing?    every person, and the one thing each is on
+      is it on track?            one line — delivery, done, results, money, runs
+      does anything need me?     this project's rows of the one Inbox, with their buttons
+      what should I know?        the CEO's last word, its clocks, the calendar, health
 
-    It used to be a twelve-section scroll fed by sixteen pollers, each section
-    with its own visual grammar, and the reader assembled the answer. The
-    sections that were really other pages went to them — the roster to Team,
-    the money to Spend, the records to Activity — and what stayed is what you
-    open the project to find out. Everything here links to where its detail
-    lives. */
+    The team used to be drawn here too, as an org chart with the decisions in
+    the chairman's box. At thirteen teams the chart was three screens wide and
+    the decisions scrolled away with it, so the team is a page of its own and
+    this one keeps what you open a project to find out. Everything here links
+    to where its detail lives. */
 
 /** An obligation to speak, opened by the platform from arithmetic or a failed
     check — never by the CEO deciding the news was worth your time. */
@@ -539,9 +537,10 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
 const WHERE_TO: Record<string, [string, string, boolean?]> = {
   settings: ["/details/settings", "fix in Settings"],
   money: ["/details/settings?s=money", "fix in Settings → Money"],
+  data_sources: ["/details/settings?s=sources", "open Data sources"],
   plan: ["/details/roadmap", "open the Roadmap"],
   boardroom: ["/chat", "open the chat"],
-  team: ["", "see the team"],
+  team: ["/team", "see the team"],
   // A price is the install's, not the project's, so it is set where prices
   // live — an app-wide page, not one under the project.
   prices: ["/settings?section=prices", "open Model prices", true],
@@ -563,7 +562,7 @@ const FIX_AT: Record<string, [string, string]> = {
   failing: ["/details/activity/runs", "See the runs"],
   late: ["/details/roadmap", "Cut scope or move the date"],
   at_risk: ["/details/roadmap", "See the plan"],
-  stalled: ["", "See who is stuck"],
+  stalled: ["/team", "See who is stuck"],
   spinning: ["/details/activity/runs", "See what the runs did"],
 };
 
@@ -594,39 +593,13 @@ export default function Overview({
     () => (deskProject ? itemsFor(deskProject, desk.reload) : []),
     [deskProject, desk.reload],
   );
-  // Snoozed rows and decisions still in their undo window leave this list as
-  // they leave the Inbox and the badge.
-  const yours = items.filter((i) => needsYou(i) && !desk.hidden.has(i.key));
-  const soonest = soonestClock(yours);
   const health = runHealth(ctx.runs ?? []);
   const ceo = firstName(ctx.ceoName);
   const auto = autonomyWord(dash);
   const base = `/projects/${projectId}`;
   const unpaid = !dash.billing_secret_id && dash.integrations?.runtime !== "mock";
 
-  // ── needs you ──
-  // Only what decides itself against you if ignored, and nothing that merely
-  // wants reading. It is the Inbox, filtered to this project, so the count
-  // here, the count in the sidebar and the count in the Inbox are one count.
   const rawFlags = flagsView?.flags ?? [];
-  const needs: React.ReactNode[] = [];
-  for (const it of yours) {
-    needs.push(
-      <div className="need" key={it.key}>
-        <span className={`kind-ic k-${it.type}`}><Icon name={KIND_ICON[it.type]} size={15} /></span>
-        <div className="grow">
-          <Link className="need-t" to={`/inbox?item=${encodeURIComponent(it.key)}`}>{it.what}</Link>
-          <div className="need-m">
-            <span>{it.kind}</span>
-            <span className={it.clocked && it.at - Date.now() < 6 * 3_600_000 ? "warn" : ""}>
-              <Icon name="clock" size={12} /> {it.consequence}
-            </span>
-          </div>
-        </div>
-        <div className="need-a"><ItemActions item={it} /></div>
-      </div>,
-    );
-  }
 
   // ── your CEO is telling you ──
   //
@@ -723,43 +696,6 @@ export default function Overview({
   }
 
   const steer = dash.can_steer !== false;
-  const chairName = dash.my_role === "chairman" ? "You" : (dash.chairman?.display_name ?? "The chairman");
-
-  // The chairman sits at the top of his own org chart, and what waits on him
-  // sits in his box — not in a card beside the team, as if it were a
-  // different subject. The people below are why the decisions exist.
-  const chair = (
-    <div className={`onode chair you${needs.length ? " waiting" : ""}`}>
-      <span className="on-id">
-        <Avatar name={dash.chairman?.display_name ?? "You"} team="chair" size="lg" />
-        <span className="on-name">
-          <b>{chairName}</b>
-          <span>
-            {dash.my_role === "chairman" ? "Owner" : "Chairman"} · money, dates, scope
-            {needs.length > 0 && <> · <span className="warn">{needs.length} waiting on you</span></>}
-          </span>
-        </span>
-        <span className="grow" />
-        <Link className="card-link" to="/inbox">Inbox <Icon name="arrow" size={13} /></Link>
-      </span>
-      {needs.length > 0 ? (
-        <div className="needs">
-          {needs}
-          {soonest && <span className="help">The soonest decides itself {fmtSoon(new Date(soonest.at).toISOString())}.</span>}
-        </div>
-      ) : (
-        <span className="on-doing">
-          <span className="good"><Icon name="check" size={14} strokeWidth={2.2} /></span>{" "}
-          Nothing needs a decision from you.{" "}
-          <span className="help">
-            {fullyAutonomous(dash)
-              ? `You set this project to run itself, so scope, dates and verdicts are ${ceo}'s to call.`
-              : "Money, legal questions and credentials always come here first."}
-          </span>
-        </span>
-      )}
-    </div>
-  );
 
   return (
     <>
@@ -838,7 +774,13 @@ export default function Overview({
       <LateBanner ctx={ctx} />
       <FailoverBanner dash={dash} settingsLink={`${base}/details/settings?s=money`} />
 
-      <TeamSection ctx={ctx} chair={chair} foot={<TeamFoot ctx={ctx} published={shelf?.matched ?? null} />} />
+      <TeamFoot ctx={ctx} published={shelf?.matched ?? null} />
+
+      {/* The project's home is what it needs from you: this project's rows
+          of the one Inbox, with their buttons, and what you should know. The
+          team itself is a page of its own — at eighteen people an org chart
+          is a place you go to, not a header you scroll past. */}
+      <InboxView project={projectId} />
 
       <div className="ov-grid">
         <div className="ov-col">
@@ -859,8 +801,6 @@ export default function Overview({
           <ComingUp projectId={projectId} />
         </aside>
       </div>
-
-      <ScheduleStrip ctx={ctx} />
 
       {health.early.length > 0 && (
         <div className={`strip${health.ratio >= 0.2 ? " serious" : ""}`} style={{ marginTop: "var(--s4)" }}>
@@ -883,8 +823,3 @@ export default function Overview({
     </>
   );
 }
-
-const KIND_ICON = {
-  approval: "check", ask: "help", scope: "list", commitment: "calendar", verdict: "eye",
-  bet: "target", frozen: "alert", kill: "target", drought: "shield", budget: "wallet", noproof: "shield",
-} as const;

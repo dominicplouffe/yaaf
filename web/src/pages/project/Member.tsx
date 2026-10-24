@@ -106,7 +106,7 @@ export default function Member({ ctx }: { ctx: ProjectCtx }) {
   if (!seat) {
     return (
       <>
-        <Link to={base} className="back-link">← Your team</Link>
+        <Link to={`${base}/team`} className="back-link">← Your team</Link>
         <p className="subtitle">{ctx.org ? "Nobody by that id is on this project." : "Loading…"}</p>
       </>
     );
@@ -138,7 +138,7 @@ export default function Member({ ctx }: { ctx: ProjectCtx }) {
 
   return (
     <>
-      <Link to={base} className="back-link">← Your team</Link>
+      <Link to={`${base}/team`} className="back-link">← Your team</Link>
       <header className="member-head">
         <span className="av-wrap">
           <Avatar name={seat.name} team={seat.ceo ? "leadership" : seat.team} size="lg" />

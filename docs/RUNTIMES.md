@@ -933,7 +933,7 @@ Designed and tracked in [PROVIDERS.md](PROVIDERS.md); the short list:
 - [x] One loop harness, `yaaf_loop`, on every provider's own wire
       (`yaaf/runtimes/wire.py`, shared with the Founder, the live check,
       discovery and smoke); `anthropic_api` and `openai_compatible` folded
-      into it (migration `0054`, aliases kept)
+      into it (migration `0055`, aliases kept)
 - [x] The default harness is the credential kind's; OpenAI and Gemini keys
       run natively on the loop
 - [x] Azure OpenAI, Bedrock, Vertex (minted tokens, refreshed by the run),

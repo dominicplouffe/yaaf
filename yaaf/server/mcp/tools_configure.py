@@ -252,7 +252,9 @@ def data_source(principal: Principal, session: Session, arguments: dict) -> dict
     description=(
         "Store or re-scope a credential. Values go in and never come back out: no tool "
         "on this surface reads one, at any scope. Omit `value` to change which roles "
-        "get an existing credential without re-pasting it. Set `filename` when the "
+        "get an existing credential without re-pasting it; omit `roles` to keep who has "
+        "it. `visibility` plain marks a setting (a timezone, an account id) that is not "
+        "secret — still never readable here. Set `filename` when the "
         "credential IS a file — a service-account key, a PEM, a kubeconfig — and "
         "granted roles receive the path to it rather than its contents."
     ),
@@ -266,17 +268,20 @@ def data_source(principal: Principal, session: Session, arguments: dict) -> dict
                                                   "on disk in the sandbox. Text files only "
                                                   "here; binary goes through the dashboard"},
                          roles={"type": "array", "items": {"type": "string"}},
+                         visibility={"type": "string", "enum": ["secret", "plain"]},
                          kind={"type": "string", "enum": ["service"]}),
 )
 def credential(principal: Principal, session: Session, arguments: dict) -> dict:
     project = resolve_project(session, principal, required(arguments, "project"))
     if (arguments.get("verb") or "list") == "list":
         rows = _call(principal, admin.list_secrets, project_id=project.id, session=session)
-        # The endpoint returns names and scopes only; asserted here as well
-        # because this is the surface where a leak would be worst.
+        # The endpoint hands a person who could reveal a value its plain form
+        # or its last four characters. A model is not that person: both are
+        # stripped here, because this is the surface where a leak would be worst.
         return envelope.fit({
             "project": project.slug,
-            "credentials": [{k: v for k, v in r.items() if k != "value"} for r in rows],
+            "credentials": [{k: v for k, v in r.items() if k not in ("value", "hint")}
+                            for r in rows],
         }, arguments.get("detail"))
 
     name = required(arguments, "name")
@@ -284,7 +289,10 @@ def credential(principal: Principal, session: Session, arguments: dict) -> dict:
     preview = confirm.gate(session, principal, "credential",
                            {k: v for k, v in arguments.items() if k != "value"}, {
                                "verb": "save", "project": project.slug, "name": name,
-                               "roles": arguments.get("roles") or [],
+                               # Omitted keeps who has it, so the preview must
+                               # not read as "nobody".
+                               "roles": arguments.get("roles", "unchanged"),
+                               "visibility": arguments.get("visibility") or "unchanged",
                                "kind": arguments.get("kind") or "service",
                                "filename": filename,
                                "value_supplied": bool(arguments.get("value")),
@@ -306,7 +314,8 @@ def credential(principal: Principal, session: Session, arguments: dict) -> dict:
                     body=admin.SecretIn(project_id=project.id, name=name,
                                         value=value,
                                         filename=filename,
-                                        role_scopes=arguments.get("roles") or [],
+                                        role_scopes=arguments.get("roles"),
+                                        visibility=arguments.get("visibility"),
                                         kind=arguments.get("kind")),
                     session=session)
     scrubbed = {k: v for k, v in arguments.items() if k != "value"}

@@ -1017,14 +1017,14 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         if url_secret is None:
             add(f"data-source:{name}", "fail",
                 f"data source '{name}': its URL credential is missing — re-save it",
-                "settings")
+                "data_sources")
             continue
         ungranted = [r for r in source.get("roles", [])
                      if r not in (url_secret.role_scopes or [])]
         if ungranted:
             add(f"data-source:{name}", "fail",
                 f"data source '{name}': credential not granted to role(s) "
-                f"{', '.join(ungranted)} — re-save it", "settings")
+                f"{', '.join(ungranted)} — re-save it", "data_sources")
             continue
         oauth_status = (source.get("oauth") or {}).get("status")
         if source.get("auth") == "oauth" and oauth_status != "connected":
@@ -1036,19 +1036,19 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 oauth_status, "its OAuth connection was never made")
             verb = "Reconnect" if oauth_status == "needs_reauth" else "Connect"
             add(f"data-source:{name}", "fail",
-                f"data source '{name}': {what} — press {verb} in Settings", "settings")
+                f"data source '{name}': {what} — press {verb} in Settings", "data_sources")
             continue
         last = source.get("last_check") or {}
         if not last:
             add(f"data-source:{name}", "warn",
-                f"data source '{name}': never tested — run its check", "settings")
+                f"data source '{name}': never tested — run its check", "data_sources")
         elif last.get("ok"):
             add(f"data-source:{name}", "ok",
-                f"data source '{name}': {last.get('detail', 'reachable')}", "settings")
+                f"data source '{name}': {last.get('detail', 'reachable')}", "data_sources")
         else:
             add(f"data-source:{name}", "fail",
                 f"data source '{name}': last check failed — {last.get('detail', '')}",
-                "settings")
+                "data_sources")
 
     # Teams: no role-version drift. (Roles never own data sources — the whole
     # role-source failure class was removed with the concept.)

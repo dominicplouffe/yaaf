@@ -22,6 +22,7 @@ import {
   savedName,
   sourceReady,
 } from "../datasource";
+import { TeamSwitches } from "../grants";
 import { CeoPicker, HirePanel, needsOf, roughMonthly } from "../roles";
 import { clip, CredentialValue, SecretInput } from "../ui";
 import type { FounderStatus, PresetCard } from "./StartProject";
@@ -47,6 +48,8 @@ interface CredentialDraft {
   /** Set => the credential IS a file and `value` is base64 of its bytes. */
   filename: string | null;
   grants: string[]; // role slugs
+  /** Carried from a full backup so a plain setting stays plain on the twin. */
+  visibility?: "secret" | "plain";
 }
 
 function slugify(name: string): string {
@@ -679,7 +682,8 @@ export default function NewProject() {
           // name did not travel, so "" asks the door to name it — which is the
           // same answer the door gives anyone who does not supply one.
           .map((s) => ({ name: s.name, value: s.value ?? "",
-                         filename: s.file ? "" : null, grants: s.role_scopes })),
+                         filename: s.file || s.filename ? s.filename ?? "" : null,
+                         grants: s.role_scopes, visibility: s.visibility })),
       );
       // Which cards the file IS — the bar, the tempo and the authority group —
       // read together in `cardsFromBundle`, because all three need the served
@@ -817,21 +821,6 @@ export default function NewProject() {
       (source) => [source.url_secret, source.name] as [string, string],
     ),
   );
-
-  function toggleGrant(i: number, slug: string) {
-    setCredentials((prev) =>
-      prev.map((c, j) =>
-        j === i
-          ? {
-              ...c,
-              grants: c.grants.includes(slug)
-                ? c.grants.filter((g) => g !== slug)
-                : [...c.grants, slug],
-            }
-          : c,
-      ),
-    );
-  }
 
   // The fire drill. Nothing here creates anything: the spec is run as a
   // project in a throwaway process on the mock runtime, and what comes back is
@@ -1094,12 +1083,13 @@ export default function NewProject() {
             role_scopes: cred.grants.filter((g) => usedRoleSlugs.includes(g) || g === chosenCeo),
             kind: "service",
             ...(cred.filename === null ? {} : { filename: cred.filename }),
+            ...(cred.visibility && cred.filename === null ? { visibility: cred.visibility } : {}),
           });
         }
       } catch (err) {
         // The project exists either way — send them to Settings to finish.
         alert(`Project created, but storing a credential failed: ${(err as Error).message}. ` +
-              "Add it in Settings → Service credentials.");
+              "Add it in Settings → Secrets & variables.");
       }
       // Shape was checked above; this asks the harder question — does anything
       // answer at that address? A source that cannot answer is a project whose
@@ -1142,7 +1132,7 @@ export default function NewProject() {
             "form tests an address and holds the Connect button — then start the project.",
         );
         if (created.webhooks) setDone(created.id);
-        else navigate(`/projects/${created.id}/details/settings?s=data`);
+        else navigate(`/projects/${created.id}/details/settings?s=sources`);
         return;
       }
       // The chairman already explained all of this to the Founder and argued
@@ -1487,7 +1477,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             ))}
           </div>
           {modeNotice && (
-            <p className="help" style={{ marginTop: 10, color: "var(--warn, var(--ink-2))" }}>
+            <p className="help" style={{ marginTop: 10, color: "var(--warning)" }}>
               {modeNotice}
             </p>
           )}
@@ -1541,7 +1531,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         </div>
         <h2>Teams</h2>
         {missingRoleSlugs.length > 0 && (
-          <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+          <p className="help" style={{ color: "var(--warning)" }}>
             This setup file hires {missingRoleSlugs.length === 1 ? "a role" : "roles"} this
             install does not have: <strong>{missingRoleSlugs.join(", ")}</strong>. The examples
             hire from the role library by slug rather than carrying their prompts, so a role
@@ -1780,7 +1770,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             ))}
           </div>
           {autonomyNotice && (
-            <p className="help" style={{ marginTop: 10, color: "var(--warn, var(--ink-2))" }}>
+            <p className="help" style={{ marginTop: 10, color: "var(--warning)" }}>
               {autonomyNotice}
             </p>
           )}
@@ -1883,7 +1873,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           </div>
           {needsReviewSeat && (
             <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8,
-              border: "1px solid var(--warn, var(--border))",
+              border: "1px solid var(--warning)",
               background: "rgba(var(--warning-rgb), 0.09)", fontSize: 13 }}>
               This preset asks for the work to be read by somebody who did not write it,
               and no team on your roster does that — so the only reader of a deliverable
@@ -2224,7 +2214,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             already added — otherwise two paragraphs of plumbing sat between
             the summary and the button that creates the project. */}
         <details className="opt-sec" open={requiredScopes.length > 0 || credentials.length > 0}>
-        <summary><h2>Service credentials (optional)</h2>
+        <summary><h2>Secrets &amp; variables (optional)</h2>
           <span className="help">keys for WordPress, GitHub, Stripe… — or add them later in Settings</span></summary>
         <p className="subtitle">
           Keys your agents will need for outside services (WordPress, GitHub, Stripe…). Encrypted
@@ -2285,24 +2275,13 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 )}
               </div>
             </div>
-            <label className="field">Which roles receive it (nobody, until you grant)</label>
-            {usedRoleSlugs.length === 0 ? (
-              <p className="help">Pick your teams' roles above first.</p>
-            ) : (
-              <div className="pill-row">
-                {usedRoleSlugs.map((slug) => (
-                  <label key={slug} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <input
-                      type="checkbox"
-                      style={{ width: "auto" }}
-                      checked={cred.grants.includes(slug)}
-                      onChange={() => toggleGrant(i, slug)}
-                    />
-                    {roleLabel(slug)}
-                  </label>
-                ))}
-              </div>
-            )}
+            <TeamSwitches
+              options={usedRoleSlugs.map((slug) => ({ slug, name: roleLabel(slug) }))}
+              selected={cred.grants}
+              onChange={(grants) => setCredential(i, { grants })}
+              what={cred.name.trim() ? <code>${envVarName(cred.name)}</code> : "it"}
+              emptyHint="Pick your teams' roles above first."
+            />
             <div className="actions">
               <button
                 type="button"

@@ -226,7 +226,6 @@ function DecisionCard({
             <input value={secretValue} type="password" placeholder="Value"
               onChange={(e) => setSecretValue(e.target.value)} />
           </div>
-          <div className="grant-label">Who receives it</div>
           <RoleGrants
             org={org}
             selected={roles}

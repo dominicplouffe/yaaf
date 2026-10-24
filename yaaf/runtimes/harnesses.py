@@ -179,7 +179,7 @@ LEGACY_RUNTIME = "agent_sdk"
 
 #: Names a harness used to go by. Each still resolves — in an export bundle
 #: written before the rename, from an old client, on a run row that ran under
-#: it — and none is ever written again (migration 0054 rewrote the stored
+#: it — and none is ever written again (migration 0055 rewrote the stored
 #: ones). `anthropic_api` and `openai_compatible` were yaaf's loop on two wires
 #: before the wire became the provider's fact.
 ALIASES = {"anthropic_api": "yaaf_loop", "openai_compatible": "yaaf_loop",

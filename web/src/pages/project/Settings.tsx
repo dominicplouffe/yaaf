@@ -8,33 +8,22 @@ import {
   AmendmentRow,
   CloneResult,
   Dashboard,
-  del,
   get,
   ConstitutionField,
-  McpServerEntry,
   OrgView,
   patch,
   post,
   ProjectBundle,
+  SecretRow,
   SlackProvision,
 } from "../../api";
-import {
-  BLANK_DATA_SOURCE,
-  DataSourceDraft,
-  DataSourceFields,
-  DataSourceIntro,
-  dataSourceBody,
-  envVarName,
-  RoleOption,
-  savedName,
-  SourceAuth,
-  sourceReady,
-} from "../../datasource";
 import { fmtWhen, usePoll } from "../../hooks";
 import type { FounderStatus, PresetCard } from "../StartProject";
-import { RoleGrants } from "../../roles";
+import DataSources from "./DataSources";
+import Secrets, { pendingNeeds } from "./Secrets";
+import { useProject } from "../../projectCtx";
 import { MembersPanel } from "./Members";
-import { ConfirmModal, CredentialValue, fmtUnit, SecretInput, StoredSecret } from "../../ui";
+import { ConfirmModal, fmtUnit, SecretInput, StoredSecret } from "../../ui";
 
 /** "amazon-audit-v2" → "amazon-audit-v3"; "Acme" → "Acme (clone)". Twins come
     in numbered runs far more often than they come in ones. */
@@ -49,16 +38,6 @@ type Act = (
   fn: () => Promise<unknown>,
   ok: string | ((result: unknown) => string),
 ) => Promise<void>;
-
-interface SecretRow {
-  id: string;
-  name: string;
-  project_id: string | null;
-  role_scopes: string[];
-  kind: "service" | "billing";
-  /** Set => the credential IS a file; its variable holds the path, not the value. */
-  filename: string | null;
-}
 
 /** Config addresses a secret by name (`slack.bot_token_secret`, a data source's
     `url_secret`); revealing one needs its id. One lookup, used by every card. */
@@ -506,450 +485,6 @@ function SlackBridge({
   );
 }
 
-interface DataSourceSaveResult {
-  name: string;
-  check: { ok: boolean; detail: string };
-  needs_connect?: boolean;
-  note: string;
-}
-
-function checkBadge(last: McpServerEntry["last_check"]) {
-  if (!last) return <span className="badge warn">never tested</span>;
-  return last.ok ? (
-    <span className="badge good">reachable</span>
-  ) : (
-    <span className="badge critical">unreachable</span>
-  );
-}
-
-/** The stored mode, with the legacy inference the server also applies: entries
-    saved before OAuth existed carry no `auth`, and for them a token means bearer. */
-function sourceAuthOf(source: McpServerEntry): SourceAuth {
-  return source.auth ?? (source.bearer_secret ? "bearer" : "none");
-}
-
-function oauthBadge(source: McpServerEntry) {
-  const status = source.oauth?.status;
-  if (status === "connected") return <span className="badge good">connected</span>;
-  if (status === "pending") return <span className="badge warn">sign-in pending</span>;
-  if (status === "needs_reauth") return <span className="badge critical">needs re-auth</span>;
-  return <span className="badge warn">not connected</span>;
-}
-
-/** Start the browser sign-in for an OAuth source. The tab must be opened by
-    the click itself (popup blockers kill anything opened after an await), so
-    callers pass one pre-opened blank and we point it at the provider. */
-async function startOAuthSignIn(projectId: string, name: string, tab: Window | null) {
-  const started = await post<{ authorize_url: string; note: string }>(
-    `/admin/projects/${projectId}/mcp_servers/${name}/oauth/start`,
-    {},
-  );
-  if (tab) tab.location.href = started.authorize_url;
-  else window.open(started.authorize_url, "_blank");
-  return started;
-}
-
-/** The org's teams as grant targets — one entry per distinct role, carrying
-    the team(s) running it, which is how RoleTicks labels the boxes. */
-function roleOptionsOf(org: OrgView | null): RoleOption[] {
-  const options: RoleOption[] = [];
-  for (const team of org?.teams ?? []) {
-    if (!team.role_slug) continue;
-    const existing = options.find((option) => option.slug === team.role_slug);
-    if (existing) existing.teams.push(team.name);
-    else options.push({ slug: team.role_slug, teams: [team.name] });
-  }
-  return options;
-}
-
-function savedMessage(result: unknown): string {
-  const saved = result as DataSourceSaveResult;
-  if (saved.needs_connect)
-    return `Saved '${saved.name}' — finish the provider's sign-in in the opened tab; ` +
-      "this page will show it connect.";
-  return (
-    `Saved '${saved.name}' — ${saved.check.ok ? "" : "warning: "}` +
-    `${saved.check.detail}. ${saved.note}`
-  );
-}
-
-/** Editing a source in place. The address is fetched and shown outright — an
-    address is not a password, and you cannot fix a port you cannot see. The
-    token stays masked and blank-keeps-current, so changing only the URL never
-    has to touch it. */
-function DataSourceEditor({
-  projectId, source, secrets, roleOptions, act, busy, onDone,
-}: {
-  projectId: string;
-  source: McpServerEntry;
-  secrets: SecretRow[];
-  roleOptions: RoleOption[];
-  act: Act;
-  busy: boolean;
-  onDone: () => void;
-}) {
-  const urlSecretId = secretByName(secrets, source.url_secret)?.id;
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [dropToken, setDropToken] = useState(false);
-  // Not prefilled from source.oauth.client_id: that id may be a dynamic
-  // registration the server owns, and re-submitting it while a URL change
-  // resets the connection would keep a client whose secret was just dropped.
-  // The Advanced box is for a client the chairman pastes by hand.
-  const [draft, setDraft] = useState<DataSourceDraft>({
-    ...BLANK_DATA_SOURCE,
-    name: source.name,
-    roles: source.roles,
-    access: source.access ?? "inline",
-    auth: sourceAuthOf(source),
-    scope: source.oauth?.scope ?? "",
-  });
-  const { url, auth } = draft;
-  const heldToken = !!source.bearer_secret && sourceAuthOf(source) === "bearer";
-
-  useEffect(() => {
-    setLoadError(null);
-    if (!urlSecretId) {
-      // Either the list has not arrived yet, or the row really is gone — this
-      // effect re-runs the moment an id shows up, so only the latter sticks.
-      setLoadError("its stored address is missing — type it again to repair the source");
-      return;
-    }
-    get<{ value: string }>(`/admin/secrets/${urlSecretId}/value`)
-      .then((got) => setDraft((prev) => ({ ...prev, url: got.value })))
-      .catch((e) => setLoadError((e as Error).message));
-  }, [urlSecretId]);
-
-  return (
-    <div className="source-editor">
-      <DataSourceFields
-        value={draft}
-        onChange={setDraft}
-        roleOptions={roleOptions}
-        showName={false}
-        bearerLabel={
-          <>
-            Bearer token —{" "}
-            {heldToken
-              ? dropToken ? "will be removed" : "blank keeps the current one"
-              : "none stored"}
-          </>
-        }
-        bearerPlaceholder={heldToken ? "blank = keep current" : "paste the credential"}
-        bearerDisabled={dropToken}
-        belowBearer={heldToken && (
-          <label className="help" style={{ display: "flex", gap: 5, alignItems: "center" }}>
-            <input
-              type="checkbox"
-              style={{ width: "auto" }}
-              checked={dropToken}
-              onChange={(e) => setDropToken(e.target.checked)}
-            />
-            remove the stored token — this server needs no auth
-          </label>
-        )}
-        rolesLabel="Which roles get this source"
-      />
-      <div className="actions">
-        <button
-          className="small primary"
-          disabled={busy || !url.trim() || draft.roles.length === 0}
-          onClick={() => {
-            // Pre-open the tab in the click itself, before any await, or the
-            // popup blocker eats the provider's sign-in page. Editing a
-            // connected source's URL resets it server-side and answers
-            // needs_connect, so an OAuth save may need the tab even when the
-            // pre-save status was 'connected' — open it whenever auth is oauth.
-            const tab = auth === "oauth" ? window.open("", "_blank") : null;
-            act(async () => {
-              try {
-                const result = await post<DataSourceSaveResult>(
-                  `/admin/projects/${projectId}/mcp_servers`,
-                  {
-                    ...dataSourceBody(draft),
-                    // Omitted keeps the stored token; "" removes it; a value rotates.
-                    bearer:
-                      auth === "bearer" ? (dropToken ? "" : draft.bearer.trim() || undefined)
-                      : auth === "none" && source.bearer_secret ? "" : undefined,
-                  },
-                );
-                if (result.needs_connect) await startOAuthSignIn(projectId, source.name, tab);
-                else tab?.close();
-                onDone();
-                return result;
-              } catch (e) {
-                tab?.close();
-                throw e;
-              }
-            }, savedMessage);
-          }}
-        >
-          Save changes
-        </button>
-        <button className="small" disabled={busy} onClick={onDone}>
-          cancel
-        </button>
-        {loadError && (
-          <span className="help" style={{ color: "var(--critical)" }}>{loadError}</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function DataSources({
-  projectId,
-  dash,
-  secrets,
-  act,
-  busy,
-  reload,
-}: {
-  projectId: string;
-  dash: Dashboard;
-  secrets: SecretRow[];
-  act: Act;
-  busy: boolean;
-  reload: () => void;
-}) {
-  const sources = (dash.integrations["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
-  const [org, setOrg] = useState<OrgView | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState<DataSourceDraft>(BLANK_DATA_SOURCE);
-  // The source whose sign-in tab is open right now. While set, the dash is
-  // re-polled so the page notices the callback landing without a refresh.
-  const [connecting, setConnecting] = useState<string | null>(null);
-
-  useEffect(() => {
-    get<OrgView>(`/observe/projects/${projectId}/org`).then(setOrg).catch(() => {});
-  }, [projectId]);
-
-  useEffect(() => {
-    if (!connecting) return;
-    const startedAt = Date.now();
-    const timer = window.setInterval(() => {
-      if (Date.now() - startedAt > 120_000) setConnecting(null);
-      else reload();
-    }, 3000);
-    return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connecting]);
-  useEffect(() => {
-    if (connecting &&
-        sources.find((s) => s.name === connecting)?.oauth?.status === "connected")
-      setConnecting(null);
-  }, [sources, connecting]);
-
-  const roleOptions = roleOptionsOf(org);
-
-  return (
-    <>
-      <DataSourceIntro>
-        To change one, press <b>edit</b> — no role editing, no repin, no CLI.
-      </DataSourceIntro>
-
-      {sources.length > 0 && (
-        <table style={{ marginBottom: 14 }}>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Address</th>
-              <th>Read as</th>
-              <th>Roles</th>
-              <th style={{ width: "28%" }}>Last check</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {sources.map((source) => (
-              <Fragment key={source.name}>
-                <tr>
-                  <td className="mono">
-                    {source.name}
-                    <div className="help">
-                      ${envVarName(source.url_secret)}
-                      {source.bearer_secret && ` · $${envVarName(source.bearer_secret)}`}
-                    </div>
-                  </td>
-                  <td className="mono">
-                    {source.url_host}:{source.url_port}
-                  </td>
-                  <td>
-                    {(source.access ?? "inline") === "bulk" ? (
-                      <>
-                        <span className="badge accent">bulk</span>
-                        <div className="help">to a file, via data_fetch</div>
-                      </>
-                    ) : (
-                      <>
-                        <span className="badge">inline</span>
-                        <div className="help">into the model's context</div>
-                      </>
-                    )}
-                  </td>
-                  <td>
-                    <div className="pill-row">
-                      {source.roles.map((slug) => (
-                        <span key={slug} className="badge accent">
-                          {slug}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
-                  <td>
-                    {sourceAuthOf(source) === "oauth" && <>{oauthBadge(source)}{" "}</>}
-                    {checkBadge(source.last_check)}
-                    {source.oauth?.status === "connected" && source.oauth.expires_at && (
-                      <div className="help">
-                        token refreshes before {fmtWhen(source.oauth.expires_at)}
-                      </div>
-                    )}
-                    {source.last_check && (
-                      <div className="help">
-                        {source.last_check.detail} — {fmtWhen(source.last_check.at)}
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <div className="actions" style={{ margin: 0 }}>
-                      {sourceAuthOf(source) === "oauth" && (
-                        <button
-                          className={`small${source.oauth?.status === "connected" ? "" : " primary"}`}
-                          disabled={busy}
-                          onClick={() => {
-                            // Opened in the click itself — see startOAuthSignIn.
-                            const tab = window.open("", "_blank");
-                            act(async () => {
-                              try {
-                                const started = await startOAuthSignIn(
-                                  projectId, source.name, tab);
-                                setConnecting(source.name);
-                                return started;
-                              } catch (e) {
-                                tab?.close();
-                                throw e;
-                              }
-                            }, `Sign-in opened for '${source.name}' — finish it in the ` +
-                               "new tab; this page will show it connect.");
-                          }}
-                        >
-                          {source.oauth?.status === "connected" ||
-                           source.oauth?.status === "needs_reauth"
-                            ? "reconnect" : "connect"}
-                        </button>
-                      )}
-                      <button
-                        className="small"
-                        disabled={busy}
-                        onClick={() =>
-                          act(async () => {
-                            const check = await post<{ ok: boolean; detail: string }>(
-                              `/admin/projects/${projectId}/mcp_servers/${source.name}/check`,
-                              {},
-                            );
-                            if (!check.ok)
-                              throw new Error(`'${source.name}': ${check.detail}`);
-                            return check;
-                          }, (result) =>
-                            `'${source.name}': ${(result as { detail: string }).detail}`)
-                        }
-                      >
-                        test
-                      </button>
-                      <button
-                        className="small"
-                        disabled={busy}
-                        onClick={() =>
-                          setEditing(editing === source.name ? null : source.name)
-                        }
-                      >
-                        {editing === source.name ? "close" : "edit"}
-                      </button>
-                      <button
-                        className="small danger"
-                        disabled={busy}
-                        onClick={() => {
-                          if (
-                            !confirm(
-                              `Remove data source '${source.name}'? Its stored URL and token ` +
-                                "secrets are deleted too" +
-                                (sourceAuthOf(source) === "oauth"
-                                  ? " (including its OAuth tokens)" : "") +
-                                "; granted roles lose these tools on their next run.",
-                            )
-                          )
-                            return;
-                          act(
-                            () => del(`/admin/projects/${projectId}/mcp_servers/${source.name}`),
-                            `Removed '${source.name}'. Granted roles lose it on their next run.`,
-                          );
-                        }}
-                      >
-                        delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-                {editing === source.name && (
-                  <tr>
-                    <td colSpan={6}>
-                      <DataSourceEditor
-                        projectId={projectId}
-                        source={source}
-                        secrets={secrets}
-                        roleOptions={roleOptions}
-                        act={act}
-                        busy={busy}
-                        onDone={() => setEditing(null)}
-                      />
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <label className="field">Add a data source</label>
-      <DataSourceFields value={draft} onChange={setDraft} roleOptions={roleOptions} />
-      <div className="actions">
-        <button
-          className="small primary"
-          disabled={busy || !sourceReady(draft)}
-          onClick={() => {
-            const name = savedName(draft);
-            // Pre-open the sign-in tab inside the click, before any await —
-            // a tab opened after the network round-trip is popup-blocked.
-            const tab = draft.auth === "oauth" ? window.open("", "_blank") : null;
-            act(async () => {
-              try {
-                const result = await post<DataSourceSaveResult>(
-                  `/admin/projects/${projectId}/mcp_servers`,
-                  dataSourceBody(draft),
-                );
-                if (result.needs_connect) {
-                  await startOAuthSignIn(projectId, name, tab);
-                  setConnecting(name);
-                } else tab?.close();
-                setDraft(BLANK_DATA_SOURCE);
-                return result;
-              } catch (e) {
-                tab?.close();
-                throw e;
-              }
-            }, savedMessage);
-          }}
-        >
-          Save data source
-        </button>
-        <span className="help">
-          A garbage URL is refused at this button, not discovered at 9am.
-        </span>
-      </div>
-    </>
-  );
-}
-
 function GithubWorkspace({
   projectId,
   dash,
@@ -1004,186 +539,6 @@ function GithubWorkspace({
             </button>
           </div>
         </>
-      )}
-    </>
-  );
-}
-
-function CredentialsManager({
-  projectId,
-  dash,
-  org,
-  secrets,
-  refreshSecrets,
-  act,
-  busy,
-}: {
-  projectId: string;
-  dash: Dashboard;
-  org: OrgView | null;
-  secrets: SecretRow[];
-  refreshSecrets: () => void;
-  act: Act;
-  busy: boolean;
-}) {
-  const [name, setName] = useState("");
-  const [value, setValue] = useState("");
-  const [filename, setFilename] = useState<string | null>(null);
-  const [grants, setGrants] = useState<string[]>([]);
-
-  // Only the credentials the chairman created by hand. The rest are owned by
-  // the thing that made them and are edited there, so one object never shows
-  // up as three rows: billing lives in the billing card, a data source's
-  // address and token live on the source, Slack's tokens live on the bridge.
-  const slack = dash.integrations["slack"] as SlackConfig | null | undefined;
-  const sources = (dash.integrations["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
-  const managed = new Set(
-    [
-      ...sources.flatMap((s) => [s.url_secret, s.bearer_secret]),
-      slack?.bot_token_secret,
-      slack?.signing_secret,
-      slack?.app_token_secret,
-    ].filter(Boolean) as string[],
-  );
-  const stored = secrets.filter((s) => s.kind !== "billing" && !managed.has(s.name));
-
-  return (
-    <>
-      <div className="row">
-        <div>
-          <label className="field">Name</label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="wordpress, github-token, stripe-key…"
-          />
-          {name.trim() && (
-            <div className="help" style={{ marginTop: 4 }}>
-              agents will see it as <code>${envVarName(name)}</code>
-              {filename !== null && ", holding the path to the file"}
-            </div>
-          )}
-        </div>
-        <div>
-          <label className="field">Value</label>
-          <CredentialValue
-            value={value}
-            filename={filename}
-            onChange={(next) => { setValue(next.value); setFilename(next.filename); }}
-            placeholder={name.trim() === "wordpress" ? "username:xxxx xxxx xxxx xxxx" : "the key itself"}
-          />
-        </div>
-      </div>
-      <label className="field">Who receives it (nobody, until you grant)</label>
-      <RoleGrants org={org} selected={grants} onChange={setGrants} secretName={name} />
-      <div className="actions">
-        <button
-          className="small primary"
-          disabled={busy || !name.trim() || !value}
-          onClick={() =>
-            act(async () => {
-              await post("/admin/secrets", {
-                project_id: projectId,
-                name: name.trim(),
-                value,
-                role_scopes: grants,
-                kind: "service",
-                ...(filename === null ? {} : { filename }),
-              });
-              setName("");
-              setValue("");
-              setFilename(null);
-              setGrants([]);
-              refreshSecrets();
-            }, "Stored. Effective on the very next run of any granted role — no restart needed.")
-          }
-        >
-          Store credential
-        </button>
-      </div>
-
-      {stored.length > 0 && (
-        <table style={{ marginTop: 14 }}>
-          <thead>
-            <tr>
-              <th>Credential</th>
-              <th style={{ width: "32%" }}>Value</th>
-              <th style={{ width: "34%" }}>Who receives it</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {stored.map((secret) => (
-              <tr key={secret.id}>
-                <td className="mono">
-                  {secret.name}
-                  <div className="help">
-                    {secret.role_scopes.length ? `$${envVarName(secret.name)}` : "not injected"}
-                    {secret.filename && ` → ${secret.filename}`}
-                  </div>
-                </td>
-                <td>
-                  <StoredSecret
-                    secretId={secret.id}
-                    // A file rotates as a file: the door takes base64 and the
-                    // shape is fixed at creation, so re-sending the name keeps
-                    // it one. What the eye shows is the decoded text.
-                    isFile={!!secret.filename}
-                    onRotate={async (next) => {
-                      await post("/admin/secrets", {
-                        project_id: projectId, name: secret.name, value: next,
-                        ...(secret.filename ? { filename: secret.filename } : {}),
-                      });
-                      refreshSecrets();
-                    }}
-                    note="Edit and save to rotate — live on the next run of any granted role."
-                  />
-                </td>
-                <td>
-                  <RoleGrants
-                    org={org}
-                    secretName={secret.name}
-                    selected={secret.role_scopes}
-                    onChange={(slugs: string[]) =>
-                      act(async () => {
-                        await post("/admin/secrets", {
-                          project_id: projectId,
-                          name: secret.name,
-                          role_scopes: slugs,
-                        });
-                        refreshSecrets();
-                      }, `Access to "${secret.name}" updated.`)
-                    }
-                  />
-                  {secret.role_scopes.length === 0 && (
-                    <span className="help">no roles — not injected anywhere</span>
-                  )}
-                </td>
-                <td>
-                  <button
-                    className="small danger"
-                    disabled={busy}
-                    onClick={() => {
-                      if (
-                        !confirm(
-                          `Delete credential '${secret.name}'? Granted roles lose it on ` +
-                            "their next run.",
-                        )
-                      )
-                        return;
-                      act(async () => {
-                        await del(`/admin/secrets/${secret.id}`);
-                        refreshSecrets();
-                      }, `Deleted '${secret.name}'.`);
-                    }}
-                  >
-                    delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       )}
     </>
   );
@@ -1598,7 +953,7 @@ function CardPicker({
         {help}
       </p>
       {staged && inForce && staged.value !== inForce.value && (
-        <p className="help" style={{ marginTop: 6, color: "var(--warn, var(--ink-2))" }}>
+        <p className="help" style={{ marginTop: 6, color: "var(--warning)" }}>
           Staged, not saved: {Object.keys(staged.constitution).length} rules move from
           {" "}<b>{inForce.label}</b> to <b>{staged.label}</b>, some of them on other tabs.
           Give a reason below and save, and it binds from the next agent call.
@@ -1694,8 +1049,13 @@ const SETTINGS_NAV = [
   { group: "The work" },
   { key: "brief", label: "Brief" },
   { key: "money", label: "Money" },
-  { key: "data", label: "Data & credentials" },
+  // Data sources and variables were one page, "Data & credentials", with an
+  // add form open at the top of each half. They are two different objects
+  // with two different lifecycles — a connection with a health state, and a
+  // value — so they are two pages, beside the other things agents plug into.
   { group: "Connections" },
+  { key: "sources", label: "Data sources" },
+  { key: "secrets", label: "Secrets & variables" },
   { key: "integrations", label: "Integrations" },
   { group: "Governance" },
   { key: "people", label: "People" },
@@ -1778,13 +1138,16 @@ export default function Settings({
   org: OrgView | null;
   reload: () => void;
 }) {
+  const needs = pendingNeeds(useProject().approvals);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // In the URL, not in a useState: half a dozen places across the app say
   // "Settings → Rules in force", and every one of them used to land the
   // chairman on Brief with no way to link any deeper.
   const [params, setParams] = useSearchParams();
-  const section = params.get("s") ?? "brief";
+  // "data" was the page both of these shared; every link to it still lands.
+  const asked = params.get("s") ?? "brief";
+  const section = asked === "data" ? "secrets" : asked;
   const theme = params.get("t") ?? "";
   const go = (next: string, tab?: string) =>
     setParams(tab ? { s: next, t: tab } : { s: next }, { replace: true });
@@ -1881,6 +1244,15 @@ export default function Settings({
     get<SecretRow[]>(`/admin/secrets?project_id=${projectId}`).then(setSecrets).catch(() => {});
   }, [projectId]);
   useEffect(refreshSecrets, [refreshSecrets, dash.billing_secret_id]);
+
+  const notice = (text: string) => {
+    setError(null);
+    setMessage(text);
+    reload();
+    // A data source's address and token are secrets too; the locked group on
+    // Secrets & variables must not wait for a page load to show a new one.
+    refreshSecrets();
+  };
 
   const act: Act = async (fn, okMessage) => {
     setError(null);
@@ -2019,6 +1391,9 @@ export default function Settings({
               onClick={() => go(item.key)}
             >
               {item.label}
+              {item.key === "secrets" && needs.length > 0 && (
+                <span className="srail-count" title="Credentials your agents asked for">{needs.length}</span>
+              )}
             </button>
           ),
         )}
@@ -2028,7 +1403,10 @@ export default function Settings({
       {message && <div className="notice-box">{message}</div>}
       {error && <div className="error">{error}</div>}
 
-      {billingReady && runtimeNow === "agent_sdk" ? (
+      {/* The all-clear belongs on the page that pays; elsewhere it was a green
+          box above unrelated work. The warning stays everywhere — a project that
+          cannot pay is news on any page — with the way to the page that fixes it. */}
+      {billingReady && runtimeNow === "agent_sdk" ? section === "money" && (
         <div className="notice-box" style={{ borderColor: "var(--good)", background: "rgba(var(--good-rgb), 0.1)" }}>
           ✓ <strong>Nothing needs doing on this page.</strong> Your agents are real, and their
           model calls{billingProvider ? ` to ${billingProvider.label}` : ""} pay with{" "}
@@ -2046,7 +1424,9 @@ export default function Settings({
               it to add a key sent the reader after the wrong fix. */}
           {runtimeNow === "mock"
             ? "⚠ This project runs FAKE test agents (mock runtime) — nothing real will happen. Switch it under Advanced below."
-            : "⚠ Agents have no way to pay for their model yet — connect a credential below or every real run will fail."}
+            : <>⚠ Agents have no way to pay for their model yet — every real run will fail until
+                a credential is connected{section === "money" ? " below" : <> under{" "}
+                <button className="linklike" onClick={() => go("money")}>Money</button></>}.</>}
         </div>
       )}
 
@@ -2161,43 +1541,14 @@ export default function Settings({
 
       </Section>
 
-      <Section on={section === "data"}>
-      <h2>Data sources — MCP servers</h2>
-      <div className="card">
-        <DataSources
-          projectId={projectId}
-          dash={dash}
-          secrets={secrets}
-          act={act}
-          busy={busy}
-          reload={reload}
-        />
-      </div>
-
+      <Section on={section === "sources"}>
+        <DataSources projectId={projectId} dash={dash} org={org} secrets={secrets}
+                     notice={notice} reload={reload} />
       </Section>
 
-      <Section on={section === "data"}>
-      <h2>Variables &amp; credentials</h2>
-      <div className="card">
-        <p className="help" style={{ marginTop: 0 }}>
-          API keys, passwords and plain configuration values your agents need for outside
-          services. <strong>Never paste a key into the boardroom</strong> — messages become model
-          context and leave the box. Stored here, a credential is encrypted at rest and injected
-          into the sandboxes of the roles you tick, as an environment variable; grants take effect
-          on the next run. <em>Agents</em> are told the variable's name and never its value — but
-          you are the chairman, so press the eye and read your own.
-        </p>
-        <CredentialsManager
-          projectId={projectId}
-          dash={dash}
-          org={org}
-          secrets={secrets}
-          refreshSecrets={refreshSecrets}
-          act={act}
-          busy={busy}
-        />
-      </div>
-
+      <Section on={section === "secrets"}>
+        <Secrets projectId={projectId} dash={dash} org={org} secrets={secrets}
+                 refreshSecrets={refreshSecrets} notice={notice} />
       </Section>
 
       <Section on={section === "integrations"}>
@@ -2241,13 +1592,13 @@ export default function Settings({
           Left behind on purpose: this project's history — runs, tasks, messages, memory, files,
           amendments.
         </p>
-        <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+        <p className="help" style={{ color: "var(--warning)" }}>
           ⚠ A twin is the same <i>shape</i> of project: its mode ({dash.mode}) and its teams are
           frozen at creation, exactly as this project's were. To change either — or anything else
           the creation form asks — don't twin it: download the setup file below and edit
           everything on the New Project page instead.
         </p>
-        <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+        <p className="help" style={{ color: "var(--warning)" }}>
           ⚠ The twin talks to the outside on its own wiring. Slack tokens come along but the
           channel map does not (two projects posting into one room helps nobody) — re-map rooms
           in the twin's Settings → Integrations. It also mints its own webhook signing secrets,

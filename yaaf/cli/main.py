@@ -495,7 +495,13 @@ def create_project(spec_file: Path) -> None:
 def set_secret(
     name: str,
     project: str = typer.Option(None, "--project", help="Project id/slug; omit for platform-level"),
-    scopes: str = typer.Option("", "--scopes", help="Comma-separated role slugs"),
+    scopes: str = typer.Option(None, "--scopes",
+                               help="Comma-separated role slugs; omit to keep who has it, "
+                                    "pass '' to grant nobody"),
+    plain: bool = typer.Option(None, "--plain/--secret",
+                               help="--plain for a setting that is not secret (a timezone, "
+                                    "an account id): shown as is in the dashboard. Omit to "
+                                    "keep it as it is"),
     kind: str = typer.Option("service", "--kind",
                              help="service; manage model credentials with create-llm-credential"),
     from_file: Path = typer.Option(
@@ -522,9 +528,12 @@ def set_secret(
                 "filename": filename or from_file.name}
     with _client() as client:
         project_id = _resolve_project(client, project) if project else None
+        if scopes is not None:
+            body["role_scopes"] = [s for s in scopes.split(",") if s]
+        if plain is not None:
+            body["visibility"] = "plain" if plain else "secret"
         _show(client.post("/admin/secrets", json={
-            "project_id": project_id, "name": name,
-            "role_scopes": [s for s in scopes.split(",") if s], "kind": kind, **body,
+            "project_id": project_id, "name": name, "kind": kind, **body,
         }))
 
 

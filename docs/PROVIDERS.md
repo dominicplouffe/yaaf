@@ -375,13 +375,13 @@ they ran on; role versions stay immutable.
 | Change | How existing installs move |
 |---|---|
 | Roles name classes | the shipped `roles/*.json` move to `@frontier`/`@balanced`/`@fast` (Anthropic's lineup resolves them to exactly the models they named, so an Anthropic project runs identically). An install picks them up the way it picks up any role edit — `yaaf seed-roles` writes a new version; pinned projects keep theirs |
-| `anthropic_api`, `openai_compatible` → `yaaf_loop` | migration `0054` rewrites `role_versions.harness` and `agents.harness_override`; the old names stay readable as aliases (export bundles, old clients, run history labels) |
+| `anthropic_api`, `openai_compatible` → `yaaf_loop` | migration `0055` rewrites `role_versions.harness` and `agents.harness_override`; the old names stay readable as aliases (export bundles, old clients, run history labels) |
 | `Provider.default_harness` → `CredentialKind.default_harness` | in code; a seat with no harness named moves to its credential's default on its next run. OpenAI and Google API-key seats move from their CLIs to `yaaf_loop` — exact metering and full withholding, which is the improvement |
 | `craft_model` → lineup `frontier` | in code |
 | `DEFAULT_MODEL`, `DEFAULT_FOUNDER_MODEL` → classes | an install that set a Founder model keeps it; one that never did resolves `@frontier` on its credential's provider, which is `claude-opus-5-5` on Anthropic — unchanged |
 | R6 translates a class seat's effort | in code; no seat that ran before runs differently — a pinned seat is held exactly as it was, and the shipped roles' classes resolve on Anthropic to models that take every effort |
-| `model_prices.source`, `model_prices.context_window` | migration `0054`; existing rows read as hand-set, with no window (the snapshot's figure is used where it has one) |
-| `provider_checks`, `credential_breakers`, `projects.fallback_secret_id` | migration `0054`; empty — no check run, no breaker open, no fallback named |
+| `model_prices.source`, `model_prices.context_window` | migration `0055`; existing rows read as hand-set, with no window (the snapshot's figure is used where it has one) |
+| `provider_checks`, `credential_breakers`, `projects.fallback_secret_id` | migration `0055`; empty — no check run, no breaker open, no fallback named |
 | lineups, default provider, search backend, provider ceilings | platform settings; absent means the shipped defaults |
 
 **What deliberately did not move: `Project.billing_secret_id`.** A

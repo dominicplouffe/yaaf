@@ -277,7 +277,7 @@ The constitution card also carries your reporting cadence — **hours between
 unprompted status reports** (default 1), an optional reporting window like
 `09:00-20:00`, and your timezone (guessed from the browser).
 
-**Service credentials (optional).** If you already know the keys the agents
+**Secrets & variables (optional).** If you already know the keys the agents
 will need, add them here: a name, the value, and tick which roles receive
 them. Agents get them as environment variables in their sandboxes and never
 see the values in chat. You can also do this later in Settings.
@@ -330,13 +330,13 @@ So the address travels as one: saving `ppc` hands the granted roles
 the sandbox rebuilds the connection from those. **The variable is the
 delivery mechanism, not a side effect.**
 
-You'll see those variable names listed under the source's name in the table.
-They don't appear in *Variables & credentials* — that card is for credentials
-you create by hand. One data source is one thing, edited in one place.
+Those variables are listed under *Secrets & variables* in a locked group, "Set
+up by your data sources", with a link back here — they belong to the source and
+are edited with it. One data source is one thing, edited in one place.
 
 ### Changing one
 
-Press **edit** on its row. The stored address is fetched and shown in full —
+Open the row's **⋯** menu and press **Edit**. The stored address is fetched and shown in full —
 an address is not a password, and you can't fix a port you can't see. Change
 what you need and save; leaving the token box blank keeps the current token,
 so a URL-only edit never disarms the auth header. There's a tickbox to remove
@@ -348,8 +348,11 @@ You are the chairman. Whoever can change a project's credentials can read them
 back — you and your co-chairs, never an observer — and the box's own
 credentials are the instance admin's. Every stored project value — service
 credentials, a data source's address and token, the Slack tokens, the webhook
-signing secrets — is masked in the UI and one press of the **eye** from being
-readable, with a copy button and an inline edit to rotate it. Debugging a connection shouldn't require a database client. The
+signing secrets — is masked in the UI and one press of **Reveal** from being
+readable, with a copy button and **Replace value** to rotate it; each reveal is
+logged to that credential's history. A value you mark **Plain value** (a
+timezone, an account id) is shown as it is instead, to the same people.
+Debugging a connection shouldn't require a database client. The
 LLM credentials projects pay with live above projects, under app-wide
 Settings, where they can be renamed and rotated but are never shown back.
 
@@ -432,7 +435,7 @@ You can watch all of it in **Roadmap**, **Tasks** and **Team**, and in
   recent completed work and evidence claims. Fail anything that doesn't hold up —
   the CEO is told its team's work is suspect. You are the one reviewer that
   doesn't approve everything put in front of it.
-- **Watch the money if you want to** — the money line under the Team page's chart warns at
+- **Watch the money if you want to** — the money line on the project's Inbox warns at
   80%. Crossing 100% does **not** stop the project — it is a plan, and going
   over obliges the CEO to account for what the extra bought. The wall is
   `hard_stop_multiple` times the plan (3x by default), and that is the only
@@ -460,7 +463,7 @@ project pauses itself rather than burning money against a wall.
 2. (Or later: Settings → billing → pick a credential → Save assignment → Test.)
 3. (Or later: Settings → Data sources → `ppc` + the MCP URL + engineer
    role → Save, auto-tested.)
-4. Team page → fix anything the health card names → card disappears.
+4. The project's Inbox → fix anything the health card names → card disappears.
 5. Chat → brief the CEO.
 6. Roadmap → accept the requirements you want, cut the rest, sign the date.
 7. Done. Check back in the morning.

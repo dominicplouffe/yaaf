@@ -2229,7 +2229,19 @@ class Secret(Base):
     # would turn every existing `kind == "service"` test into a membership
     # check, which is the change spreading instead of staying put.
     filename: Mapped[str | None] = mapped_column(String(120))
+    # "secret" (masked; read back only by a deliberate, audited reveal) or
+    # "plain" (an ad account id, a timezone — shown as is to whoever could
+    # reveal it anyway). Both are encrypted at rest and injected identically;
+    # the axis is how a person sees it, never what a sandbox receives. A
+    # timezone masked like a refresh token makes every row look the same, and
+    # telling two of them apart then costs two audited reveals.
+    visibility: Mapped[str] = mapped_column(String(8), default="secret",
+                                            server_default="secret")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # Any write — a rotation, a regrant, a visibility change. The list says
+    # "updated Oct 21" so a stale key is visible without opening anything.
+    updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, default=utcnow,
+                                                        onupdate=utcnow)
     # An LLM credential retired from every menu without being destroyed.
     # Lifting per-project keys above projects made one managed credential per
     # historical key, so installs woke up choosing from a list mostly made of

@@ -10,6 +10,7 @@ discipline is the product.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -1738,7 +1739,8 @@ def export_project(project_id: str, include_values: bool = False,
             # neither `{` nor `-----BEGIN`, so the file-shaped refusal at the
             # door cannot catch it either.
             {"name": s.name, "role_scopes": s.role_scopes, "kind": s.kind,
-             "filename": s.filename, "value": decrypt(s.ciphertext)}
+             "filename": s.filename, "visibility": s.visibility or "secret",
+             "value": decrypt(s.ciphertext)}
             for s in session.execute(
                 select(Secret)
                 .where(Secret.project_id == project.id)
@@ -1962,7 +1964,8 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
             continue
         copy = Secret(id=ids.new_id(ids.SECRET), project_id=project.id, name=row.name,
                       ciphertext=row.ciphertext, role_scopes=list(row.role_scopes or []),
-                      kind=row.kind, filename=row.filename)
+                      kind=row.kind, filename=row.filename,
+                      visibility=row.visibility or "secret")
         session.add(copy)
         ciphertexts[row.name] = row.ciphertext
     billing_credential_hidden = None
@@ -2396,6 +2399,12 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
 
     So speak MCP instead: initialize, then tools/list, and say which tools came
     back. `transport` is a seam for tests; production passes nothing.
+
+    Every answer carries a `state`, because a screen that has one red word for
+    "wrong port", "token rejected", "proxy refused" and "no tools" teaches the
+    chairman to read red as noise — the same mistake the old GET made with
+    green. The state picks the label and the one button that fixes it; the
+    `detail` stays the sentence.
     """
     import httpx
 
@@ -2416,23 +2425,27 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
                            "clientInfo": {"name": "yaaf", "version": "1.0"}},
             }, None)
             if opened.status_code in (401, 403):
-                return {"ok": False, "code": "unauthorized",
+                return {"ok": False, "code": "unauthorized", "state": "unauthorized",
                         "detail": f"the server refused the credential (HTTP "
                                   f"{opened.status_code}) — check the bearer token"}
             if opened.status_code == 404:
-                return {"ok": False, "detail": "no MCP endpoint at that path (HTTP 404) — the "
+                return {"ok": False, "state": "not_found",
+                        "detail": "no MCP endpoint at that path (HTTP 404) — the "
                                                "address needs the server's own path, often /mcp"}
             if opened.status_code >= 400:
-                return {"ok": False, "detail": f"something is listening, but it did not accept an "
-                                               f"MCP handshake (HTTP {opened.status_code})"}
+                return {"ok": False, "state": "not_mcp",
+                        "detail": f"something is listening, but it did not accept an "
+                                  f"MCP handshake (HTTP {opened.status_code})"}
             try:
                 envelope = _sse_or_json(opened) or {}
             except ValueError:
-                return {"ok": False, "detail": "that address answered, but not with MCP — it "
-                                               "looks like an ordinary web page or API"}
+                return {"ok": False, "state": "not_mcp",
+                        "detail": "that address answered, but not with MCP — it "
+                                  "looks like an ordinary web page or API"}
             if "error" in envelope:
                 message = (envelope["error"] or {}).get("message", "unknown error")
-                return {"ok": False, "detail": f"the server refused the handshake: {message}"}
+                return {"ok": False, "state": "not_mcp",
+                        "detail": f"the server refused the handshake: {message}"}
 
             info = (envelope.get("result") or {}).get("serverInfo") or {}
             named = " ".join(str(p) for p in (info.get("name"), info.get("version")) if p)
@@ -2447,21 +2460,35 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
                     tools = ((_sse_or_json(listed) or {}).get("result") or {}).get("tools") or []
                 except ValueError:
                     tools = []
+    except httpx.ProxyError:
+        # Before ConnectError: a proxy refusal is not "nothing is listening",
+        # and telling someone to check a port that is fine sends them the wrong way.
+        return {"ok": False, "state": "blocked",
+                "detail": "a proxy between yaaf and that address refused the connection — "
+                          "the host probably needs allowing on this network"}
     except httpx.ConnectError:
-        return {"ok": False, "detail": "nothing is listening at that address — check "
-                                       "host and port, and that the server is running"}
+        return {"ok": False, "state": "unreachable",
+                "detail": "nothing is listening at that address — check "
+                          "host and port, and that the server is running"}
+    except httpx.TimeoutException:
+        return {"ok": False, "state": "timeout",
+                "detail": "no answer within 10 seconds — the server may be down, or a "
+                          "firewall is dropping the connection"}
     except httpx.HTTPError as exc:
-        return {"ok": False, "detail": f"could not connect: {exc.__class__.__name__}"}
+        return {"ok": False, "state": "unreachable",
+                "detail": f"could not connect: {exc.__class__.__name__}"}
 
     who = f"MCP server{f' {named}' if named else ''}"
     if not tools:
         # The handshake is real, so the address and credential are right — but
         # a source that offers an agent nothing is not a working data source.
-        return {"ok": False, "detail": f"{who} answered the handshake but offers no tools — "
-                                       "agents would mount it and find nothing to call"}
+        return {"ok": False, "state": "no_tools", "tools": 0,
+                "detail": f"{who} answered the handshake but offers no tools — "
+                          "agents would mount it and find nothing to call"}
     shown = ", ".join(t.get("name", "?") for t in tools[:4])
     more = f", +{len(tools) - 4} more" if len(tools) > 4 else ""
-    return {"ok": True, "detail": f"{who} ready — {len(tools)} tool(s): {shown}{more}"}
+    return {"ok": True, "state": "ok", "tools": len(tools),
+            "detail": f"{who} ready — {len(tools)} tool(s): {shown}{more}"}
 
 
 def _oauth_checked(url: str, token: str, entry: dict, transport=None) -> dict:
@@ -2471,7 +2498,8 @@ def _oauth_checked(url: str, token: str, entry: dict, transport=None) -> dict:
     check = _check_data_source(url, token, transport)
     if check.get("code") == "unauthorized":
         entry["oauth"] = {**(entry.get("oauth") or {}), "status": "needs_reauth"}
-        check = {**check, "detail": "the server rejected the access token — press Reconnect"}
+        check = {**check, "state": "needs_reauth",
+                 "detail": "the server rejected the access token — press Reconnect"}
     return check
 
 
@@ -2578,7 +2606,8 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         if token:
             check = _oauth_checked(body.url.strip(), token, entry)
         else:
-            check = {"ok": False, "detail": "OAuth connection required — press Connect"}
+            check = {"ok": False, "state": "needs_signin",
+                     "detail": "OAuth connection required — press Connect"}
     else:
         # Three cases, because an edit that changes only the URL must not silently
         # disarm the auth header. Absent (None) keeps whatever the source already
@@ -2648,7 +2677,8 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
 
         token = ensure_fresh_token(session, project, entry)
         if token is None:
-            check = {"ok": False, "detail": "OAuth connection required — press Connect"}
+            check = {"ok": False, "state": "needs_signin",
+                     "detail": "OAuth connection required — press Connect"}
         else:
             check = _oauth_checked(url, token, entry)
     else:
@@ -2663,6 +2693,95 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
     _audit(session, project.id, "mcp_server.check", "project", project.id,
            {"name": name, "ok": check["ok"]})
     return check
+
+
+class DataSourceRolesIn(BaseModel):
+    # At least one, for the reason DataSourceIn says so: a source nobody
+    # receives is an address stored for no one. Removing it is a delete.
+    roles: list[str] = Field(min_length=1)
+
+
+@router.post("/projects/{project_id}/mcp_servers/{name}/roles", dependencies=[authority.STEER])
+def regrant_data_source(project_id: str, name: str, body: DataSourceRolesIn,
+                        session: Session = Depends(db)) -> dict:
+    """Change who receives a source, and nothing else.
+
+    Saving the source again would do it, but a save needs the address, re-runs
+    the check and — for an OAuth source whose address the form re-sends — can
+    land the chairman on the provider's consent screen. The access map moves a
+    tick, so this moves a tick: the entry's roles and the role grants of the
+    two secrets a sandbox actually reads (the address and the token). The
+    refresh token and an OAuth client secret stay ungranted, as they always are.
+    """
+    project = _get_project(session, project_id)
+    servers = (project.integrations or {}).get("mcp_servers", [])
+    entry = next((s for s in servers if s.get("name") == name), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="unknown data source")
+    try:
+        policy.check_roles_on_project(session, project.id, body.roles)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    was = list(entry.get("roles") or [])
+    entry["roles"] = list(body.roles)
+    for secret_name in (entry.get("url_secret"), entry.get("bearer_secret")):
+        row = _project_secret(session, project.id, secret_name) if secret_name else None
+        if row is not None:
+            row.role_scopes = list(body.roles)
+    from yaaf.server.mcp_oauth import persist_entry
+
+    persist_entry(project, entry)
+    _audit(session, project.id, "mcp_server.roles", "project", project.id,
+           {"name": name, "was": was, "roles": body.roles})
+    return {"name": name, "roles": body.roles, "was": was,
+            "note": "Effective on each granted role's next run."}
+
+
+class DataSourceProbeIn(BaseModel):
+    url: str
+    bearer: str | None = None
+
+
+@router.post("/projects/{project_id}/mcp_servers/probe", dependencies=[authority.STEER])
+def probe_data_source(project_id: str, body: DataSourceProbeIn,
+                      session: Session = Depends(db)) -> dict:
+    """The check a save runs, run before anything is saved — and the one
+    question the old form made the chairman answer blind: how does this
+    server want you to sign in?
+
+    The form asked for a name, an address, an auth mode, a read mode and roles
+    all at once, before anyone knew whether the server answered. Now the
+    address comes first: a server that refuses an anonymous handshake and
+    publishes OAuth metadata wants a browser sign-in; one that refuses and
+    publishes none wants a pasted token; one that answers wants nothing.
+    Nothing is stored and nothing is granted. It reaches out exactly as the
+    save would, from the same seat, for the same people."""
+    _get_project(session, project_id)
+    _parse_source_url(
+        body.url,
+        "that is not a URL — a data source needs a full address like "
+        "https://host:1234/path (schemes http/https only)",
+    )
+    import httpx
+
+    url = body.url.strip()
+    check = _check_data_source(url, body.bearer or None)
+    auth = "bearer" if body.bearer else "none"
+    if check.get("state") == "unauthorized" and not body.bearer:
+        from yaaf.server import mcp_oauth
+
+        try:
+            mcp_oauth.discover(url)
+            auth = "oauth"
+            check = {"ok": False, "state": "needs_signin",
+                     "detail": "the server asks you to sign in with OAuth — saving opens "
+                               "its sign-in in a new tab"}
+        except (mcp_oauth.OAuthSetupError, httpx.HTTPError, ValueError):
+            # No metadata at any rung: it wants a pasted token.
+            auth = "bearer"
+            check = {**check, "detail": "the server wants a credential and publishes no "
+                                        "OAuth sign-in — paste its token"}
+    return {"check": check, "auth": auth}
 
 
 @router.post("/projects/{project_id}/mcp_servers/{name}/oauth/start", dependencies=[authority.STEER])
@@ -5706,7 +5825,14 @@ class SecretIn(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     # Omit value to update role grants only — no re-pasting to change access.
     value: str | None = Field(default=None, min_length=1)
-    role_scopes: list[str] = Field(default_factory=list)
+    # Omitted means "unchanged" on an update and "nobody" on a create. It used
+    # to default to [] on both, so rotating a key — sending only its new value,
+    # which is what the Settings eye-and-save did — silently took it away from
+    # every role that had it, and the first anyone heard was an agent's 401.
+    role_scopes: list[str] | None = None
+    # "secret" or "plain"; omitted keeps it (and creates "secret"). See
+    # Secret.visibility for why the axis exists at all.
+    visibility: Literal["secret", "plain"] | None = None
     # Fixed at creation; omit on update. "billing" credentials refuse role
     # grants — they are injected everywhere by the billing path, so a grant
     # would hand agents the raw model credential under a second name.
@@ -5721,8 +5847,17 @@ class SecretIn(BaseModel):
 
 @router.get("/secrets", dependencies=[authority.IN_HANDLER])
 def list_secrets(project_id: str | None = None, session: Session = Depends(db)) -> list[dict]:
-    """Names and scopes only. The list is polled every few seconds, so values
-    never ride it — reading one is a deliberate act, and has its own endpoint.
+    """Names and scopes. The list is polled every few seconds, so a secret's
+    value never rides it — reading one is a deliberate act, and has its own
+    endpoint.
+
+    Two things do ride it, and only to a caller who could press the eye
+    anyway: a *plain* value whole, because the chairman said it is not a
+    secret, and a secret's last four characters, which is how a person tells
+    two keys apart and matches one against the provider's own dashboard
+    (Stripe and OpenAI print the same four). Neither is shown to an observer,
+    and the MCP surface strips both. A value shorter than twelve characters
+    gets no hint at all: four of eight is half a password.
 
     One project's to any of its members; every project's, and the platform's
     own, to the instance admin alone."""
@@ -5732,11 +5867,61 @@ def list_secrets(project_id: str | None = None, session: Session = Depends(db)) 
         stmt = stmt.where(Secret.project_id == project_id)
     else:
         authority.require_admin_here(session)
-    return [
-        {"id": s.id, "name": s.name, "project_id": s.project_id,
-         "role_scopes": s.role_scopes, "kind": s.kind, "filename": s.filename}
-        for s in session.execute(stmt.order_by(Secret.created_at)).scalars()
-    ]
+    rows = list(session.execute(stmt.order_by(Secret.created_at)).scalars())
+    readers = {p: _may_read_values(session, p) for p in {r.project_id for r in rows}}
+    return [_secret_row(s, readers[s.project_id]) for s in rows]
+
+
+def _may_read_values(session: Session, project_id: str | None) -> bool:
+    """Whether this caller could reveal this project's values — the same test
+    the reveal route applies, asked without refusing."""
+    try:
+        _require_secret_steer(session, project_id)
+    except HTTPException:
+        return False
+    return True
+
+
+def _secret_row(s: Secret, may_read: bool) -> dict:
+    from yaaf.core.crypto import decrypt
+
+    row = {"id": s.id, "name": s.name, "project_id": s.project_id,
+           "role_scopes": s.role_scopes, "kind": s.kind, "filename": s.filename,
+           "visibility": s.visibility or "secret",
+           "created_at": s.created_at.isoformat() if s.created_at else None,
+           "updated_at": (s.updated_at or s.created_at).isoformat()
+           if (s.updated_at or s.created_at) else None}
+    # Billing credentials are rotated, never read — not even four characters.
+    if not may_read or s.llm_mode is not None or s.kind == "billing":
+        return row
+    try:
+        value = decrypt(s.ciphertext)
+    except Exception:  # an undecryptable row still lists; the reveal says why
+        return row
+    if s.filename:
+        with contextlib.suppress(credential_files.BadCredentialFile):
+            row["size_bytes"] = len(credential_files.decode(value))
+    elif row["visibility"] == "plain":
+        row["value"] = value
+    elif len(value) >= 12:
+        row["hint"] = value[-4:]
+    return row
+
+
+def _secret_owner(session: Session, project_id: str | None, name: str) -> str | None:
+    """What owns this secret, in words, when it is not the chairman's own:
+    a data source's address or token, or a Slack token. Those are edited where
+    they live and stay masked, so a person reading "plain" never mistakes one
+    for an ordinary setting."""
+    source = _data_source_owning(session, project_id, name)
+    if source is not None:
+        return f"data source '{source}'"
+    project = session.get(Project, project_id) if project_id else None
+    slack = ((project.integrations or {}).get("slack") or {}) if project else {}
+    if name in {slack.get(k) for k in ("bot_token_secret", "signing_secret",
+                                       "app_token_secret") if slack.get(k)}:
+        return "the Slack bridge"
+    return None
 
 
 @router.get("/secrets/{secret_id}/value", dependencies=[authority.IN_HANDLER])
@@ -5792,6 +5977,111 @@ def reveal_secret(secret_id: str, session: Session = Depends(db)) -> dict:
             return {"id": row.id, "name": row.name, "filename": row.filename,
                     "value": None, "binary": True, "size_bytes": len(body)}
     return {"id": row.id, "name": row.name, "value": decrypt(row.ciphertext)}
+
+
+#: What each write to a secret means, as the drawer's history says it.
+_SECRET_HISTORY = ("secret.create", "secret.rotate", "secret.rescope", "secret.visibility",
+                   "secret.reveal", "credential.scope")
+
+
+@router.get("/secrets/{secret_id}/history", dependencies=[authority.IN_HANDLER])
+def secret_history(secret_id: str, session: Session = Depends(db)) -> list[dict]:
+    """Who did what to one credential, newest first, in sentences.
+
+    Every row here was already in the audit log; this is that log read back
+    for one credential, because "who gave Data this key, and when did anyone
+    last look at it" is the question asked while debugging, and the answer was
+    on the record and nowhere on screen. It includes every reveal, so it is
+    for the people who may reveal — the same test the eye applies. A need
+    fulfilled through the Inbox is on the approval, not the secret, and is
+    found by the name it stored."""
+    row = session.get(Secret, secret_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown secret")
+    _require_secret_steer(session, row.project_id)
+    entries = list(session.execute(
+        select(AuditLog).where(AuditLog.entity == "secret", AuditLog.entity_id == row.id,
+                               AuditLog.action.in_(_SECRET_HISTORY))
+    ).scalars())
+    if row.project_id is not None:
+        entries += [
+            a for a in session.execute(
+                select(AuditLog).where(AuditLog.project_id == row.project_id,
+                                       AuditLog.action == "approval.decide")
+            ).scalars()
+            if (a.detail or {}).get("secret_name") == row.name
+        ]
+    entries.sort(key=lambda a: a.at, reverse=True)
+    names = _actor_names(session, [a.actor for a in entries])
+    # Grants are stored as role slugs; a person reads them as the teams they
+    # hired. A slug nobody here runs any more stays a slug, which is the truth.
+    teams: dict[str, list[str]] = {}
+    if row.project_id is not None:
+        from yaaf.server.staffing import team_role_slug
+
+        for team in session.execute(select(Team).where(Team.project_id == row.project_id)
+                                    .order_by(Team.created_at)).scalars():
+            slug = team_role_slug(session, team)
+            if slug:
+                teams.setdefault(slug, []).append(team.name)
+        ceo = policy.ceo_of(session, row.project_id)
+        version = session.get(RoleVersion, ceo.role_version_id) if ceo else None
+        role = session.get(Role, version.role_id) if version else None
+        if role is not None:
+            teams.setdefault(role.slug, []).append("CEO")
+    label = {slug: " + ".join(named) for slug, named in teams.items()}
+    return [{"at": a.at.isoformat(), "action": a.action, "by": names.get(a.actor, "yaaf"),
+             "what": _secret_history_line(a.action, a.detail or {}, label), "reason":
+             (a.detail or {}).get("reason")} for a in entries[:100]]
+
+
+def _actor_names(session: Session, stamps: list[str]) -> dict[str, str]:
+    """`user:…` / `agent:…` stamps to the names a person recognises, with the
+    door kept when it was not the person's own hand."""
+    out: dict[str, str] = {}
+    for stamp in set(stamps):
+        base, _, via = stamp.partition(" via ")
+        kind, _, ident = base.partition(":")
+        name = None
+        if kind == "user":
+            user = session.get(User, ident)
+            name = user.display_name if user else None
+        elif kind == "agent":
+            agent = session.get(Agent, ident)
+            name = agent.name if agent else None
+        if name:
+            out[stamp] = f"{name} (via {via.split(':', 1)[-1]})" if via else name
+    return out
+
+
+def _secret_history_line(action: str, detail: dict, label: dict[str, str]) -> str:
+    def named(slugs) -> str:
+        return ", ".join(label.get(s, s) for s in slugs) or "nobody"
+
+    roles = named(detail.get("role_scopes") or detail.get("now") or [])
+    if action == "secret.create":
+        return f"Added it for {roles}"
+    if action == "secret.rotate":
+        return "Replaced the value"
+    if action == "secret.reveal":
+        return "Revealed the value"
+    if action == "secret.visibility":
+        return ("Made it a plain value" if detail.get("visibility") == "plain"
+                else "Made it a secret")
+    if action == "approval.decide":
+        given = named(detail.get("roles") or [])
+        return f"Stored it to fulfil an agent's request, for {given}"
+    if "was" not in detail:  # written before rescopes recorded what they replaced
+        return f"Set who gets it: {roles}"
+    was = set(detail.get("was") or [])
+    now = set(detail.get("role_scopes") or detail.get("now") or [])
+    gave, took = sorted(now - was), sorted(was - now)
+    if not gave and not took:
+        return "Saved it unchanged"
+    parts = ([f"gave it to {named(gave)}"] if gave else []) + \
+            ([f"took it from {named(took)}"] if took else [])
+    line = "; ".join(parts)
+    return line[:1].upper() + line[1:]  # not .capitalize(): it lowercases the team names
 
 
 @router.delete("/secrets/{secret_id}", dependencies=[authority.IN_HANDLER])
@@ -6040,6 +6330,26 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         except policy.Refusal as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
+    if body.visibility == "plain":
+        # A list row shows a plain value whole, so "plain" is refused wherever
+        # whole would be wrong: a file (bytes, not a line of text), a
+        # credential something else owns, and anything that pays for models.
+        if as_file:
+            raise HTTPException(
+                status_code=422,
+                detail=f"'{body.name}' is a file credential — the list shows its name and "
+                       "size, never its contents, so it stays secret")
+        owner = _secret_owner(session, body.project_id, body.name)
+        if owner is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"'{body.name}' belongs to {owner} and stays masked — change it there")
+        if body.project_id is None or (existing is not None and (
+                existing.kind == "billing" or existing.llm_mode is not None)):
+            raise HTTPException(
+                status_code=422,
+                detail="only a project's own service credentials can be plain values")
+
     if existing:
         if existing.llm_mode is not None:
             raise HTTPException(status_code=422, detail="Manage LLM credentials in Settings")
@@ -6062,11 +6372,26 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
             existing.ciphertext = encrypt(value)
             existing.filename = filename  # a rotated file may be named differently
             rotated = True
-        existing.role_scopes = body.role_scopes
-        _audit(session, body.project_id, "secret.rotate" if rotated else "secret.rescope",
-               "secret", existing.id, {"role_scopes": body.role_scopes})
+        was = list(existing.role_scopes or [])
+        if body.role_scopes is not None:
+            existing.role_scopes = body.role_scopes
+        was_visibility = existing.visibility or "secret"
+        if body.visibility is not None:
+            existing.visibility = body.visibility
+        now = list(existing.role_scopes or [])
+        if rotated:
+            action = "secret.rotate"
+        elif sorted(was) != sorted(now):
+            action = "secret.rescope"
+        elif was_visibility != existing.visibility:
+            action = "secret.visibility"
+        else:
+            action = "secret.rescope"
+        _audit(session, body.project_id, action, "secret", existing.id,
+               {"name": existing.name, "role_scopes": now, "was": was,
+                "visibility": existing.visibility, "was_visibility": was_visibility})
         return {"id": existing.id, "rotated": rotated, "role_scopes": existing.role_scopes,
-                "filename": existing.filename}
+                "filename": existing.filename, "visibility": existing.visibility}
     if value is None:
         raise HTTPException(status_code=422, detail="a new secret needs a value")
     kind = "service"  # the only kind this door creates; billing was refused above
@@ -6075,15 +6400,17 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         project_id=body.project_id,
         name=body.name,
         ciphertext=encrypt(value),
-        role_scopes=body.role_scopes,
+        role_scopes=body.role_scopes or [],
         kind=kind,
         filename=filename,
+        visibility=body.visibility or "secret",
     )
     session.add(row)
     _audit(session, body.project_id, "secret.create", "secret", row.id,
-           {"role_scopes": body.role_scopes, "kind": kind, "filename": filename})
+           {"name": body.name, "role_scopes": row.role_scopes, "kind": kind,
+            "filename": filename, "visibility": row.visibility})
     return {"id": row.id, "rotated": False, "role_scopes": row.role_scopes, "kind": kind,
-            "filename": row.filename}
+            "filename": row.filename, "visibility": row.visibility}
 
 
 # ── MCP clients ─────────────────────────────────────────────────────────────────

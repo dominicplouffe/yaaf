@@ -100,6 +100,47 @@ def test_no_chart_paints_with_a_hardcoded_colour():
     )
 
 
+#: A custom property being declared: `--ink: ...` in CSS, or `"--ink": ...` as
+#: a key in a React style object.
+CSS_VAR_DECL = re.compile(r"""(--[\w-]+)["'`]?\s*:""")
+CSS_VAR_USE = re.compile(r"var\(\s*(--[\w-]+)")
+
+
+def test_every_custom_property_read_is_one_somebody_declared():
+    """`var(--name)` on a name nothing declares is not an error anywhere: the
+    browser takes the fallback, or nothing, and the build and this suite stay
+    green.
+
+    The undo toast set its text to `var(--bg, #fff)`. There is no `--bg`, so
+    the text was always white — fine on the light theme's dark toast, and
+    white on white on the dark one. The same check found warnings painted
+    `var(--warn, var(--ink-2))`, which drew every warning in plain grey for
+    want of `--warning`. A fallback does not excuse the name; it is what hid
+    both.
+    """
+    sources = sorted(WEB_SRC.rglob("*.css")) + sorted(WEB_SRC.rglob("*.ts*"))
+    declared: set[str] = set()
+    for path in sources:
+        declared.update(CSS_VAR_DECL.findall(path.read_text()))
+
+    offenders: list[str] = []
+    for path in sources:
+        source = path.read_text()
+        for match in CSS_VAR_USE.finditer(source):
+            if match.group(1) not in declared:
+                line = source[: match.start()].count("\n") + 1
+                offenders.append(
+                    f"{path.relative_to(WEB_SRC.parents[1])}:{line} — {match.group(1)}"
+                )
+
+    assert not offenders, (
+        "these read a custom property that nothing declares, so the browser "
+        "silently falls back:\n  "
+        + "\n  ".join(offenders)
+        + "\nUse a token from the top of styles.css, or declare the new one there."
+    )
+
+
 def test_the_burn_up_is_drawn_for_deliver_projects_only():
     """A burn-up of work that recurs is a flat line — `velocity.standing_record`
     says so in its own docstring, and an Operate project already has the record
@@ -136,15 +177,24 @@ def test_nothing_that_only_wants_reading_sits_under_the_decision_heading():
     nothing the reader could do about it. The rule is mechanical because the
     argument for breaking it is always available and always wrong.
     """
-    source = (WEB_SRC / "pages" / "project" / "Overview.tsx").read_text()
-    start = source.index("const needs: React.ReactNode[] = []")
-    end = source.index("const news: React.ReactNode[] = []")
-    assert start < end, "the desk's two zones are no longer in the expected order"
-    decide_zone = source[start:end]
-    assert "rawFlags" not in decide_zone, (
-        "a flag is being pushed into the zone that needs a decision. A flag "
-        "does not block and does not expire — it belongs with the news, which "
-        "is the `news` array below it."
+    # The decide zone lives in one place now: the Inbox's Decide tab, which
+    # every project's home embeds. A project page that grew a decide list of
+    # its own again would be a second zone for this rule to miss.
+    overview = (WEB_SRC / "pages" / "project" / "Overview.tsx").read_text()
+    assert "const needs" not in overview, (
+        "the project home has a decision list of its own again; it embeds the "
+        "Inbox, whose Decide tab is the one zone this rule guards"
+    )
+    source = (WEB_SRC / "pages" / "Inbox.tsx").read_text()
+    decide = re.search(r"const needs = (.+);", source)
+    assert decide, "the Inbox's Decide list is no longer built where this test expects"
+    assert decide.group(1).strip() == "inProject(desk.mine)", (
+        "the Decide tab is built from something other than the desk's own "
+        "needs-you rows: " + decide.group(1)
+    )
+    assert re.search(r"const acks = inProject\(updates\.filter\(isAck\)\)", source), (
+        "flags no longer land on the Acknowledge tab. A flag does not block and "
+        "does not expire — it belongs with what you note, never with what you decide."
     )
 
 
