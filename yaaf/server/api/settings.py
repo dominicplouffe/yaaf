@@ -898,6 +898,208 @@ def delete_model_price(model: str, session: Session = Depends(db)) -> dict:
     return {"model": model, "removed": True}
 
 
+# ── models: lineups, the default provider, per-provider ceilings ─────────────────
+
+
+@router.get("/models", dependencies=[authority.INSTANCE_ADMIN])
+def get_models(session: Session = Depends(db)) -> dict:
+    """Settings → Models: what each class names on each provider, where bare
+    classes resolve when a project pays nobody yet, and how many runs each
+    provider may carry at once (docs/PROVIDERS.md §1, §8)."""
+    from yaaf.core import model_policy
+
+    return {"default_provider": model_policy.default_provider(session),
+            "lineups": model_policy.lineup_table(session),
+            "ceilings": model_policy.ceilings(session)}
+
+
+class LineupIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(max_length=32)
+    #: frontier | balanced | fast
+    cls: str = Field(alias="class", max_length=16)
+    #: The model it names on that provider; null goes back to the shipped one.
+    model: str | None = Field(default=None, max_length=128)
+
+
+@router.put("/models/lineup", dependencies=[authority.INSTANCE_ADMIN])
+def put_lineup(body: LineupIn, session: Session = Depends(db)) -> dict:
+    """Name what a class is on a provider. Every class seat on every project
+    whose primary provider this is moves with it on its next run — which is
+    the point, and why it is an administrator's door. The seats it would now
+    refuse are named in the answer rather than discovered at 3am."""
+    from yaaf.core import model_policy
+    from yaaf.server.api.admin import _audit
+
+    model_policy.set_lineup(session, body.provider, body.cls, body.model)
+    _audit(session, None, "models.lineup", "provider", body.provider,
+           {"class": body.cls, "model": body.model})
+    session.flush()
+    return {**get_models(session), "unrunnable": _unrunnable_seats(session)}
+
+
+class DefaultProviderIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(max_length=32)
+
+
+@router.put("/models/default-provider", dependencies=[authority.INSTANCE_ADMIN])
+def put_default_provider(body: DefaultProviderIn, session: Session = Depends(db)) -> dict:
+    from yaaf.core import model_policy
+    from yaaf.server.api.admin import _audit
+
+    model_policy.set_default_provider(session, body.provider)
+    _audit(session, None, "models.default_provider", "provider", body.provider, {})
+    return get_models(session)
+
+
+class CeilingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(max_length=32)
+    #: At most this many runs on the provider at once; null lifts it.
+    limit: int | None = Field(default=None, ge=1, le=1000)
+
+
+@router.put("/models/ceiling", dependencies=[authority.INSTANCE_ADMIN])
+def put_ceiling(body: CeilingIn, session: Session = Depends(db)) -> dict:
+    from yaaf.core import model_policy
+    from yaaf.server.api.admin import _audit
+
+    model_policy.set_ceiling(session, body.provider, body.limit)
+    _audit(session, None, "models.ceiling", "provider", body.provider, {"limit": body.limit})
+    return get_models(session)
+
+
+def _unrunnable_seats(session: Session) -> list[str]:
+    """Seats of live projects that a lineup change left unable to run, by name."""
+    from sqlalchemy import select
+
+    from yaaf.core.models import Agent, Project
+    from yaaf.server.seat_checks import seat_problem
+
+    out = []
+    live = session.scalars(select(Project).where(Project.status.in_(("running", "paused"))))
+    for project in live:
+        agents = list(session.scalars(select(Agent).where(Agent.project_id == project.id)))
+        problem = seat_problem(session, project, agents, chat=False)
+        if problem:
+            out.append(f"{project.name} — {problem}")
+    return out
+
+
+@router.get("/llm-credentials/{credential_id}/models",
+            dependencies=[authority.INSTANCE_ADMIN])
+def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
+    """What the provider actually serves for this credential, by the names a
+    seat or a lineup would use (`provider/model` for one the catalog does not
+    list) — so a Groq lineup is picked from Groq's list, not typed from memory
+    (docs/PROVIDERS.md §8). One free call to the provider's own model list."""
+    import asyncio
+
+    import httpx
+
+    from yaaf.core import model_tokens
+    from yaaf.core.crypto import decrypt
+    from yaaf.runtimes import catalog, wire
+    from yaaf.runtimes.providers import provider, spec
+
+    row = _managed(session, credential_id, lock=False)
+    seller = provider(row.provider)
+    if seller.protocol is None:
+        raise HTTPException(status_code=422, detail=f"{seller.label} lists no models")
+    key = decrypt(row.ciphertext)
+    if seller.mints_tokens:
+        try:
+            key, _ = model_tokens.mint(seller.name, key)
+        except model_tokens.MintError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    endpoint = wire.Endpoint.from_spec(spec(seller, row.llm_mode, row.base_url), key)
+    try:
+        names = asyncio.run(wire.list_models(endpoint))
+    except (wire.WireError, httpx.HTTPError) as exc:
+        raise HTTPException(status_code=502, detail=f"{seller.label} would not list its "
+                                                    f"models: {exc}") from exc
+    listed = {m.id for m in catalog.MODELS if m.provider == seller.name}
+    return {"provider": seller.name, "models": [
+        {"id": name if name in listed else f"{seller.name}/{name}", "name": name,
+         "listed": name in listed} for name in names]}
+
+
+# ── web search: the platform's own backend ──────────────────────────────────────
+
+
+@router.get("/web-search", dependencies=[authority.INSTANCE_ADMIN])
+def get_web_search(session: Session = Depends(db)) -> dict:
+    from yaaf.core import web_search
+    from yaaf.runtimes.wire import SEARCH_BACKENDS
+
+    return {"configured": web_search.config(session),
+            "backends": [{"name": b.name, "label": b.label, "base_url": b.base_url,
+                          "suggested_usd": b.suggested_usd, "key": b.key,
+                          "console_url": b.console_url} for b in SEARCH_BACKENDS.values()]}
+
+
+class WebSearchIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    backend: str = Field(max_length=32)
+    key: str | None = Field(default=None, max_length=1000)
+    base_url: str | None = Field(default=None, max_length=500)
+    #: What one query costs, in USD — billed into every run that searches.
+    price_usd: float | None = Field(default=None, ge=0, le=10)
+
+
+@router.put("/web-search", dependencies=[authority.INSTANCE_ADMIN])
+def put_web_search(body: WebSearchIn, session: Session = Depends(db)) -> dict:
+    """Name the backend every harness without search of its own searches with.
+    From the next run, a role granting `web` is honoured on every provider
+    (R2), and each query is billed into the run at this price."""
+    from yaaf.core import web_search
+    from yaaf.server.api.admin import _audit
+
+    found = web_search.configure(session, body.backend, key=body.key, base_url=body.base_url,
+                                 price_usd=body.price_usd)
+    _audit(session, None, "web_search.configure", "backend", body.backend,
+           {"price_usd": found.get("price_usd")})
+    return get_web_search(session)
+
+
+@router.post("/web-search/test", dependencies=[authority.INSTANCE_ADMIN])
+def test_web_search(session: Session = Depends(db)) -> dict:
+    """One real query, so the key is known to work before a run depends on it."""
+    import asyncio
+
+    import httpx
+
+    from yaaf.core import platform as plat
+    from yaaf.core import web_search
+    from yaaf.runtimes import wire
+
+    found = web_search.config(session)
+    if found is None:
+        raise HTTPException(status_code=422, detail="no web search backend is configured")
+    try:
+        hits = asyncio.run(wire.search_web(found["backend"], found["base_url"],
+                                           plat.secret_value(session, web_search.SECRET) or "",
+                                           "yaaf agent framework", 3))
+    except (wire.WireError, httpx.HTTPError) as exc:
+        return {"ok": False, "detail": f"the search failed: {exc}"}
+    return {"ok": True, "detail": f"{found['label']} answered with {len(hits)} results."}
+
+
+@router.delete("/web-search", dependencies=[authority.INSTANCE_ADMIN])
+def delete_web_search(session: Session = Depends(db)) -> dict:
+    """Forget the backend. Seats promised `web` on a provider that does not
+    search are refused at their next door and their next lease (R2)."""
+    from yaaf.core import web_search
+
+    return {"removed": web_search.clear(session),
+            "unrunnable": _unrunnable_seats(session)}
+
+
 # ── doctor: is this install able to do its job? ─────────────────────────────────
 
 

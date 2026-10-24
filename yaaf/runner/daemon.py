@@ -87,22 +87,35 @@ def main() -> None:  # pragma: no cover - process entrypoint
 # ── leasing ─────────────────────────────────────────────────────────────────────
 
 
+#: How far past `limit` the lease looks for runs it may start, when a provider
+#: ceiling might leave the oldest rows waiting: far enough that one saturated
+#: provider at the head of the queue cannot stall every other provider's runs.
+CEILING_LOOKAHEAD = 5
+
+
 def lease_and_prepare(limit: int = 1) -> list[RunJob]:
     """Claim up to `limit` queue rows and assemble everything their execution
-    needs, in one transaction per row."""
+    needs, in one transaction per row. A row whose seat runs on a provider at
+    the install's ceiling for it (Settings → Models) stays queued for a later
+    tick — `max_concurrent_runs` caps a project, this caps a provider every
+    project on the box shares (docs/PROVIDERS.md §8)."""
     jobs: list[RunJob] = []
     with db_session() as session:
         now = utcnow()
+        ceilings = model_policy.ceilings(session)
+        running = _running_by_provider(session) if ceilings else {}
         rows = list(
             session.execute(
                 select(RunQueue)
                 .where((RunQueue.not_before.is_(None)) | (RunQueue.not_before <= now))
                 .order_by(RunQueue.created_at)
-                .limit(limit)
+                .limit(limit * CEILING_LOOKAHEAD if ceilings else limit)
                 .with_for_update(skip_locked=True)
             ).scalars()
         )
         for queued in rows:
+            if len(jobs) >= limit:
+                break
             project = session.get(Project, queued.project_id)
             if project is None or project.status != ProjectStatus.RUNNING:
                 # Paused/stopped mid-queue. Dropping the row is correct and not
@@ -118,11 +131,43 @@ def lease_and_prepare(limit: int = 1) -> list[RunJob]:
                          project.status if project else "missing")
                 session.delete(queued)
                 continue
+            provider = _queued_provider(session, queued, project) if ceilings else None
+            if provider in ceilings and running.get(provider, 0) >= ceilings[provider]:
+                continue
             job = _materialize(session, queued, project)
             if job is not None:
                 jobs.append(job)
+                if provider:
+                    running[provider] = running.get(provider, 0) + 1
             session.delete(queued)
     return jobs
+
+
+def _running_by_provider(session: Session) -> dict[str, int]:
+    """Runs in flight on each provider. The resident chat is not counted: it
+    holds a session open for hours and spends only when the chairman speaks."""
+    from sqlalchemy import func
+
+    rows = session.execute(
+        select(Run.provider, func.count(Run.id))
+        .where(Run.status == RunStatus.RUNNING, Run.kind != RunKind.CHAT_SESSION,
+               Run.provider.is_not(None))
+        .group_by(Run.provider)).all()
+    return {provider: count for provider, count in rows}
+
+
+def _queued_provider(session: Session, queued: RunQueue, project: Project) -> str | None:
+    """The provider a queued run's seat will call, or None for a run that calls
+    no model (a check, a seat on the scripted backend)."""
+    if queued.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK) or not queued.agent_id:
+        return None
+    agent = session.get(Agent, queued.agent_id)
+    if agent is None:
+        return None
+    seat = seat_for(agent, role_version_for(session, agent),
+                    runtime=(project.integrations or {}).get("runtime"),
+                    context=model_policy.context(session, project))
+    return None if seat.harness == "mock" else seat.provider
 
 
 def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob | None:

@@ -254,6 +254,30 @@ WITHHELD = {
     "GET /admin/projects/{project_id}/credentials":
         "the same list rides the project's dashboard (`credentials`), which `project` "
         "already returns — a second read path would be a second definition of it.",
+    "GET /admin/settings/models":
+        "the install's lineups and ceilings are above every project a client is scoped "
+        "to; `catalog (models)` says what each class resolves to, which is what a drafter "
+        "needs.",
+    "PUT /admin/settings/models/lineup":
+        "a lineup moves every class seat on every project of that provider at once — "
+        "an administrator's decision, made on the Models screen.",
+    "PUT /admin/settings/models/default-provider":
+        "where every unpaid project's classes resolve is install-wide; not a drafter's.",
+    "PUT /admin/settings/models/ceiling":
+        "concurrency per provider is the install's rate-limit budget, shared by every "
+        "project on it.",
+    "GET /admin/settings/llm-credentials/{credential_id}/models":
+        "it spends a call on the credential's own key to list a provider's models; the "
+        "lineup it helps set is an administrator's.",
+    "GET /admin/settings/web-search":
+        "which search backend the install pays for is above every project.",
+    "PUT /admin/settings/web-search":
+        "it installs a paid key every project's searches bill to — an administrator's.",
+    "POST /admin/settings/web-search/test":
+        "it spends a query on the install's key.",
+    "DELETE /admin/settings/web-search":
+        "removing it refuses every searching seat on providers without search of their "
+        "own; an administrator's decision.",
     "GET /admin/settings/model-prices":
         "the install's price table is above every project a client is scoped to; a "
         "seat refused for want of a price says so in the refusal.",
