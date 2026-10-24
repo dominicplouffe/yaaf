@@ -429,7 +429,7 @@ You can watch all of it in **Roadmap**, **Tasks** and **Team**, and in
   recent completed work and evidence claims. Fail anything that doesn't hold up —
   the CEO is told its team's work is suspect. You are the one reviewer that
   doesn't approve everything put in front of it.
-- **Watch the money if you want to** — the money line under the Team page's chart warns at
+- **Watch the money if you want to** — the money line on the project's Inbox warns at
   80%. Crossing 100% does **not** stop the project — it is a plan, and going
   over obliges the CEO to account for what the extra bought. The wall is
   `hard_stop_multiple` times the plan (3x by default), and that is the only
@@ -457,7 +457,7 @@ project pauses itself rather than burning money against a wall.
 2. (Or later: Settings → billing → pick a credential → Save assignment → Test.)
 3. (Or later: Settings → Data sources → `ppc` + the MCP URL + engineer
    role → Save, auto-tested.)
-4. Team page → fix anything the health card names → card disappears.
+4. The project's Inbox → fix anything the health card names → card disappears.
 5. Chat → brief the CEO.
 6. Roadmap → accept the requirements you want, cut the rest, sign the date.
 7. Done. Check back in the morning.

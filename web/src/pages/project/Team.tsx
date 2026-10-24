@@ -1,12 +1,14 @@
 import { ReactNode, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { OrgView, post, SeatWork } from "../../api";
+import { useDesk } from "../../desk";
 import { firstName, ProjectCtx } from "../../projectCtx";
 import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
 import { clip, fmtAgo, fmtUnit } from "../../ui";
-import { Avatar, Seg } from "../../ui/kit";
+import { Avatar, PageHead, Seg } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
 import { heldFor, Seat, SEAT_LABEL, SEAT_TONE, SeatState } from "../../ui/team";
+import ScheduleStrip from "./Schedule";
 
 /** The org chart you hired, and what each person on it is doing.
 
@@ -139,8 +141,10 @@ function conditionWords(when: NonNullable<OrgView["teams"][number]["stand_down_w
 }
 
 /** A team's heading on the chart: what it is, what it runs, what it owes. */
-function TeamHead({ ctx, team, onRepinned }: {
+function TeamHead({ ctx, team, onRepinned, compact }: {
   ctx: ProjectCtx; team: OrgView["teams"][number]; onRepinned: (msg: string) => void;
+  /** On a large team's grid: the role said in words on one line, not a chip. */
+  compact?: boolean;
 }) {
   const tasks = (ctx.tasks ?? []).filter((t) => t.team_id === team.id);
   const open = tasks.filter((t) => ["ready", "claimed", "checking", "review"].includes(t.status)).length;
@@ -169,8 +173,9 @@ function TeamHead({ ctx, team, onRepinned }: {
         </div>
       )}
       <div className="team-role">
-        {team.role_name && (
-          <span className="chip" title={team.role_slug ?? undefined}>{team.role_name} v{team.role_version}</span>
+        {team.role_name && (compact
+          ? <span className="help" title={team.role_slug ?? undefined}>{team.role_name} v{team.role_version}</span>
+          : <span className="chip" title={team.role_slug ?? undefined}>{team.role_name} v{team.role_version}</span>
         )}
         {behind && steer && (
           <button className="small" title="A newer version of this role exists. Live teams never change silently — adopting is your call, and the CEO is told."
@@ -297,15 +302,58 @@ function AddTeam({ ctx, onClose }: { ctx: ProjectCtx; onClose: () => void }) {
   );
 }
 
+/** One person as one line, for a team too large to draw as cards: who, what
+    state, what they are on, and what they run on. */
+function SeatRow({ seat, work, onOpen }: {
+  seat: Seat; work?: Partial<SeatWork>; onOpen: (id: string) => void;
+}) {
+  const line = workLine(work);
+  return (
+    <button type="button" className={`seat-row st-${seat.state}`} onClick={() => onOpen(seat.id)}
+      title={`${seat.name} — ${SEAT_LABEL[seat.state]}: ${seat.doing}`}>
+      <span className="sr-top">
+        <span className={`seat-dot ${seat.state}`} />
+        <b>{seat.name}</b>
+        {seat.lead && <span className="on-lead">lead</span>}
+        <span className="grow" />
+        <span className={`sr-state st-${seat.state}`}>{SEAT_LABEL[seat.state]}</span>
+      </span>
+      <span className="sr-doing">{seat.doing}</span>
+      {line && <span className="sr-work">{line}</span>}
+    </button>
+  );
+}
+
+/** Past this many teams or people the chart stops drawing one row of full
+    cards. At thirteen teams that row was three screens wide, centred on a
+    point off to the right, and the chairman's own box scrolled out of view.
+    A large team wraps into a grid of team cards, one line per person. */
+const LARGE_TEAMS = 4;
+const LARGE_PEOPLE = 10;
+
+/** Teams with someone at work, waiting or stuck come first: on a large team
+    the cards worth reading are the ones where something is happening. */
+const BUSY: SeatState[] = ["working", "waiting", "blocked", "next"];
+
 function OrgChart({ ctx, chair }: { ctx: ProjectCtx; chair: ReactNode }) {
   const { org, seats } = ctx;
   const [repinMsg, setRepinMsg] = useState<string | null>(null);
   const ceo = seats.find((s) => s.ceo);
+  const shown = (org?.teams ?? []).filter((t) => t.running || t.last_change?.recent);
+  const people = seats.filter((s) => !s.ceo && s.state !== "stood_down").length;
+  const large = shown.length > LARGE_TEAMS || people > LARGE_PEOPLE;
+  const busy = (teamId: string) =>
+    seats.some((s) => s.teamId === teamId && BUSY.includes(s.state));
+  const ordered = large
+    ? [...shown].sort((a, b) => Number(busy(b.id)) - Number(busy(a.id))
+        || Number(!!b.last_change?.recent) - Number(!!a.last_change?.recent)
+        || a.name.localeCompare(b.name))
+    : shown;
   return (
     <>
       {repinMsg && <div className="notice-box">{repinMsg}</div>}
       <div className="org-scroll">
-        <div className="org">
+        <div className={`org${large ? " large" : ""}`}>
           <div className="org-level">{chair}</div>
           <div className="org-v" />
           {ceo && (
@@ -315,19 +363,41 @@ function OrgChart({ ctx, chair }: { ctx: ProjectCtx; chair: ReactNode }) {
             </div>
           )}
           <div className="org-v" />
-          <div className="org-branches">
-            {(org?.teams ?? []).filter((t) => t.running || t.last_change?.recent).map((team) => (
-              <div className={`org-branch${team.running ? "" : " gone"}`} key={team.id}>
-                <TeamHead ctx={ctx} team={team} onRepinned={setRepinMsg} />
-                <div className="team-members">
-                  {seats.filter((s) => s.teamId === team.id).map((s) => (
-                    <SeatNode key={s.id} seat={s} onOpen={ctx.openAgent}
-                      work={team.agents.find((a) => a.id === s.id)} />
-                  ))}
-                </div>
+          {large ? (
+            <>
+              <div className="org-caption help">
+                {shown.length} teams report to {ceo ? ceo.name : "the CEO"} · the ones with someone at work come first
               </div>
-            ))}
-          </div>
+              <div className="org-grid">
+                {ordered.map((team) => (
+                  <div className={`team-c${team.running ? "" : " gone"}${team.last_change?.recent && team.last_change.action !== "stand_down" ? " new" : ""}`}
+                    key={team.id}>
+                    <TeamHead ctx={ctx} team={team} onRepinned={setRepinMsg} compact />
+                    <div className="team-rows">
+                      {seats.filter((s) => s.teamId === team.id).map((s) => (
+                        <SeatRow key={s.id} seat={s} onOpen={ctx.openAgent}
+                          work={team.agents.find((a) => a.id === s.id)} />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="org-branches">
+              {shown.map((team) => (
+                <div className={`org-branch${team.running ? "" : " gone"}`} key={team.id}>
+                  <TeamHead ctx={ctx} team={team} onRepinned={setRepinMsg} />
+                  <div className="team-members">
+                    {seats.filter((s) => s.teamId === team.id).map((s) => (
+                      <SeatNode key={s.id} seat={s} onOpen={ctx.openAgent}
+                        work={team.agents.find((a) => a.id === s.id)} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <StoodDown ctx={ctx} />
         </div>
       </div>
@@ -436,5 +506,41 @@ export function TeamSection({ ctx, chair, foot }: {
         : <SeatTable ctx={ctx} />}
       {foot}
     </section>
+  );
+}
+
+/** The Team page: who is doing this project's work, who they report to, and
+    what each of them is on — the chart, or the same people as a table, and
+    when each of them works. What they need from you is on the project's
+    Inbox; your box at the top of the chart says how much and goes there. */
+export default function TeamPage({ ctx }: { ctx: ProjectCtx }) {
+  const { mine } = useDesk();
+  const { dash, projectId } = ctx;
+  const waiting = mine.filter((i) => i.project.id === projectId).length;
+  const chair = (
+    <div className={`onode chair you compact${waiting ? " waiting" : ""}`}>
+      <span className="on-id">
+        <Avatar name={dash.chairman?.display_name ?? "You"} team="chair" />
+        <span className="on-name">
+          <b>{dash.my_role === "chairman" ? "You" : (dash.chairman?.display_name ?? "The chairman")}</b>
+          <span>
+            {dash.my_role === "chairman" ? "Owner" : "Chairman"} · money, dates, scope
+            {" · "}{waiting > 0
+              ? <span className="warn">{waiting} waiting on you</span>
+              : "nothing waiting on you"}
+          </span>
+        </span>
+        <span className="grow" />
+        <Link className="card-link" to={`/projects/${projectId}`}>Inbox <Icon name="arrow" size={13} /></Link>
+      </span>
+    </div>
+  );
+  return (
+    <>
+      <PageHead title="Team"
+        lede="Who is doing this project's work, who they report to, and what each of them is on right now. Click anyone for their page." />
+      <TeamSection ctx={ctx} chair={chair} />
+      <ScheduleStrip ctx={ctx} />
+    </>
   );
 }

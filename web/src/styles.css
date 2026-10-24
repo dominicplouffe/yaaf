@@ -3037,3 +3037,48 @@ button.rt-row:hover { background: var(--hover); }
 .add-team { margin-bottom: 14px; padding: 12px 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); }
 .add-team .team-t { display: flex; align-items: center; gap: 8px; }
 .add-team .onode.addnode { width: auto; }
+
+/* The Inbox as one project's home: the same two panes, framed as a card
+   under the project's header rather than filling the window. */
+.inbox.embedded { margin: var(--s4) 0 0; height: min(78vh, 760px); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden; background: var(--surface); }
+.inbox.embedded .ib-head { padding-top: 16px; }
+.ib-h2 { margin: 0; font-size: 20px; }
+.inbox.embedded .ib-detail { padding: 22px 28px 32px; }
+@media (max-width: 760px) {
+  .inbox.embedded { height: auto; grid-template-columns: minmax(0, 1fr); margin: var(--s4) 0 0; }
+}
+
+/* A large team: teams wrap into a grid of cards, each person one line. */
+.org.large { width: 100%; min-width: 0; }
+.onode.chair.you.compact { width: min(560px, 100%); padding: 10px 14px; gap: 0; }
+.org-caption { margin: 2px 0 12px; text-align: center; }
+.org-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; width: 100%; align-items: start; }
+.team-c { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-width: 0;
+  border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.team-c.new { border: 1.5px dashed rgba(var(--accent-rgb), 0.55); }
+.team-c.new .team-h.new { border: 0; padding: 0; }
+.team-c.gone { opacity: 0.7; }
+.team-c .team-h { gap: 4px; }
+.team-c .team-role { min-height: 0; }
+.team-rows { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--border); padding-top: 6px; }
+.seat-row { display: flex; flex-direction: column; gap: 2px; width: 100%; min-width: 0; min-height: 0; padding: 7px 8px;
+  border: 0; border-radius: var(--radius); background: transparent; color: var(--ink); text-align: left; font: inherit; }
+.seat-row:hover { background: var(--hover); }
+.sr-top { display: flex; align-items: center; gap: 7px; font-size: 13.5px; min-width: 0; }
+.sr-state { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.sr-state.st-working { color: var(--accent); }
+.sr-state.st-waiting { color: var(--warning); }
+.sr-state.st-blocked { color: var(--serious); }
+.sr-doing { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 15px; }
+.sr-work { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 15px; }
+.seat-row { align-items: stretch; justify-content: flex-start; }
+.team-c { position: relative; }
+.team-c .team-h > button, .team-c .team-h > .reason-form { position: absolute; top: 10px; right: 10px; }
+.team-c .team-h > .reason-form { left: 10px; z-index: 2; padding: 8px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--e2); }
+.team-c .team-t { padding-right: 96px; }
+.sched-quiet { margin: 8px 0 0; }
+/* Inside one project's Inbox the project is the page you are on: no tag,
+   no "open the project" link. */
+.inbox.embedded .ib-detail .ptag, .inbox.embedded .ib-open-project { display: none; }

@@ -136,15 +136,24 @@ def test_nothing_that_only_wants_reading_sits_under_the_decision_heading():
     nothing the reader could do about it. The rule is mechanical because the
     argument for breaking it is always available and always wrong.
     """
-    source = (WEB_SRC / "pages" / "project" / "Overview.tsx").read_text()
-    start = source.index("const needs: React.ReactNode[] = []")
-    end = source.index("const news: React.ReactNode[] = []")
-    assert start < end, "the desk's two zones are no longer in the expected order"
-    decide_zone = source[start:end]
-    assert "rawFlags" not in decide_zone, (
-        "a flag is being pushed into the zone that needs a decision. A flag "
-        "does not block and does not expire — it belongs with the news, which "
-        "is the `news` array below it."
+    # The decide zone lives in one place now: the Inbox's Decide tab, which
+    # every project's home embeds. A project page that grew a decide list of
+    # its own again would be a second zone for this rule to miss.
+    overview = (WEB_SRC / "pages" / "project" / "Overview.tsx").read_text()
+    assert "const needs" not in overview, (
+        "the project home has a decision list of its own again; it embeds the "
+        "Inbox, whose Decide tab is the one zone this rule guards"
+    )
+    source = (WEB_SRC / "pages" / "Inbox.tsx").read_text()
+    decide = re.search(r"const needs = (.+);", source)
+    assert decide, "the Inbox's Decide list is no longer built where this test expects"
+    assert decide.group(1).strip() == "inProject(desk.mine)", (
+        "the Decide tab is built from something other than the desk's own "
+        "needs-you rows: " + decide.group(1)
+    )
+    assert re.search(r"const acks = inProject\(updates\.filter\(isAck\)\)", source), (
+        "flags no longer land on the Acknowledge tab. A flag does not block and "
+        "does not expire — it belongs with what you note, never with what you decide."
     )
 
 
