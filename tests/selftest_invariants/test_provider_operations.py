@@ -381,3 +381,22 @@ def test_a_seat_whose_provider_searches_is_never_handed_the_platforms_key(client
                if j.project_id == project_id and j.agent_id == created.json()["ceo_agent_id"])
     assert job.harness == "yaaf_loop" and job.provider == "anthropic"
     assert "YAAF_SEARCH_KEY" not in job.billing_env
+
+
+def test_a_login_of_another_provider_is_never_sent_to_anthropics_plan_meter(client,
+                                                                           monkeypatch):
+    """The plan probe asks Anthropic. A ChatGPT login is a subscription too,
+    and pressing Refresh on it must not hand it to Anthropic."""
+    from yaaf.server import plan_probe
+
+    monkeypatch.setattr(plan_probe, "refresh",
+                        lambda *a, **k: pytest.fail("a ChatGPT login went to Anthropic"))
+    login = client.post(CREDENTIALS, headers=ADMIN, json={
+        "name": "ChatGPT", "mode": "subscription", "provider": "openai",
+        "value": '{"tokens": {"access_token": "a", "refresh_token": "r"}}'})
+    assert login.status_code == 201, login.text
+    meter = client.get(f"{CREDENTIALS}/{login.json()['id']}/usage", headers=ADMIN,
+                       params={"refresh": "true"})
+    assert meter.status_code == 200, meter.text
+    assert meter.json()["available"] is False
+    assert "OpenAI reports no plan meter" in meter.json()["reason"]

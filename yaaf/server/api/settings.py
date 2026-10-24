@@ -819,6 +819,16 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
                           "the monthly budget below is the meter that applies",
                 "windows": [], "fetched_at": None, "cached": False,
                 "token_digest": None}
+    seller = PROVIDERS.get(row.provider or DEFAULT_PROVIDER)
+    if seller is None or not seller.plan_meter:
+        # The probe asks Anthropic. A ChatGPT or Google login sent there would
+        # be one vendor's credential handed to another — and answered with
+        # nothing anyway.
+        return {"credential_id": credential_id, "mode": mode, "available": False,
+                "reason": f"{seller.label if seller else row.provider} reports no plan "
+                          "meter yaaf can read — the run ceiling and the token budget are "
+                          "the meters that apply",
+                "windows": [], "fetched_at": None, "cached": False, "token_digest": None}
     token = decrypt(row.ciphertext)
     outcome = plan_probe.refresh(session, token) if refresh else None
     found = plan_usage.stored(session, token)

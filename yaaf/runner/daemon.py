@@ -771,11 +771,14 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         # The run was told what is left on the plan behind its own credential.
         # Filing it here is the whole meter: no request to Anthropic, and it
         # refreshes exactly as often as the credential is actually used.
-        if result.plan and project is not None and project.billing_secret_id:
-            from yaaf.core import plan_usage
+        if result.plan and project is not None:
+            from yaaf.core import plan_usage, project_credentials
             from yaaf.core.crypto import decrypt
 
-            billing = session.get(Secret, project.billing_secret_id)
+            # The credential that paid this run's provider — which, on a
+            # project paying two, is not always the billing one.
+            billing = project_credentials.credential_for(
+                session, project, job.provider or DEFAULT_PROVIDER)
             if billing is not None:
                 try:
                     plan_usage.record(session, decrypt(billing.ciphertext), result.plan)
