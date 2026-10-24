@@ -254,3 +254,29 @@ def test_your_own_chat_bubble_is_readable_in_both_themes():
         assert ratio >= 4.5, (
             f"the bubble's name and time are {ratio:.2f}:1 on {tokens['--accent']}"
         )
+
+
+def test_every_text_ink_clears_4_5_on_every_neutral_ground():
+    """The header of `styles.css` says each text colour clears 4.5:1 against
+    its own ground. `--muted` was checked against the card and nothing else,
+    and in the light theme it sits on the sidebar (`--sunken`) and on every
+    segmented control and tab strip (`--surface-2`): 4.27:1 and 4.46:1, on
+    every screen, under the workspace and project headings and the signed-in
+    address. An audit of every page in both themes found it there; nothing in
+    the suite looked.
+    """
+    css = (WEB_SRC / "styles.css").read_text()
+    themes = re.findall(r"\{([^{}]*--on-accent:[^{}]*)\}", css)
+    assert len(themes) == 3, "expected the dark, OS-light and chosen-light token sets"
+
+    def rgb(value: str) -> tuple[int, ...]:
+        return tuple(int(value.strip()[i : i + 2], 16) for i in (1, 3, 5))
+
+    for theme in themes:
+        tokens = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", theme))
+        for ink in ("--ink", "--ink-2", "--muted"):
+            for ground in ("--page", "--surface", "--surface-2", "--sunken"):
+                ratio = _contrast(rgb(tokens[ink]), rgb(tokens[ground]))
+                assert ratio >= 4.5, (
+                    f"{ink} {tokens[ink]} is {ratio:.2f}:1 on {ground} {tokens[ground]}"
+                )

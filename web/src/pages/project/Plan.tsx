@@ -244,9 +244,8 @@ function RequirementCard({ r, onCritical, onDone, names }: {
   const [open, setOpen] = useState(false);
   const over = r.est_runs != null && r.spent.runs > r.est_runs && !SETTLED.has(r.status);
   return (
-    <div className="card" style={{
+    <div className={`card req-card${SETTLED.has(r.status) ? " settled" : ""}`} style={{
       padding: "10px 14px", marginBottom: 8,
-      opacity: SETTLED.has(r.status) ? 0.65 : 1,
       borderLeft: onCritical ? "3px solid var(--accent)" : undefined,
     }}>
       <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
@@ -254,7 +253,7 @@ function RequirementCard({ r, onCritical, onDone, names }: {
           style={{ color: "var(--muted)", fontWeight: 500 }}>{r.key}</span>
         <button className="linklike" style={{ flex: 1, minWidth: 220, textAlign: "left",
           background: "none", border: "none", padding: 0, font: "inherit",
-          color: "var(--ink)", cursor: "pointer" }}
+          color: SETTLED.has(r.status) ? "var(--ink-2)" : "var(--ink)", cursor: "pointer" }}
           onClick={() => setOpen(!open)}>
           {requirementName(r)}
           {r.meta?.description && (

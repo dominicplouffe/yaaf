@@ -592,11 +592,11 @@ export default function Boardroom({ projectId, dash, org }: {
                   <span className={`chip ${refusalCleared ? "" : "serious"}`}>
                     {refusalCleared ? "refused, then got through" : "last refused"}
                   </span>{" "}
-                  {refusedAt && <span style={{ opacity: 0.75 }}>{fmtWhen(refusedAt)}</span>}
+                  {refusedAt && <span>{fmtWhen(refusedAt)}</span>}
                   <span style={{ display: "block", marginTop: 4 }}>
                     {clip(lastRefusal, 220)}
                   </span>
-                  <span style={{ display: "block", marginTop: 4, opacity: 0.75 }}>
+                  <span style={{ display: "block", marginTop: 4 }}>
                     {refusalCleared
                       ? `It made the same call again (${fmtWhen(refusalCleared)}) and that `
                         + "one went through, so this wall is behind it."
