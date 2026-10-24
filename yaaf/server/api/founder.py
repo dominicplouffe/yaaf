@@ -138,12 +138,11 @@ def status(session: Session = Depends(db)) -> dict:
     }
 
 
-class CredentialIn(BaseModel):
-    value: str = Field(min_length=8)
-    mode: str = Field(default="api_key", pattern="^(api_key|subscription)$")
-    provider: str = "anthropic"
-    base_url: str | None = Field(default=None, max_length=500)
-    model: str | None = Field(default=None, min_length=3, max_length=200)
+# One body for both doors onto the platform credential: this one, which the
+# Founding screen grew up with, and Settings' `/platform-credential`. Two copies
+# drifted once — this one still demanded an eight-character key after a local
+# server stopped needing any.
+CredentialIn = app_settings.CredentialIn
 
 
 @router.put("/credential", dependencies=[authority.INSTANCE_ADMIN])
@@ -161,7 +160,7 @@ def put_credential(body: CredentialIn, session: Session = Depends(db)) -> dict:
     an API-key field should not get a different answer depending on which form
     he was looking at.
 
-    The same credential is managed app-wide at ``PUT /admin/settings/anthropic``;
+    The same credential is managed app-wide at ``PUT /admin/settings/platform-credential``;
     both doors share one implementation so they cannot drift.
     """
     return app_settings.install_credential(session, body.value, body.mode, body.provider,

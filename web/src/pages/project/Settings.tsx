@@ -1,4 +1,5 @@
 import { CredentialPicker, PlanMeter, ProviderCredentials } from "../../llmCredentials";
+import { useProviders } from "../../providers";
 import { plainStatus } from "../../ui/kit";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -1789,6 +1790,7 @@ export default function Settings({
 
   const [billingCredentialId, setBillingCredentialId] = useState(dash.billing_secret_id ?? "");
   const [busy, setBusy] = useState(false);
+  const registry = useProviders();
 
   const [runtime, setRuntime] = useState(String(dash.integrations["runtime"] ?? "agent_sdk"));
 
@@ -1923,6 +1925,10 @@ export default function Settings({
   }
 
   const billingReady = dash.billing_secret_id !== null;
+  // Which provider the billing credential pays, so the page says "OpenAI" or
+  // "Anthropic" rather than assuming one.
+  const billingProvider = (dash.credentials ?? []).find((c) => c.billing) ?? null;
+  const billingSeller = registry.find((p) => p.name === billingProvider?.provider);
   const runtimeNow = String(dash.integrations["runtime"] ?? "agent_sdk");
 
   async function cloneProject() {
@@ -2023,13 +2029,13 @@ export default function Settings({
 
       {billingReady && runtimeNow === "agent_sdk" ? (
         <div className="notice-box" style={{ borderColor: "var(--good)", background: "rgba(var(--good-rgb), 0.1)" }}>
-          ✓ <strong>Nothing needs doing on this page.</strong> Your agents are real Claude agents,
-          and when they call Claude they pay with{" "}
+          ✓ <strong>Nothing needs doing on this page.</strong> Your agents are real, and their
+          model calls{billingProvider ? ` to ${billingProvider.label}` : ""} pay with{" "}
           <strong>
             {dash.billing_secret_name}
             {dash.billing_mode === "subscription"
-              ? " (your Claude subscription)"
-              : " (a metered Anthropic API key)"}
+              ? " (a subscription, metered in tokens)"
+              : " (an API key, billed per call)"}
           </strong>
           . Come back here only to change how agents pay, or to amend the project's rules.
         </div>
@@ -2115,15 +2121,15 @@ export default function Settings({
       </Section>
 
       <Section on={section === "money"}>
-      <h2>How agents pay for Claude</h2>
+      <h2>How agents pay for their models</h2>
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
-          Every agent run calls Claude, and that call needs a credential. Currently:{" "}
+          Every agent run calls a model, and that call needs a credential. Currently:{" "}
           {billingReady ? (
             <strong>
               {dash.billing_secret_name} — {dash.billing_mode === "subscription"
-                ? "your Claude subscription (uses your plan's rate limits; no per-call charges)"
-                : "an API key (each call bills your Anthropic account in dollars)"}
+                ? `a ${billingProvider?.label ?? ""} subscription (uses your plan's rate limits; no per-call charges)`
+                : `an API key (each call bills your ${billingProvider?.label ?? "provider"} account in dollars)`}
             </strong>
           ) : (
             <strong>none connected</strong>
@@ -2140,8 +2146,12 @@ export default function Settings({
           <button className={detaching ? "danger" : "primary"} disabled={busy || billingCredentialId === (dash.billing_secret_id ?? "")} onClick={connectBilling}>{detaching ? "Detach credential" : "Save assignment"}</button>
           <button disabled={busy || !billingReady} onClick={testBilling}>Test connection</button>
         </div>
-        <p className="help">Changing the assignment applies to new runs. The selected credential also determines whether budgets use USD or tokens. Clearing the pick detaches the credential: the project keeps its rules but cannot run until one is assigned, and the credential can then be deleted in Settings.</p>
+        <p className="help">Changing the assignment applies to new runs. The provider it pays
+          becomes the project&apos;s own: every seat whose role names a class — Frontier,
+          Balanced, Fast — runs on that provider&apos;s model for it. The selected credential
+          also determines whether budgets use USD or tokens. Clearing the pick detaches the credential: the project keeps its rules but cannot run until one is assigned, and the credential can then be deleted in Settings.</p>
         <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode}
+          meters={!!billingSeller?.plan_meter}
           title={`Plan usage for ${dash.billing_secret_name ?? "this credential"}`} />
         <ProviderCredentials projectId={projectId} disabled={busy} />
       </div>
@@ -2303,7 +2313,7 @@ export default function Settings({
               Agent execution — are the agents real, or test stand-ins?
             </label>
             <select value={runtime} onChange={(e) => setRuntime(e.target.value)}>
-              <option value="agent_sdk">Real Claude agents (normal)</option>
+              <option value="agent_sdk">Real agents, each on its own harness (normal)</option>
               <option value="mock">
                 Test stand-ins — scripted fakes for platform development; free, do nothing real
               </option>

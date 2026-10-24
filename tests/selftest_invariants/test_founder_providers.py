@@ -122,3 +122,13 @@ def test_the_founder_names_any_credential_as_the_billing_one(client):
     [row] = menu["credentials"]
     assert row["classes"]["frontier"]["model"] == "gpt-6-astra"
     assert row["classes"]["balanced"]["priced"] is False
+
+
+def test_a_local_server_can_pay_the_founder_through_either_door(client):
+    """The Founding screen's door and Settings' take one body: a local server
+    takes no key at either."""
+    for path in ("/admin/founder/credential", "/admin/settings/platform-credential"):
+        installed = client.put(path, headers=ADMIN, json={
+            "provider": "ollama", "base_url": "http://ollama:11434/v1",
+            "model": "ollama/llama3.3"})
+        assert installed.status_code == 200, (path, installed.text)

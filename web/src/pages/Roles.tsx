@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { get, post, RoleSummary } from "../api";
+import { isClass, modelLabel, ModelSelect, parseRef, useModels, useProviders } from "../providers";
 import { CATEGORIES, DOMAINS, canDo, depthOf } from "../roles";
 import { clip, downloadCsv, ExportCsv } from "../ui";
 
@@ -12,9 +13,12 @@ interface RoleDetail {
   version: number;
   description: string;
   system_prompt: string;
+  // A model, or a class of one (`@balanced`) — the class runs on whichever
+  // provider pays the project (docs/PROVIDERS.md).
   model: string;
   effort: string;
-  // What drives the model; null is the provider's default (docs/RUNTIMES.md).
+  // What drives the model; null is the default of whatever credential kind
+  // pays the seat (docs/RUNTIMES.md).
   harness: string | null;
   // Booleans for the sandbox tools — unknown keys
   // are preserved verbatim on save (the proxy generator reads this dict too).
@@ -23,9 +27,10 @@ interface RoleDetail {
 }
 
 
-/** "claude-opus-5-5" → "opus-5": the family is the choice; the vendor prefix is noise. */
+/** A role's model as a chip says it: "Balanced" for a class — the provider is the
+    project's to decide — and the model's own name for a pinned one. */
 function shortModel(model: string | null): string {
-  return (model ?? "—").replace(/^claude-/, "");
+  return model ? modelLabel(model) : "—";
 }
 
 const EMPTY: RoleDetail = {
@@ -37,7 +42,7 @@ const EMPTY: RoleDetail = {
   version: 0,
   description: "",
   system_prompt: "",
-  model: "claude-sonnet-5-5",
+  model: "@balanced",
   effort: "high",
   harness: null,
   tool_permissions: { files: true, bash: false, data_processing: true, web: true },
@@ -77,6 +82,8 @@ export default function Roles() {
   // The harnesses a seat may run on, from the registry rather than a list
   // written into this page — the next one arrives without editing it.
   const [harnesses, setHarnesses] = useState<{ name: string; label: string }[]>([]);
+  const catalog = useModels();
+  const registry = useProviders();
   function refresh() {
     get<RoleSummary[]>("/admin/roles").then(setRoles).catch((e: Error) => setError(e.message));
   }
@@ -397,14 +404,9 @@ export default function Roles() {
             <div className="row">
               <div>
                 <label className="field">Model</label>
-                <select
-                  value={editing.model}
-                  onChange={(e) => setEditing({ ...editing, model: e.target.value })}
-                >
-                  <option value="claude-opus-5-5">claude-opus-5-5 (most capable)</option>
-                  <option value="claude-sonnet-5-5">claude-sonnet-5-5 (balanced)</option>
-                  <option value="claude-haiku-4-5">claude-haiku-4-5 (cheap/fast)</option>
-                </select>
+                <ModelSelect value={editing.model} info={catalog} registry={registry}
+                  primary={catalog?.default_provider}
+                  onChange={(model) => setEditing({ ...editing, model })} />
               </div>
               <div>
                 <label className="field">Effort</label>
@@ -412,7 +414,7 @@ export default function Roles() {
                   value={editing.effort}
                   onChange={(e) => setEditing({ ...editing, effort: e.target.value })}
                 >
-                  {["low", "medium", "high", "xhigh", "max"].map((level) => (
+                  {(catalog?.efforts ?? ["low", "medium", "high", "xhigh", "max"]).map((level) => (
                     <option key={level}>{level}</option>
                   ))}
                 </select>
@@ -423,7 +425,7 @@ export default function Roles() {
                   value={editing.harness ?? ""}
                   onChange={(e) => setEditing({ ...editing, harness: e.target.value || null })}
                 >
-                  <option value="">Default for the model</option>
+                  <option value="">Default — whatever the paying credential runs on</option>
                   {harnesses.map((h) => (
                     <option key={h.name} value={h.name}>{h.label}</option>
                   ))}
@@ -431,8 +433,19 @@ export default function Roles() {
               </div>
             </div>
             <p className="help">
+              {isClass(editing.model)
+                ? <>A class is the role saying how much model it needs; each project&apos;s
+                    provider says whose. On a project paid by{" "}
+                    {registry.find((p) => p.name === catalog?.default_provider)?.label ?? "the default provider"}{" "}
+                    this runs on{" "}
+                    <code>{catalog?.lineups[parseRef(editing.model).provider
+                      ?? catalog.default_provider]?.[parseRef(editing.model).cls ?? ""] ?? "nothing yet"}</code>.
+                    Its effort runs at the nearest setting the model has at or above this one.</>
+                : <>A pinned model runs whatever pays the project — its provider must be paid
+                    too — and its effort must be one the model takes.</>}{" "}
               The harness is what drives the model in the sandbox. It changes how a run is
-              driven, never what it may do — every rule is the server's, on every harness.
+              driven, never what it may do — every rule is the server&apos;s, on every harness;
+              naming one ties the role to the providers that harness serves.
             </p>
           </div>
 

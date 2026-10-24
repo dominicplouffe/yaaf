@@ -1,10 +1,9 @@
-// App-wide settings: the three things that are true above every project, and
-// your own account.
+// App-wide settings: what is true above every project, and your own account.
 //
-// Two of the three — the Founder's own model credential and the Slack connection —
-// are small, stateful and read once a quarter. The third, the LLM credentials
-// projects pay with, is a working list that on a real install runs to dozens
-// of rows. Stacking all three on one scroll meant the rarely-touched cards sat
+// Most of it — the Founder's own model credential, the model lineups, the web
+// search backend, the Slack connection — is small, stateful and read once a
+// quarter. The LLM credentials projects pay with are a working list that on a
+// real install runs to dozens of rows. Stacking all three on one scroll meant the rarely-touched cards sat
 // below a table that was itself the reason nobody scrolled: to change a Slack
 // channel prefix you first travelled past forty credentials.
 //
@@ -22,17 +21,24 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { del, get, post, put, UserRow } from "../api";
 import { PasswordCard, SessionsCard, TokensCard } from "../account";
-import { Credential, LlmCredentials, ModelPrices, useProviders } from "../llmCredentials";
+import { Credential, LlmCredentials, ModelPrices } from "../llmCredentials";
 import { useMe } from "../me";
 import { People } from "../people";
+import {
+  BaseUrlFields, DEFAULT_PROVIDER, KeyHelp, KeyInput, ModelSelect, ProviderInfo, useModels,
+  useProviders,
+} from "../providers";
 import { SecretInput } from "../ui";
 
-interface AnthropicSettings {
+interface PlatformSettings {
   configured: boolean;
   billing_mode: string;
   /** Which provider the platform credential pays; the Founder runs on it. */
   provider: string;
+  /** The model the Founder runs on: its reference, resolved on that provider. */
   model: string;
+  /** As set — a class (`@frontier`) until somebody names a model. */
+  model_ref?: string;
   note: string;
   /** Its own key, or one of the LLM credentials, borrowed — named, never shown. */
   source?: { source: "own" | "llm_credential" | null; credential_id?: string; name?: string };
@@ -42,7 +48,7 @@ interface AnthropicSettings {
     key is enough to start. */
 function BorrowCard({
   settings, reload,
-}: { settings: AnthropicSettings; reload: () => void }) {
+}: { settings: PlatformSettings; reload: () => void }) {
   const [existing, setExisting] = useState<Credential[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
@@ -105,7 +111,9 @@ interface CredentialCounts {
 }
 
 interface AppSettings {
-  anthropic: AnthropicSettings;
+  platform?: PlatformSettings;
+  /** The same section, under the name it had when it could pay nobody else. */
+  anthropic: PlatformSettings;
   slack: SlackSettings;
   llm_credentials: CredentialCounts;
 }
@@ -116,29 +124,36 @@ function Flash({ note }: { note: { ok: boolean; text: string } | null }) {
   return <p className={note.ok ? "help" : "error"}>{note.text}</p>;
 }
 
+/** Kinds the Founder can be paid with. It runs in the control plane's own
+    process: on a provider's API with a key, or — for a login only the Claude
+    Code CLI can hold — on that CLI, which the server drives for it. */
+const founderKinds = (seller: ProviderInfo | undefined) =>
+  (seller?.kinds ?? []).filter((k) => k.mode === "api_key" || k.default_harness === "claude_agent_sdk");
+
+const PLATFORM = "/admin/settings/platform-credential";
+
 function ModelCard({
   settings, reload,
-}: { settings: AnthropicSettings; reload: () => void }) {
+}: { settings: PlatformSettings; reload: () => void }) {
   const [value, setValue] = useState("");
   const [mode, setMode] = useState(settings.billing_mode);
-  const [provider, setProvider] = useState(settings.provider || "anthropic");
+  const [provider, setProvider] = useState(settings.provider || DEFAULT_PROVIDER);
   const [baseUrl, setBaseUrl] = useState("");
-  const [model, setModel] = useState(settings.model);
+  const [model, setModel] = useState(settings.model_ref ?? settings.model);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
-  // Any provider the Founder can run on: Anthropic's CLI takes a key or a
-  // subscription; every other provider's chat API takes an API key.
-  const sellers = useProviders();
+  const sellers = useProviders().filter((p) => p.protocol);
+  const catalog = useModels();
   const seller = sellers.find((p) => p.name === provider);
-  const kinds = (seller?.kinds ?? []).filter(
-    (k) => provider === "anthropic" || k.mode === "api_key");
-  const anthropic = provider === "anthropic";
+  const kinds = founderKinds(seller);
+  const kind = kinds.find((k) => k.mode === mode) ?? kinds[0];
+  const saved = settings.model_ref ?? settings.model;
 
   useEffect(() => {
     setMode(settings.billing_mode);
-    setProvider(settings.provider || "anthropic");
-    setModel(settings.model);
-  }, [settings.billing_mode, settings.provider, settings.model]);
+    setProvider(settings.provider || DEFAULT_PROVIDER);
+    setModel(settings.model_ref ?? settings.model);
+  }, [settings.billing_mode, settings.provider, settings.model, settings.model_ref]);
 
   async function run(fn: () => Promise<string>) {
     setBusy(true);
@@ -153,6 +168,7 @@ function ModelCard({
     }
   }
 
+  const sellerLabel = sellers.find((p) => p.name === settings.provider)?.label ?? settings.provider;
   return (
     <div className="card">
       <p className="help" style={{ marginTop: 0 }}>
@@ -162,18 +178,14 @@ function ModelCard({
         {settings.configured && settings.source?.source === "llm_credential" ? (
           <>
             <span className="badge good">configured</span> drafting on the LLM credential{" "}
-            <strong>{settings.source.name}</strong>, running <code>{settings.model}</code>.
+            <strong>{settings.source.name}</strong> ({sellerLabel}), running{" "}
+            <code>{settings.model}</code>.
           </>
         ) : settings.configured ? (
           <>
-            <span className="badge good">configured</span>{" "}
-            {settings.provider && settings.provider !== "anthropic"
-              ? `${sellers.find((p) => p.name === settings.provider)?.label
-                  ?? settings.provider} API key`
-              : settings.billing_mode === "subscription"
-                ? "OAuth subscription token"
-                : "Anthropic API key"}{" "}
-            is installed, running <code>{settings.model}</code>. The value is never shown
+            <span className="badge good">configured</span> a {sellerLabel}{" "}
+            {settings.billing_mode === "subscription" ? "subscription" : "API key"} is
+            installed, running <code>{settings.model}</code>. The value is never shown
             again — rotate it by pasting a new one.
           </>
         ) : (
@@ -189,61 +201,47 @@ function ModelCard({
         <div>
           <label className="field">Provider</label>
           <select value={provider} disabled={busy}
-                  onChange={(e) => { setProvider(e.target.value); setMode("api_key"); }}>
-            {(sellers.length ? sellers : [{ name: "anthropic", label: "Anthropic" }])
-              .map((p) => <option key={p.name} value={p.name}>{p.label}</option>)}
+                  onChange={(e) => { setProvider(e.target.value); setMode("api_key"); setBaseUrl(""); }}>
+            {sellers.length === 0 && <option value={provider}>Loading providers…</option>}
+            {sellers.map((p) => <option key={p.name} value={p.name}>{p.label}</option>)}
           </select>
         </div>
-        <div>
+        {kinds.length > 1 && <div>
           <label className="field">Key type</label>
           <select value={mode} disabled={busy} onChange={(e) => setMode(e.target.value)}>
-            {kinds.length ? kinds.map((k) => (
-              <option key={k.mode} value={k.mode}>{k.bills.split(",")[0]}</option>
-            )) : <option value="api_key">API key</option>}
+            {kinds.map((k) => <option key={k.mode} value={k.mode}>{k.bills.split(",")[0]}</option>)}
           </select>
-        </div>
-        <div>
-          <label className="field">
-            {settings.configured ? "Replace the key — blank keeps the current one" : "The key"}
-          </label>
-          <SecretInput
-            value={value}
-            onChange={setValue}
-            placeholder={!anthropic ? "the key" : mode === "subscription" ? "sk-ant-oat…" : "sk-ant-api…"}
-            disabled={busy}
-          />
-        </div>
+        </div>}
       </div>
-      {seller?.credential_base_url && (
-        <div>
-          <label className="field">The server&apos;s base URL</label>
-          <input value={baseUrl} disabled={busy} placeholder="http://ollama:11434/v1"
-                 onChange={(e) => setBaseUrl(e.target.value)} />
-        </div>
-      )}
+      {seller?.credential_base_url && <BaseUrlFields provider={seller} value={baseUrl}
+        onChange={setBaseUrl} secret={value} disabled={busy} />}
+      <label className="field">
+        {settings.configured ? `Replace the ${(kind?.label ?? "key").toLowerCase()} — blank keeps the current one`
+          : kind?.label ?? "The key"}
+      </label>
+      <KeyInput kind={kind} value={value} onChange={setValue} disabled={busy}
+        placeholder={seller?.local ? "Leave blank — it takes no key" : undefined} />
+      <KeyHelp provider={seller} kind={kind} />
       <p className="help">
-        {!anthropic
-          ? "On any provider but Anthropic the Founder runs on its chat API, with this key and "
-            + "the model below — one of that provider's — which is saved with it."
-          : mode === "subscription"
-            ? "A subscription token comes from `claude setup-token` and starts sk-ant-oat."
-            : "An API key comes from the Anthropic console and starts sk-ant-api."}{" "}
-        Pasting one where the other belongs is refused here rather than failing on your
-        first message.
+        The Founder runs on this provider&apos;s own API — or, for a Claude subscription, on
+        the Claude Code CLI — with the model below. Unless you name one, that is the
+        provider&apos;s Frontier model. Pasting a key where another kind belongs is refused
+        here rather than failing on your first message.
       </p>
 
       <div className="actions">
         <button
           className="primary"
-          disabled={busy || value.trim().length < 8}
+          disabled={busy || (!seller?.local && value.trim().length < 8)
+            || (!!seller?.credential_base_url && !baseUrl.trim())}
           onClick={() =>
             run(async () => {
-              await put("/admin/settings/anthropic", {
+              await put(PLATFORM, {
                 value: value.trim(), mode, provider,
                 ...(baseUrl.trim() ? { base_url: baseUrl.trim() } : {}),
                 // The model travels with a key of another provider: the two are
                 // one decision, and the server refuses them apart.
-                ...(model.trim() !== settings.model || provider !== settings.provider
+                ...(model.trim() !== saved || provider !== settings.provider
                   ? { model: model.trim() } : {}),
               });
               setValue("");
@@ -259,8 +257,7 @@ function ModelCard({
               disabled={busy}
               onClick={() =>
                 run(async () => {
-                  const result = await post<{ ok: boolean; detail: string }>(
-                    "/admin/settings/anthropic/test");
+                  const result = await post<{ ok: boolean; detail: string }>(`${PLATFORM}/test`);
                   if (!result.ok) throw new Error(result.detail);
                   return result.detail;
                 })
@@ -275,7 +272,7 @@ function ModelCard({
                              + "No project is affected — they never used it."))
                   return;
                 run(async () => {
-                  await del("/admin/settings/anthropic");
+                  await del(PLATFORM);
                   return "Key removed.";
                 });
               }}
@@ -288,24 +285,23 @@ function ModelCard({
 
       <label className="field">Model the Founder runs on</label>
       <div className="actions">
-        <input
-          value={model}
-          disabled={busy}
-          onChange={(e) => setModel(e.target.value)}
-          style={{ maxWidth: 260 }}
-        />
+        <ModelSelect value={model} onChange={setModel} info={catalog} registry={sellers}
+          primary={provider} providersShown={[provider]} disabled={busy} />
         <button
-          disabled={busy || model.trim() === settings.model || model.trim().length < 3}
+          disabled={busy || model.trim() === saved || model.trim().length < 2}
           onClick={() =>
             run(async () => {
-              await put("/admin/settings/anthropic/model", { model: model.trim() });
-              return `The Founder now runs on ${model.trim()}.`;
+              const said = await put<{ model: string }>(`${PLATFORM}/model`, { model: model.trim() });
+              return `The Founder now runs on ${said.model ?? model.trim()}.`;
             })
           }
         >
           Save model
         </button>
       </div>
+      {settings.model_ref && settings.model_ref !== settings.model &&
+        <p className="help">{settings.model_ref} resolves to <code>{settings.model}</code> on{" "}
+          {sellerLabel}.</p>}
       <Flash note={note} />
     </div>
   );
@@ -516,12 +512,278 @@ function SlackCard({
   );
 }
 
-type SectionKey = "credentials" | "prices" | "founder" | "slack" | "people" | "account";
+// ── models: lineups, the default provider, per-provider ceilings ────────────────
+//
+// A role names a class — Frontier, Balanced, Fast — and a project's provider
+// says whose model that is. This is where an install says what each class is
+// on each provider: the shipped lineup where yaaf has one, the install's own
+// where it does not or should not. A provider with no model for a class
+// refuses every class seat on it (R8), so the gaps are drawn as gaps.
+
+interface LineupCellInfo { model: string | null; shipped: string | null; source: "install" | "shipped" | null }
+interface LineupRow { provider: string; label: string; classes: Record<string, LineupCellInfo> }
+interface ModelsSettings { default_provider: string; lineups: LineupRow[]; ceilings: Record<string, number> }
+
+const CLASS_NAMES: [string, string][] = [["frontier", "Frontier"], ["balanced", "Balanced"], ["fast", "Fast"]];
+
+/** One class on one provider: what it names, and the door to change it. */
+function LineupCell({ provider, cls, label, cell, options, onSaved }: {
+  provider: string; cls: string; label: string; cell: LineupCellInfo;
+  options: string[]; onSaved: (said: ModelsSettings & { unrunnable?: string[] }) => void;
+}) {
+  const [value, setValue] = useState(cell.model ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { setValue(cell.model ?? ""); }, [cell.model]);
+  async function save(model: string | null) {
+    setBusy(true); setError("");
+    try {
+      onSaved(await put<ModelsSettings & { unrunnable?: string[] }>(
+        "/admin/settings/models/lineup", { provider, class: cls, model }));
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+  const listId = `lineup-${provider}-${cls}`;
+  return <div className="lineup-cell">
+    <label className="field">{label}
+      <input list={listId} value={value} disabled={busy} maxLength={128}
+        placeholder={`none set — a ${label} seat on this provider is refused`}
+        onChange={(e) => setValue(e.target.value)} />
+      <datalist id={listId}>{options.map((o) => <option key={o} value={o} />)}</datalist>
+    </label>
+    <span className="help">
+      {cell.source === "install" ? `this install's${cell.shipped ? ` (shipped: ${cell.shipped})` : ""}`
+        : cell.source === "shipped" ? "shipped with yaaf" : "not set"}
+    </span>{" "}
+    <button type="button" className="small" disabled={busy || !value.trim() || value.trim() === cell.model}
+      onClick={() => save(value.trim())}>Save</button>{" "}
+    {cell.source === "install" && <button type="button" className="small" disabled={busy}
+      onClick={() => save(null)}>{cell.shipped ? "Back to shipped" : "Clear"}</button>}
+    {error && <p className="error" role="alert">{error}</p>}
+  </div>;
+}
+
+/** One provider's lineup and ceiling, with discovery from one of its keys. */
+function ProviderLineup({ row, ceiling, catalog, credentials, onSaved }: {
+  row: LineupRow; ceiling: number | undefined; catalog: string[];
+  credentials: Credential[]; onSaved: (said: ModelsSettings & { unrunnable?: string[] }) => void;
+}) {
+  const [discovered, setDiscovered] = useState<string[]>([]);
+  const [limit, setLimit] = useState(ceiling ? String(ceiling) : "");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => { setLimit(ceiling ? String(ceiling) : ""); }, [ceiling]);
+  const options = [...new Set([...catalog, ...discovered])];
+  const key = credentials.find((c) => c.mode === "api_key");
+  async function discover() {
+    if (!key) return;
+    setBusy(true); setNote(null);
+    try {
+      const found = await get<{ models: { id: string }[] }>(
+        `/admin/settings/llm-credentials/${key.id}/models`);
+      setDiscovered(found.models.map((m) => m.id));
+      setNote({ ok: true, text: `${found.models.length} models answer to ${key.name}; they are offered in the boxes above.` });
+    } catch (e) { setNote({ ok: false, text: (e as Error).message }); } finally { setBusy(false); }
+  }
+  async function saveCeiling() {
+    setBusy(true); setNote(null);
+    try {
+      onSaved(await put<ModelsSettings>("/admin/settings/models/ceiling",
+        { provider: row.provider, limit: limit.trim() ? Number(limit) : null }));
+      setNote({ ok: true, text: limit.trim() ? `At most ${limit} runs on ${row.label} at once.`
+        : `No ceiling on ${row.label}.` });
+    } catch (e) { setNote({ ok: false, text: (e as Error).message }); } finally { setBusy(false); }
+  }
+  const gaps = CLASS_NAMES.filter(([c]) => !row.classes[c]?.model).length;
+  return <details className="card" open={credentials.length > 0}>
+    <summary><strong>{row.label}</strong>{" "}
+      {credentials.length > 0 && <span className="chip accent">{credentials.length} credential{credentials.length === 1 ? "" : "s"}</span>}{" "}
+      {gaps > 0 && <span className="chip">{gaps === 3 ? "no lineup" : `${gaps} class${gaps === 1 ? "" : "es"} unset`}</span>}
+    </summary>
+    <div className="row" style={{ flexWrap: "wrap", gap: 12 }}>
+      {CLASS_NAMES.map(([cls, label]) => <LineupCell key={cls} provider={row.provider} cls={cls}
+        label={label} cell={row.classes[cls] ?? { model: null, shipped: null, source: null }}
+        options={options} onSaved={onSaved} />)}
+    </div>
+    <div className="actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+      {key && <button type="button" className="small" disabled={busy} onClick={discover}>
+        List the models {key.name} can call</button>}
+      <label className="field" style={{ maxWidth: 220 }}>Runs at once, across every project
+        <input type="number" min={1} value={limit} disabled={busy} placeholder="no ceiling"
+          onChange={(e) => setLimit(e.target.value)} /></label>
+      <button type="button" className="small" disabled={busy || limit === (ceiling ? String(ceiling) : "")}
+        onClick={saveCeiling}>Save ceiling</button>
+    </div>
+    <Flash note={note} />
+  </details>;
+}
+
+function ModelsSection() {
+  const [data, setData] = useState<ModelsSettings | null>(null);
+  const [error, setError] = useState("");
+  const [stranded, setStranded] = useState<string[]>([]);
+  const [credentials, setCredentials] = useState<Credential[]>([]);
+  const [nonce, setNonce] = useState(0);
+  const catalog = useModels(nonce);
+  const registry = useProviders();
+  useEffect(() => {
+    get<ModelsSettings>("/admin/settings/models").then(setData).catch((e) => setError(e.message));
+    get<Credential[]>("/admin/settings/llm-credentials").then(setCredentials).catch(() => {});
+  }, []);
+  const saved = (said: ModelsSettings & { unrunnable?: string[] }) => {
+    setData(said); setStranded(said.unrunnable ?? []); setNonce((n) => n + 1);
+  };
+  async function setDefault(provider: string) {
+    setError("");
+    try { saved(await put<ModelsSettings>("/admin/settings/models/default-provider", { provider })); }
+    catch (e) { setError((e as Error).message); }
+  }
+  if (!data) return error ? <p className="error">{error}</p> : <div className="card muted">Loading…</div>;
+  const held = (name: string) => credentials.filter((c) => (c.provider ?? DEFAULT_PROVIDER) === name);
+  const rows = [...data.lineups].sort((a, b) =>
+    Number(held(b.provider).length > 0) - Number(held(a.provider).length > 0));
+  const reachable = new Set(registry.filter((p) => p.protocol).map((p) => p.name));
+  return <>
+    <h2 style={{ marginTop: 0 }}>Models</h2>
+    <p className="help">A role names a class of model — <b>Frontier</b>, <b>Balanced</b> or{" "}
+      <b>Fast</b> — and the provider a project pays says whose model that is. Change a class
+      here and every seat naming it on every project that provider pays moves with it on its
+      next run. A provider with nothing set for a class refuses that class&apos;s seats rather
+      than quietly running another vendor&apos;s model.</p>
+    {error && <p className="error" role="alert">{error}</p>}
+    {stranded.length > 0 && <div className="notice-box" role="alert">
+      <b>That change leaves seats unable to run:</b>
+      <ul>{stranded.map((line) => <li key={line}>{line}</li>)}</ul></div>}
+    <div className="card">
+      <label className="field" style={{ maxWidth: 340 }}>Default provider
+        <select value={data.default_provider} onChange={(e) => setDefault(e.target.value)}>
+          {data.lineups.map((r) => <option key={r.provider} value={r.provider}>{r.label}</option>)}
+        </select></label>
+      <p className="help">Where a project that pays nobody yet resolves its classes, and what
+        the Founder&apos;s Frontier model means before it has a key.</p>
+    </div>
+    {rows.filter((r) => reachable.has(r.provider) || held(r.provider).length > 0).map((row) =>
+      <ProviderLineup key={row.provider} row={row} ceiling={data.ceilings[row.provider]}
+        catalog={(catalog?.models ?? []).filter((m) => m.provider === row.provider).map((m) => m.id)}
+        credentials={held(row.provider)} onSaved={saved} />)}
+  </>;
+}
+
+// ── web search: the install's own backend ───────────────────────────────────────
+
+interface SearchBackend { name: string; label: string; base_url: string | null;
+  suggested_usd: number; key: boolean; console_url: string | null }
+interface SearchSettings {
+  configured: { backend: string; label: string; base_url: string; price_usd: number; has_key: boolean } | null;
+  backends: SearchBackend[];
+}
+
+function WebSearchSection({ reload: reloadRail }: { reload: () => void }) {
+  const [data, setData] = useState<SearchSettings | null>(null);
+  const [backend, setBackend] = useState("");
+  const [key, setKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [price, setPrice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [stranded, setStranded] = useState<string[]>([]);
+  const adopt = useCallback((d: SearchSettings) => {
+    setData(d);
+    const chosen = d.configured?.backend ?? d.backends[0]?.name ?? "";
+    setBackend(chosen);
+    setBaseUrl(d.configured?.base_url ?? "");
+    setPrice(String(d.configured?.price_usd ?? d.backends.find((b) => b.name === chosen)?.suggested_usd ?? ""));
+  }, []);
+  useEffect(() => {
+    get<SearchSettings>("/admin/settings/web-search").then(adopt)
+      .catch((e) => setNote({ ok: false, text: (e as Error).message }));
+  }, [adopt]);
+  async function run(fn: () => Promise<string>) {
+    setBusy(true); setNote(null);
+    try { setNote({ ok: true, text: await fn() }); reloadRail(); }
+    catch (e) { setNote({ ok: false, text: (e as Error).message }); } finally { setBusy(false); }
+  }
+  if (!data) return <div className="card muted">Loading…</div>;
+  const chosen = data.backends.find((b) => b.name === backend);
+  const current = data.configured;
+  const sameBackend = current?.backend === backend;
+  return <>
+    <h2 style={{ marginTop: 0 }}>Web search</h2>
+    <p className="help">A role granted the web is promised search. Claude, GPT and Gemini
+      search on their own APIs; most other providers — and the OpenCode CLI — do not, and a
+      web role on one of them is refused until this install has a search backend of its own.
+      Every query is billed into the run at the price below, under its cap, and the key never
+      reaches an agent&apos;s shell.</p>
+    <div className="card">
+      <p className="help" style={{ marginTop: 0 }}>{current
+        ? <><span className="badge good">configured</span> {current.label}, ${current.price_usd} a query.</>
+        : <><span className="badge warn">not set</span> web roles run only where the provider or the harness searches.</>}</p>
+      <div className="row">
+        <div><label className="field">Backend</label>
+          <select value={backend} disabled={busy} onChange={(e) => {
+            setBackend(e.target.value);
+            const next = data.backends.find((b) => b.name === e.target.value);
+            setPrice(String(next?.suggested_usd ?? "")); setBaseUrl(next?.base_url ?? "");
+          }}>
+            {data.backends.map((b) => <option key={b.name} value={b.name}>{b.label}</option>)}
+          </select></div>
+        <div><label className="field">Price per query (USD)</label>
+          <input type="number" min={0} step="any" value={price} disabled={busy}
+            onChange={(e) => setPrice(e.target.value)} /></div>
+      </div>
+      {chosen && !chosen.base_url && <label className="field">Address
+        <input value={baseUrl} disabled={busy} placeholder="http://searxng:8080"
+          onChange={(e) => setBaseUrl(e.target.value)} /></label>}
+      {chosen?.key && <>
+        <label className="field">{current?.has_key && sameBackend ? "Replace the key — blank keeps the current one" : "API key"}</label>
+        <SecretInput value={key} onChange={setKey} disabled={busy} />
+      </>}
+      <p className="help">{chosen?.suggested_usd !== undefined && `Suggested from ${chosen.label}'s entry rate: $${chosen.suggested_usd} a query — set what your plan actually charges. `}
+        {chosen?.console_url && <a href={chosen.console_url} target="_blank" rel="noreferrer">
+          Get a {chosen.label} key ↗</a>}</p>
+      <div className="actions">
+        <button className="primary" disabled={busy || !backend
+          || (!!chosen?.key && !key.trim() && !(sameBackend && current?.has_key))}
+          onClick={() => run(async () => {
+            adopt(await put<SearchSettings>("/admin/settings/web-search", {
+              backend, key: key.trim() || null, base_url: baseUrl.trim() || null,
+              price_usd: price === "" ? null : Number(price) }));
+            setKey("");
+            return "Saved. From the next run, web roles are honoured on every provider.";
+          })}>{current ? "Update" : "Save"}</button>
+        {current && <>
+          <button disabled={busy} onClick={() => run(async () => {
+            const said = await post<{ ok: boolean; detail: string }>("/admin/settings/web-search/test");
+            if (!said.ok) throw new Error(said.detail);
+            return said.detail;
+          })}>Test it</button>
+          <button disabled={busy} onClick={() => {
+            if (!confirm("Remove the search backend? Web roles on providers that cannot search "
+                         + "are refused at their next run.")) return;
+            run(async () => {
+              const said = await del<{ unrunnable: string[] }>("/admin/settings/web-search");
+              setStranded(said.unrunnable ?? []);
+              adopt(await get<SearchSettings>("/admin/settings/web-search"));
+              return "Removed.";
+            });
+          }}>Remove</button>
+        </>}
+      </div>
+      <Flash note={note} />
+      {stranded.length > 0 && <div className="notice-box" role="alert">
+        <b>These seats can no longer run:</b>
+        <ul>{stranded.map((line) => <li key={line}>{line}</li>)}</ul></div>}
+    </div>
+  </>;
+}
+
+type SectionKey = "credentials" | "prices" | "models" | "search" | "founder" | "slack" | "people" | "account";
 
 const SECTIONS: ({ group: string; admin: boolean } | { key: SectionKey; label: string; admin: boolean })[] = [
   { group: "This box", admin: true },
   { key: "credentials", label: "LLM credentials", admin: true },
+  { key: "models", label: "Models", admin: true },
   { key: "prices", label: "Model prices", admin: true },
+  { key: "search", label: "Web search", admin: true },
   { key: "founder", label: "Founder", admin: true },
   { key: "slack", label: "Slack", admin: true },
   { key: "people", label: "People", admin: true },
@@ -556,9 +818,12 @@ function railNote(
              tone: "good" };
   }
   if (key === "prices") return { text: "what models cost", tone: "" };
+  if (key === "models") return { text: "what each class runs on", tone: "" };
+  if (key === "search") return { text: "for providers that cannot", tone: "" };
   if (key === "founder") {
-    return s.anthropic.configured
-      ? { text: s.anthropic.model, tone: "good" }
+    const founder = s.platform ?? s.anthropic;
+    return founder.configured
+      ? { text: founder.model, tone: "good" }
       : { text: "no key set", tone: "warn" };
   }
   return s.slack.bot_token_configured
@@ -650,11 +915,13 @@ export default function Settings() {
             <>
               {section === "credentials" && <LlmCredentials onChanged={reload} />}
               {section === "prices" && <ModelPrices />}
+              {section === "models" && <ModelsSection />}
+              {section === "search" && <WebSearchSection reload={reload} />}
               {section === "founder" && settings && (
                 <>
                   <h2 style={{ marginTop: 0 }}>The key the Founder drafts on</h2>
-                  <BorrowCard settings={settings.anthropic} reload={reload} />
-                  <ModelCard settings={settings.anthropic} reload={reload} />
+                  <BorrowCard settings={settings.platform ?? settings.anthropic} reload={reload} />
+                  <ModelCard settings={settings.platform ?? settings.anthropic} reload={reload} />
                 </>
               )}
               {section === "slack" && settings && (

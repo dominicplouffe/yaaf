@@ -5,6 +5,7 @@ import { TaskChain } from "../../chain";
 import { WhatTheyDid } from "../../did";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { firstName, ProjectCtx } from "../../projectCtx";
+import { useProviders } from "../../providers";
 import { clip, fmtAgo } from "../../ui";
 import { Avatar, plainStatus } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
@@ -95,6 +96,7 @@ const WEEK_MS = 7 * 86_400_000;
 export default function Member({ ctx }: { ctx: ProjectCtx }) {
   const { agentId = "" } = useParams();
   const navigate = useNavigate();
+  const registry = useProviders();
   const { projectId } = ctx;
   const { data: made } = usePoll(
     () => get<ResultsView>(`/observe/projects/${projectId}/results?agent_id=${encodeURIComponent(agentId)}`),
@@ -261,7 +263,9 @@ export default function Member({ ctx }: { ctx: ProjectCtx }) {
               {work?.model && (
                 <>
                   <dt>Model</dt>
-                  <dd>{work.model}{work.provider ? ` · ${work.provider}` : ""}</dd>
+                  <dd>{work.model}{work.provider
+                    ? ` · ${registry.find((p) => p.name === work.provider)?.label ?? work.provider}`
+                    : ""}</dd>
                   <dt>This month</dt>
                   <dd>{fmtUsd(work.month_usd ?? 0)}{work.month_share ? ` · ${Math.round(work.month_share * 100)}% of the project` : ""}</dd>
                 </>

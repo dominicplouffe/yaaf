@@ -1,4 +1,8 @@
-import { CredentialPicker, resolveCredential, useProviders } from "../llmCredentials";
+import { CredentialPicker, resolveCredential } from "../llmCredentials";
+import {
+  CLASS_ORDER, DEFAULT_PROVIDER, isPriced, ModelSelect, parseRef, providerOf as refProvider,
+  resolveRef, useModels, useProviders,
+} from "../providers";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { CrewSummary, get, McpServerEntry, post, ProjectBundle,
@@ -180,13 +184,16 @@ export default function NewProject() {
   const [otherCredentials, setOtherCredentials] = useState<Record<string, string>>({});
   const [otherProvider, setOtherProvider] = useState("");
   const registry = useProviders();
-  // Which provider the billing credential pays, and — when the roles run on
-  // another provider's models — the one model every seat is moved to. Never
-  // chosen for the chairman: a key that pays DeepSeek under a roster of
-  // Claude roles is a choice between moving the seats and paying Anthropic
-  // too, and both are his to make.
-  const [billingProvider, setBillingProvider] = useState("anthropic");
+  // Which provider the billing credential pays — the project's own provider,
+  // where every role naming a class runs — and, optionally, the one model or
+  // class every seat is moved to. A role pinned to another provider's model
+  // is a choice between moving the seat and paying that provider too, and
+  // both are the chairman's to make.
+  const [billingProvider, setBillingProvider] = useState(DEFAULT_PROVIDER);
   const [seatModel, setSeatModel] = useState("");
+  const catalog = useModels();
+  // The install's own prices, for a model the catalog does not list (an
+  // administrator's table — empty for anyone else, who reads the catalog's).
   const [modelTable, setModelTable] = useState<{
     model: string; provider: string; shipped: object | null; own: object | null }[]>([]);
   useEffect(() => {
@@ -619,7 +626,7 @@ export default function NewProject() {
       resolveCredential(p.billing_secret_id, p.billing_secret_name).then((found) => {
         if (found && pick === billingPick.current) {
           setBillingCredentialId(found.id); setBillingMode(found.mode);
-          setBillingProvider(found.provider ?? "anthropic");
+          setBillingProvider(found.provider ?? DEFAULT_PROVIDER);
         }
       });
       // The other providers' credentials travel by name too, and resolve the
@@ -627,7 +634,7 @@ export default function NewProject() {
       setOtherCredentials({});
       Object.entries(p.credential_names ?? {}).forEach(([provider, credName]) => {
         resolveCredential(null, credName).then((found) => {
-          if (found && (found.provider ?? "anthropic") === provider) {
+          if (found && (found.provider ?? DEFAULT_PROVIDER) === provider) {
             setOtherCredentials((prev) => ({ ...prev, [provider]: found.id }));
           }
         });
@@ -837,11 +844,21 @@ export default function NewProject() {
     }
   }
 
-  /** The provider a model belongs to, as the server reads it: the catalog's,
-      else a `provider/model` prefix, else Anthropic. */
+  /** The provider a seat's model belongs to, as the server reads it: a class
+      resolves on the billing credential's provider (or the one it names), a
+      model is the catalog's, else its `provider/` prefix's, else the default. */
   function providerOf(model: string): string {
-    return modelTable.find((r) => r.model === model)?.provider
-      ?? registry.find((r) => model.startsWith(`${r.name}/`))?.name ?? "anthropic";
+    const resolved = resolveRef(model, billingProvider, catalog) ?? model;
+    return modelTable.find((r) => r.model === resolved)?.provider
+      ?? refProvider(resolved, catalog, registry, billingProvider || DEFAULT_PROVIDER);
+  }
+
+  /** Whether this install can meter a model in dollars, as far as the screen
+      can tell: its own price, a shipped one, or a provider that states costs. */
+  function pricedModel(model: string): boolean | null {
+    const row = modelTable.find((r) => r.model === model);
+    if (row) return !!(row.own || row.shipped);
+    return isPriced(model, catalog, registry);
   }
 
   /** Every seat on the form and the model it would run on — its role's, or
@@ -1630,7 +1647,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               setOtherProvider("");
               if (chosen) setOtherCredentials((prev) => ({ ...prev, [chosen]: prev[chosen] ?? "" }));
             }}>
-              <option value="">— for seats on DeepSeek, OpenRouter or your own server —</option>
+              <option value="">— for seats pinned to another provider&apos;s models —</option>
               {registry.filter((r) => !(r.name in otherCredentials))
                 .map((r) => <option key={r.name} value={r.name}>{r.label}</option>)}
             </select></label>
@@ -1638,33 +1655,55 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             const labelOf = (p: string) => registry.find((r) => r.name === p)?.label ?? p;
             const paid = [billingProvider, ...Object.entries(otherCredentials)
               .filter(([, id]) => id).map(([p]) => p)];
-            const choices = modelTable.filter((r) => paid.includes(r.provider));
-            const priced = (m: string) => {
-              const row = modelTable.find((r) => r.model === m);
-              return !!(row?.own || row?.shipped)
-                || !!registry.find((r) => r.name === row?.provider)?.reports_cost;
-            };
-            const unpaid = seatModel || runtime === "mock" || !billingCredentialId ? []
-              : seatModels().filter((s) => s.model && !paid.includes(providerOf(s.model)));
+            // Only a dollar meter needs prices; a subscription is stopped in tokens.
+            const dollars = billingMode !== "subscription";
+            const lineup = CLASS_ORDER.map((cls) => {
+              const model = resolveRef(`@${cls}`, billingProvider, catalog);
+              return { cls, model, priced: model ? pricedModel(model) : null };
+            });
+            const effective = seatModel ? resolveRef(seatModel, billingProvider, catalog) : null;
+            const active = runtime !== "mock" && !!billingCredentialId;
+            const seats = seatModel ? [] : seatModels().filter((s) => s.model);
+            const unmodelled = active ? seats.filter((s) => !resolveRef(s.model, billingProvider, catalog)) : [];
+            const unpaid = active ? seats.filter((s) => resolveRef(s.model, billingProvider, catalog)
+              && !paid.includes(providerOf(s.model))) : [];
             return <>
-              <label className="field" style={{ maxWidth: 380 }}>Run every seat on
-                <select value={seatModel} onChange={(e) => setSeatModel(e.target.value)}>
-                  <option value="">each role&apos;s own model</option>
-                  {choices.map((r) => <option key={r.model} value={r.model}>
-                    {r.model} — {labelOf(r.provider)}{priced(r.model) ? "" : " · no price yet"}
-                  </option>)}
-                </select></label>
-              {seatModel && !priced(seatModel) && <p className="help">
-                {seatModel} has no price on this install, and a seat metered in dollars
-                needs one: set it under <Link to="/settings?section=prices" target="_blank"
+              {billingCredentialId && <p className="help">
+                On {labelOf(billingProvider)} the roles&apos; classes run on:{" "}
+                {lineup.map((l, i) => <span key={l.cls}>{i > 0 && " · "}
+                  {l.cls} → {l.model ? <code>{l.model}</code> : <b>none set</b>}
+                  {dollars && l.model && l.priced === false ? " (no price yet)" : ""}</span>)}.
+                {(lineup.some((l) => !l.model) || (dollars && lineup.some((l) => l.priced === false))) && <>
+                  {" "}A seat on an unset class, or on an unpriced model under an API key, is refused:{" "}
+                  set the lineup under <Link to="/settings?section=models" target="_blank"
+                    rel="noreferrer">Settings → Models ↗</Link> and import prices under{" "}
+                  <Link to="/settings?section=prices" target="_blank"
+                    rel="noreferrer">Settings → Model prices ↗</Link>.</>}
+              </p>}
+              <label className="field" style={{ maxWidth: 480 }}>Run every seat on
+                <ModelSelect value={seatModel} onChange={setSeatModel} info={catalog}
+                  registry={registry} primary={billingProvider} providersShown={paid}
+                  qualified={paid.length > 1} empty="each role's own model" />
+              </label>
+              {seatModel && !effective && <p className="help">
+                {labelOf(parseRef(seatModel).provider ?? billingProvider)} has no model set for
+                that class — choose another, or set one under Settings → Models.</p>}
+              {effective && dollars && pricedModel(effective) === false && <p className="help">
+                {effective} has no price on this install, and a seat metered in dollars
+                needs one: import or set it under <Link to="/settings?section=prices" target="_blank"
                 rel="noreferrer">Settings → Model prices ↗</Link> first.</p>}
+              {unmodelled.length > 0 && <p className="notice-box">
+                {unmodelled.slice(0, 4).map((s) => s.who).join(", ")}
+                {unmodelled.length > 4 ? ` and ${unmodelled.length - 4} more` : ""} name a class{" "}
+                {labelOf(billingProvider)} has no model for. Set its lineup under Settings → Models,
+                or run every seat on a model above.</p>}
               {unpaid.length > 0 && <p className="notice-box">
                 This project pays {paid.map(labelOf).join(" and ")}, and{" "}
                 {unpaid.slice(0, 4).map((s) => `${s.who} (${s.model})`).join(", ")}
                 {unpaid.length > 4 ? ` and ${unpaid.length - 4} more` : ""} run on{" "}
                 {[...new Set(unpaid.map((s) => labelOf(providerOf(s.model))))].join(" and ")}{" "}
                 models it does not pay. Run every seat on one of {labelOf(billingProvider)}&apos;s
-                models above, or pay {[...new Set(unpaid.map((s) => labelOf(providerOf(s.model))))]
+                classes or models above, or pay {[...new Set(unpaid.map((s) => labelOf(providerOf(s.model))))]
                   .join(" and ")} too.</p>}
             </>;
           })()}
@@ -1676,7 +1715,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <div style={{ marginTop: 8, maxWidth: 380 }}>
               <label className="field">Runtime</label>
               <select value={runtime} onChange={(e) => setRuntime(e.target.value)}>
-                <option value="agent_sdk">agent_sdk — real model in the sandbox</option>
+                <option value="agent_sdk">real — each seat on its own harness, in the sandbox</option>
                 <option value="mock">mock — scripted, $0 (CI / tire-kicking)</option>
               </select>
               <p className="help">
