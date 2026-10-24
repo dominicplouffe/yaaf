@@ -400,3 +400,14 @@ def test_a_login_of_another_provider_is_never_sent_to_anthropics_plan_meter(clie
     assert meter.status_code == 200, meter.text
     assert meter.json()["available"] is False
     assert "OpenAI reports no plan meter" in meter.json()["reason"]
+
+
+def test_vertex_lists_googles_models_per_publisher():
+    endpoint = wire.Endpoint(protocol="gemini", auth="bearer", base_url=(
+        "https://europe-west4-aiplatform.googleapis.com/v1/projects/acme/locations/"
+        "europe-west4/publishers/google"))
+    assert wire.models_url(endpoint) == (
+        "https://europe-west4-aiplatform.googleapis.com/v1beta1/publishers/google/models")
+    assert wire.model_ids(endpoint, {"publisherModels": [
+        {"name": "publishers/google/models/gemini-3.1-pro-preview"}]}) == [
+        "gemini-3.1-pro-preview"]

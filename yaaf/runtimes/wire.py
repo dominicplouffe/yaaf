@@ -40,9 +40,11 @@ import httpx
 CONNECT_TIMEOUT_S = 30
 READ_TIMEOUT_S = 600
 
-#: The most `max_tokens` every provider of the OpenAI chat shape accepts. Below
-#: it the governor's clamp is sent; above it the provider's default stands —
-#: DeepSeek's chat model refuses more than 8,192, and others less still.
+#: The most output tokens every model of every non-Anthropic wire accepts as a
+#: limit. Below it the governor's clamp is sent; above it the model's own
+#: default stands — DeepSeek's chat model refuses more than 8,192, Bedrock's
+#: Nova and Llama models refuse more than theirs, and a limit a model refuses
+#: is a run that never starts. Anthropic's wire always takes one.
 SAFE_MAX_TOKENS = 8192
 
 #: The protocols this file speaks. A provider naming another is refused by the
@@ -386,8 +388,9 @@ def responses_request(model: str, system: str, transcript: list[Turn], tools: li
         # Reasoning comes back encrypted so it can be replayed without being
         # stored.
         "store": False, "include": ["reasoning.encrypted_content"],
-        "max_output_tokens": max_tokens,
     }
+    if max_tokens < SAFE_MAX_TOKENS:
+        body["max_output_tokens"] = max_tokens
     if web_search:
         body["tools"].append({"type": "web_search"})
     if effort:
@@ -501,9 +504,11 @@ def gemini_request(system: str, transcript: list[Turn], tools: list[ToolSpec],
                 for o in turn.outputs]})
         else:
             contents.append({"role": "user", "parts": [{"text": turn.text}]})
-    config: dict = {"maxOutputTokens": max_tokens}
+    config: dict = {"maxOutputTokens": max_tokens} if max_tokens < SAFE_MAX_TOKENS else {}
     if effort:
-        config["thinkingConfig"] = {"thinkingLevel": effort}
+        # The enum's own spelling, as the Gemini CLI sends it — the one
+        # spelling this repo has seen the API accept (gemini_cli_entry.py).
+        config["thinkingConfig"] = {"thinkingLevel": effort.upper()}
     body: dict = {"systemInstruction": {"parts": [{"text": system}]}, "contents": contents,
                   "generationConfig": config}
     if grounded:
@@ -619,8 +624,9 @@ def bedrock_request(system: str, transcript: list[Turn], tools: list[ToolSpec],
                 for o in turn.outputs]})
         else:
             messages.append({"role": "user", "content": [{"text": turn.text}]})
-    body: dict = {"system": [{"text": system}], "messages": messages,
-                  "inferenceConfig": {"maxTokens": max_tokens}}
+    body: dict = {"system": [{"text": system}], "messages": messages}
+    if max_tokens < SAFE_MAX_TOKENS:
+        body["inferenceConfig"] = {"maxTokens": max_tokens}
     if tools:
         body["toolConfig"] = {"tools": [{"toolSpec": {
             "name": t.name, "description": t.description or t.name,
@@ -798,9 +804,13 @@ def _one_search(usage: Usage) -> Usage:
 
 def models_url(endpoint: Endpoint) -> str:
     """Where a provider lists the models a key may call. Bedrock lists them on
-    its control endpoint, not the runtime one a run calls."""
+    its control endpoint, not the runtime one a run calls; Vertex lists Google's
+    models per publisher, not per project."""
     if endpoint.protocol == "bedrock":
         return endpoint.base_url.replace("bedrock-runtime.", "bedrock.", 1) + "/foundation-models"
+    if endpoint.protocol == "gemini" and "aiplatform.googleapis.com" in endpoint.base_url:
+        scheme, _, rest = endpoint.base_url.partition("://")
+        return f"{scheme}://{rest.split('/', 1)[0]}/v1beta1/publishers/google/models"
     return f"{endpoint.base_url}/models"
 
 

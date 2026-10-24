@@ -302,7 +302,7 @@ def test_gemini_request_is_the_native_api(stage):
     assert sent["headers"]["x-goog-api-key"] == "provider-key"
     body = sent["body"]
     assert body["systemInstruction"] == {"parts": [{"text": "You are the analyst."}]}
-    assert body["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "high"}
+    assert body["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "HIGH"}
     declarations = body["tools"][0]["functionDeclarations"]
     assert any(d["name"] == "Write" for d in declarations)
     # Gemini refuses some JSON-schema keywords outright; none is sent.
@@ -496,3 +496,26 @@ def test_with_no_backend_and_no_provider_search_nothing_is_offered(stage):
     _drive(r, [_chat_reply("ok")])
     names = {t["function"]["name"] for t in r.requests[0]["body"]["tools"]}
     assert "WebSearch" not in names and "WebFetch" in names
+
+
+@pytest.mark.parametrize("near", [False, True], ids=["far", "near"])
+@pytest.mark.parametrize(("spec", "model", "field"), [
+    (OPENAI, "gpt-6.1-sol", lambda b: b.get("max_output_tokens")),
+    (GEMINI, "gemini-3.1-pro-preview",
+     lambda b: (b.get("generationConfig") or {}).get("maxOutputTokens")),
+    (BEDROCK, "bedrock/us.amazon.nova-pro-v1:0",
+     lambda b: (b.get("inferenceConfig") or {}).get("maxTokens")),
+], ids=["responses", "gemini", "bedrock"])
+def test_an_output_limit_is_sent_only_when_the_cap_needs_one(stage, spec, model, field, near):
+    """A limit above a model's own ceiling is refused, and every run on that
+    model would fail before it started. Far from the cap the model's default
+    stands; near it, the governor's clamp is sent."""
+    reply = {"openai_responses": _responses([_message("ok")]),
+             "gemini": _gemini([{"text": "ok"}]),
+             "bedrock": _converse([{"text": "ok"}])}[spec["protocol"]]
+    r = stage(spec, model)
+    if near:
+        r.mp.setattr(r.base, "MAX_USD", 0.001)
+    _drive(r, [reply])
+    # $0.001 at $10 per million output tokens is 100 tokens.
+    assert field(r.requests[0]["body"]) == (100 if near else None)
