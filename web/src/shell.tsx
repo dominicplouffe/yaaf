@@ -92,7 +92,12 @@ function ProjectNav({
     const busy = people.filter((s) => s.state === "working").length;
     // Team carries who is at it; Details only flags the one thing inside it
     // that is an occasion rather than a reference — an open review.
-    aside[""] = people.length ? `${busy}/${people.length}` : undefined;
+    aside.team = people.length ? `${busy}/${people.length}` : undefined;
+    // The project's Inbox carries the same count as the Inbox above it, for
+    // this project only — the one number on the sidebar that asks for you.
+    if (needs > 0) {
+      aside[""] = <span className="sb-badge" title="Decisions on this project only you can make">{needs}</span>;
+    }
     if (reviews?.open) aside.details = <span className="sb-pill">review open</span>;
   }
   const unread = ctx?.dash.boardroom_unread ?? 0;
@@ -161,7 +166,7 @@ function LiveNow() {
         </button>
       ))}
       {live.length > 6 && (
-        <Link className="sb-more" to={`/projects/${ctx.projectId}`}>and {live.length - 6} more</Link>
+        <Link className="sb-more" to={`/projects/${ctx.projectId}/team`}>and {live.length - 6} more</Link>
       )}
     </>
   );
@@ -183,13 +188,17 @@ function Crumbs() {
       const tab = page.path === "details"
         ? DETAIL_TABS.find((t) => path.startsWith(`/projects/${project[1]}/details/${t.path}`))
         : undefined;
+      // One person's page sits under Team, and the crumb goes back there.
+      const person = page.path === "team" && path.split("/").length > 4;
       parts.push({
         label: page.path === "chat" ? `Chat with ${firstName(frame.ctx.ceoName)}` : page.label,
-        to: tab ? `/projects/${project[1]}/details` : undefined,
+        to: tab ? `/projects/${project[1]}/details` : person ? `/projects/${project[1]}/team` : undefined,
       });
       if (tab) parts.push({ label: tab.label });
-    } else if (project[2] === "team") {
-      parts.push({ label: "Team" });
+      if (person) {
+        const seat = frame.ctx.seats.find((s) => s.id === path.split("/")[4]);
+        parts.push({ label: seat?.name ?? "Person" });
+      }
     }
   } else if (path.startsWith("/projects/new")) {
     parts.push({ label: "Projects", to: "/projects" }, { label: "New project" });

@@ -30,7 +30,7 @@ always shows the same four things in the same order:
 | **Home** | The landing page: one sentence on whether anything needs you, the decisions themselves, every project side by side, and what happened while you were away. |
 | **Inbox** | Everything that needs you, across every project — and everything worth knowing that doesn't. The badge counts only the first. |
 | **Projects** | Your portfolio — one comparable row per project. |
-| **The project you are in** | A switcher (status, and how many things on it need you), then that project's four pages: Team, Chat, Results, Details. |
+| **The project you are in** | A switcher (status, and how many things on it need you), then that project's five pages: Inbox, Team, Chat, Results, Details. |
 
 Under the project's pages a **Live now** list names who is working, who is
 waiting and who wakes next; click a name to open that agent. The **Role
@@ -44,7 +44,7 @@ phone the sidebar folds into a drawer behind the menu button.
 a search box of its own) opens a palette
 that finds any page, project or person and runs the few app-wide actions
 (theme, shortcuts, sign out). **?** lists every shortcut. **g** then a letter
-goes to a page of the project you are in — **g t** Team, **g c** Chat,
+goes to a page of the project you are in — **g o** its Inbox, **g t** Team, **g c** Chat,
 **g r** Results, **g d** Details, and straight to a Details tab with **g m**
 Roadmap, **g k** Tasks, **g f** Deliverables, **g s** Spend, **g v** Reviews,
 **g a** Activity — and **g i** to the Inbox. No single
@@ -149,7 +149,7 @@ stopped, cannot run, paused, failing (its last three runs died), late, at
 risk, decisions waiting, busy with nothing to show (twenty or more paid runs in
 a week, from a project at least a week old, with nothing finished, met,
 published or proven), gone quiet, on track — decided once on the server,
-so the Projects page, the project's Team page, `yaaf projects`, `yaaf status`
+so the Projects page, the project's Inbox, `yaaf projects`, `yaaf status`
 and Claude's `desk` and `project` say exactly the same thing.
 
 It replaced the Desk as the first screen. The Desk answered "what needs me?"
@@ -211,7 +211,7 @@ the whole case:
 - **Scope, a date, a close to judge** link to the screen where the decision is
   made, with the consequence stated first.
 
-The sidebar badge, Home, the project switcher and each Team page's **You** box
+The sidebar badge, Home, the project switcher and each project's Inbox
 card all read the same list from the same request, so they cannot disagree.
 
 **Only live projects appear.** Stopped and completed ones are the Projects
@@ -347,8 +347,8 @@ Chosen once, at creation, and frozen — the rules differ by shape.
 
 A Deliver project whose every requirement is true tells you so, and then closes
 itself after `complete_after_hours` (24 by default; Settings → Rules in force →
-Autonomy) unless its scope moves: the Team page's strip says when, and **Complete
-the project…** does it now. A completed delivery's Team page offers **Reopen…** for
+Autonomy) unless its scope moves: the project's Inbox says when, on its strip, and **Complete
+the project…** does it now. A completed delivery's Inbox offers **Reopen…** for
 14 days; a reopened one runs again and will not close itself until its scope has
 moved.
 
@@ -394,66 +394,53 @@ next agent call. A project whose rules were set individually is reported as
 
 # Inside a project
 
-A project is a team at work, so it has four pages, each answering one
-question:
+A project has five pages, each answering one question:
 
 | Page | Answers |
 |---|---|
-| **Team** | Who is doing my job, how is it going, and what do they need from me? The project's home. |
+| **Inbox** | What does this project need from me, and what should I know? The project's home. |
+| **Team** | Who is doing my job, who do they report to, and what is each of them on? |
 | **Chat** | Talk to the CEO who runs them. |
 | **Results** | What has the team delivered, and who checked it? |
 | **Details** | How it works inside — Roadmap, Tasks, Deliverables, Spend, Reviews, Activity, Settings, as tabs. Nothing there needs you. |
 
-The sidebar carries one number beside Team (how many seats are busy) and marks
-Details when a review is open. Every page carries the same notices when they
-apply: why nothing is happening when the answer is not obvious, a project
-paused or stopped and why, and a review that is open and waiting on you.
+The sidebar carries the count of decisions waiting on you beside Inbox (the
+same count as the Inbox above it, for this project), how many people are busy
+beside Team, and marks Details when a review is open. Every page carries the
+same notices when they apply: why nothing is happening when the answer is not
+obvious, a project paused or stopped and why, and a review that is open and
+waiting on you.
 
-Every old address still works: `/overview` and `/team` open Team, `/roadmap`,
-`/tasks`, `/deliverables`, `/spend`, `/reviews`, `/activity/…` and `/settings`
-open the matching Details tab, with their filters intact.
+Every old address still works: `/overview` opens the project's Inbox, `/team`
+the Team page, and `/roadmap`, `/tasks`, `/deliverables`, `/spend`, `/reviews`,
+`/activity/…` and `/settings` the matching Details tab, with their filters
+intact.
 
 **Explore projects have no Roadmap tab.** They have no requirements by
 design — their shape is bets and evidence — and a tab that only ever explains
 its own absence is clutter. See [project shapes](#project-shapes) below.
 
-## Team — the project's home
+## Inbox — the project's home
 
-<img src="screenshots/cockpit-overview.png" alt="The Team page: the chairman at the top with the three decisions waiting on them, the CEO beneath, and each team — a newly hired Risk team drawn dashed with the CEO's reason — with every person's state, model and month's cost">
+<img src="screenshots/cockpit-overview.png" alt="A project's Inbox: the header with its status and a one-line scoreboard, then the three things waiting on the chairman on this project with the selected one opened, and below it the CEO's latest word, what the CEO is watching, the calendar and setup and health">
 
 **The header** says what kind of project this is (its shape, the date it is due,
 how much the CEO decides on its own, your role on it), its name and status, the
 project's one-line status (the same sentence as Home, with a link to the page
 that fixes it when something is wrong), the goal (the full brief one click
 away), and the controls: **Start**, **Pause the team**, **Stop**, and
-**Message** the CEO. When the projection lands past the promised date, a banner
-under it says so in days, with your two levers: cut scope, or move the date.
+**Message** the CEO. Under it, one line keeps score: on track or not, how many
+must-be-true things are true (or bets in play, on an Explore project), how many
+results have been delivered, what this month has cost against the cap, and
+runs today. When the projection lands past the promised date, a banner says
+so in days, with your two levers: cut scope, or move the date.
 
-**Your team** is the org chart, top to bottom:
+**The Inbox** is the same Inbox as the one in the sidebar, for this project
+only — the same rows, the same tabs (Decide, Acknowledge, Updates, Watching,
+Done), the same buttons, and the same count. It is one component in both
+places, so the two can never disagree.
 
-- **You.** Your box holds what waits on you on this project — the Inbox's
-  Needs-you rows, with their buttons (approve, decline, answer, snooze) and the
-  clock on each. A quiet project says nothing needs a decision from you.
-- **The CEO**, who reports to you and is the only agent you talk to.
-- **Each team** with its lead and its people. Every person wears their state as
-  a coloured word — **Working**, **Up next**, **Waiting on you**, **Blocked**,
-  **Idle**, **Paused** — says in one line what they are doing, and names the
-  **model** they run on and what they have **cost this month** (and their share
-  of the project's month). An active seat with no run in a week carries a
-  **No run in N days** (or **Never run**) marker.
-- **A team the CEO hired this week** is drawn with a dashed outline and a
-  **new** badge, with who hired it, when, and the reason it gave. Hiring is the
-  CEO's own verb — no approval waits — so this is where you see it happened;
-  **Stand down…** under it is how you disagree. Teams whose job is done fold to
-  one line under the chart, with **Recall** one click away.
-- **Add a team** hires from the role library.
-
-**List** shows the same people as a table with runs and spend today. Under the
-chart, one line keeps score: on track or not, how many must-be-true things are
-true (or bets in play, on an Explore project), how many results have been
-delivered, what this month has cost against the cap, and runs today.
-
-**Below the chart:**
+**Below it:**
 
 - **From the CEO** — its latest message to you, the flags it has raised (answer
   each with **Noted**), and one-click starters that open Chat with the question
@@ -467,16 +454,46 @@ delivered, what this month has cost against the cap, and runs today.
   heartbeat, any agent on a clock) and one-off events coloured by kind — one
   that **resolves itself**, a **deadline**, a **meeting**, or the platform's
   **projection**, drawn hollow.
-- **Who works when** — one row per person across the day around now: the last
-  twelve hours as the runs that happened, a line at now, and the next twelve as
-  the wakes the platform will fire (dashed). Everyone else wakes when handed
-  work or a message, and the row says so. Computed from the same heartbeats the
-  dispatcher reads, so a wake drawn here is a wake that will run.
 - **Setup & health** — anything misconfigured, in plain language, with a fix
   link. Each row is a **problem** (fix it) or a **suggestion** (advice; **Got
   it** puts it away for you until the finding changes). The badge beside the
   project's status counts the same rows. A healthy project collapses this to
   one green line.
+
+## Team — who is doing the work
+
+<img src="screenshots/team.png" alt="The Team page: the chairman's one-line box linking to the Inbox, the CEO beneath, and each team — a newly hired Risk team drawn dashed with the CEO's reason — with every person's state, what they are on, the model they run on and their month's cost">
+
+The org chart, top to bottom:
+
+- **You**, on one line: how many things wait on you, and **Inbox →**.
+- **The CEO**, who reports to you and is the only agent you talk to.
+- **Each team** with its lead and its people. Every person wears their state as
+  a coloured word — **Working**, **Up next**, **Waiting on you**, **Blocked**,
+  **Idle**, **Paused** — says in one line what they are doing, and names the
+  **model** they run on and what they have **cost this month**. An active seat
+  with no run in a week carries a **No run in N days** (or **Never run**)
+  marker.
+- **A large team stays readable.** Past four teams or ten people, teams wrap
+  into a grid of cards instead of one row, the ones with someone at work,
+  waiting or stuck come first, and each person is one line. A thirteen-team
+  project fits the width of the page.
+- **A team the CEO hired this week** is drawn with a dashed outline and a
+  **new** badge, with who hired it, when, and the reason it gave. Hiring is the
+  CEO's own verb — no approval waits — so this is where you see it happened;
+  **Stand down…** is how you disagree. Teams whose job is done fold to one
+  line under the chart, with **Recall** one click away.
+- **+ Add a team** hires from the role library.
+
+**List** shows the same people as a table with runs and spend today.
+
+**Who works when**, under the chart, is one row per person across the day
+around now: the last twelve hours as the runs that happened, a line at now,
+and the next twelve as the wakes the platform will fire (dashed). On a large
+team the people who did not run and have no scheduled wake are counted in one
+line rather than drawn as empty rows — they work when handed work or a
+message. Computed from the same heartbeats the dispatcher reads, so a wake
+drawn here is a wake that will run.
 
 ### One person's page
 
@@ -629,7 +646,7 @@ forecast grades. Nothing but the platform ever writes `met`.
 
 Opened on schedule by the janitor, with zero tokens, regardless of budget or an
 empty board. A review with nothing on the board is the one you most need. An
-open review shows a banner on the Team page and the Roadmap until you close it.
+open review shows a banner on the project's Inbox and the Roadmap until you close it.
 
 - **The platform's numbers**, frozen at open: pace, requirements met since the
   last review, the commitment's state with promised and projected dates,

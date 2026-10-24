@@ -1,14 +1,15 @@
 import { IconName } from "./ui/Icon";
 
-/** A project is a team at work, so it has four pages, each answering one
-    question: Team (who is doing my job, how is it going, what do they need
-    from me?), Chat (talk to the CEO who runs them), Results (what has the team
-    delivered, and who checked it?) and Details (how it works inside, for when
-    you want to look). Ten pages in the sidebar made every one of them look
-    equally important, and the team, the thing a chairman actually bought, was
-    the sixth. */
+/** A project's pages, each answering one question: Inbox (what does it need
+    from me, and what should I know?), Team (who is doing my job, and what is
+    each of them on?), Chat (talk to the CEO who runs them), Results (what has
+    the team delivered, and who checked it?) and Details (how it works inside,
+    for when you want to look). Ten pages in the sidebar made every one of
+    them look equally important; one page holding both the decisions and the
+    org chart fell apart the first time a project had thirteen teams. */
 export const PROJECT_PAGES: { path: string; label: string; icon: IconName; key: string }[] = [
-  { path: "", label: "Team", icon: "org", key: "t" },
+  { path: "", label: "Inbox", icon: "inbox", key: "o" },
+  { path: "team", label: "Team", icon: "org", key: "t" },
   { path: "chat", label: "Chat", icon: "message", key: "c" },
   { path: "results", label: "Results", icon: "check", key: "r" },
   { path: "details", label: "Details", icon: "layout", key: "d" },
@@ -29,7 +30,8 @@ export const DETAIL_TABS: { path: string; label: string; icon: IconName; key: st
 
 /** Every place inside a project the palette and the G-keys can go. */
 export const PROJECT_DESTINATIONS = [
-  ...PROJECT_PAGES.map((p) => ({ ...p, words: p.path === "" ? "org chart people agents home overview"
-    : p.path === "chat" ? "boardroom ceo message" : p.path === "results" ? "published deliverables" : "" })),
+  ...PROJECT_PAGES.map((p) => ({ ...p, words: p.path === "" ? "home overview decisions needs you approvals questions"
+    : p.path === "team" ? "org chart people agents who" : p.path === "chat" ? "boardroom ceo message"
+      : p.path === "results" ? "published deliverables" : "" })),
   ...DETAIL_TABS.map((t) => ({ ...t, path: `details/${t.path}`, label: `Details › ${t.label}` })),
 ];
