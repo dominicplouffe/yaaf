@@ -1444,7 +1444,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             ))}
           </div>
           {modeNotice && (
-            <p className="help" style={{ marginTop: 10, color: "var(--warn, var(--ink-2))" }}>
+            <p className="help" style={{ marginTop: 10, color: "var(--warning)" }}>
               {modeNotice}
             </p>
           )}
@@ -1498,7 +1498,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         </div>
         <h2>Teams</h2>
         {missingRoleSlugs.length > 0 && (
-          <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+          <p className="help" style={{ color: "var(--warning)" }}>
             This setup file hires {missingRoleSlugs.length === 1 ? "a role" : "roles"} this
             install does not have: <strong>{missingRoleSlugs.join(", ")}</strong>. The examples
             hire from the role library by slug rather than carrying their prompts, so a role
@@ -1703,7 +1703,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             ))}
           </div>
           {autonomyNotice && (
-            <p className="help" style={{ marginTop: 10, color: "var(--warn, var(--ink-2))" }}>
+            <p className="help" style={{ marginTop: 10, color: "var(--warning)" }}>
               {autonomyNotice}
             </p>
           )}
@@ -1806,7 +1806,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           </div>
           {needsReviewSeat && (
             <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8,
-              border: "1px solid var(--warn, var(--border))",
+              border: "1px solid var(--warning)",
               background: "rgba(var(--warning-rgb), 0.09)", fontSize: 13 }}>
               This preset asks for the work to be read by somebody who did not write it,
               and no team on your roster does that — so the only reader of a deliverable

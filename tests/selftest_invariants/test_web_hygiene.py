@@ -100,6 +100,47 @@ def test_no_chart_paints_with_a_hardcoded_colour():
     )
 
 
+#: A custom property being declared: `--ink: ...` in CSS, or `"--ink": ...` as
+#: a key in a React style object.
+CSS_VAR_DECL = re.compile(r"""(--[\w-]+)["'`]?\s*:""")
+CSS_VAR_USE = re.compile(r"var\(\s*(--[\w-]+)")
+
+
+def test_every_custom_property_read_is_one_somebody_declared():
+    """`var(--name)` on a name nothing declares is not an error anywhere: the
+    browser takes the fallback, or nothing, and the build and this suite stay
+    green.
+
+    The undo toast set its text to `var(--bg, #fff)`. There is no `--bg`, so
+    the text was always white — fine on the light theme's dark toast, and
+    white on white on the dark one. The same check found warnings painted
+    `var(--warn, var(--ink-2))`, which drew every warning in plain grey for
+    want of `--warning`. A fallback does not excuse the name; it is what hid
+    both.
+    """
+    sources = sorted(WEB_SRC.rglob("*.css")) + sorted(WEB_SRC.rglob("*.ts*"))
+    declared: set[str] = set()
+    for path in sources:
+        declared.update(CSS_VAR_DECL.findall(path.read_text()))
+
+    offenders: list[str] = []
+    for path in sources:
+        source = path.read_text()
+        for match in CSS_VAR_USE.finditer(source):
+            if match.group(1) not in declared:
+                line = source[: match.start()].count("\n") + 1
+                offenders.append(
+                    f"{path.relative_to(WEB_SRC.parents[1])}:{line} — {match.group(1)}"
+                )
+
+    assert not offenders, (
+        "these read a custom property that nothing declares, so the browser "
+        "silently falls back:\n  "
+        + "\n  ".join(offenders)
+        + "\nUse a token from the top of styles.css, or declare the new one there."
+    )
+
+
 def test_the_burn_up_is_drawn_for_deliver_projects_only():
     """A burn-up of work that recurs is a flat line — `velocity.standing_record`
     says so in its own docstring, and an Operate project already has the record
