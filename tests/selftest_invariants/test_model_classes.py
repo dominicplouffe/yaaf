@@ -415,3 +415,29 @@ def test_an_export_carries_the_class_and_a_clone_resolves_it_again(client):
     with db_session() as session:
         ada = session.query(Agent).filter_by(project_id=clone.json()["id"], name="Ada").one()
         assert ada.model_override == "@fast"
+
+
+def test_a_ceo_whose_class_lost_its_model_holds_no_boardroom_session(client):
+    """R8's backstop in the chat lane: a lineup unset after the doors last
+    asked leaves the CEO's class with nothing behind it, and the supervisor
+    starts no session on a model that does not exist."""
+    from yaaf.core.models import Project
+    from yaaf.runner.chat import converses
+
+    _library(client)
+    for cls, model in (("frontier", "groq/kimi-k2"), ("balanced", "groq/llama-4"),
+                       ("fast", "groq/llama-4-scout")):
+        assert client.put(f"{MODELS}/lineup", headers=ADMIN, json={
+            "provider": "groq", "class": cls, "model": model}).status_code == 200
+        _price(client, model)
+    groq = _credential(client, "Groq", "groq", "gsk-groq-test-value")
+    created = client.post("/admin/projects", headers=ADMIN, json=_body("groq-chat", groq))
+    assert created.status_code == 200, created.text
+    project_id, ceo_id = created.json()["id"], created.json()["ceo_agent_id"]
+    with db_session() as session:
+        assert converses(session, session.get(Project, project_id), session.get(Agent, ceo_id))
+    assert client.put(f"{MODELS}/lineup", headers=ADMIN, json={
+        "provider": "groq", "class": "frontier", "model": None}).status_code == 200
+    with db_session() as session:
+        assert not converses(session, session.get(Project, project_id),
+                             session.get(Agent, ceo_id))

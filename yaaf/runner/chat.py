@@ -336,10 +336,13 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
 def converses(session: Session, project: Project, ceo: Agent) -> bool:
     """Whether the CEO's seat runs on a harness that can hold the boardroom
     conversation (R7) — the harness its work runs on, which is the one its
-    talk runs on too."""
+    talk runs on too — on a model it can name at all (R8: a lineup changed
+    since the doors last asked can leave a class with nothing behind it)."""
     seat = seat_for(ceo, role_version_for(session, ceo),
                     (project.integrations or {}).get("runtime"),
                     context=model_policy.context(session, project))
+    if not seat.resolved:
+        return False
     found = HARNESSES.get(seat.harness)
     return found is not None and (found.conversation or found.family == "mock")
 
