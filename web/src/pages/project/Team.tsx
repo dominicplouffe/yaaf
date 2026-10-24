@@ -274,7 +274,7 @@ function AddTeam({ ctx, onClose }: { ctx: ProjectCtx; onClose: () => void }) {
             {needsOf(role.secret_scopes ?? []).length > 0 && (
               <p className="help">
                 {role.name} needs {needsOf(role.secret_scopes ?? []).map((n) => n.words).join(" and ")} —
-                add it in Settings → Data &amp; credentials, scoped to this role, or its runs will
+                add it in Settings → Secrets &amp; variables, granted to this team, or its runs will
                 fail asking for it.
               </p>
             )}

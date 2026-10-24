@@ -593,7 +593,45 @@ export interface McpServerEntry {
     scope?: string | null;
     error?: string;
   };
-  last_check?: { ok: boolean; detail: string; at: string };
+  last_check?: {
+    ok: boolean;
+    detail: string;
+    at: string;
+    /** Which way it failed (or "ok"), so the row can name the fix. Absent on
+        checks recorded before states existed. */
+    state?: SourceState;
+    tools?: number;
+  };
+}
+
+export type SourceState =
+  | "ok" | "unauthorized" | "not_found" | "not_mcp" | "no_tools" | "blocked" | "timeout"
+  | "unreachable" | "needs_signin" | "needs_reauth";
+
+/** One row of GET /admin/secrets. Values never ride it — except, for someone
+    who could reveal them anyway, a plain value whole and a secret's last four. */
+export interface SecretRow {
+  id: string;
+  name: string;
+  project_id: string | null;
+  role_scopes: string[];
+  kind: "service" | "billing";
+  /** Set => the credential IS a file; its variable holds the path, not the value. */
+  filename: string | null;
+  visibility: "secret" | "plain";
+  created_at: string | null;
+  updated_at: string | null;
+  value?: string;
+  hint?: string;
+  size_bytes?: number;
+}
+
+export interface SecretHistoryRow {
+  at: string;
+  action: string;
+  by: string;
+  what: string;
+  reason?: string | null;
 }
 
 export interface TaskRow {
@@ -1393,6 +1431,10 @@ export interface ProjectBundle {
         picker rather than a box to type in. The file's own name does not
         travel — a key file is usually named after the account it opens. */
     file?: boolean;
+    /** Present only in full backups (include_values=true), with the value —
+        without it a file credential would restore as a string of base64. */
+    filename?: string | null;
+    visibility?: "secret" | "plain";
     /** Present only in full backups (include_values=true). */
     value?: string;
   }[];

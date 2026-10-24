@@ -4,7 +4,7 @@
 // primitives the redesign repeats everywhere so the pattern is learned once.
 
 import type React from "react";
-import { Icon } from "./ui/Icon";
+import { Icon, type IconName } from "./ui/Icon";
 import { useEffect, useId, useRef, useState } from "react";
 import { Activity, Dashboard, get, RunRow, SpendBucket } from "./api";
 import { announceOffer, SpendOffer } from "./precedent";
@@ -654,7 +654,7 @@ export function CopyField({ value, note }: { value: string; note?: React.ReactNo
     Reports base64 in both modes when a file is chosen, because that is what the
     door takes; `filename` is what makes it a file credential at all. */
 export function CredentialValue({
-  value, filename, onChange, placeholder, disabled,
+  value, filename, onChange, placeholder, disabled, fileOnly,
 }: {
   value: string;
   /** null => the chairman is typing a string. */
@@ -662,6 +662,8 @@ export function CredentialValue({
   onChange: (next: { value: string; filename: string | null }) => void;
   placeholder?: string;
   disabled?: boolean;
+  /** The type was already chosen as File: offer the picker and nothing to type into. */
+  fileOnly?: boolean;
 }) {
   const [size, setSize] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -703,6 +705,23 @@ export function CredentialValue({
           {size === null ? "A file" : `A file, ${size.toLocaleString()} bytes`} — granted
           roles receive the <strong>path</strong> to it, never its contents.
         </div>
+      </div>
+    );
+  }
+
+  if (fileOnly) {
+    return (
+      <div className="secret-field-stack">
+        <input ref={picker} type="file" hidden disabled={disabled}
+               onChange={(e) => pick(e.target.files?.[0])} />
+        <button type="button" className="filepick" disabled={disabled}
+                onClick={() => picker.current?.click()}>
+          <Icon name="file" size={15} /> Choose a file
+        </button>
+        <div className="help">
+          A service-account key, a PEM, a kubeconfig. Agents receive the path, not the bytes.
+        </div>
+        {error && <div className="help" style={{ color: "var(--critical)" }}>{error}</div>}
       </div>
     );
   }
@@ -1169,6 +1188,111 @@ export function ConfirmModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Every edit on a settings list happens here, not inline in its row.
+
+    The list it opens over stays a list: one line per thing, scannable, and the
+    row you are editing stays lit behind the scrim. Inline editors grew each
+    row to the height of the form inside it — a credential row on the old page
+    was 410px of team cards — and a page of them stopped being readable as a
+    list at all. One save button lives in the footer, so there is exactly one
+    way to commit a change. */
+export function Drawer({
+  title, sub, icon, onClose, footer, children, wide,
+}: {
+  title: React.ReactNode;
+  sub?: React.ReactNode;
+  icon?: React.ReactNode;
+  onClose: () => void;
+  footer?: React.ReactNode;
+  children: React.ReactNode;
+  wide?: boolean;
+}) {
+  const labelId = useId();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [onClose]);
+  return (
+    <>
+      <div className="drawer-scrim" onClick={onClose} />
+      <aside className={`drawer${wide ? " wide" : ""}`} role="dialog" aria-modal="true"
+             aria-labelledby={labelId}>
+        <header className="drawer-head">
+          {icon}
+          <div className="drawer-title">
+            <h3 id={labelId}>{title}</h3>
+            {sub && <p>{sub}</p>}
+          </div>
+          <button className="icon small" aria-label="Close" title="Close" onClick={onClose}>
+            <Icon name="x" size={15} />
+          </button>
+        </header>
+        <div className="drawer-body">{children}</div>
+        {footer && <footer className="drawer-foot">{footer}</footer>}
+      </aside>
+    </>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  icon?: IconName;
+  onClick: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+}
+
+/** The ⋯ at the end of a row. Test, edit, delete were four always-visible
+    buttons on every data source — sixteen on a page of four — and seven red
+    delete buttons stacked down the credentials table. Rare verbs go here. */
+export function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!box.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  return (
+    <div className="rowmenu" ref={box} onClick={(e) => e.stopPropagation()}>
+      <button className="icon small" aria-label={label} title={label} aria-expanded={open}
+              aria-haspopup="menu" onClick={() => setOpen(!open)}>
+        <Icon name="more" size={16} />
+      </button>
+      {open && (
+        <div className="rowmenu-pop" role="menu">
+          {items.map((item) => (
+            <button key={item.label} role="menuitem" disabled={item.disabled}
+                    className={item.danger ? "del" : ""}
+                    onClick={() => { setOpen(false); item.onClick(); }}>
+              {item.icon && <Icon name={item.icon} size={14} />}
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

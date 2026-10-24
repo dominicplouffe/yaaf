@@ -274,7 +274,7 @@ The constitution card also carries your reporting cadence — **hours between
 unprompted status reports** (default 1), an optional reporting window like
 `09:00-20:00`, and your timezone (guessed from the browser).
 
-**Service credentials (optional).** If you already know the keys the agents
+**Secrets & variables (optional).** If you already know the keys the agents
 will need, add them here: a name, the value, and tick which roles receive
 them. Agents get them as environment variables in their sandboxes and never
 see the values in chat. You can also do this later in Settings.
@@ -327,13 +327,13 @@ So the address travels as one: saving `ppc` hands the granted roles
 the sandbox rebuilds the connection from those. **The variable is the
 delivery mechanism, not a side effect.**
 
-You'll see those variable names listed under the source's name in the table.
-They don't appear in *Variables & credentials* — that card is for credentials
-you create by hand. One data source is one thing, edited in one place.
+Those variables are listed under *Secrets & variables* in a locked group, "Set
+up by your data sources", with a link back here — they belong to the source and
+are edited with it. One data source is one thing, edited in one place.
 
 ### Changing one
 
-Press **edit** on its row. The stored address is fetched and shown in full —
+Open the row's **⋯** menu and press **Edit**. The stored address is fetched and shown in full —
 an address is not a password, and you can't fix a port you can't see. Change
 what you need and save; leaving the token box blank keeps the current token,
 so a URL-only edit never disarms the auth header. There's a tickbox to remove
@@ -345,8 +345,11 @@ You are the chairman. Whoever can change a project's credentials can read them
 back — you and your co-chairs, never an observer — and the box's own
 credentials are the instance admin's. Every stored project value — service
 credentials, a data source's address and token, the Slack tokens, the webhook
-signing secrets — is masked in the UI and one press of the **eye** from being
-readable, with a copy button and an inline edit to rotate it. Debugging a connection shouldn't require a database client. The
+signing secrets — is masked in the UI and one press of **Reveal** from being
+readable, with a copy button and **Replace value** to rotate it; each reveal is
+logged to that credential's history. A value you mark **Plain value** (a
+timezone, an account id) is shown as it is instead, to the same people.
+Debugging a connection shouldn't require a database client. The
 LLM credentials projects pay with live above projects, under app-wide
 Settings, where they can be renamed and rotated but are never shown back.
 

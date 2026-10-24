@@ -5,8 +5,29 @@ in a browser). The bar at the top switches between eight screens: **Today** (the
 **Variables**, **Edit drawer**, **Access map**, **Paste .env**, **Data sources**, **Add a source**
 and **Research & plan**. **Design notes** pins the reasoning to each part.
 
-> **Status: proposal.** Nothing in `web/src` or the server has changed. This folder is for
-> deciding whether to build it.
+> **Status: built.** Settings now has **Data sources** and **Secrets & variables** under
+> Connections, as proposed; old `?s=data` links land on Secrets & variables.
+> [`docs/DASHBOARD.md`](../../DASHBOARD.md) describes them as shipped. Where the build departs
+> from this proposal:
+>
+> - **No hint column.** A secret's last four characters are read at list time, for people who
+>   could reveal the value anyway, so the hint works for every credential stored before this
+>   change too. The migration (`0054`) adds only `visibility` and `updated_at`.
+> - **No batch endpoint.** The access map and *Paste .env* stage changes in the browser and then
+>   save each row through the endpoints that exist, so every row keeps its own audit entry. A
+>   data source's teams change through a new `POST …/mcp_servers/{name}/roles`, which neither
+>   re-checks the server nor sends an OAuth source back through its consent screen.
+> - **More health states than drawn.** Each check now returns a `state`, and the page names ten:
+>   *Working, Needs sign-in, Sign-in expired, Credential refused, Wrong address, Not an MCP
+>   server, Offers no tools, Blocked by the network, Not answering, Can't connect.*
+> - **Two bugs found on the way, fixed.** Rotating a value from the old page sent no
+>   `role_scopes`, which the server read as "nobody", so the key silently left every sandbox;
+>   an omitted `role_scopes` now keeps the grants (CLI and MCP too). And importing a full
+>   backup in the new-project form restored a file credential as a string of base64, because
+>   the form ignored the backup's `filename`.
+> - **One team picker.** The cards, the checkbox row and the wizard's pills became one
+>   component (`web/src/grants.tsx`), used by the drawer, the Inbox's *Fulfill the need*, the
+>   data source form and the new-project wizard.
 
 | Today (full length) | Variables | Access map |
 |---|---|---|

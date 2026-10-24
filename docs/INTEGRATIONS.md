@@ -116,11 +116,24 @@ ChatGPT login cannot, since it pays only the Codex CLI.
 
 ## Credentials and variables
 
-**Settings → Data & credentials**, or `yaaf set-secret`.
+**Settings → Secrets & variables**, or `yaaf set-secret`.
 
 A secret has a name, a value (encrypted at rest with `YAAF_MASTER_KEY`), a
 `kind`, and a list of **role scopes**. Only agents whose role is in the scope
 list get it injected, and only for the duration of a run.
+
+It also has a **visibility**: `secret` (the default — masked, read back only by
+an audited reveal) or `plain`, for a setting that is not secret at all, like a
+timezone or an ad account id. A plain value is still encrypted at rest and
+injected exactly the same way; the difference is only that the list shows it as
+it is, to someone who could reveal it anyway. Observers and the MCP surface get
+neither plain values nor a secret's last four characters. Files, values a data
+source or Slack owns, and billing credentials stay secret.
+
+Saving an existing name without `role_scopes` keeps who has it — rotating a key
+never takes it away from anyone. Send `role_scopes: []` to grant nobody.
+`GET /admin/secrets/{id}/history` reads back who created, rotated, regranted or
+revealed a credential, in sentences, for the people who may reveal it.
 
 - `kind: "service"` — role-grantable. WordPress passwords, API tokens, database
   URLs. This is the only kind a project stores.
@@ -191,8 +204,10 @@ it is a file — never its bytes.
 
 ## Data sources — external MCP servers
 
-**Settings → Data & credentials → Data sources.** One form: **name, URL,
-roles, Save.**
+**Settings → Data sources.** One form: **address first, then name, sign-in,
+how agents read results, and who gets its tools.** The address is checked
+before anything is stored (`POST /admin/projects/{id}/mcp_servers/probe`), and
+the check says how the server wants you to sign in.
 
 What happens on save:
 
@@ -207,7 +222,15 @@ What happens on save:
 a healthy MCP endpoint answers GET with 405.)
 
 Saving under an existing name is the edit path. `bearer` omitted keeps the
-current token, `""` removes it, anything else rotates it.
+current token, `""` removes it, anything else rotates it. To change only who
+receives a source, `POST /admin/projects/{id}/mcp_servers/{name}/roles` with
+`{"roles": [...]}` regrants its address and token without re-checking it or
+sending an OAuth source back through the provider's consent screen.
+
+Every check result carries a `state` — `ok`, `unauthorized`, `not_found`,
+`not_mcp`, `no_tools`, `blocked`, `timeout`, `unreachable`, `needs_signin`,
+`needs_reauth` — so a screen can name the failure and its fix rather than
+calling all of them "unreachable".
 
 > Roles never own MCP servers. A server frozen into a role template follows
 > every project that pins that role — including one that had never heard of it.
