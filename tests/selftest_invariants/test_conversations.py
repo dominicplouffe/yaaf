@@ -378,7 +378,7 @@ def _settle(client, message: str) -> dict:
 def test_the_founder_drafts_on_deepseek_through_its_chat_api(client, monkeypatch):
     _deepseek_founder(client)
     sent = _chat_api(monkeypatch, [
-        {"content": None, "reasoning_content": "never sent back",
+        {"content": None, "reasoning_content": "thinking beside the call",
          "tool_calls": [{"id": "c1", "type": "function", "function": {
              "name": "propose_bundle", "arguments": json.dumps({"project": DRAFT})}}]},
         {"content": "Explore, because you are still choosing what to build."},
@@ -397,7 +397,11 @@ def test_the_founder_drafts_on_deepseek_through_its_chat_api(client, monkeypatch
     assert sorted(t["function"]["name"] for t in first["tools"]) == sorted(TOOL_NAMES)
     tool_result = json.loads(second["messages"][-1]["content"])
     assert second["messages"][-1]["role"] == "tool" and tool_result["ok"] is True
-    assert all("reasoning_content" not in m for m in second["messages"])
+    # DeepSeek's thinking mode refuses a tool loop that drops the reasoning
+    # streamed beside a call (this asserted R1's opposite rule until the API
+    # reversed it), so it goes back on the turn it came with.
+    [called] = [m for m in second["messages"] if m.get("tool_calls")]
+    assert called["reasoning_content"] == "thinking beside the call"
 
 
 def test_the_grader_runs_on_the_same_credential(monkeypatch):

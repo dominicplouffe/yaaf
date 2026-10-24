@@ -339,8 +339,10 @@ AZURE_OPENAI = Provider(
     search_usd=0.025,
     console_url="https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/"
                 "CognitiveServicesHub/~/OpenAI",
+    # Azure's own words for a dead key. Never a bare status code: "401" is in
+    # a context-length error that counts 140,123 tokens too.
     failure_markers=("access denied due to invalid subscription key",
-                     "invalid subscription key", "401"),
+                     "invalid subscription key"),
 )
 
 #: Models on AWS Bedrock, through the Converse API, paid with a Bedrock API key

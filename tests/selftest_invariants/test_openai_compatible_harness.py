@@ -301,15 +301,24 @@ def test_a_tool_call_cut_off_at_the_length_limit_is_never_run(run):
     assert "cut off" in run.requests[1]["messages"][3]["content"]
 
 
-def test_reasoning_the_provider_streamed_is_not_sent_back(run):
-    """DeepSeek's reasoner streams `reasoning_content`, and refuses a request
-    that carries it back. The transcript replays what the model said, not what
-    it thought."""
+def test_reasoning_beside_a_tool_call_goes_back_with_it(run):
+    """DeepSeek's thinking mode (V4) and Kimi stream `reasoning_content`, and
+    refuse a tool loop that drops it: "the reasoning_content in the thinking
+    mode must be passed back to the API". This used to assert the opposite —
+    DeepSeek R1's rule, that a request carrying it is refused — which the
+    current API reversed for turns that call tools (and ignores elsewhere).
+    A turn that called nothing does not carry it: nothing needs it there."""
     chunks = _chunks("Answer.", calls=[{"id": "call_1", "name": "Glob",
                                         "input": {"pattern": "*"}}], finish="tool_calls")
     chunks.insert(1, {"choices": [{"index": 0, "delta": {"reasoning_content": "hmm"}}]})
     _drive(run, [{"sse": chunks}, {"sse": TEXT}])
-    assert "reasoning_content" not in json.dumps(run.requests[1]["messages"])
+    [called] = [m for m in run.requests[1]["messages"] if m.get("tool_calls")]
+    assert called["reasoning_content"] == "hmm"
+
+
+def test_reasoning_beside_a_plain_reply_is_not_replayed(run):
+    reply = run.loop.wire.chat_reply("Done.", [], "stop", run.loop.wire.Usage(), None, "hmm")
+    assert "reasoning_content" not in reply.turn.native
 
 
 def test_a_content_filter_ends_the_run(run):

@@ -31,6 +31,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from yaaf.runtimes import wire
+
 pytest.importorskip("claude_agent_sdk")
 
 PRICE = {"input": 2.0, "output": 10.0, "cache_read": 0.2, "cache_write_5m": 0.0,
@@ -145,7 +147,8 @@ def _responses(output: list[dict], *, status: str = "completed", usage: dict | N
 
 def _message(text: str) -> dict:
     return {"type": "message", "id": "msg_1", "role": "assistant", "status": "completed",
-            "content": [{"type": "output_text", "text": text, "annotations": []}]}
+            "content": [{"type": "output_text", "text": text, "annotations": [],
+                         "logprobs": []}]}
 
 
 REASONING = {"type": "reasoning", "id": "rs_1", "summary": [],
@@ -519,3 +522,431 @@ def test_an_output_limit_is_sent_only_when_the_cap_needs_one(stage, spec, model,
     _drive(r, [reply])
     # $0.001 at $10 per million output tokens is 100 tokens.
     assert field(r.requests[0]["body"]) == (100 if near else None)
+
+
+# ── the wire itself, against the vendors' own definitions ───────────────────────
+#
+# Each sample below is shaped by the vendor's machine-readable definition —
+# OpenAI's OpenAPI spec, the `anthropic` and `google-genai` SDK types, the
+# Gemini and Vertex discovery documents, botocore's `bedrock-runtime` model —
+# or, for an error, by the wording the vendor documents for it.
+
+
+def _sse(events: list, *, named: bool = False) -> dict:
+    body = "".join((f"event: {e['type']}\n" if named else "") + f"data: {json.dumps(e)}\n\n"
+                   for e in events)
+    return {"content": (body + ("" if named else "data: [DONE]\n\n")).encode(),
+            "headers": {"content-type": "text/event-stream"}}
+
+
+def _call(endpoint: wire.Endpoint, script: list, *, transcript: list | None = None,
+          tools: list | None = None, max_tokens: int = 100_000, **kw):
+    """One `wire.call` against a scripted provider: the reply, and what was sent."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        step = script[len(seen) - 1]
+        return httpx.Response(step.get("status", 200), headers=step.get("headers"),
+                              content=step.get("content"), json=step.get("json"))
+
+    async def go():
+        return [r async for r in wire.call(
+            endpoint, "m", "You are the analyst.",
+            transcript or [wire.Turn("user", text="hi")], tools or [], max_tokens,
+            transport=httpx.MockTransport(handler), **kw)]
+
+    replies = asyncio.run(go())
+    return replies[0], [json.loads(r.content) if r.content else None for r in seen]
+
+
+CHAT = wire.Endpoint(protocol="openai_chat", base_url="https://api.example.com/v1")
+RESPONSES = wire.Endpoint(protocol="openai_responses", base_url="https://api.openai.com/v1")
+GOOGLE = wire.Endpoint(protocol="gemini", auth="x-goog-api-key",
+                       base_url="https://generativelanguage.googleapis.com/v1beta")
+CONVERSE = wire.Endpoint(protocol="bedrock",
+                         base_url="https://bedrock-runtime.us-east-1.amazonaws.com")
+MESSAGES = wire.Endpoint(protocol="anthropic", auth="x-api-key",
+                         base_url="https://api.anthropic.com/v1")
+WRITE = wire.ToolSpec("Write", "Write a file", {
+    "type": "object", "properties": {"file_path": {"type": "string"},
+                                     "content": {"type": "string"}},
+    "required": ["file_path", "content"]})
+
+
+# ── a prompt longer than the window is "context", by each vendor's own words ────
+
+OVERFLOWS = {
+    "openai": (400, {"error": {
+        "message": "This model's maximum context length is 128000 tokens. However, your "
+                   "messages resulted in 139020 tokens. Please reduce the length of the "
+                   "messages.", "type": "invalid_request_error", "param": "messages",
+        "code": "context_length_exceeded"}}),
+    "openai_responses": (400, {"error": {
+        "message": "Your input exceeds the context window of this model. Please adjust "
+                   "your input and try again.", "type": "invalid_request_error",
+        "param": "input", "code": "context_length_exceeded"}}),
+    "anthropic": (400, {"type": "error", "error": {
+        "type": "invalid_request_error",
+        "message": "prompt is too long: 208310 tokens > 200000 maximum"}}),
+    "anthropic_with_max_tokens": (400, {"type": "error", "error": {
+        "type": "invalid_request_error",
+        "message": "input length and `max_tokens` exceed context limit: 188000 + 21333 > "
+                   "200000, decrease input length or `max_tokens` and try again"}}),
+    "gemini": (400, {"error": {
+        "code": 400, "message": "The input token count (1210551) exceeds the maximum number "
+                                "of tokens allowed (1048576).", "status": "INVALID_ARGUMENT"}}),
+    "bedrock": (400, {"message": "Input is too long for requested model."}),
+    "bedrock_anthropic": (400, {"message": "prompt is too long: 210000 tokens > 200000 maximum"}),
+    "deepseek": (400, {"error": {
+        "message": "This model's maximum context length is 131072 tokens. However, you "
+                   "requested 140000 tokens (132000 in the messages, 8000 in the completion).",
+        "type": "invalid_request_error", "param": None, "code": "invalid_request_error"}}),
+    "mistral": (400, {"object": "error", "message": "Prompt contains 140000 tokens and 0 "
+                      "draft tokens, too large for model with 131072 maximum context length",
+                      "type": "invalid_request_message_error", "code": "3051"}),
+    "xai": (400, {"code": "Client specified an invalid argument", "error": "This model's "
+                  "maximum prompt length is 131072 but the request contains 200000 tokens."}),
+    "groq": (400, {"error": {"message": "Please reduce the length of the messages or "
+                             "completion.", "type": "invalid_request_error",
+                             "code": "context_length_exceeded"}}),
+    "openrouter": (400, {"error": {"message": "This endpoint's maximum context length is "
+                                   "65536 tokens. However, you requested about 70000 tokens.",
+                                   "code": 400}}),
+    "llama.cpp": (400, {"error": {"code": 400, "type": "exceed_context_size_error",
+                                  "message": "the request exceeds the available context size, "
+                                             "try increasing it"}}),
+    "moonshot": (400, {"error": {"message": "Invalid request: Your request exceeded model "
+                                            "token limit: 131072",
+                                 "type": "invalid_request_error"}}),
+}
+
+
+@pytest.mark.parametrize("vendor", sorted(OVERFLOWS))
+def test_a_prompt_too_long_for_the_window_is_context(vendor):
+    status, body = OVERFLOWS[vendor]
+    assert wire.classify(status, body) == "context"
+
+
+@pytest.mark.parametrize(("status", "body", "markers", "kind"), [
+    # Auth and transient keep their precedence over the window's words.
+    (401, OVERFLOWS["openai"][1], (), "auth"),
+    (429, OVERFLOWS["openai"][1], (), "transient"),
+    (400, {"error": {"message": "Incorrect API key provided; maximum context length"}},
+     ("incorrect api key provided",), "auth"),
+    # A limit on output, or on rate, is not a prompt too long.
+    (400, {"error": {"message": "max_tokens is too large: 100000. This model supports at "
+                                "most 16384 completion tokens, whereas you provided 100000.",
+                     "type": "invalid_request_error", "param": "max_tokens"}}, (), "fatal"),
+    (429, {"error": {"message": "Request too large for gpt-6 on tokens per min (TPM): "
+                                "Limit 30000, Requested 50000.", "code": "rate_limit_exceeded"}},
+     (), "transient"),
+    (400, {"error": {"message": "Invalid schema for function 'Write'", "code": None}}, (),
+     "fatal"),
+    # OpenAI's documented word for an empty balance: as dead as a 402.
+    (429, {"error": {"message": "You exceeded your current quota, please check your plan "
+                                "and billing details.", "type": "insufficient_quota",
+                     "code": "insufficient_quota"}}, (), "auth"),
+])
+def test_context_classification_is_conservative(status, body, markers, kind):
+    assert wire.classify(status, body, markers) == kind
+
+
+@pytest.mark.parametrize(("endpoint", "status", "headers", "body"), [
+    (CHAT, *OVERFLOWS["deepseek"][:1], None, OVERFLOWS["deepseek"][1]),
+    (RESPONSES, 400, None, OVERFLOWS["openai_responses"][1]),
+    (GOOGLE, 400, None, OVERFLOWS["gemini"][1]),
+    (CONVERSE, 400, {"x-amzn-errortype": "ValidationException:http://internal.amazon.com/"
+                                          "coral/com.amazon.bedrock/"}, OVERFLOWS["bedrock"][1]),
+    (MESSAGES, 400, None, OVERFLOWS["anthropic"][1]),
+], ids=["openai_chat", "openai_responses", "gemini", "bedrock", "anthropic"])
+def test_every_wire_raises_an_overflow_as_context(endpoint, status, headers, body):
+    with pytest.raises(wire.WireError) as refused:
+        _call(endpoint, [{"status": status, "headers": headers, "json": body}])
+    assert refused.value.kind == "context" and refused.value.status == status
+
+
+def test_an_overflow_inside_a_stream_is_context_not_a_retry():
+    chunk = {"error": {"message": "This model's maximum context length is 65536 tokens.",
+                       "code": "context_length_exceeded"}}
+    with pytest.raises(wire.WireError) as refused:
+        _call(CHAT, [_sse([chunk])])
+    assert refused.value.kind == "context"
+    event = {"type": "error", "code": "context_length_exceeded", "sequence_number": 1,
+             "message": "Your input exceeds the context window of this model.", "param": None}
+    with pytest.raises(wire.WireError) as refused:
+        _call(RESPONSES, [_sse([event], named=True)])
+    assert refused.value.kind == "context"
+
+
+# ── openai_chat: the stream as the spec writes it, and as hosts stray from it ───
+
+
+def _chunk(delta: dict | None = None, finish: str | None = None, **extra) -> dict:
+    return {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1,
+            "model": "m-2026", "choices": [{"index": 0, "delta": delta or {},
+                                            "finish_reason": finish}], **extra}
+
+
+def test_parallel_tool_calls_assemble_from_interleaved_fragments():
+    """The spec's shape: `index` names the call; id, type and name come once on
+    its first fragment; `arguments` arrive in pieces, two calls interleaved —
+    one chunk may carry fragments of both. Usage is a last chunk with no
+    choices, `usage: null` on every other."""
+    first, second = json.dumps({"file_path": "a.md", "content": "A"}), json.dumps(
+        {"file_path": "b.md", "content": "B"})
+    chunks = [
+        _chunk({"role": "assistant", "content": None, "tool_calls": [
+            {"index": 0, "id": "call_a", "type": "function",
+             "function": {"name": "Write", "arguments": ""}}]}, usage=None),
+        _chunk({"tool_calls": [{"index": 0, "function": {"arguments": first[:10]}},
+                               {"index": 1, "id": "call_b", "type": "function",
+                                "function": {"name": "Write", "arguments": second[:7]}}]}),
+        _chunk({"tool_calls": [{"index": 1, "function": {"arguments": second[7:]}}]}),
+        _chunk({"tool_calls": [{"index": 0, "function": {"arguments": first[10:]}}]}),
+        _chunk(finish="tool_calls"),
+        {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1, "model": "m-2026",
+         "choices": [], "usage": {
+             "prompt_tokens": 1200, "completion_tokens": 300, "total_tokens": 1500,
+             "prompt_tokens_details": {"cached_tokens": 1000, "audio_tokens": 0},
+             "completion_tokens_details": {"reasoning_tokens": 200, "audio_tokens": 0}}},
+    ]
+    reply, _ = _call(CHAT, [_sse(chunks)], tools=[WRITE])
+    assert reply.stop == "tool_use" and reply.model == "m-2026"
+    assert [(c.id, c.input["file_path"]) for c in reply.turn.calls] == [
+        ("call_a", "a.md"), ("call_b", "b.md")]
+    # cached_tokens is inside prompt_tokens; reasoning inside completion_tokens.
+    assert (reply.usage.input, reply.usage.cache_read, reply.usage.output) == (200, 1000, 300)
+    assert reply.turn.native["tool_calls"][1]["function"]["arguments"] == second
+
+
+@pytest.mark.parametrize("host", ["no_index", "index_reused", "name_repeated"])
+def test_tool_call_fragments_from_hosts_that_stray_from_the_spec(host):
+    first, second = '{"file_path": "a.md", "content": "A"}', '{"file_path": "b.md", "content": "B"}'
+    if host == "no_index":
+        parts = [[{"id": "call_a", "type": "function",
+                   "function": {"name": "Write", "arguments": first[:5]}}],
+                 [{"function": {"arguments": first[5:]}}],
+                 [{"id": "call_b", "type": "function",
+                   "function": {"name": "Write", "arguments": second}}]]
+    elif host == "index_reused":
+        parts = [[{"index": 0, "id": "call_a", "type": "function",
+                   "function": {"name": "Write", "arguments": first}}],
+                 [{"index": 0, "id": "call_b", "type": "function",
+                   "function": {"name": "Write", "arguments": second}}]]
+    else:
+        parts = [[{"index": 0, "id": "call_a", "function": {"name": "Write", "arguments": ""}}],
+                 [{"index": 0, "id": "call_a",
+                   "function": {"name": "Write", "arguments": first[:9]}}],
+                 [{"index": 0, "id": "call_a",
+                   "function": {"name": "Write", "arguments": first[9:]}}],
+                 [{"index": 1, "id": "call_b",
+                   "function": {"name": "Write", "arguments": second}}]]
+    chunks = [_chunk({"tool_calls": p}) for p in parts] + [_chunk(finish="tool_calls")]
+    reply, _ = _call(CHAT, [_sse(chunks)], tools=[WRITE])
+    assert [(c.id, c.name, c.input.get("file_path")) for c in reply.turn.calls] == [
+        ("call_a", "Write", "a.md"), ("call_b", "Write", "b.md")]
+
+
+def test_a_delta_whose_content_is_a_list_of_chunks_is_read_for_its_text():
+    """Mistral's reasoning models stream `content` as chunks, thinking among them."""
+    chunks = [_chunk({"content": [{"type": "thinking", "thinking": [
+        {"type": "text", "text": "hmm"}]}]}),
+        _chunk({"content": [{"type": "text", "text": "Done."}]}), _chunk(finish="stop")]
+    reply, _ = _call(CHAT, [_sse(chunks)])
+    assert reply.turn.text == "Done." and reply.stop == "end"
+
+
+def test_chat_request_matches_the_spec():
+    _, sent = _call(CHAT, [_sse([_chunk({"content": "ok"}, "stop")])], tools=[WRITE],
+                    max_tokens=500, effort="high")
+    body = sent[0]
+    assert body["stream"] is True and body["stream_options"] == {"include_usage": True}
+    assert body["tools"][0] == {"type": "function", "function": {
+        "name": "Write", "description": "Write a file", "parameters": WRITE.input_schema}}
+    assert body["max_tokens"] == 500 and body["reasoning_effort"] == "high"
+
+
+# ── openai_responses ────────────────────────────────────────────────────────────
+
+
+def test_responses_request_matches_the_spec():
+    """`strict` is required on a function tool, and a strict schema must close
+    every object — so it is stated false. `max_output_tokens` has a floor of
+    16. A turn this wire did not write goes back as the spec's easy message."""
+    transcript = [wire.Turn("user", text="hi"), wire.Turn("assistant", text="Looking."),
+                  wire.Turn("user", text="go on")]
+    reply = _responses([_message("ok")])
+    _, sent = _call(RESPONSES, [reply], transcript=transcript, tools=[WRITE], max_tokens=5)
+    body = sent[0]
+    assert body["tools"] == [{"type": "function", "name": "Write",
+                              "description": "Write a file",
+                              "parameters": WRITE.input_schema, "strict": False}]
+    assert body["max_output_tokens"] == 16
+    assert body["input"][1] == {"role": "assistant", "content": "Looking."}
+
+
+def test_responses_usage_counts_reasoning_once_and_searches_per_call():
+    usage = {"input_tokens": 5000, "input_tokens_details": {"cached_tokens": 4000,
+                                                            "cache_write_tokens": 0},
+             "output_tokens": 900, "output_tokens_details": {"reasoning_tokens": 700},
+             "total_tokens": 5900}
+    searched = {"type": "web_search_call", "id": "ws_1", "status": "completed",
+                "action": {"type": "search", "query": "q"}}
+    reply, _ = _call(RESPONSES, [_responses([REASONING, searched, searched, _message("x")],
+                                            usage=usage)])
+    assert (reply.usage.input, reply.usage.cache_read, reply.usage.output) == (1000, 4000, 900)
+    assert reply.usage.web_searches == 2
+
+
+# ── gemini ──────────────────────────────────────────────────────────────────────
+
+
+def test_gemini_declarations_hold_only_what_its_schema_has():
+    """Gemini's `Schema` is a closed set of fields; anything else is an
+    unknown name and a refused request. References are inlined, a type list
+    becomes a type and `nullable`, `oneOf` the `anyOf` it means — and a
+    property that happens to be *named* like a keyword stays a property."""
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "default": {"type": "string", "description": "a property called default"},
+            "mode": {"type": ["string", "null"], "enum": ["a", "w"]},
+            "opts": {"$ref": "#/$defs/Opts"},
+            "choice": {"oneOf": [{"type": "string"}, {"type": "integer"}]},
+            "level": {"type": "integer", "enum": [1, 2]},
+            "tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
+        },
+        "required": ["default", "gone"],
+        "$defs": {"Opts": {"type": "object", "additionalProperties": False,
+                           "properties": {"x": {"type": "number", "exclusiveMinimum": 0}}}}}
+    tools = [wire.ToolSpec("Shape", "shapes", schema),
+             wire.ToolSpec("Ping", "takes nothing", {"type": "object", "properties": {}})]
+    body = wire.gemini_request("sys", [wire.Turn("user", text="hi")], tools, 100)
+    shape, ping = body["tools"][0]["functionDeclarations"]
+    assert shape["parameters"] == {
+        "type": "object",
+        "properties": {
+            "default": {"type": "string", "description": "a property called default"},
+            "mode": {"type": "string", "nullable": True, "enum": ["a", "w"]},
+            "opts": {"type": "object", "properties": {"x": {"type": "number"}}},
+            "choice": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+            "level": {"type": "integer"},
+            "tags": {"type": "array", "items": {"type": "string"}}},
+        "required": ["default"]}
+    # An OBJECT with no properties is refused: a tool that takes nothing
+    # declares no parameters.
+    assert ping == {"name": "Ping", "description": "takes nothing"}
+
+
+def test_gemini_effort_is_its_thinking_level_enum():
+    for effort, level in [("low", "LOW"), ("medium", "MEDIUM"), ("high", "HIGH"),
+                          ("max", "HIGH")]:
+        body = wire.gemini_request("s", [wire.Turn("user", text="q")], [], 100, effort)
+        assert body["generationConfig"]["thinkingConfig"] == {"thinkingLevel": level}
+
+
+@pytest.mark.parametrize("finish", ["MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL",
+                                    "MISSING_THOUGHT_SIGNATURE", "PROHIBITED_CONTENT"])
+def test_a_gemini_finish_that_is_no_answer_stops_the_run_by_name(finish):
+    reply = wire.gemini_reply({"candidates": [{"finishReason": finish,
+                                               "finishMessage": "the call was malformed"}],
+                               "usageMetadata": {"promptTokenCount": 10}})
+    assert reply.stop == "refusal" and finish in reply.detail
+
+
+def test_a_gemini_turn_not_written_by_gemini_replays_validly():
+    """A rebuilt function call carries the documented stand-in signature, and
+    a reply that came back with no parts (cut off while thinking) is not sent
+    back as an empty content."""
+    transcript = [wire.Turn("user", text="hi"), wire.Turn("assistant", native=[]),
+                  wire.Turn("user", text="again"),
+                  wire.Turn("assistant", calls=(wire.ToolCall("call_0", "Write", {}),)),
+                  wire.Turn("user", outputs=(wire.ToolOutput("call_0", "ok"),))]
+    contents = wire.gemini_request("s", transcript, [WRITE], 100)["contents"]
+    assert [c["role"] for c in contents] == ["user", "user", "model", "user"]
+    assert contents[2]["parts"] == [{"functionCall": {"name": "Write", "args": {}},
+                                     "thoughtSignature": "skip_thought_signature_validator"}]
+    assert contents[3]["parts"][0]["functionResponse"] == {"name": "Write",
+                                                           "response": {"content": "ok"}}
+
+
+# ── bedrock ─────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("stop", ["malformed_tool_use", "malformed_model_output"])
+def test_a_malformed_converse_reply_stops_the_run_by_name(stop):
+    reply = wire.bedrock_reply({"output": {"message": {"role": "assistant", "content": []}},
+                                "stopReason": stop, "usage": {"inputTokens": 1,
+                                                              "outputTokens": 1,
+                                                              "totalTokens": 2}})
+    assert reply.stop == "refusal" and stop in reply.detail
+
+
+def test_converse_sends_no_blank_system_block():
+    assert "system" not in wire.bedrock_request("", [wire.Turn("user", text="hi")], [], 100)
+
+
+# ── anthropic: the server search, when asked for ────────────────────────────────
+
+
+def test_anthropic_search_is_its_server_tool_kept_for_replay_and_counted():
+    content = [
+        {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search",
+         "input": {"query": "yaaf"}},
+        {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1", "content": [
+            {"type": "web_search_result", "url": "https://example.com/yaaf", "title": "yaaf",
+             "encrypted_content": "opaque", "page_age": None}]},
+        {"type": "text", "text": "yaaf is a framework.", "citations": None}]
+    message = {"id": "msg_1", "type": "message", "role": "assistant", "model": "claude-x",
+               "content": content, "stop_reason": "end_turn", "stop_sequence": None,
+               "usage": {"input_tokens": 100, "output_tokens": 20,
+                         "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+                         "server_tool_use": {"web_search_requests": 1,
+                                             "web_fetch_requests": 0}}}
+    reply, sent = _call(MESSAGES, [{"json": message}], tools=[WRITE], web_search=True)
+    assert sent[0]["tools"][-1] == {"type": "web_search_20250305", "name": "web_search"}
+    assert reply.usage.web_searches == 1 and reply.turn.text == "yaaf is a framework."
+    replay = wire.anthropic_request("m", "s", [wire.Turn("user", text="hi"), reply.turn,
+                                               wire.Turn("user", text="more")], [], 100)
+    assert replay["messages"][1] == {"role": "assistant", "content": content}
+    assert "tools" not in replay
+    _, sent = _call(MESSAGES, [{"json": message}], tools=[WRITE])
+    assert all(t.get("type") != "web_search_20250305" for t in sent[0]["tools"])
+
+
+# ── what a key can see: every page of it ────────────────────────────────────────
+
+
+def test_a_paged_model_list_is_followed_to_its_end():
+    def listing(endpoint, pages):
+        seen = []
+
+        def handler(request):
+            seen.append(request)
+            return httpx.Response(200, json=pages[len(seen) - 1])
+        names = asyncio.run(wire.list_models(endpoint, transport=httpx.MockTransport(handler)))
+        return names, [str(r.url) for r in seen]
+
+    names, urls = listing(MESSAGES, [
+        {"data": [{"id": "claude-a", "type": "model"}], "has_more": True,
+         "first_id": "claude-a", "last_id": "claude-a"},
+        {"data": [{"id": "claude-b", "type": "model"}], "has_more": False,
+         "first_id": "claude-b", "last_id": "claude-b"}])
+    assert names == ["claude-a", "claude-b"]
+    assert urls == ["https://api.anthropic.com/v1/models",
+                    "https://api.anthropic.com/v1/models?limit=1000&after_id=claude-a"]
+    names, urls = listing(GOOGLE, [{"models": [{"name": "models/gemini-a"}],
+                                    "nextPageToken": "t2"},
+                                   {"models": [{"name": "models/gemini-b"}]}])
+    assert names == ["gemini-a", "gemini-b"] and urls[1].endswith("?pageSize=1000&pageToken=t2")
+    names, urls = listing(CONVERSE, [
+        {"modelSummaries": [{"modelId": "amazon.nova-pro-v1:0", "modelArn": "arn:x"}]},
+        {"inferenceProfileSummaries": [{"inferenceProfileId": "us.amazon.nova-pro-v1:0"}],
+         "nextToken": "n2"},
+        {"inferenceProfileSummaries": [{"inferenceProfileId": "eu.amazon.nova-pro-v1:0"}]}])
+    assert names == ["amazon.nova-pro-v1:0", "eu.amazon.nova-pro-v1:0",
+                     "us.amazon.nova-pro-v1:0"]
+    assert urls[1] == ("https://bedrock.us-east-1.amazonaws.com/inference-profiles"
+                       "?maxResults=1000")

@@ -156,7 +156,9 @@ class WireError(RuntimeError):
     the HTTP status — or the error's own code, for an error that arrived inside
     a stream whose status was already 200. `kind` is what a run does about it:
     "auth" (a dead credential: pause the project on the third), "transient"
-    (resume the same transcript) or "fatal"."""
+    (resume the same transcript), "context" (the prompt is longer than the
+    model's window: the same transcript will be refused the same way, a
+    shorter one may not) or "fatal"."""
 
     def __init__(self, status: int, body: object, kind: str):
         message = body
@@ -170,17 +172,54 @@ class WireError(RuntimeError):
         self.kind = kind
 
 
+#: Each vendor's words for a prompt longer than the model's window, lower-case.
+#: Matched only once a refusal is neither a dead key nor worth a retry, and
+#: only phrases that say "too long" of the prompt: a limit on output, on rate
+#: or on request bytes is not this, and making room would not fix it.
+_CONTEXT_MARKERS = (
+    "context_length_exceeded",  # OpenAI, Azure, Groq: the error code
+    "maximum context length",  # OpenAI, DeepSeek, Mistral, vLLM, OpenRouter
+    "exceeds the context window",  # OpenAI's Responses API
+    "prompt is too long",  # Anthropic, Anthropic on Bedrock and Vertex, Fireworks
+    "exceed context limit",  # Anthropic: input length and `max_tokens` exceed ...
+    "exceeds the maximum number of tokens allowed",  # Gemini, Vertex
+    "input is too long",  # Bedrock
+    "too many input tokens",  # Bedrock
+    "input tokens exceed",  # Bedrock's Nova: "number of input tokens exceeds ..."
+    "maximum prompt length",  # xAI
+    "exceeded model token limit",  # Moonshot
+    "range of input length should be",  # Qwen (DashScope)
+    "reduce the length of the messages",  # OpenAI-compatible servers' advice
+    "available context size",  # llama.cpp
+    "exceed_context_size_error",  # llama.cpp: the error type
+)
+
+
+def _said(body: object) -> str:
+    return body.lower() if isinstance(body, str) else json.dumps(body, default=str).lower()
+
+
+def overflowed(body: object) -> bool:
+    """Whether a refusal says the prompt did not fit the model's window."""
+    said = _said(body)
+    return any(marker in said for marker in _CONTEXT_MARKERS)
+
+
 def classify(status: int, body: object, markers: tuple[str, ...] = ()) -> str:
     """A refusal by its status, then by the provider's own words. 402 is an
     empty balance: as dead as a revoked key until somebody pays, which is what
-    the three-strikes pause is for."""
-    if status in (401, 402, 403):
+    the three-strikes pause is for — and so is OpenAI's 429
+    `insufficient_quota`, its documented word for the same thing, which no
+    retry outlasts."""
+    said = _said(body)
+    if status in (401, 402, 403) or (status == 429 and "insufficient_quota" in said):
         return "auth"
     if status in (408, 409, 425, 429) or status >= 500:
         return "transient"
-    said = json.dumps(body, default=str).lower() if not isinstance(body, str) else body.lower()
     if any(marker in said for marker in markers):
         return "auth"
+    if overflowed(said):
+        return "context"
     return "fatal"
 
 
@@ -261,6 +300,10 @@ def chat_request(endpoint: Endpoint, model: str, system: str, transcript: list[T
             "name": t.name, "description": t.description, "parameters": t.input_schema}}
             for t in tools]
     if max_tokens < SAFE_MAX_TOKENS:
+        # OpenAI's spec deprecates this for `max_completion_tokens`, and its
+        # reasoning models refuse it — but OpenAI is on the Responses wire,
+        # and the hosts on this one (DeepSeek, Mistral, OpenRouter, Ollama...)
+        # document `max_tokens`, where the newer name is not universal.
         body["max_tokens"] = max_tokens
     if effort:
         body["reasoning_effort"] = effort
@@ -274,8 +317,11 @@ def chat_request(endpoint: Endpoint, model: str, system: str, transcript: list[T
 def chat_usage(usage: dict | None, reports_cost: bool) -> Usage:
     """The last line's usage. `prompt_tokens` counts the cached part too, which
     DeepSeek states as `prompt_cache_hit_tokens` and the OpenAI shape as
-    `prompt_tokens_details.cached_tokens`; there are no cache writes to pay
-    for in this shape. The output is the larger of `completion_tokens` and
+    `prompt_tokens_details.cached_tokens`. The OpenAI spec now also states
+    `cache_write_tokens`; they stay in `input`, priced at the input rate,
+    because an install's price row for a model on this wire need not carry a
+    cache-write rate, and a missing rate would meter them as free. The
+    output is the larger of `completion_tokens` and
     what the total leaves after the prompt: the OpenAI shape counts reasoning
     inside the completion, xAI's beside it, and only the total says which."""
     usage = usage or {}
@@ -292,28 +338,81 @@ def chat_usage(usage: dict | None, reports_cost: bool) -> Usage:
 
 
 def chat_reply(text: str, calls: list[dict], finish: str | None, usage: Usage,
-               served: str | None) -> Reply:
+               served: str | None, reasoning: str = "") -> Reply:
     parsed = tuple(ToolCall(c["id"], c["name"], _arguments(c["arguments"])) for c in calls)
     stop = _CHAT_STOPS.get(finish or "", "end")
     if parsed and stop == "end":
         # Some providers say "stop" with tool calls in hand.
         stop = "tool_use"
-    # Reasoning the provider streamed beside the reply is never part of what
-    # goes back: DeepSeek refuses a request that carries it.
     native: dict = {"role": "assistant", "content": text or None}
     if calls:
         native["tool_calls"] = [{"id": c["id"], "type": "function",
                                  "function": {"name": c["name"], "arguments": c["arguments"]}}
                                 for c in calls]
+        # Thinking streamed beside a turn that called tools goes back with
+        # it, under the name it came by: DeepSeek's thinking mode (V4) and
+        # Kimi refuse a tool loop that drops it, and ignore it on a turn
+        # without calls — so a turn that called nothing does not carry it.
+        # A host that never sends `reasoning_content` is never sent one.
+        if reasoning:
+            native["reasoning_content"] = reasoning
     return Reply(turn=Turn("assistant", text=text, calls=parsed, native=native),
                  stop=stop, usage=usage, model=served,
                  detail="the provider's content filter stopped the reply"
                  if stop == "refusal" else None)
 
 
+def _chat_text(content: Any) -> str:
+    """A delta's text. The spec's is a string; Mistral's reasoning models send
+    a list of chunks, its thinking among them, of which only `text` is the
+    reply."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(str(c.get("text") or "") for c in content
+                       if isinstance(c, dict) and c.get("type") == "text")
+    return ""
+
+
+def _complete(arguments: str) -> bool:
+    try:
+        return isinstance(json.loads(arguments), dict)
+    except ValueError:
+        return False
+
+
+def _merge_call(calls: list[dict], slots: dict, part: dict) -> None:
+    """One streamed fragment of a tool call into the call it continues. The
+    spec's shape: `index` names the call, its `id` and name come on its first
+    fragment, and `arguments` arrive in pieces. Hosts on this wire stray from
+    it: no `index` at all, one `index` reused for parallel calls that each
+    arrive whole under their own id, the name repeated on every fragment. A
+    fragment starts a new call when it says so by an index not yet seen — or
+    by a new id and a name after a call whose arguments are already whole."""
+    function = part.get("function") or {}
+    call_id, name = part.get("id") or "", function.get("name") or ""
+    index = part.get("index")
+    slot = slots.get(index) if index is not None else (len(calls) - 1 if calls else None)
+    if (slot is not None and call_id and name and calls[slot]["id"]
+            and call_id != calls[slot]["id"] and _complete(calls[slot]["arguments"])):
+        slot = None
+    if slot is None:
+        calls.append({"id": "", "name": "", "arguments": ""})
+        slot = len(calls) - 1
+    if index is not None:
+        slots[index] = slot
+    call = calls[slot]
+    call["id"] = call_id or call["id"]
+    if name != call["name"]:
+        call["name"] += name
+    call["arguments"] += function.get("arguments") or ""
+
+
 async def _chat(http: httpx.AsyncClient, endpoint: Endpoint, body: dict):
     text: list[str] = []
-    calls: dict[int, dict] = {}
+    reasoning: list[str] = []
+    calls: list[dict] = []
+    slots: dict = {}
     finish: str | None = None
     usage: dict | None = None
     served: str | None = None
@@ -334,7 +433,8 @@ async def _chat(http: httpx.AsyncClient, endpoint: Endpoint, body: dict):
                 code = error.get("code") if isinstance(error, dict) else None
                 status = code if isinstance(code, int) else 200
                 raise WireError(status, chunk,
-                                "transient" if status == 200 else
+                                ("context" if overflowed(chunk) else "transient")
+                                if status == 200 else
                                 classify(status, chunk, endpoint.failure_markers))
             served = chunk.get("model") or served
             if chunk.get("usage"):
@@ -344,18 +444,15 @@ async def _chat(http: httpx.AsyncClient, endpoint: Endpoint, body: dict):
                 if choice.get("usage") and not chunk.get("usage"):
                     usage = choice["usage"]
                 delta = choice.get("delta") or {}
-                if delta.get("content"):
-                    text.append(delta["content"])
+                text.append(_chat_text(delta.get("content")))
+                if isinstance(delta.get("reasoning_content"), str):
+                    reasoning.append(delta["reasoning_content"])
                 for part in delta.get("tool_calls") or []:
-                    call = calls.setdefault(part.get("index", len(calls)),
-                                            {"id": "", "name": "", "arguments": ""})
-                    call["id"] = part.get("id") or call["id"]
-                    function = part.get("function") or {}
-                    call["name"] += function.get("name") or ""
-                    call["arguments"] += function.get("arguments") or ""
+                    if isinstance(part, dict):
+                        _merge_call(calls, slots, part)
                 finish = choice.get("finish_reason") or finish
-    yield chat_reply("".join(text), [calls[i] for i in sorted(calls)], finish,
-                     chat_usage(usage, endpoint.reports_cost), served)
+    yield chat_reply("".join(text), calls, finish, chat_usage(usage, endpoint.reports_cost),
+                     served, "".join(reasoning))
 
 
 # ── openai_responses: OpenAI's own API, and Azure's ────────────────────────────
@@ -367,10 +464,11 @@ def responses_request(model: str, system: str, transcript: list[Turn], tools: li
     items: list[dict] = []
     for turn in transcript:
         if turn.role == "assistant":
+            # A turn this wire did not write goes back as the spec's easy
+            # message: an `output_text` part must carry what only the server
+            # writes (`annotations`, `logprobs`).
             items += turn.native if turn.native is not None else [
-                *([{"type": "message", "role": "assistant",
-                    "content": [{"type": "output_text", "text": turn.text}]}]
-                  if turn.text else []),
+                *([{"role": "assistant", "content": turn.text}] if turn.text else []),
                 *({"type": "function_call", "call_id": c.id, "name": c.name,
                    "arguments": json.dumps(c.input)} for c in turn.calls)]
         elif turn.outputs:
@@ -381,8 +479,11 @@ def responses_request(model: str, system: str, transcript: list[Turn], tools: li
             items.append({"role": "user", "content": turn.text})
     body: dict = {
         "model": model, "instructions": system, "input": items,
+        # `strict` is required by the spec, and a strict tool's schema must
+        # close every object and require every property — which an MCP
+        # server's schema need not. Stated, so no default decides it.
         "tools": [{"type": "function", "name": t.name, "description": t.description,
-                   "parameters": t.input_schema} for t in tools],
+                   "parameters": t.input_schema, "strict": False} for t in tools],
         # Nothing is kept on the provider's side: the transcript is yaaf's,
         # replayed whole, which is what makes a resume the same call again.
         # Reasoning comes back encrypted so it can be replayed without being
@@ -390,7 +491,8 @@ def responses_request(model: str, system: str, transcript: list[Turn], tools: li
         "store": False, "include": ["reasoning.encrypted_content"],
     }
     if max_tokens < SAFE_MAX_TOKENS:
-        body["max_output_tokens"] = max_tokens
+        # The spec's floor: a limit below 16 is refused, not honoured.
+        body["max_output_tokens"] = max(16, max_tokens)
     if web_search:
         body["tools"].append({"type": "web_search"})
     if effort:
@@ -462,9 +564,13 @@ async def _responses(http: httpx.AsyncClient, endpoint: Endpoint, body: dict):
                                 "transient" if code in ("server_error", "rate_limit_exceeded")
                                 else classify(400, failure, endpoint.failure_markers))
             elif kind == "error":
-                code = str(event.get("code") or "")
-                raise WireError(200, {"error": event},
+                # The spec's event is flat (`code`, `message`); a nested
+                # `error` object is read too, as the failed response holds it.
+                nested = event.get("error") if isinstance(event.get("error"), dict) else {}
+                code = str(event.get("code") or nested.get("code") or "")
+                raise WireError(200, {"error": {**nested, **event}},
                                 "auth" if "auth" in code or "api_key" in code
+                                else "context" if overflowed(event)
                                 else "transient" if code in ("server_error",
                                                              "rate_limit_exceeded", "")
                                 else "fatal")
@@ -477,7 +583,21 @@ async def _responses(http: httpx.AsyncClient, endpoint: Endpoint, body: dict):
 # ── gemini: the Gemini API, and Vertex AI ──────────────────────────────────────
 
 _GEMINI_REFUSALS = ("SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII",
-                    "IMAGE_SAFETY", "LANGUAGE")
+                    "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION",
+                    "LANGUAGE", "ESCALATION", "MODEL_ARMOR", "PUP_LIMITED_DISABLED")
+#: Finishes that are no answer at all: the call went wrong on Google's side
+#: of the reply. Read as "end" they would close a run as done with nothing
+#: done, so they stop it, loudly, by name.
+_GEMINI_FAILURES = ("MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL", "TOO_MANY_TOOL_CALLS",
+                    "MISSING_THOUGHT_SIGNATURE", "MALFORMED_RESPONSE")
+#: yaaf's effort rungs as the API's `thinkingLevel` enum (MINIMAL, LOW, MEDIUM,
+#: HIGH): there is nothing above HIGH to send a stronger rung as.
+_GEMINI_LEVELS = {"minimal": "MINIMAL", "low": "LOW", "medium": "MEDIUM", "high": "HIGH",
+                  "xhigh": "HIGH", "max": "HIGH"}
+#: The documented stand-in for a signature on a function call Gemini did not
+#: write: a turn rebuilt from text (another wire's, a test's) has none, and
+#: Gemini 3 refuses a function call without one.
+_GEMINI_UNSIGNED = "skip_thought_signature_validator"
 
 
 def gemini_request(system: str, transcript: list[Turn], tools: list[ToolSpec],
@@ -493,8 +613,13 @@ def gemini_request(system: str, transcript: list[Turn], tools: list[ToolSpec],
         if turn.role == "assistant":
             parts = turn.native if turn.native is not None else [
                 *([{"text": turn.text}] if turn.text else []),
-                *({"functionCall": {"name": c.name, "args": c.input}} for c in turn.calls)]
-            contents.append({"role": "model", "parts": parts})
+                *({"functionCall": {"name": c.name, "args": c.input},
+                   **({"thoughtSignature": _GEMINI_UNSIGNED} if i == 0 else {})}
+                  for i, c in enumerate(turn.calls))]
+            if parts:
+                # A reply cut off while thinking has no parts, and a content
+                # without parts is refused.
+                contents.append({"role": "model", "parts": parts})
         elif turn.outputs:
             contents.append({"role": "user", "parts": [
                 {"functionResponse": {
@@ -508,30 +633,94 @@ def gemini_request(system: str, transcript: list[Turn], tools: list[ToolSpec],
     if effort:
         # The enum's own spelling, as the Gemini CLI sends it — the one
         # spelling this repo has seen the API accept (gemini_cli_entry.py).
-        config["thinkingConfig"] = {"thinkingLevel": effort.upper()}
+        config["thinkingConfig"] = {
+            "thinkingLevel": _GEMINI_LEVELS.get(effort.lower(), effort.upper())}
     body: dict = {"systemInstruction": {"parts": [{"text": system}]}, "contents": contents,
                   "generationConfig": config}
     if grounded:
         body["tools"] = [{"googleSearch": {}}]
     elif tools:
-        body["tools"] = [{"functionDeclarations": [
-            {"name": t.name, "description": t.description,
-             "parameters": _gemini_schema(t.input_schema)} for t in tools]}]
+        body["tools"] = [{"functionDeclarations": [_gemini_function(t) for t in tools]}]
     return body
 
 
-#: JSON-schema keywords Gemini's function declarations refuse. Dropped rather
-#: than sent: a declaration Gemini refuses is a run that never starts.
-_GEMINI_UNSUPPORTED = ("$schema", "additionalProperties", "default", "examples", "$defs",
-                       "definitions", "$ref", "const", "patternProperties")
+def _gemini_function(tool: ToolSpec) -> dict:
+    declared: dict = {"name": tool.name, "description": tool.description}
+    parameters = _gemini_schema(tool.input_schema, tool.input_schema)
+    # An object with no properties is refused ("should be non-empty for
+    # OBJECT type"); a tool that takes nothing declares no parameters.
+    if isinstance(parameters, dict) and parameters.get("properties"):
+        declared["parameters"] = parameters
+    return declared
 
 
-def _gemini_schema(schema: Any) -> Any:
-    if isinstance(schema, dict):
-        return {k: _gemini_schema(v) for k, v in schema.items() if k not in _GEMINI_UNSUPPORTED}
-    if isinstance(schema, list):
-        return [_gemini_schema(v) for v in schema]
-    return schema
+#: The fields of the Gemini API's `Schema` (the discovery document's; Vertex's
+#: adds a few). A field outside it is an unknown name, and an unknown name is
+#: a refused request — a run that never starts — so everything else is
+#: dropped: `additionalProperties`, `$schema`, `examples`, `allOf`, `not`...
+#: `default` and `example` are in it but dropped too: a default that does not
+#: match the type is refused, and the model needs neither.
+_GEMINI_KEYWORDS = frozenset((
+    "anyOf", "description", "enum", "format", "items", "maxItems", "maxLength",
+    "maxProperties", "maximum", "minItems", "minLength", "minProperties", "minimum",
+    "nullable", "pattern", "properties", "propertyOrdering", "required", "title", "type"))
+
+
+def _gemini_ref(root: Any, ref: Any) -> Any:
+    """A local `$ref` (`#/$defs/X`, `#/definitions/X`) resolved in `root`."""
+    if not isinstance(ref, str) or not ref.startswith("#/"):
+        return None
+    node = root
+    for key in ref[2:].split("/"):
+        node = node.get(key.replace("~1", "/").replace("~0", "~")) if isinstance(
+            node, dict) else None
+    return node if isinstance(node, dict) else None
+
+
+def _gemini_schema(schema: Any, root: Any = None, depth: int = 0) -> Any:
+    """A JSON schema as Gemini's `Schema`: references inlined (a recursive
+    one cut at a depth), `oneOf` as the `anyOf` it means here, `const` as a
+    one-value enum, a type list as one type and `nullable`, and keywords only
+    where a schema is — a property *named* `default` is a property."""
+    if not isinstance(schema, dict) or depth > 12:
+        return {}
+    if "$ref" in schema:
+        target = _gemini_ref(root, schema["$ref"])
+        rest = {k: v for k, v in schema.items() if k != "$ref"}
+        return _gemini_schema({**target, **rest} if target else rest, root, depth + 1)
+    schema = dict(schema)
+    if "oneOf" in schema and "anyOf" not in schema:
+        schema["anyOf"] = schema["oneOf"]
+    if "const" in schema and "enum" not in schema:
+        schema["enum"] = [schema["const"]]
+    out: dict = {}
+    for key, value in schema.items():
+        if key not in _GEMINI_KEYWORDS:
+            continue
+        if key == "properties" and isinstance(value, dict):
+            out[key] = {name: _gemini_schema(sub, root, depth + 1) for name, sub in value.items()}
+        elif key == "items":
+            out[key] = _gemini_schema(value, root, depth + 1)
+        elif key == "anyOf" and isinstance(value, list):
+            out[key] = [_gemini_schema(sub, root, depth + 1) for sub in value]
+        elif key == "type" and isinstance(value, list):
+            kinds = [k for k in value if k != "null"]
+            if len(kinds) == 1:
+                out["type"] = kinds[0]
+            elif kinds:
+                out["anyOf"] = [{"type": k} for k in kinds]
+            if "null" in value:
+                out["nullable"] = True
+        elif key == "enum":
+            # The enum is a string type's: other values are refused.
+            if isinstance(value, list) and value and all(isinstance(v, str) for v in value):
+                out[key] = value
+        else:
+            out[key] = value
+    if isinstance(out.get("required"), list) and isinstance(out.get("properties"), dict):
+        # A required name that is not a property is refused.
+        out["required"] = [n for n in out["required"] if n in out["properties"]]
+    return out
 
 
 def gemini_reply(body: dict) -> Reply:
@@ -561,9 +750,11 @@ def gemini_reply(body: dict) -> Reply:
             calls.append(ToolCall(call.get("id") or f"call_{index}", call.get("name") or "",
                                   _arguments(call.get("args"))))
     finish = candidate.get("finishReason") or "STOP"
-    if finish in _GEMINI_REFUSALS:
-        stop, detail = "refusal", f"the reply was stopped: {finish}"
-    elif finish == "MAX_TOKENS":
+    if finish in _GEMINI_REFUSALS or finish in _GEMINI_FAILURES:
+        message = candidate.get("finishMessage")
+        stop, detail = "refusal", f"the reply was stopped: {finish}" + (
+            f" ({str(message)[:300]})" if message else "")
+    elif finish in ("MAX_TOKENS", "CONTINUATION"):
         stop, detail = "max_tokens", None
     else:
         stop, detail = ("tool_use" if calls else "end"), None
@@ -601,7 +792,10 @@ async def _gemini(http: httpx.AsyncClient, endpoint: Endpoint, model: str, body:
 
 _BEDROCK_STOPS = {"end_turn": "end", "stop_sequence": "end", "tool_use": "tool_use",
                   "max_tokens": "max_tokens", "model_context_window_exceeded": "max_tokens",
-                  "guardrail_intervened": "refusal", "content_filtered": "refusal"}
+                  "guardrail_intervened": "refusal", "content_filtered": "refusal",
+                  # No answer, and no call fit to run: stopped by name rather
+                  # than read as a run that finished.
+                  "malformed_model_output": "refusal", "malformed_tool_use": "refusal"}
 _BEDROCK_AUTH = ("unrecognizedclient", "accessdenied", "expiredtoken", "invalidsignature")
 _BEDROCK_TRANSIENT = ("throttling", "servicequota", "modelnotready", "serviceunavailable",
                       "internalserver", "modeltimeout")
@@ -624,7 +818,8 @@ def bedrock_request(system: str, transcript: list[Turn], tools: list[ToolSpec],
                 for o in turn.outputs]})
         else:
             messages.append({"role": "user", "content": [{"text": turn.text}]})
-    body: dict = {"system": [{"text": system}], "messages": messages}
+    # A system block's text must not be empty: none is sent instead.
+    body: dict = {**({"system": [{"text": system}]} if system else {}), "messages": messages}
     if max_tokens < SAFE_MAX_TOKENS:
         body["inferenceConfig"] = {"maxTokens": max_tokens}
     if tools:
@@ -673,7 +868,8 @@ async def _bedrock(http: httpx.AsyncClient, endpoint: Endpoint, model: str, body
 
 
 def anthropic_request(model: str, system: str, transcript: list[Turn], tools: list[ToolSpec],
-                      max_tokens: int, effort: str | None = None) -> dict:
+                      max_tokens: int, effort: str | None = None,
+                      web_search: bool = False) -> dict:
     messages: list[dict] = []
     for turn in transcript:
         if turn.role == "assistant":
@@ -690,9 +886,16 @@ def anthropic_request(model: str, system: str, transcript: list[Turn], tools: li
             messages.append({"role": "user", "content": turn.text})
     body: dict = {"model": model, "max_tokens": max_tokens, "system": system,
                   "messages": messages}
-    if tools:
-        body["tools"] = [{"name": t.name, "description": t.description,
-                          "input_schema": t.input_schema} for t in tools]
+    body["tools"] = [{"name": t.name, "description": t.description,
+                      "input_schema": t.input_schema} for t in tools]
+    if web_search:
+        # The server search's first version: every model with search takes
+        # it, where the newer ones are model by model, and this file knows no
+        # models. Its `server_tool_use` and `web_search_tool_result` blocks
+        # come back in `content` and go back in `native`, as they must.
+        body["tools"].append({"type": "web_search_20250305", "name": "web_search"})
+    if not body["tools"]:
+        del body["tools"]
     if effort:
         body["output_config"] = {"effort": effort}
     return body
@@ -766,7 +969,7 @@ async def call(endpoint: Endpoint, model: str, system: str, transcript: list[Tur
                               bedrock_request(system, transcript, tools, max_tokens))
         elif endpoint.protocol == "anthropic":
             stream = _anthropic(http, endpoint, anthropic_request(
-                model, system, transcript, tools, max_tokens, effort))
+                model, system, transcript, tools, max_tokens, effort, web_search))
         else:
             raise WireError(0, {"error": {"message": f"unknown protocol {endpoint.protocol!r}"}},
                             "fatal")
@@ -822,9 +1025,11 @@ def model_ids(endpoint: Endpoint, body: Any) -> list[str]:
         names = [str(r.get("name") or "") for r in rows if isinstance(r, dict)]
         return sorted({n.rsplit("/", 1)[-1] for n in names if n})
     if endpoint.protocol == "bedrock":
-        rows = body.get("modelSummaries") or []
-        return sorted({str(r.get("modelId")) for r in rows
-                       if isinstance(r, dict) and r.get("modelId")})
+        rows = [*(body.get("modelSummaries") or []),
+                *(body.get("inferenceProfileSummaries") or [])]
+        ids = [r.get("modelId") or r.get("inferenceProfileId") for r in rows
+               if isinstance(r, dict)]
+        return sorted({str(i) for i in ids if i})
     rows = body.get("data") or body.get("models") or []
     return sorted({str(r.get("id") or r.get("name")) for r in rows
                    if isinstance(r, dict) and (r.get("id") or r.get("name"))})
@@ -843,7 +1048,63 @@ async def list_models(endpoint: Endpoint, *,
         response = await http.get(models_url(endpoint), headers=headers(endpoint))
         if response.status_code >= 400:
             raise await _refused(response, endpoint)
-        return model_ids(endpoint, response.json())
+        body = response.json()
+        names = set(model_ids(endpoint, body))
+        for _ in range(_MAX_PAGES):
+            following = _next_page(endpoint, body)
+            if following is None:
+                break
+            response = await http.get(models_url(endpoint), params=following,
+                                      headers=headers(endpoint))
+            if response.status_code >= 400:
+                raise await _refused(response, endpoint)
+            body = response.json()
+            names.update(model_ids(endpoint, body))
+        if endpoint.protocol == "bedrock":
+            names.update(await _inference_profiles(http, endpoint))
+        return sorted(names)
+
+
+#: How many further pages a listing is followed for: a provider that pages
+#: forever is not listed forever.
+_MAX_PAGES = 20
+
+
+def _next_page(endpoint: Endpoint, body: Any) -> dict | None:
+    """The query for a listing's next page, or None at its end. Anthropic
+    pages by `has_more` and `last_id`, 20 to a page unless asked; Google by
+    `nextPageToken`, 50 to a page on the Gemini API. The first page is asked
+    for plainly, so a provider that pages nothing is asked nothing new."""
+    if not isinstance(body, dict):
+        return None
+    if endpoint.protocol == "anthropic" and body.get("has_more") and body.get("last_id"):
+        return {"limit": 1000, "after_id": body["last_id"]}
+    if endpoint.protocol == "gemini" and body.get("nextPageToken"):
+        return {"pageSize": 1000, "pageToken": body["nextPageToken"]}
+    return None
+
+
+async def _inference_profiles(http: httpx.AsyncClient, endpoint: Endpoint) -> list[str]:
+    """Bedrock's inference profiles (`us.anthropic...`): not foundation models,
+    so not in that list, yet the only id many models answer on demand to.
+    Best effort — a key that may list models but not profiles still lists."""
+    url = endpoint.base_url.replace("bedrock-runtime.", "bedrock.", 1) + "/inference-profiles"
+    out: list[str] = []
+    params: dict = {"maxResults": 1000}
+    for _ in range(_MAX_PAGES):
+        try:
+            response = await http.get(url, params=params, headers=headers(endpoint))
+            body = response.json() if response.status_code < 400 else None
+        except (httpx.HTTPError, ValueError):
+            body = None
+        if not isinstance(body, dict):
+            break
+        out += model_ids(endpoint, {"inferenceProfileSummaries":
+                                    body.get("inferenceProfileSummaries") or []})
+        if not body.get("nextToken"):
+            break
+        params = {"maxResults": 1000, "nextToken": body["nextToken"]}
+    return out
 
 
 # ── web search backends: the platform's own search (docs/PROVIDERS.md §6) ──────
