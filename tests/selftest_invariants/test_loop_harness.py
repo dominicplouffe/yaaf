@@ -121,7 +121,7 @@ def _staged(monkeypatch, tmp_path, perms: dict | None = None) -> SimpleNamespace
 
     loop = importlib.reload(loop_module)
     monkeypatch.setitem(sys.modules, "loop_harness", loop)
-    import yaaf.runner.anthropic_api_entry as api_module
+    import yaaf.runner.loop_entry as api_module
 
     api = importlib.reload(api_module)
     workspace = tmp_path / "workspace"

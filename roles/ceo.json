@@ -7,7 +7,7 @@
     "general"
   ],
   "description": "Owns the plan, bet selection, and kill decisions. The only agent that speaks to the chairman and the only one that creates top-level tasks.",
-  "model": "claude-opus-5-5",
+  "model": "@frontier",
   "effort": "high",
   "tool_permissions": {
     "files": true,

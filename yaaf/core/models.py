@@ -850,10 +850,11 @@ class RoleVersion(Base):
     version: Mapped[int] = mapped_column(Integer)
     description: Mapped[str] = mapped_column(Text)
     system_prompt: Mapped[str] = mapped_column(Text)
-    model: Mapped[str] = mapped_column(String(64), default=DEFAULT_MODEL)
+    model: Mapped[str] = mapped_column(String(128), default=DEFAULT_MODEL)
     effort: Mapped[str] = mapped_column(String(8), default=DEFAULT_EFFORT)
-    # What drives the model (yaaf.runtimes.harnesses). NULL is the provider's
-    # default — which is every role written before there was a choice.
+    # What drives the model (yaaf.runtimes.harnesses). NULL is the default of
+    # whatever credential kind pays the seat — which is every role written
+    # before there was a choice.
     harness: Mapped[str | None] = mapped_column(String(32))
     # {"bash": true, "web": true, "github": false}
     tool_permissions: Mapped[dict] = mapped_column(JSONVariant, default=dict)
@@ -941,7 +942,7 @@ class Agent(Base):
     # actually reads and could not buy it more thinking, because effort was
     # readable only from the role version every project on the install shares.
     # Raising it in the library would have raised it everywhere.
-    model_override: Mapped[str | None] = mapped_column(String(64))
+    model_override: Mapped[str | None] = mapped_column(String(128))
     effort_override: Mapped[str | None] = mapped_column(String(16))
     # The same for what drives the model (yaaf.runtimes.harnesses): null is the
     # role's harness, and the role's null is its provider's default.
@@ -1898,7 +1899,7 @@ class Run(Base):
     priced_usd: Mapped[float | None] = mapped_column(Float)
     # Pinned at lease time, not resolved at read time: a role repin or model
     # change must never silently re-attribute historical spend.
-    model: Mapped[str | None] = mapped_column(String(64))
+    model: Mapped[str | None] = mapped_column(String(128))
     effort: Mapped[str | None] = mapped_column(String(16))
     # Who served the model and what drove it (docs/RUNTIMES.md), pinned beside
     # the model for the same reason. NULL on every run from before they were
@@ -2276,6 +2277,9 @@ class ModelPrice(Base):
     cache_read: Mapped[float] = mapped_column(Float, default=0.0)
     cache_write: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    #: Where the number came from: None for one an administrator typed, the
+    #: feed and its date for one imported (yaaf.core.price_feed).
+    source: Mapped[str | None] = mapped_column(String(200))
 
 
 class PlanReading(Base):

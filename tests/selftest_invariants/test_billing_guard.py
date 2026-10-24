@@ -52,15 +52,16 @@ def test_billing_check_preflights_without_a_run(client, monkeypatch):
                  json={"billing_mode": "api_key", "billing_secret_id": api["id"]},
                  headers=ADMIN)
 
-    class FakeResponse:
-        def __init__(self, status_code):
-            self.status_code = status_code
+    from yaaf.runtimes import wire
 
-    monkeypatch.setattr(httpx, "get", lambda *a, **k: FakeResponse(200))
+    def provider(status_code):
+        return httpx.MockTransport(lambda request: httpx.Response(status_code, json={"data": []}))
+
+    monkeypatch.setattr(wire, "TRANSPORT", provider(200))
     good = client.post(f"/admin/projects/{project['id']}/billing_check", headers=ADMIN).json()
     assert good["ok"] is True and "verified" in good["detail"]
 
-    monkeypatch.setattr(httpx, "get", lambda *a, **k: FakeResponse(401))
+    monkeypatch.setattr(wire, "TRANSPORT", provider(401))
     bad = client.post(f"/admin/projects/{project['id']}/billing_check", headers=ADMIN).json()
     assert bad["ok"] is False and "rejected" in bad["detail"]
 

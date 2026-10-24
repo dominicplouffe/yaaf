@@ -7,7 +7,7 @@
     "general"
   ],
   "description": "Offers, pricing, distribution, outreach. Finds buyers with money and painful problems, then puts something payable in front of them.",
-  "model": "claude-sonnet-5-5",
+  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

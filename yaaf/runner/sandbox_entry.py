@@ -2099,6 +2099,9 @@ class AttemptResult:
     subtype: str | None = None
     cache_creation_1h: int = 0
     web_searches: int = 0
+    #: What the install's own search backend charged, in USD, for searches
+    #: made through yaaf rather than the provider (docs/PROVIDERS.md §6).
+    search_usd: float = 0.0
 
 
 def price_usage(price: dict, *, tokens_in: int, tokens_out: int, cache_read: int,
@@ -2116,11 +2119,12 @@ def price_usage(price: dict, *, tokens_in: int, tokens_out: int, cache_read: int
 
 def _priced(price: dict | None, bill: AttemptResult) -> float | None:
     if price is None:
-        return None
-    return price_usage(price, tokens_in=bill.tokens_in, tokens_out=bill.tokens_out,
-                       cache_read=bill.cache_read, cache_creation=bill.cache_creation,
-                       cache_creation_1h=bill.cache_creation_1h,
-                       web_searches=bill.web_searches)
+        # A platform search is priced by the install whatever the model is.
+        return bill.search_usd or None
+    return bill.search_usd + price_usage(
+        price, tokens_in=bill.tokens_in, tokens_out=bill.tokens_out,
+        cache_read=bill.cache_read, cache_creation=bill.cache_creation,
+        cache_creation_1h=bill.cache_creation_1h, web_searches=bill.web_searches)
 
 
 def usage_bill(usage, *, cost_usd: float | None, subtype: str | None) -> AttemptResult:

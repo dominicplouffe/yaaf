@@ -25,7 +25,7 @@ from pathlib import Path
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, model_policy
 from yaaf.core.config import settings
 from yaaf.core.db import db_session
 from yaaf.core.models import (
@@ -48,9 +48,12 @@ from yaaf.runner.daemon import (
     _billing_env,
     _data_source_prompt,
     _merge_project_data_sources,
+    _mint_secret_id,
+    _mint_token,
     _pin_seat,
     _provider_spec,
     _role_secret_env,
+    _search_env,
     stash_context_doc,
 )
 from yaaf.runner.types import RunJob
@@ -242,7 +245,8 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
         # boots fresh, paid with the new one. A deliberate end, so KILLED and
         # outside the restart backstop; the new session answers the backlog.
         seat = seat_for(ceo, role_version_for(session, ceo),
-                        (project.integrations or {}).get("runtime"))
+                        (project.integrations or {}).get("runtime"),
+                        context=model_policy.context(session, project))
         if (live_run.trigger or {}).get("credential") != _credential_mark(
                 session, project, seat.provider):
             _end_session(session, project, live_run,
@@ -334,7 +338,8 @@ def converses(session: Session, project: Project, ceo: Agent) -> bool:
     conversation (R7) — the harness its work runs on, which is the one its
     talk runs on too."""
     seat = seat_for(ceo, role_version_for(session, ceo),
-                    (project.integrations or {}).get("runtime"))
+                    (project.integrations or {}).get("runtime"),
+                    context=model_policy.context(session, project))
     found = HARNESSES.get(seat.harness)
     return found is not None and (found.conversation or found.family == "mock")
 
@@ -401,7 +406,8 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     # its provider's credential — like any run of that seat (docs/RUNTIMES.md,
     # M6). The harness's own entry holds the conversation; the SDK's entry
     # is the SDK's resident client.
-    seat = seat_for(ceo, role_version, (project.integrations or {}).get("runtime"))
+    seat = seat_for(ceo, role_version, (project.integrations or {}).get("runtime"),
+                    context=model_policy.context(session, project))
     run = Run(
         id=ids.new_id(ids.RUN),
         project_id=project.id,
@@ -448,7 +454,13 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     from yaaf.server.recognizers import credentials_prompt
 
     job.system_prompt += credentials_prompt(*announced_credentials(role_secrets))
-    job.billing_env = {**_billing_env(session, project, seat.provider), **role_secrets}
+    job.billing_env = {**_billing_env(session, project, seat.provider), **role_secrets,
+                       **_search_env(session, job)}
+    job.mint_secret_id = _mint_secret_id(session, project, seat.provider)
+    if (refused := _mint_token(job)) is not None:
+        # The session would only fail its first call; say why where it is read.
+        log.warning("chat session for %s cannot mint its model token: %s",
+                    project.slug, refused.summary)
 
     # Chat gets its own scratch at /workspace: a run's staging must never race
     # a resident session's. It also gets the project's working tree read-only

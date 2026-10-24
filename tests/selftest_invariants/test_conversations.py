@@ -177,7 +177,7 @@ def test_a_deepseek_ceo_talks_on_deepseek_priced_and_paid_as_its_runs_are(
     assert started.status_code == 200, started.text
     chat.chat_supervisor_once()
     env = launched[0]["env"]
-    assert env["YAAF_CHAT_ENTRY"] == "openai_compatible_entry.py"
+    assert env["YAAF_CHAT_ENTRY"] == "loop_entry.py"
     assert env["DEEPSEEK_API_KEY"] == "sk-deepseek-test-value"
     assert "ANTHROPIC_API_KEY" not in env
     assert json.loads(env["YAAF_PRICE"])["output"] == 0.42
@@ -185,7 +185,7 @@ def test_a_deepseek_ceo_talks_on_deepseek_priced_and_paid_as_its_runs_are(
     with db_session() as session:
         run = session.query(Run).filter_by(kind="chat_session").one()
         assert (run.model, run.provider, run.harness) == (
-            "deepseek-chat", "deepseek", "openai_compatible")
+            "deepseek-chat", "deepseek", "yaaf_loop")
 
 
 # ── the sandbox side: a conversation on any driver ──────────────────────────────
@@ -267,12 +267,13 @@ def test_yaafs_loop_carries_the_conversation_in_its_transcript(monkeypatch):
     chat_entry = _chat_entry(
         monkeypatch, entry="openai_compatible_entry.py", YAAF_MODEL="deepseek-chat",
         YAAF_PRICE=json.dumps(price), DEEPSEEK_API_KEY="sk-test",
-        YAAF_PROVIDER=json.dumps({"name": "deepseek", "base_url": "https://api.deepseek.com/v1",
+        YAAF_PROVIDER=json.dumps({"name": "deepseek", "protocol": "openai_chat",
+                                  "base_url": "https://api.deepseek.com/v1",
                                   "key_env": "DEEPSEEK_API_KEY"}))
     import yaaf.runner.loop_harness as loop_module
 
     monkeypatch.setitem(sys.modules, "loop_harness", importlib.reload(loop_module))
-    import yaaf.runner.openai_compatible_entry as api_module
+    import yaaf.runner.loop_entry as api_module
 
     api = importlib.reload(api_module)
     monkeypatch.setattr(chat_entry.base, "_call", lambda *a, **k: {"status": 200, "body": {}})
@@ -290,8 +291,8 @@ def test_yaafs_loop_carries_the_conversation_in_its_transcript(monkeypatch):
         return httpx.Response(200, headers={"content-type": "text/event-stream"},
                               content=body.encode())
 
-    client = api.OpenAICompatibleClient(model="deepseek-chat", spec=chat_entry.base.PROVIDER,
-                                        transport=httpx.MockTransport(handler))
+    client = api.WireClient(model="deepseek-chat", spec=chat_entry.base.PROVIDER, effort=None,
+                            web_search=False, transport=httpx.MockTransport(handler))
     conversation = chat_entry.DriverConversation(
         sys.modules["loop_harness"].LoopDriver(client, "You are the CEO."))
 
@@ -321,9 +322,10 @@ PLATFORM = "/admin/settings/anthropic"
 
 
 def _chat_api(monkeypatch, replies: list[dict]) -> list[dict]:
-    """The OpenAI-compatible chat API the Founder reaches on any provider but
-    Anthropic, scripted: each request gets the next message."""
-    from yaaf.founder import loop
+    """The OpenAI-compatible chat API the Founder reaches on an OpenAI-shaped
+    provider, scripted: each request gets the next message, streamed the way
+    the shape streams it — content, then each tool call, then usage."""
+    from yaaf.runtimes import wire
 
     sent: list[dict] = []
 
@@ -333,14 +335,18 @@ def _chat_api(monkeypatch, replies: list[dict]) -> list[dict]:
         reply = replies[len(sent) - 1]
         if "status" in reply:
             return httpx.Response(reply["status"], json=reply["body"])
-        return httpx.Response(200, json={"choices": [{"message": reply}]})
+        delta = {k: v for k, v in reply.items() if k != "tool_calls"}
+        lines = [{"choices": [{"index": 0, "delta": delta}]}]
+        lines += [{"choices": [{"index": 0, "delta": {"tool_calls": [{"index": i, **call}]}}]}
+                  for i, call in enumerate(reply.get("tool_calls") or [])]
+        lines += [{"choices": [{"index": 0, "delta": {}, "finish_reason":
+                                "tool_calls" if reply.get("tool_calls") else "stop"}]},
+                  {"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}]
+        body = "".join(f"data: {json.dumps(line)}\n\n" for line in lines) + "data: [DONE]\n\n"
+        return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                              content=body.encode())
 
-    real = loop.run
-
-    async def wired(*args, **kwargs):
-        return await real(*args, **kwargs, transport=httpx.MockTransport(handler))
-
-    monkeypatch.setattr(loop, "run", wired)
+    monkeypatch.setattr(wire, "TRANSPORT", httpx.MockTransport(handler))
     return sent
 
 
@@ -422,8 +428,6 @@ def test_a_dead_platform_key_on_another_provider_says_auth(monkeypatch):
 
 @pytest.mark.parametrize(("body", "says"), [
     # The model is the Founder's road; the credential pays it — one decision.
-    ({"provider": "deepseek", "value": "sk-deepseek-platform"},
-     "the Founder runs on claude-opus-5-5, which is Anthropic's"),
     ({"provider": "deepseek", "value": "sk-deepseek-platform", "model": "gpt-5.5"},
      "gpt-5.5, which is OpenAI's"),
     # A ChatGPT login pays the Codex CLI and nothing that runs in this process.
@@ -435,6 +439,28 @@ def test_a_dead_platform_key_on_another_provider_says_auth(monkeypatch):
 def test_a_platform_credential_the_founder_cannot_run_on_is_refused(client, body, says):
     refused = client.put(PLATFORM, headers=ADMIN, json=body)
     assert refused.status_code == 422 and says in refused.text, refused.text
+
+
+def test_a_key_is_enough_where_the_provider_has_a_frontier_model(client):
+    """The Founder's model is a class (docs/PROVIDERS.md §7): pasting a DeepSeek
+    key with no model named gives a Founder on DeepSeek's frontier model —
+    where it used to be refused for defaulting to Claude's."""
+    installed = client.put(PLATFORM, headers=ADMIN, json={
+        "provider": "deepseek", "value": "sk-deepseek-platform"})
+    assert installed.status_code == 200, installed.text
+    assert installed.json()["model"] == "deepseek-reasoner"
+    shown = client.get("/admin/settings", headers=ADMIN).json()["anthropic"]
+    assert (shown["model"], shown["model_ref"]) == ("deepseek-reasoner", "@frontier")
+
+
+def test_a_provider_with_no_frontier_model_needs_the_founders_model_named(client):
+    refused = client.put(PLATFORM, headers=ADMIN, json={
+        "provider": "groq", "value": "gsk-platform-key"})
+    assert refused.status_code == 422
+    assert "Groq has no Frontier model set" in refused.text
+    named = client.put(PLATFORM, headers=ADMIN, json={
+        "provider": "groq", "value": "gsk-platform-key", "model": "groq/kimi-k2-instruct"})
+    assert named.status_code == 200, named.text
 
 
 def test_the_founders_model_cannot_drift_from_the_credential(client):

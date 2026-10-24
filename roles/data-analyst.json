@@ -7,7 +7,7 @@
     "data"
   ],
   "description": "Turns a pile of records into findings someone can act on and someone else can re-derive. Every number comes out of a committed script, and a claim the data cannot support does not ship.",
-  "model": "claude-sonnet-5-5",
+  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

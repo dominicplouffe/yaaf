@@ -432,11 +432,13 @@ def test_the_sandbox_image_carries_every_harness_and_what_it_imports():
     from yaaf.runtimes.harnesses import HARNESSES
 
     dockerfile = (TESTS.parent / "deploy" / "sandbox" / "Dockerfile").read_text()
-    copied = set(re.findall(r"COPY yaaf/runner/(\w+\.py) /opt/yaaf/\1", dockerfile))
+    copied = set(re.findall(r"COPY yaaf/(?:runner|runtimes)/(\w+\.py) /opt/yaaf/\1",
+                            dockerfile))
     entrypoints = {get_backend(name).entrypoint for name, h in HARNESSES.items()
                    if h.family != "mock"}
     assert entrypoints <= copied, entrypoints - copied
-    siblings = {p.name for p in RUNNER.glob("*.py")}
+    shared = RUNNER.parent / "runtimes"
+    siblings = {p.name for p in (*RUNNER.glob("*.py"), *shared.glob("*.py"))}
     # What the image's venv installs, by import name; and what arrives only as
     # a dependency of something installed (the anthropic SDK's HTTP client).
     pip_line = re.search(r"pip install --no-cache-dir \\\n(.*)", dockerfile).group(1)
@@ -444,8 +446,15 @@ def test_the_sandbox_image_carries_every_harness_and_what_it_imports():
                  for word in pip_line.split()}
     installed |= {"httpx2"}
     for name in copied:
-        tree = ast.parse((RUNNER / name).read_text())
+        tree = ast.parse(((RUNNER / name) if (RUNNER / name).exists()
+                          else (shared / name)).read_text())
+        # An import in an `except ModuleNotFoundError` is the control plane's
+        # road to a sibling the image carries beside the file (the wire).
+        fallbacks = {id(n) for handler in ast.walk(tree)
+                     if isinstance(handler, ast.ExceptHandler) for n in ast.walk(handler)}
         for node in ast.walk(tree):
+            if id(node) in fallbacks:
+                continue
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module and not node.level:

@@ -59,7 +59,10 @@ SLACK_CHANNEL_PREFIX = "slack.channel_prefix"  # "" => the project slug
 SLACK_CHANNEL_VISIBILITY = "slack.channel_visibility"  # "private" | "public"
 SLACK_AUTO_CREATE = "slack.auto_create_channels"  # "true" | "false"
 
-DEFAULT_FOUNDER_MODEL = "claude-opus-5-5"
+#: The Founder's model when nobody named one: the frontier class, resolved on
+#: whatever provider the platform credential pays — so pasting a Gemini key is
+#: enough to have a Founder (docs/PROVIDERS.md §7).
+DEFAULT_FOUNDER_MODEL = "@frontier"
 DEFAULT_SLACK_VISIBILITY = "private"
 
 
@@ -111,8 +114,27 @@ def billing_mode(session: Session) -> str:
     return get_setting(session, BILLING_MODE, "api_key") or "api_key"
 
 
-def founder_model(session: Session) -> str:
+def founder_model_ref(session: Session) -> str:
+    """The Founder's model as it was set — a model, or a class."""
     return get_setting(session, FOUNDER_MODEL, DEFAULT_FOUNDER_MODEL) or DEFAULT_FOUNDER_MODEL
+
+
+def founder_model(session: Session, provider: str | None = None) -> str:
+    """The model the Founder and the grader run on: its reference resolved on
+    the platform credential's provider (or `provider`, for a credential being
+    installed). A class that provider has no model for comes back named with
+    the provider (`groq/@frontier`) — refused at every door that sets either
+    half, and never sent to a model."""
+    from yaaf.core import model_policy
+    from yaaf.runtimes import catalog
+
+    ref = founder_model_ref(session)
+    provider = provider or credential_provider(session)
+    resolved = model_policy.resolve(session, ref, provider=provider)
+    if resolved:
+        return resolved
+    _, cls = catalog.parse(ref)
+    return catalog.class_ref(cls or "frontier", provider)
 
 
 def _own_row(session: Session) -> Secret | None:
@@ -262,26 +284,38 @@ def clear_credential(session: Session) -> bool:
 
 
 def founder_env(session: Session) -> dict[str, str]:
-    """The credential, as the environment the Claude Code CLI reads.
+    """The credential, as the environment the Founder's model call reads.
 
-    This is deliberately the same two-line split every agent already runs
-    under (:func:`yaaf.runner.daemon._billing_env`): a subscription token is
+    This is deliberately the same split every agent already runs under
+    (:func:`yaaf.runner.daemon._billing_env`): a Claude subscription token is
     consumed by the CLI, which owns the OAuth exchange, and is not a Messages
     API credential at all. An earlier version of this module handed the token
     to the raw Messages API as a bearer token; it 401'd on every subscription,
     because that is not what the token is for.
 
     One credential story for the whole product is the point. A key that works
-    for a project's agents works for the Founder, and vice versa.
+    for a project's agents works for the Founder, and vice versa. A key file
+    the control plane mints tokens from (Vertex) is minted here, and the file
+    itself goes no further than this function.
     """
     from yaaf.runtimes.providers import credential_env
+    from yaaf.runtimes.providers import provider as seller
 
     row = _credential_row(session)
-    env = credential_env(row.provider if row is not None else None,
-                         billing_mode(session), credential(session))
+    found = seller(row.provider if row is not None else None)
+    value = credential(session)
+    if found.mints_tokens:
+        from yaaf.core import model_tokens
+
+        try:
+            value, _ = model_tokens.mint(found.name, value)
+        except model_tokens.MintError as exc:
+            raise NoPlatformCredential(f"the platform's {found.label} credential could not "
+                                       f"mint a token: {exc}") from exc
+    env = credential_env(found.name, billing_mode(session), value)
     if row is not None and row.base_url:
-        # A server the chairman runs: its address travels with its key
-        # (yaaf.founder.loop reads it).
+        # An address that is the credential's own — a server the chairman
+        # runs, an Azure resource, a Bedrock region (yaaf.founder.loop).
         from yaaf.founder.loop import BASE_URL_ENV
 
         env[BASE_URL_ENV] = row.base_url

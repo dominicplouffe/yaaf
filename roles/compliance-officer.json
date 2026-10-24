@@ -7,7 +7,7 @@
     "markets"
   ],
   "description": "Reviews anything the desk publishes or acts on for the lines that must not be crossed: advice, claims, licensing, non-public information, and market conduct. Not a lawyer; a checkpoint that escalates.",
-  "model": "claude-sonnet-5-5",
+  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

@@ -61,17 +61,23 @@ MAX_DRILL_DAYS = 90
     description=(
         "Search the role and crew library — who you can hire, and the pre-built teams. "
         "Roles carry the credentials they will need, which is a fact about hiring one "
-        "rather than something to discover when a run fails. `credentials` lists what "
-        "a project can pay Claude with — names and billing modes, never values — so "
-        "you can ask the chairman which one before `create_project`. `harnesses` lists "
-        "what can drive a seat's model; name one in a team's `harness_overrides` only "
-        "when the chairman asks for it — absent, a seat runs on its role's default."
+        "rather than something to discover when a run fails. A role names a model class "
+        "(@frontier, @balanced, @fast) or a model; a class runs on the project's own "
+        "provider — the one its billing credential pays. `credentials` lists what a "
+        "project can pay its model calls with — names, providers and billing modes, "
+        "never values — and what each class would run on if it paid, so you can ask the "
+        "chairman which one before `create_project`. `models` lists the classes, each "
+        "provider's lineup and every catalog model with whether it can be metered. "
+        "`harnesses` lists what can drive a seat's model; name one in a team's "
+        "`harness_overrides` only when the chairman asks for it — absent, a seat runs on "
+        "its credential's default."
     ),
     input_schema={
         "type": "object",
         "properties": {
             "what": {"type": "string",
-                     "enum": ["roles", "crews", "credentials", "harnesses", "providers"]},
+                     "enum": ["roles", "crews", "credentials", "models", "harnesses",
+                              "providers"]},
             "query": {"type": "string"},
             "category": {"type": "string",
                          "enum": ["leadership", "research", "build", "content",
@@ -94,6 +100,10 @@ def catalog(principal: Principal, session: Session, arguments: dict) -> dict:
         from yaaf.server.api.admin import list_providers
 
         payload = list_providers()
+    elif what == "models":
+        from yaaf.server.api.admin import list_models
+
+        payload = list_models(session)
     elif what == "crews":
         payload = founder_tools.search_crews(session, query=arguments.get("query"))
     else:

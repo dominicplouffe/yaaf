@@ -58,6 +58,8 @@ def get_settings(session: Session = Depends(db)) -> dict:
             # the Founder runs on whichever one this says (docs/RUNTIMES.md M6).
             "provider": platform.credential_provider(session),
             "model": platform.founder_model(session),
+            # As set: a class resolves on whatever the credential pays.
+            "model_ref": platform.founder_model_ref(session),
             # Its own key, or one of the LLM credentials below, borrowed.
             "source": platform.credential_source(session),
             "note": ("This key pays for product-wide conversations — the Founder. It is "
@@ -97,7 +99,8 @@ def _llm_counts(session: Session) -> dict:
 
 
 class CredentialIn(BaseModel):
-    value: str = Field(min_length=8)
+    #: Blank only for a local server, which takes no key (`_key_value`).
+    value: str = Field(default="", max_length=10000)
     mode: str = Field(default="api_key", pattern=MODE_PATTERN)
     provider: str = DEFAULT_PROVIDER
     base_url: str | None = Field(default=None, max_length=500)
@@ -106,12 +109,24 @@ class CredentialIn(BaseModel):
     model: str | None = Field(default=None, min_length=3, max_length=200)
 
 
-def _founder_model_problem(model: str, provider_name: str) -> str | None:
+def _founder_model_problem(session: Session, ref: str, provider_name: str) -> str | None:
     """A Founder's model the platform credential does not pay for. The model
-    picks the road (`yaaf.founder.session.on_sdk`); the credential pays it."""
+    picks the road (`yaaf.founder.session.on_sdk`); the credential pays it. A
+    class resolves on the credential's provider — which is why a credential
+    of any provider with a lineup needs no model named at all."""
+    from yaaf.core import model_policy
     from yaaf.runtimes import catalog
 
+    bad = catalog.valid_ref(ref)
+    if bad:
+        return bad
     seller = PROVIDERS[provider_name]
+    model = model_policy.resolve(session, ref, provider=provider_name)
+    if model is None:
+        label = catalog.class_label(ref)
+        return (f"the Founder runs on the {label} class, and {seller.label} has no {label} "
+                f"model set — name the Founder's model ({seller.name}/<model>), or set "
+                f"{seller.label}'s lineup in Settings → Models")
     if catalog.provider_of(model) == seller.name:
         return None
     owner = PROVIDERS[catalog.provider_of(model)].label
@@ -138,10 +153,11 @@ def install_credential(session: Session, value: str, mode: str,
     """
     from yaaf.founder.session import refusal
 
-    value = value.strip()
     base_url = _check_provider(provider, mode, base_url)
+    value = _key_value(provider, value)
     problem = (refusal(provider, mode) or platform.shape_error(mode, value, provider)
-               or _founder_model_problem((model or platform.founder_model(session)).strip(),
+               or _founder_model_problem(session,
+                                         (model or platform.founder_model_ref(session)).strip(),
                                          provider))
     if problem:
         raise HTTPException(status_code=422, detail=problem)
@@ -168,7 +184,7 @@ def borrow_llm_credential(session: Session, credential_id: str) -> dict:
             "no such LLM credential — pick one listed under Settings → LLM credentials"))
     provider = row.provider or DEFAULT_PROVIDER
     problem = (refusal(provider, row.llm_mode)
-               or _founder_model_problem(platform.founder_model(session), provider))
+               or _founder_model_problem(session, platform.founder_model_ref(session), provider))
     if problem:
         raise HTTPException(status_code=422, detail=problem)
     platform.use_llm_credential(session, row.id)
@@ -180,13 +196,15 @@ def borrow_llm_credential(session: Session, credential_id: str) -> dict:
 def set_founder_model(session: Session, model: str) -> dict:
     """The Founder's model, held to the provider the platform credential pays.
     Shared with ``/admin/founder/model``."""
+    from yaaf.runtimes import catalog
+
     model = model.strip()
-    if platform.has_credential(session):
-        problem = _founder_model_problem(model, platform.credential_provider(session))
-        if problem:
-            raise HTTPException(status_code=422, detail=problem)
+    problem = (_founder_model_problem(session, model, platform.credential_provider(session))
+               if platform.has_credential(session) else catalog.valid_ref(model))
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
     platform.set_setting(session, platform.FOUNDER_MODEL, model)
-    return {"model": model}
+    return {"model": platform.founder_model(session), "ref": model}
 
 
 def check_credential(session: Session) -> dict:
@@ -327,7 +345,8 @@ class LlmCredentialIn(BaseModel):
 
     name: str = Field(min_length=1, max_length=120)
     mode: str = Field(pattern=MODE_PATTERN)
-    value: str = Field(min_length=8, max_length=10000)
+    #: Blank only for a local server, which takes no key (`_key_value`).
+    value: str = Field(default="", max_length=10000)
     #: Which provider it pays (yaaf.runtimes.providers). Absent is Anthropic,
     #: which every credential was before there was a second.
     provider: str = Field(default=DEFAULT_PROVIDER, max_length=32)
@@ -356,16 +375,39 @@ def _check_provider(provider_name: str, mode: str, base_url: str | None) -> str 
             f"{seller.label} takes {', '.join(k.bills for k in seller.kinds)} — not '{mode}'"))
     base_url = (base_url or "").strip() or None
     if seller.credential_base_url:
-        if not base_url or not base_url.startswith(("http://", "https://")):
+        # A local server is plain HTTP on the sandbox network; everything
+        # else carries a key, and a key goes over TLS or not at all.
+        schemes = ("http://", "https://") if seller.local or seller.name == "custom" \
+            else ("https://",)
+        if not base_url or not base_url.startswith(schemes) or "{" in base_url:
+            example = (seller.base_url_template or "").replace("{base_url}",
+                                                               "http://ollama:11434/v1")
             raise HTTPException(status_code=422, detail=(
                 f"a {seller.label} credential carries the server's address — give its "
-                "base URL, e.g. http://ollama:11434/v1"))
+                f"base URL, e.g. {example or 'http://ollama:11434/v1'}"))
         return base_url.rstrip("/")
     if base_url:
         raise HTTPException(status_code=422, detail=(
             f"{seller.label} is reached at its own address; a base URL is only for a "
-            "custom endpoint"))
+            "provider whose address is the credential's own"))
     return None
+
+
+#: What a local server's credential holds when it was given no key: the wire
+#: sends nothing for it (its auth is "none"), and the column is not nullable.
+NO_KEY = "no-key"
+
+
+def _key_value(provider_name: str, value: str | None) -> str:
+    """The value to store: as given, or — for a local server, which takes no
+    key — a stand-in when it was left blank. Anything else needs a key."""
+    value = (value or "").strip()
+    seller = PROVIDERS.get(provider_name)
+    if not value and seller is not None and seller.local:
+        return NO_KEY
+    if len(value) < 8:
+        raise HTTPException(status_code=422, detail="Enter a credential of at least 8 characters")
+    return value
 
 
 def _token_groups(session: Session) -> dict[str, tuple[str | None, int]]:
@@ -468,10 +510,9 @@ def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> di
     if duplicate:
         raise HTTPException(status_code=409, detail="A credential with this name already exists")
     if value is not None:
-        value = value.strip()
-        if len(value) < 8:
-            raise HTTPException(status_code=422, detail="Enter a credential of at least 8 characters")
-        problem = platform.shape_error(row.llm_mode, value, row.provider)
+        value = _key_value(row.provider, value)
+        problem = (None if value == NO_KEY
+                   else platform.shape_error(row.llm_mode, value, row.provider))
         if problem:
             raise HTTPException(status_code=422, detail=problem)
         row.ciphertext = encrypt(value)
@@ -824,10 +865,16 @@ def put_model_price(model: str, body: ModelPriceIn, session: Session = Depends(d
     model = model.strip()
     if not model or len(model) > 128:
         raise HTTPException(status_code=422, detail="Name the model, as a seat names it")
+    if catalog.is_class(model):
+        raise HTTPException(status_code=422, detail=(
+            f"{model} is a class, not a model — price the model it resolves to "
+            "(Settings → Models shows each provider's lineup)"))
     row = session.get(ModelPrice, model) or ModelPrice(model=model)
     row.input, row.output = body.input, body.output
     row.cache_read, row.cache_write = body.cache_read, body.cache_write
     row.updated_at = utcnow()
+    # Typed by an administrator: whatever a feed said before, this is theirs.
+    row.source = None
     session.add(row)
     session.flush()
     _audit(session, None, "model_price.set", "model", model, body.model_dump())

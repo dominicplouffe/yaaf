@@ -919,14 +919,16 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     # Prices: a seat on a harness yaaf prices itself is metered by the model
     # catalog, so its budget is only as right as the catalog. The bills the
     # self-reporting harnesses send for the same model are the check on it.
+    from yaaf.core import model_policy
     from yaaf.runtimes import catalog
     from yaaf.runtimes.harnesses import HARNESSES
     from yaaf.runtimes.seats import seat_for
     from yaaf.server.contextpack import role_version_for
 
+    context = model_policy.context(session, project)
     metered: dict[str, set[str]] = {}
     for agent in _project_agents(session, project.id):
-        seat = seat_for(agent, role_version_for(session, agent))
+        seat = seat_for(agent, role_version_for(session, agent), context=context)
         harness = HARNESSES.get(seat.harness or "")
         if harness is not None and harness.cost == "priced":
             metered.setdefault(seat.model, set()).add(harness.label)
@@ -1597,8 +1599,12 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
     ).all())
     total = sum(float(v) for v in spent.values()) or 0.0
 
+    from yaaf.core import model_policy
+
+    context = model_policy.context(session, project)
+
     def working(agent) -> dict:
-        seat = seat_for(agent, role_version_for(session, agent))
+        seat = seat_for(agent, role_version_for(session, agent), context=context)
         usd = float(spent.get(agent.id, 0.0))
         return {"model": catalog.label(seat.model), "model_id": seat.model,
                 "provider": seat.provider, "month_usd": round(usd, 2),

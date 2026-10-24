@@ -34,13 +34,16 @@ class Harness:
     #: Code); "priced" — yaaf prices it from the catalog, so a model with no
     #: price cannot run on it (R3).
     cost: str = "reported"
-    #: The efforts it can express (R6). None: it hands the seat's effort to
-    #: the model as yaaf names it (the Claude harnesses, whose names are
-    #: yaaf's). Empty: it has no effort dial at all, and the seat's is unused.
+    #: The efforts it can express (R6). None: the model's own ladder governs
+    #: (the catalog's `efforts`), or yaaf's names pass as they are (the Claude
+    #: harnesses, whose names are yaaf's). Empty: it has no effort dial at all,
+    #: and the seat's is unused.
     efforts: tuple[str, ...] | None = None
     #: Where a `web` grant's search comes from (R2): "own" — the harness
-    #: searches; "provider" — the provider's API does, where it does (yaaf's
-    #: loop); "none" — nothing does, so a role granting `web` is refused.
+    #: searches; "loop" — the provider's wire where it has a server tool, else
+    #: the platform's search backend (yaaf's loop); "platform" — only the
+    #: platform's backend, over the yaaf tools' MCP server; "none" — nothing
+    #: does, so a role granting `web` is refused.
     search: str = "own"
     #: The name the model sees for a tool `tool` of MCP server `server` —
     #: what a prompt naming a data source's tools renders through.
@@ -50,6 +53,25 @@ class Harness:
     #: place the chairman waits on a seat in real time.
     conversation: bool = False
 
+
+#: Every provider yaaf's loop reaches: each speaks a wire `yaaf.runtimes.wire`
+#: knows. Listed rather than derived, because this file reads nothing from the
+#: provider registry; `test_runtime_registries.py` holds the two to each other.
+LOOP_PROVIDERS = (
+    "anthropic", "openai", "google", "vertex", "azure_openai", "bedrock", "deepseek",
+    "mistral", "xai", "openrouter", "groq", "together", "fireworks", "cerebras", "cohere",
+    "nvidia", "huggingface", "zai", "moonshot", "qwen", "ollama", "lmstudio", "custom",
+)
+
+#: Every provider OpenCode can reach: its OpenAI-compatible client, a bearer
+#: key (or none, for a local server), at the provider's chat address. Not
+#: OpenRouter, whose per-call cost never reaches OpenCode's stream; not the
+#: providers whose address or key is shaped otherwise (Azure, Bedrock, Vertex).
+OPENCODE_PROVIDERS = (
+    "openai", "deepseek", "mistral", "xai", "groq", "together", "fireworks", "cerebras",
+    "cohere", "nvidia", "huggingface", "zai", "moonshot", "qwen", "ollama", "lmstudio",
+    "custom",
+)
 
 HARNESSES: dict[str, Harness] = {h.name: h for h in (
     Harness(
@@ -71,35 +93,21 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         accepts=("anthropic:api_key", "anthropic:subscription"),
         conversation=True,
     ),
-    # yaaf's own agent loop on the Messages API: no CLI underneath, the
-    # built-in tools yaaf's own, every call priced from the catalog. API keys
-    # only — a subscription token is a CLI credential, not a Messages API one.
-    # The reference every provider reached by plain API is built from.
+    # yaaf's own agent loop, on whichever wire the seat's provider speaks
+    # (yaaf.runtimes.wire): no CLI underneath, the built-in tools yaaf's own,
+    # every call priced as it is billed. API keys only — a subscription or a
+    # login is a CLI credential. The loop is yaaf's; the wire is the
+    # provider's, so a provider of a known shape is a registry row and this
+    # entry's two lists (docs/PROVIDERS.md §3). Search where the provider's
+    # wire has it, and from the platform's own backend everywhere else.
     Harness(
-        name="anthropic_api",
-        label="Anthropic API (yaaf's own loop)",
+        name="yaaf_loop",
+        label="yaaf agent loop (the provider's own API)",
         family="loop",
-        providers=("anthropic",),
-        accepts=("anthropic:api_key",),
+        providers=LOOP_PROVIDERS,
+        accepts=tuple(f"{p}:api_key" for p in LOOP_PROVIDERS),
         cost="priced",
-        search="provider",
-        conversation=True,
-    ),
-    # The same loop on the OpenAI-compatible chat API: one client, and every
-    # provider that speaks that shape is a row in the provider registry. The
-    # loop's own tools; search only where the provider runs one (R2 refuses a
-    # `web` grant it cannot honour).
-    Harness(
-        name="openai_compatible",
-        label="OpenAI-compatible API (yaaf's own loop)",
-        family="loop",
-        providers=("deepseek", "openrouter", "custom", "moonshot", "qwen", "mistral", "xai"),
-        accepts=("deepseek:api_key", "openrouter:api_key", "custom:api_key",
-                 "moonshot:api_key", "qwen:api_key", "mistral:api_key", "xai:api_key"),
-        cost="priced",
-        # The chat-completions shape has no common word for effort.
-        efforts=(),
-        search="provider",
+        search="loop",
         conversation=True,
     ),
     # The Codex CLI (`codex exec --json`), driven like the Claude CLI: the
@@ -138,19 +146,19 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
     # The OpenCode CLI (`opencode run --format json`): one CLI for every
     # provider on the OpenAI-compatible chat API, its own file tools and
     # shell, yaaf's tools over MCP. Its search is its own hosted service's,
-    # so it searches for nobody here. OpenRouter is not among its providers:
+    # so it searches for nobody here — the platform's backend, served as a
+    # yaaf tool, is the only search a seat on it gets. OpenRouter is not among its providers:
     # the cost OpenRouter states per call never reaches OpenCode's stream,
     # and an OpenRouter model needs no price to be hired.
     Harness(
         name="opencode",
         label="OpenCode CLI",
         family="cli",
-        providers=("openai", "deepseek", "custom", "moonshot", "qwen", "mistral", "xai"),
-        accepts=("openai:api_key", "deepseek:api_key", "custom:api_key", "moonshot:api_key",
-                 "qwen:api_key", "mistral:api_key", "xai:api_key"),
+        providers=OPENCODE_PROVIDERS,
+        accepts=tuple(f"{p}:api_key" for p in OPENCODE_PROVIDERS),
         cost="priced",
         efforts=(),
-        search="none",
+        search="platform",
         tool_ref="{server}_{tool}",
         conversation=True,
     ),
@@ -168,3 +176,21 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
 #: What `integrations.runtime` said before seats had harnesses of their own.
 #: It still means "run each seat on its own harness"; only "mock" overrides.
 LEGACY_RUNTIME = "agent_sdk"
+
+#: Names a harness used to go by. Each still resolves — in an export bundle
+#: written before the rename, from an old client, on a run row that ran under
+#: it — and none is ever written again (migration 0054 rewrote the stored
+#: ones). `anthropic_api` and `openai_compatible` were yaaf's loop on two wires
+#: before the wire became the provider's fact.
+ALIASES = {"anthropic_api": "yaaf_loop", "openai_compatible": "yaaf_loop",
+           LEGACY_RUNTIME: "claude_agent_sdk"}
+
+
+def canonical(name: str | None) -> str | None:
+    """A harness name as it is spelled now."""
+    return ALIASES.get(name, name) if name else name
+
+
+def find(name: str | None) -> Harness | None:
+    """The harness a name — current or former — refers to."""
+    return HARNESSES.get(canonical(name) or "")

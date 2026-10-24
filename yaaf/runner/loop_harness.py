@@ -39,6 +39,11 @@ from typing import Any, Protocol
 import httpx
 import sandbox_entry as base
 
+try:
+    import wire  # the sandbox: copied into the image beside this file
+except ModuleNotFoundError:  # the control plane, and the tests that drive this
+    from yaaf.runtimes import wire
+
 #: What `max_turns` gives the Claude harnesses: model calls, not tool calls.
 MAX_TURNS = 100
 #: A call's output ceiling before the governor narrows it. Long enough that a
@@ -59,43 +64,23 @@ FETCH_TIMEOUT_S = 30
 #: The model credentials a shell is never handed. Nothing an agent runs needs
 #: to pay for the model, and a key a shell can print is a key a transcript can
 #: carry anywhere (SECURITY.md).
-MODEL_CREDENTIAL_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN")
+MODEL_CREDENTIAL_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN",
+                        "YAAF_SEARCH_KEY")
+#: The platform's search backend, when the install has one and this run was
+#: promised `web` on a provider that does not search (docs/PROVIDERS.md §6).
+SEARCH = json.loads(os.environ.get("YAAF_SEARCH") or "null")
+SEARCH_RESULTS_PER_QUERY = 8
 
 
 # ── the loop's own shapes: what every provider's client speaks ─────────────────
+#
+# The wire's (yaaf.runtimes.wire), so a client built on it hands its turns to
+# the loop as they are, and one built on a vendor SDK speaks the same.
 
-
-@dataclass(frozen=True)
-class ToolSpec:
-    name: str
-    description: str
-    input_schema: dict
-
-
-@dataclass(frozen=True)
-class ToolCall:
-    id: str
-    name: str
-    input: dict
-
-
-@dataclass(frozen=True)
-class ToolOutput:
-    call_id: str
-    text: str
-    is_error: bool = False
-
-
-@dataclass(frozen=True)
-class Turn:
-    """One message of the transcript. The loop reads `text` and `calls`; the
-    client that produced an assistant turn replays `native`, its own form of
-    it, verbatim."""
-    role: str  # "user" | "assistant"
-    text: str = ""
-    calls: tuple[ToolCall, ...] = ()
-    outputs: tuple[ToolOutput, ...] = ()
-    native: Any = None
+ToolSpec = wire.ToolSpec
+ToolCall = wire.ToolCall
+ToolOutput = wire.ToolOutput
+Turn = wire.Turn
 
 
 @dataclass(frozen=True)
@@ -353,6 +338,9 @@ async def b_web_fetch(args: dict) -> dict:
     return _text(_clip(f"HTTP {status} {url}\n\n{text}", TOOL_OUTPUT_CHARS), error=status >= 400)
 
 
+#: The platform search backend's transport — a test's stand-in, else httpx's.
+SEARCH_TRANSPORT: httpx.AsyncBaseTransport | None = None
+
 #: The file tools — what a `files` grant means — by name.
 FILE_TOOLS = ("Read", "Write", "Edit", "Glob", "Grep")
 
@@ -454,6 +442,9 @@ class LoopDriver:
         self.tools: dict[str, base.Tool] | None = None
         self.transcript: list[Turn] = []
         self.calls = 0
+        #: Bills a tool ran up between model calls — a search — yielded and
+        #: held to the cap like a call's own.
+        self.charges: list[base.AttemptResult] = []
 
     def budget(self, remaining_usd: float) -> None:
         self.max_usd = remaining_usd
@@ -463,6 +454,19 @@ class LoopDriver:
                                      input_schema=base.wire_schema(t))
                  for t in base.run_tools()]
         tools += [BUILTINS[name] for name in base._builtin_tools() if name in BUILTINS]
+        if "WebSearch" in base._builtin_tools() and not getattr(self.client, "native_search",
+                                                                 False):
+            # Search the provider's wire does not do as a server tool: the
+            # provider's own grounded call where it has one (Gemini), else the
+            # platform's backend. Neither is a grant the doors did not check
+            # (R2): a run reaches here searchless only by a door nobody built.
+            searcher = getattr(self.client, "search", None)
+            if searcher is not None or SEARCH:
+                tools.append(base.Tool(
+                    "WebSearch", "Search the web. Returns the top results — titles, addresses "
+                    "and snippets — to read further with WebFetch.",
+                    {"type": "object", "properties": {"query": {"type": "string"}},
+                     "required": ["query"]}, self._web_search))
         if self.skills:
             tools.append(base.Tool(
                 "Skill", "Load a skill's instructions by name.",
@@ -491,6 +495,32 @@ class LoopDriver:
                     self._source_tool(config, offered.name)))
         return {t.name: t for t in tools}, problems
 
+    async def _web_search(self, args: dict) -> dict:
+        query = str(args.get("query", "")).strip()
+        if not query:
+            return _text("query is empty", error=True)
+        searcher = getattr(self.client, "search", None)
+        if searcher is not None:
+            text, bill = await searcher(query)
+            self.charges.append(bill)
+            return _text(text)
+        try:
+            hits = await wire.search_web(SEARCH["backend"], SEARCH.get("base_url") or "",
+                                         os.environ.get("YAAF_SEARCH_KEY", ""), query,
+                                         SEARCH_RESULTS_PER_QUERY, transport=SEARCH_TRANSPORT)
+        except (wire.WireError, httpx.HTTPError) as exc:
+            return _text(f"search failed: {exc}", error=True)
+        price = float(SEARCH.get("price_usd") or 0.0)
+        # Billed at the install's price whatever the model is: the meter and
+        # the priced check both carry it (sandbox_entry._priced).
+        self.charges.append(base.AttemptResult(cost_usd=price, tokens_in=0, tokens_out=0,
+                                               cache_creation=0, cache_read=0,
+                                               subtype="web_search", search_usd=price))
+        if not hits:
+            return _text(f"no results for {query!r}")
+        return _text("\n\n".join(f"{n}. {h.title}\n{h.url}\n{h.snippet}"
+                                  for n, h in enumerate(hits, 1)))
+
     async def _skill(self, args: dict) -> dict:
         skill = self.skills.get(str(args.get("skill", "")))
         if skill is None:
@@ -512,7 +542,7 @@ class LoopDriver:
         """What a call cost: what the provider said it cost, where it says
         (OpenRouter); otherwise the call priced at the model's price."""
         cost = usage.cost_usd if usage.cost_usd is not None else base._priced(self.price, usage)
-        return dataclasses.replace(usage, cost_usd=cost, subtype=subtype)
+        return dataclasses.replace(usage, cost_usd=cost, subtype=usage.subtype or subtype)
 
     async def _run(self, call: ToolCall) -> ToolOutput:
         tool = (self.tools or {}).get(call.name)
@@ -637,6 +667,10 @@ class LoopDriver:
                                       "preview": output.text[:2000]})
                 outputs.append(output)
             self.transcript.append(Turn("user", outputs=tuple(outputs)))
+            while self.charges:
+                charge = self._bill(self.charges.pop(0), "web_search")
+                yield charge
+                spent += charge.cost_usd or 0.0
 
     def error_kind(self, exc: BaseException) -> str | None:
         if isinstance(exc, (BudgetReached, Unpriced, ModelRefused)):

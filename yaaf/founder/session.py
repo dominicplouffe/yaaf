@@ -15,8 +15,8 @@ drafts a project and calls six read-only tools, so it runs in-process with
 every built-in tool switched off.
 
 That is the Anthropic road. A platform credential of any other provider runs
-both callers on the OpenAI-compatible chat API instead (`yaaf.founder.loop`,
-docs/RUNTIMES.md M6) — chosen by the model's provider, which a door holds to
+both callers on that provider's own wire instead (`yaaf.founder.loop`,
+docs/PROVIDERS.md §7) — chosen by the model's provider, which a door holds to
 the credential's (`refusal`, and `yaaf.server.api.settings`).
 """
 
@@ -70,20 +70,20 @@ def refusal(provider_name: str, mode: str) -> str | None:
     """Why a credential cannot pay for the Founder and the grader, or None.
 
     They run in this process: on the Claude Code CLI for Anthropic, which takes
-    an API key or a subscription; for any other provider on its chat API,
-    which takes an API key at an address the registry knows. A ChatGPT login
-    is neither — it pays the Codex CLI and nothing else."""
+    an API key or a subscription; for any other provider on its own wire,
+    which takes an API key. A ChatGPT login or a Google login is neither — each
+    pays its own CLI and nothing else."""
     from yaaf.runtimes.providers import ANTHROPIC, provider
 
     if provider_name == ANTHROPIC.name:
         return None
     seller = provider(provider_name)
     if mode != "api_key":
-        return (f"the Founder runs in this process, on {seller.label}'s chat API, which "
+        return (f"the Founder runs in this process, on {seller.label}'s API, which "
                 f"takes an API key — a {seller.kind(mode).bills.split(',')[0]} pays only "
                 "its own CLI. Use an API key")
-    if not (seller.base_url or seller.credential_base_url):
-        return f"{seller.label} has no chat API the Founder can run on"
+    if seller.protocol is None:
+        return f"{seller.label} has no API the Founder can run on"
     return None
 
 

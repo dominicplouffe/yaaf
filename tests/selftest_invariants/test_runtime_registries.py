@@ -30,15 +30,19 @@ from yaaf.server.dispatcher import dispatch_once
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 REAL_HARNESSES = [h for h in harnesses.HARNESSES.values() if h.family != "mock"]
+#: The model a seat with no override runs on, on the default provider.
+DEFAULT = catalog.resolve(catalog.DEFAULT_MODEL, providers.DEFAULT_PROVIDER)
 
 
 # ── the registries are complete ─────────────────────────────────────────────────
 
 
-def test_the_harness_registry_imports_nothing_from_yaaf():
+@pytest.mark.parametrize("path", ["harnesses.py", "wire.py"])
+def test_the_files_the_sandbox_shares_import_nothing_from_yaaf(path):
     """The sandbox carries single files, not the package; the harness facts
-    have to be readable from there without the control plane behind them."""
-    tree = ast.parse((REPO / "yaaf" / "runtimes" / "harnesses.py").read_text())
+    and every provider's wire have to be readable from there without the
+    control plane behind them."""
+    tree = ast.parse((REPO / "yaaf" / "runtimes" / path).read_text())
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             assert not any(a.name.split(".")[0] == "yaaf" for a in node.names)
@@ -51,33 +55,46 @@ def test_every_model_is_served_by_a_registered_provider_and_a_harness():
         assert model.provider in providers.PROVIDERS, model.id
         assert any(model.provider in h.providers for h in REAL_HARNESSES), model.id
         assert model.tier > 0, f"{model.id}: tier 0 means 'never heard of it'"
+        assert not catalog.is_class(model.id), model.id
+        for rung in model.efforts or ():
+            assert rung in catalog.EFFORTS, (model.id, rung)
 
 
 def test_the_defaults_name_things_that_exist():
-    assert catalog.model(catalog.DEFAULT_MODEL) is not None
+    """The default model is a class, and it resolves on the default provider to
+    a model the catalog lists — a seat with no role version runs somewhere."""
+    assert catalog.is_class(catalog.DEFAULT_MODEL)
     assert providers.DEFAULT_PROVIDER in providers.PROVIDERS
+    resolved = catalog.resolve(catalog.DEFAULT_MODEL, providers.DEFAULT_PROVIDER)
+    assert catalog.model(resolved) is not None
+    assert catalog.DEFAULT_EFFORT in catalog.EFFORTS
 
 
-def test_each_provider_lifts_within_itself():
-    """`stakes: high` moves a seat to its own provider's craft model — never to
-    another vendor's, and never to one the catalog cannot rank. A provider with
-    no ladder of its own (OpenRouter's hundreds of models, a custom server)
-    names none, and its seats stay where the chairman put them."""
+def test_each_lineup_stays_within_its_provider():
+    """`stakes: high` and every class resolve within the seat's own provider —
+    never to another vendor's model, and never to one the catalog cannot rank
+    where the provider has a ladder of its own. A provider with catalog models
+    ships a whole lineup; one with none to rank (OpenRouter's hundreds, a
+    custom server) ships none, and its lineup is the install's to name."""
     for provider in providers.PROVIDERS.values():
-        if provider.craft_model is None:
-            assert not any(m.provider == provider.name for m in catalog.MODELS), (
-                f"{provider.name} has catalog models to climb; name its craft model")
-            continue
-        craft = catalog.model(provider.craft_model)
-        assert craft is not None, provider.name
-        assert craft.provider == provider.name
+        lineup = dict(provider.lineup or {})
+        assert set(lineup) <= set(catalog.CLASSES), provider.name
+        for cls, model in lineup.items():
+            assert catalog.provider_of(model) == provider.name, (provider.name, cls, model)
+        if any(m.provider == provider.name for m in catalog.MODELS):
+            assert set(lineup) == set(catalog.CLASSES), (
+                f"{provider.name} has catalog models to climb; name its whole lineup")
+            for model in lineup.values():
+                assert catalog.model(model) is not None, model
+            ranks = [catalog.tier(lineup[c]) for c in catalog.CLASSES]
+            assert ranks == sorted(ranks), f"{provider.name}'s lineup is out of order: {ranks}"
 
 
-def test_each_provider_runs_on_a_harness_that_can_take_its_credentials():
+def test_each_credential_kind_defaults_to_a_harness_that_can_take_it():
     for provider in providers.PROVIDERS.values():
-        harness = harnesses.HARNESSES[provider.default_harness]
-        assert provider.name in harness.providers
         for kind in provider.kinds:
+            harness = harnesses.HARNESSES[kind.default_harness]
+            assert provider.name in harness.providers, (provider.name, kind.mode)
             assert f"{provider.name}:{kind.mode}" in harness.accepts, (provider.name, kind.mode)
 
 
@@ -87,19 +104,66 @@ def test_every_credential_kind_is_whole():
         assert provider.failure_markers, provider.name
         for kind in provider.kinds:
             assert kind.meter in ("usd", "tokens"), (provider.name, kind.mode)
-            assert kind.env_var and kind.bills, (provider.name, kind.mode)
+            assert kind.env_var and kind.bills and kind.label, (provider.name, kind.mode)
+            assert kind.help, f"{provider.name}:{kind.mode} says nowhere where a key comes from"
             assert callable(kind.shape_error)
             assert any(f"{provider.name}:{kind.mode}" in h.accepts for h in REAL_HARNESSES)
+
+
+def test_every_provider_can_be_reached():
+    """A provider is reached on a wire the wire file speaks, with a key it knows
+    how to present, at an address it has — its own, or a template the
+    credential form fills in."""
+    from yaaf.runtimes import wire
+
+    for provider in providers.PROVIDERS.values():
+        assert provider.protocol in wire.PROTOCOLS, provider.name
+        assert provider.auth in wire.AUTH_STYLES, provider.name
+        if provider.credential_base_url:
+            assert provider.base_url_template and provider.base_url is None, provider.name
+        else:
+            assert (provider.base_url or "").startswith("https://"), provider.name
+        if provider.search:
+            assert provider.search_usd > 0, f"{provider.name} searches for free?"
+        if provider.local:
+            assert provider.auth == "none", provider.name
+
+
+def test_yaaf_loop_reaches_every_provider_with_a_wire():
+    """The loop's provider list is written out (harnesses.py reads nothing from
+    the registry); this holds the two to each other."""
+    with_wire = {p.name for p in providers.PROVIDERS.values() if p.protocol}
+    assert set(harnesses.LOOP_PROVIDERS) == with_wire
+    loop = harnesses.HARNESSES["yaaf_loop"]
+    assert set(loop.accepts) == {f"{p}:api_key" for p in with_wire}
+
+
+def test_a_harness_alias_names_a_harness_that_exists():
+    for old, new in harnesses.ALIASES.items():
+        assert old not in harnesses.HARNESSES and new in harnesses.HARNESSES, old
+        assert harnesses.find(old) is harnesses.HARNESSES[new]
 
 
 def test_the_sandbox_fallback_model_is_the_catalog_default():
     """The sandbox cannot import the catalog, so it keeps a literal — which the
     runner always overrides, and which must not drift from what it overrides
-    it with. The FILE_CRED_PREFIX discipline, for the one copy that remains."""
+    it with: the default class, resolved on the default provider. The
+    FILE_CRED_PREFIX discipline, for the one copy that remains."""
     source = (REPO / "yaaf" / "runner" / "sandbox_entry.py").read_text()
     match = re.search(r'os\.environ\.get\("YAAF_MODEL", "([^"]+)"\)', source)
     assert match, "the sandbox no longer reads YAAF_MODEL with a fallback"
-    assert match.group(1) == catalog.DEFAULT_MODEL
+    assert match.group(1) == catalog.resolve(catalog.DEFAULT_MODEL, providers.DEFAULT_PROVIDER)
+
+
+def test_every_file_the_loop_imports_is_in_the_image():
+    dockerfile = (REPO / "deploy" / "sandbox" / "Dockerfile").read_text()
+    for path in ("yaaf/runner/loop_entry.py", "yaaf/runner/loop_harness.py",
+                 "yaaf/runtimes/wire.py", "yaaf/runner/sandbox_entry.py"):
+        assert f"COPY {path} /opt/yaaf/{path.rsplit('/', 1)[-1]}" in dockerfile, path
+    from yaaf.runner.backends import get_backend
+
+    assert get_backend("yaaf_loop").entrypoint == "loop_entry.py"
+    assert get_backend("anthropic_api").entrypoint == "loop_entry.py"
 
 
 # ── what the registries decide, unchanged from before they existed ──────────────
@@ -117,6 +181,14 @@ def test_a_mode_nobody_registered_is_read_as_the_api_key():
 def test_an_unknown_model_is_served_by_the_default_provider():
     assert catalog.provider_of("a-model-nobody-listed") == providers.DEFAULT_PROVIDER
     assert catalog.tier("a-model-nobody-listed") == 0
+
+
+def test_a_bare_class_has_no_provider_until_it_is_resolved():
+    """A reader that hands a class to a provider without resolving it fails
+    here, in a test — not by billing the default provider in production."""
+    with pytest.raises(catalog.Unresolved):
+        catalog.provider_of("@balanced")
+    assert catalog.provider_of("openai/@balanced") == "openai"
 
 
 def test_the_project_runtime_overrides_the_seat_and_nothing_else():
@@ -291,7 +363,10 @@ def test_a_model_the_catalog_does_not_list_is_leased_with_no_price(client):
         dispatch_once(session)
     job = next(j for j in lease_and_prepare(limit=10) if j.project_id == project["id"])
     assert job.model == "claude-mystery-9"
-    assert (job.price, job.model_flags) == (None, {})
+    # No price, and nothing the catalog knows about it — except that on
+    # Anthropic's own wire an unlisted model takes yaaf's effort names.
+    assert job.price is None
+    assert job.model_flags == {"effort": True, "web_tools": "basic", "efforts": None}
 
 
 def _bills(project_id: str, agent_id: str, model: str, reported: float, priced: float,
@@ -323,25 +398,25 @@ def test_a_price_table_that_drifts_from_the_bills_is_on_the_health_checklist(cli
     """The catalog meters every seat on the loop, so it is checked against the
     bills the self-reporting harnesses send for the same model."""
     project = _on_the_loop(client, "drifted")
-    model = catalog.DEFAULT_MODEL
+    model = DEFAULT
     _bills(project["id"], project["ceo_agent_id"], model, reported=0.50, priced=0.60)
     [gap] = _gap_checks(client, project["id"])
     assert gap["key"] == f"price-gap:{model}" and gap["status"] == "warn"
     assert "20% above" in gap["detail"] and "over-counted" in gap["detail"]
-    assert "Anthropic API (yaaf's own loop)" in gap["detail"]
+    assert "yaaf agent loop (the provider's own API)" in gap["detail"]
     assert catalog.price(model).as_of in gap["detail"]
 
 
 def test_a_price_table_within_tolerance_says_nothing(client):
     project = _on_the_loop(client, "close-enough")
-    _bills(project["id"], project["ceo_agent_id"], catalog.DEFAULT_MODEL,
+    _bills(project["id"], project["ceo_agent_id"], DEFAULT,
            reported=0.50, priced=0.52)
     assert _gap_checks(client, project["id"]) == []
 
 
 def test_a_handful_of_small_runs_cannot_raise_it(client):
     project = _on_the_loop(client, "too-little")
-    _bills(project["id"], project["ceo_agent_id"], catalog.DEFAULT_MODEL,
+    _bills(project["id"], project["ceo_agent_id"], DEFAULT,
            reported=0.01, priced=0.02, runs=5)
     assert _gap_checks(client, project["id"]) == []
 
@@ -349,7 +424,7 @@ def test_a_handful_of_small_runs_cannot_raise_it(client):
 def test_a_project_metered_by_its_own_bills_is_not_told_about_the_table(client):
     """Nothing it runs is metered by the catalog; the drift is not its problem."""
     project = make_project(client, slug="self-billed", start=False)
-    _bills(project["id"], project["ceo_agent_id"], catalog.DEFAULT_MODEL,
+    _bills(project["id"], project["ceo_agent_id"], DEFAULT,
            reported=0.50, priced=0.60)
     assert _gap_checks(client, project["id"]) == []
 
@@ -358,9 +433,9 @@ def test_the_loops_own_runs_are_not_evidence_for_the_table(client):
     """A priced run's two figures are the same number: counting it would only
     pull the gap toward zero."""
     project = _on_the_loop(client, "circular")
-    _bills(project["id"], project["ceo_agent_id"], catalog.DEFAULT_MODEL,
+    _bills(project["id"], project["ceo_agent_id"], DEFAULT,
            reported=0.50, priced=0.60)
-    _bills(project["id"], project["ceo_agent_id"], catalog.DEFAULT_MODEL,
+    _bills(project["id"], project["ceo_agent_id"], DEFAULT,
            reported=5.0, priced=5.0, harness="anthropic_api")
     assert len(_gap_checks(client, project["id"])) == 1
 

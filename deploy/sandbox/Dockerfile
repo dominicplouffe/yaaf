@@ -19,7 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv git curl bash ca-certificates gawk jq \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code
+# The Claude Code CLI the Agent SDK and the claude_cli harness drive, pinned at
+# the version tests/fixtures/harnesses/claude/ was recorded on: every other CLI
+# here is pinned for the reason the next comment gives, and this one was the
+# exception only because it was here first (docs/RUNTIMES.md, Admission, 6).
+RUN npm install -g @anthropic-ai/claude-code@2.1.296
 # The Codex CLI, pinned: its flags, config keys and session file were read off
 # this version (yaaf/runner/codex_cli_entry.py), and a CLI that moves under a
 # driver is a run that fails in a new way. Update deliberately, re-recording
@@ -42,8 +46,8 @@ RUN npm install -g @google/gemini-cli@0.63.0
 # reaches for by reflex. Both land in /opt/venv, which PATH puts first — so
 # the `python3` an agent runs through Bash is this interpreter. The mcp pin
 # bounds client-API drift for data_fetch, which imports it; the anthropic pin
-# does the same for the anthropic_api harness, which also imports the HTTP
-# client (httpx2) that SDK major speaks. (The network is
+# does the same for yaaf's loop on Anthropic's wire, which also imports the
+# HTTP client (httpx2) that SDK major speaks. Every other wire is httpx. (The network is
 # open, so an agent can pip install more at run time — these are baked so the
 # common cases cost zero setup.)
 RUN python3 -m venv /opt/venv \
@@ -76,12 +80,12 @@ COPY yaaf/runner/chat_entry.py /opt/yaaf/chat_entry.py
 # The CLI itself is the one installed above for the Agent SDK to drive.
 COPY yaaf/runner/claude_cli_entry.py /opt/yaaf/claude_cli_entry.py
 COPY yaaf/runner/yaaf_tools.py /opt/yaaf/yaaf_tools.py
-# yaaf's own agent loop, and the Messages API client the anthropic_api harness
-# drives it with (the `anthropic` SDK above). No CLI underneath.
+# yaaf's own agent loop (yaaf_loop), its entry, and every provider's wire —
+# the same wire.py the control plane talks to providers with, so a request the
+# Founder can make is a request a seat makes. No CLI underneath.
 COPY yaaf/runner/loop_harness.py /opt/yaaf/loop_harness.py
-COPY yaaf/runner/anthropic_api_entry.py /opt/yaaf/anthropic_api_entry.py
-# The same loop on the OpenAI-compatible chat API, over the httpx above.
-COPY yaaf/runner/openai_compatible_entry.py /opt/yaaf/openai_compatible_entry.py
+COPY yaaf/runner/loop_entry.py /opt/yaaf/loop_entry.py
+COPY yaaf/runtimes/wire.py /opt/yaaf/wire.py
 # The Codex CLI harness; it starts yaaf_tools.py above for the yaaf tools.
 COPY yaaf/runner/codex_cli_entry.py /opt/yaaf/codex_cli_entry.py
 # The OpenCode CLI harness; it too starts yaaf_tools.py for the yaaf tools.
