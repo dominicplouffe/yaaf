@@ -242,10 +242,13 @@ def _refusal(harness: str | None, model: str, tool_permissions: dict | None,
     # so it runs at its model's published rung instead (`catalog.rung`).
     if effort and effort not in catalog.EFFORTS:
         return f"no effort '{effort}' — an effort is one of {', '.join(catalog.EFFORTS)}"
-    if effort and pinned and found.efforts and effort not in found.efforts:
-        return (f"{found.label} has no effort '{effort}' — it takes "
-                f"{', '.join(found.efforts)}")
-    if effort and pinned:
+    # Only where the harness has a dial at all: one that sends no effort
+    # (OpenCode, `efforts=()`) cannot run a seat cheaper or dearer than it was
+    # hired at. `None` is a harness whose models' own ladders govern.
+    if effort and pinned and found.efforts != ():
+        if found.efforts and effort not in found.efforts:
+            return (f"{found.label} has no effort '{effort}' — it takes "
+                    f"{', '.join(found.efforts)}")
         row = catalog.model(model)
         if row is not None and row.efforts is not None and effort not in row.efforts:
             return (f"{model} takes the efforts {', '.join(row.efforts)} — not '{effort}'; "

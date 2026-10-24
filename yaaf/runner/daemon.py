@@ -131,10 +131,14 @@ def lease_and_prepare(limit: int = 1) -> list[RunJob]:
                          project.status if project else "missing")
                 session.delete(queued)
                 continue
-            provider = _queued_provider(session, queued, project) if ceilings else None
+            seat = _queued_seat(session, queued, project) if ceilings else None
+            provider = seat.provider if seat is not None and seat.harness != "mock" else None
             if provider in ceilings and running.get(provider, 0) >= ceilings[provider]:
                 continue
-            job = _materialize(session, queued, project)
+            # The seat resolved for the ceiling is the seat the run is pinned
+            # to: resolving it twice is a context's worth of reads per row,
+            # under the rows' locks.
+            job = _materialize(session, queued, project, seat=seat)
             if job is not None:
                 jobs.append(job)
                 if provider:
@@ -156,21 +160,21 @@ def _running_by_provider(session: Session) -> dict[str, int]:
     return {provider: count for provider, count in rows}
 
 
-def _queued_provider(session: Session, queued: RunQueue, project: Project) -> str | None:
-    """The provider a queued run's seat will call, or None for a run that calls
-    no model (a check, a seat on the scripted backend)."""
+def _queued_seat(session: Session, queued: RunQueue, project: Project):
+    """The seat a queued run will execute on, or None for a run that calls no
+    model (a check)."""
     if queued.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK) or not queued.agent_id:
         return None
     agent = session.get(Agent, queued.agent_id)
     if agent is None:
         return None
-    seat = seat_for(agent, role_version_for(session, agent),
+    return seat_for(agent, role_version_for(session, agent),
                     runtime=(project.integrations or {}).get("runtime"),
                     context=model_policy.context(session, project))
-    return None if seat.harness == "mock" else seat.provider
 
 
-def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob | None:
+def _materialize(session: Session, queued: RunQueue, project: Project,
+                 seat=None) -> RunJob | None:
     cons = effective(session, project.id)
     run = Run(
         id=queued.id,
@@ -253,9 +257,9 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
         run.summary = f"seat cannot run: {problem}"
         run.finished_at = utcnow()
         return None
-    _pin_seat(session, run, job, seat_for(agent, role_version,
-                                          runtime=(project.integrations or {}).get("runtime"),
-                                          context=model_policy.context(session, project)))
+    _pin_seat(session, run, job, seat or seat_for(
+        agent, role_version, runtime=(project.integrations or {}).get("runtime"),
+        context=model_policy.context(session, project)))
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     job.agent_kind = agent.kind
     source_specs = _merge_project_data_sources(session, project, role_version, job)
@@ -892,9 +896,6 @@ def _announce_failover(session: Session, secret, label: str, moved: str) -> None
                                    else Attention.FYI))
 
 
-CREDENTIAL_FAILURE_MARKERS = failure_markers()
-
-
 def _looks_like_credential_failure(run: Run) -> bool:
     """A dead credential, as the harness classified it — or, for a run whose
     harness said nothing, as its summary reads. The markers stay as the second
@@ -903,7 +904,7 @@ def _looks_like_credential_failure(run: Run) -> bool:
     if getattr(run, "error_kind", None) == "auth":
         return True
     lowered = (run.summary or "").lower()
-    return any(marker in lowered for marker in CREDENTIAL_FAILURE_MARKERS)
+    return any(marker in lowered for marker in failure_markers(getattr(run, "provider", None)))
 
 
 def _flag_credential_failure(session: Session, project: Project, run: Run) -> None:

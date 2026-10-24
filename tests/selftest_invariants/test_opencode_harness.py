@@ -400,3 +400,24 @@ def test_the_image_pins_the_version_the_driver_preseeds(run):
     dockerfile = (FIXTURES.parents[2].parent / "deploy" / "sandbox" / "Dockerfile").read_text()
     assert f"opencode-ai@{VERSION}" in dockerfile
     assert os.path.exists(FIXTURES / "README.md")
+
+
+def test_a_search_charge_still_being_written_is_billed_on_the_next_read(monkeypatch, tmp_path):
+    """The tool server appends a line per search while the driver reads. A
+    half-written last line used to be counted as read and skipped — a search
+    never billed, never held to the cap. And the ledger only ever grows: one
+    that shrank was cut, and the run stops rather than go on unmetered."""
+    import yaaf.runner.sandbox_entry as base
+
+    monkeypatch.setattr(base, "STAGING", tmp_path)
+    monkeypatch.setattr(base, "RUN_ID", "run_ledger")
+    ledger, path = base.SearchLedger(), tmp_path / "search-run_ledger.jsonl"
+    path.write_text('{"usd": 0.005}\n{"usd": 0.0')
+    assert [b.search_usd for b in ledger.new()] == [0.005]
+    with path.open("a") as f:
+        f.write('07}\n')
+    assert [b.search_usd for b in ledger.new()] == [0.007]
+    assert ledger.new() == []
+    path.write_text("")
+    with pytest.raises(base.LedgerTampered):
+        ledger.new()

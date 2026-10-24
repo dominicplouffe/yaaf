@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
@@ -172,8 +173,10 @@ def run() -> dict:
                 secret = session.get(Secret, secret_id)
                 if secret is None:
                     continue
-                endpoint = _endpoint(secret)
-            names = asyncio.run(_list(endpoint))
+                held = _Held(secret.provider, secret.llm_mode, secret.base_url,
+                             secret.ciphertext)
+            # Minting (Vertex) is a network call too: outside the session.
+            names = asyncio.run(_list(_endpoint(held)))
             with db_session() as session:
                 secret = session.get(Secret, secret_id)
                 if secret is not None:
@@ -213,7 +216,17 @@ def run() -> dict:
     return summary
 
 
-def _endpoint(secret: Secret):
+@dataclass(frozen=True)
+class _Held:
+    """What reaching a provider needs of a credential row, read inside a
+    session and used outside it."""
+    provider: str
+    llm_mode: str | None
+    base_url: str | None
+    ciphertext: str
+
+
+def _endpoint(secret: Secret | _Held):
     from yaaf.core import model_tokens
     from yaaf.core.crypto import decrypt
     from yaaf.runtimes import wire

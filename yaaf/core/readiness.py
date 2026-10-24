@@ -103,7 +103,11 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
             f"{'that class' if len(unset) == 1 else 'those classes'} are refused here. Pick "
             f"{'one' if len(unset) == 1 else 'them'} from the models the key can call.",
             {"action": "set_lineup", "class": unset[0], "classes": unset}))
-    if unpriced:
+    # A price is what a dollar meter stops on (R3); a login metered in tokens
+    # runs its CLI without one. Only a credential that bills in dollars makes
+    # a missing price a refusal.
+    dollars = any(seller.kind(s.llm_mode).meter == "usd" for s in credentials)
+    if unpriced and dollars:
         issues.insert(0, _issue(
             "unpriced", "block",
             f"{', '.join(unpriced)} {'has' if len(unpriced) == 1 else 'have'} no price on this "

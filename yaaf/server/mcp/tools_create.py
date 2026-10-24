@@ -167,7 +167,6 @@ def grade_goal(principal: Principal, session: Session, arguments: dict) -> dict:
     half still runs and says so, because a rubric the caller can read is better
     than a refusal.
     """
-    import asyncio
 
     from yaaf.core.platform import NoPlatformCredential, founder_env, founder_model
     from yaaf.founder.grade import GOAL_ELEMENTS
@@ -190,7 +189,10 @@ def grade_goal(principal: Principal, session: Session, arguments: dict) -> dict:
                      "install's LLM credentials (Settings → Founder) and ask again."),
         }, arguments.get("detail"))
 
-    grade = asyncio.run(run_grade(goal, env=env, model=founder_model(session)))
+    from yaaf.runtimes.wire import run_sync
+
+    # Called on the MCP endpoint's event loop, where asyncio.run refuses.
+    grade = run_sync(run_grade(goal, env=env, model=founder_model(session)))
     return envelope.fit({"graded": True, **grade.to_dict()}, arguments.get("detail"))
 
 

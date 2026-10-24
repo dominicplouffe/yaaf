@@ -173,9 +173,12 @@ def parse(ref: str | None) -> tuple[str | None, str | None]:
     primary provider is meant — or (None, None) for a concrete model."""
     ref = ref or ""
     prefix, slash, rest = ref.partition("/")
-    if slash and rest.startswith(CLASS_SIGIL) and prefix in PROVIDERS:
+    # A class name is one word. A path after the sigil is a model some hosts
+    # name that way — Cloudflare's `@cf/meta/llama-3.1-8b-instruct` behind a
+    # custom endpoint — and is passed to the provider as written.
+    if slash and rest.startswith(CLASS_SIGIL) and prefix in PROVIDERS and "/" not in rest:
         return prefix, rest[1:]
-    if ref.startswith(CLASS_SIGIL):
+    if ref.startswith(CLASS_SIGIL) and "/" not in ref:
         return None, ref[1:]
     return None, None
 

@@ -29,8 +29,10 @@ vendor would be a pin per vendor for what a page of mapping does.
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
@@ -58,6 +60,20 @@ AUTH_STYLES = ("bearer", "x-api-key", "api-key", "x-goog-api-key", "none")
 #: own, or a test's stand-in provider. One seam, so a test of the live check,
 #: of discovery or of the Founder points one variable at a fake.
 TRANSPORT: httpx.AsyncBaseTransport | None = None
+
+
+def run_sync(coro: Coroutine[Any, Any, Any]) -> Any:
+    """A wire call from synchronous code, wherever that code runs. A sync
+    FastAPI route runs on a worker thread with no event loop; the MCP endpoint
+    is `async`, and its tools are plain functions called on the loop's own
+    thread, where `asyncio.run` refuses to start. There the call gets a
+    thread, and a loop, of its own."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 # ── the shapes every wire speaks ───────────────────────────────────────────────

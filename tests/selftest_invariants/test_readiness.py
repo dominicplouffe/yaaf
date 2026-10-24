@@ -75,3 +75,17 @@ def test_every_gap_is_named_with_its_fix_and_agrees_with_the_doors(client):
 def test_only_an_administrator_reads_it(client):
     member = headers_of(person("member@example.com"))
     assert client.get(READINESS, headers=member).status_code == 403
+
+
+def test_a_login_metered_in_tokens_is_not_blocked_for_want_of_prices(client):
+    """R3 refuses an unpriced model only under a dollar meter: a ChatGPT login
+    runs Codex metered in tokens. Readiness must not call that provider
+    broken because its models carry no price."""
+    _roles(client)
+    assert client.post("/admin/settings/llm-credentials", headers=ADMIN, json={
+        "name": "ChatGPT", "mode": "subscription", "provider": "openai",
+        "value": '{"tokens": {"access_token": "x", "refresh_token": "y", "id_token": "z", '
+                 '"account_id": "acct"}}'}).status_code == 201
+    [openai] = client.get(READINESS, headers=ADMIN).json()["providers"]
+    assert "unpriced" not in {i["code"] for i in openai["issues"]}
+    assert openai["ready"] is True

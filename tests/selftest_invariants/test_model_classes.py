@@ -441,3 +441,25 @@ def test_a_ceo_whose_class_lost_its_model_holds_no_boardroom_session(client):
     with db_session() as session:
         assert not converses(session, session.get(Project, project_id),
                              session.get(Agent, ceo_id))
+
+
+def test_an_effort_a_harness_never_sends_is_not_refused():
+    """R6 holds a pinned model to its ladder where the harness turns a dial.
+    OpenCode sends no effort at all, so a role pinned to gpt-5.5 at `max` —
+    accepted before — runs exactly as hired there, and stays accepted."""
+    from yaaf.runtimes.seats import refusal
+
+    assert refusal("opencode", "gpt-5.5", {}, ("openai", "api_key"), priced=True,
+                   effort="max", pinned=True) is None
+    refused = refusal("yaaf_loop", "gpt-5.5", {}, ("openai", "api_key"), priced=True,
+                      effort="max", pinned=True)
+    assert refused and "takes the efforts low, medium, high, xhigh" in refused
+
+
+def test_a_model_named_with_an_at_sign_is_a_model_not_a_class():
+    from yaaf.runtimes import catalog
+
+    for ref in ("custom/@cf/meta/llama-3.1-8b-instruct", "@cf/meta/llama-3.1-8b-instruct"):
+        assert not catalog.is_class(ref) and catalog.valid_ref(ref) is None, ref
+    assert catalog.parse("openai/@fast") == ("openai", "fast")
+    assert catalog.valid_ref("@fastest") is not None, "a typo of a class is still refused"

@@ -3247,7 +3247,6 @@ def live_check(secret: Secret, plaintext: str, *, transport=None) -> dict:
     list, through the wire a run uses (yaaf.runtimes.wire) — the same
     address, the same header. A key file is minted into a token first; a
     local server is asked the same question, keyless."""
-    import asyncio
 
     import httpx
 
@@ -3268,7 +3267,7 @@ def live_check(secret: Secret, plaintext: str, *, transport=None) -> dict:
         except model_tokens.MintError as exc:
             return {"ok": False, "detail": str(exc)}
     try:
-        models = asyncio.run(wire.list_models(wire.Endpoint.from_spec(found, key),
+        models = wire.run_sync(wire.list_models(wire.Endpoint.from_spec(found, key),
                                               transport=transport))
     except httpx.HTTPError as exc:
         return {"ok": False, "detail": f"could not reach the API: {exc.__class__.__name__}"}

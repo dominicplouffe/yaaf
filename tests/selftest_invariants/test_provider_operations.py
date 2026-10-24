@@ -296,6 +296,33 @@ def test_a_run_refreshes_its_token_only_for_the_provider_it_was_leased_on(client
     assert forged.status_code == 401
 
 
+def test_a_run_on_a_fallback_keeps_its_token_after_the_failover_ends(client, monkeypatch):
+    """A run leased onto a Vertex fallback during an outage outlives it. Once
+    the billing provider recovers the fallback no longer pays new seats — but
+    the run already on it must still be handed a token, or its next refresh
+    reads as a dead key and counts toward the three-strikes pause."""
+    from tests.conftest import live_token
+    from yaaf.core import model_tokens
+    from yaaf.core.models import Project, Run
+
+    project = make_project(client)
+    account, _ = _service_account()
+    vertex = _credential(client, "Vertex fallback", "vertex", account, base_url=(
+        "https://us-central1-aiplatform.googleapis.com/v1/projects/acme-ml/locations/"
+        "us-central1/publishers/google")).json()["id"]
+    monkeypatch.setattr(model_tokens, "mint", lambda provider, key_file: (
+        "ya29.fallback", time.time() + 3600))
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    with db_session() as session:
+        # Named and then healthy again: no breaker open.
+        session.get(Project, project["id"]).fallback_secret_id = vertex
+        session.query(Run).filter_by(agent_id=project["ceo_agent_id"],
+                                     status="running").one().provider = "vertex"
+    fresh = client.post("/agent/model-token", headers={"Authorization": f"Bearer {token}"})
+    assert fresh.status_code == 200, fresh.text
+    assert fresh.json()["token"] == "ya29.fallback"
+
+
 # ── the platform's search backend, and R2 ───────────────────────────────────────
 
 
@@ -417,3 +444,42 @@ def test_vertex_lists_googles_models_per_publisher():
     assert wire.model_ids(endpoint, {"publisherModels": [
         {"name": "publishers/google/models/gemini-3.1-pro-preview"}]}) == [
         "gemini-3.1-pro-preview"]
+
+
+def test_a_runs_prose_about_authentication_is_not_its_credential_dying():
+    """Three failed runs whose summaries read as a dead key pause the project.
+    With twenty providers, the union of their phrases matched ordinary work —
+    an engineer's 'authentication module', a tool's '401 Unauthorized' — so a
+    run is read against its own provider's phrases, and those are specific."""
+    from types import SimpleNamespace
+
+    from yaaf.runner.daemon import _looks_like_credential_failure
+
+    def run(provider, summary, kind=None):
+        return SimpleNamespace(provider=provider, summary=summary, error_kind=kind)
+
+    prose = ("Wrote the authentication module; the GitHub API returned 401 Unauthorized "
+             "for the deploy key, so the PR is not open yet.")
+    for provider in ("anthropic", "openai", "zai", "together", "nvidia", "vertex", "bedrock"):
+        assert not _looks_like_credential_failure(run(provider, prose)), provider
+    assert _looks_like_credential_failure(run("zai", "401: token expired or incorrect"))
+    assert _looks_like_credential_failure(run("anthropic", "Not logged in · Please run /login"))
+    assert _looks_like_credential_failure(run("groq", "x", kind="auth"))
+
+
+def test_a_live_check_works_on_the_mcp_endpoints_event_loop(monkeypatch):
+    """The MCP endpoint is async and calls its tools on the loop's own thread,
+    where asyncio.run refuses to start — `billing_check` reached the live
+    check there and failed with "the tool failed" whatever the key."""
+    import asyncio
+
+    from yaaf.server.api.admin import live_check
+
+    monkeypatch.setattr(wire, "TRANSPORT", httpx.MockTransport(
+        lambda r: httpx.Response(200, json={"data": [{"id": "llama-4"}]})))
+
+    async def from_the_loop():
+        return live_check(SimpleNamespace(provider="groq", llm_mode="api_key", base_url=None),
+                          "the-key")
+
+    assert asyncio.run(from_the_loop())["ok"] is True

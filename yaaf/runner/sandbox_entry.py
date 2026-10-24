@@ -2225,6 +2225,8 @@ class SearchLedger:
     search is under the per-run cap the moment it is made, not at the end."""
 
     def __init__(self) -> None:
+        #: Bytes read so far: only whole lines — one the server is still
+        #: writing is left for the next read, not skipped and lost.
         self.read = 0
 
     @staticmethod
@@ -2238,12 +2240,23 @@ class SearchLedger:
 
     def new(self) -> list[AttemptResult]:
         try:
-            lines = self.path().read_text().splitlines()
+            data = self.path().read_bytes()
+        except FileNotFoundError:
+            data = b""
         except OSError:
             return []
-        fresh, self.read = lines[self.read:], len(lines)
+        if len(data) < self.read:
+            # Only ever appended to: shorter than what was read is a ledger
+            # somebody cut, and charges cut from it are charges dodged. The
+            # run stops rather than go on unmetered.
+            raise LedgerTampered("the search ledger shrank — searches made this run can no "
+                                 "longer be metered, so the run stops")
+        whole = data.rfind(b"\n", self.read) + 1
+        if whole <= self.read:
+            return []
+        fresh, self.read = data[self.read:whole].decode(errors="replace"), whole
         out = []
-        for line in fresh:
+        for line in fresh.splitlines():
             try:
                 usd = float(json.loads(line).get("usd") or 0.0)
             except (ValueError, AttributeError):
@@ -2252,6 +2265,10 @@ class SearchLedger:
                                      cache_creation=0, cache_read=0, subtype="web_search",
                                      search_usd=usd))
         return out
+
+
+class LedgerTampered(RuntimeError):
+    """A run's own search ledger was cut or removed under it."""
 
 
 async def run_harness(make_driver) -> int:

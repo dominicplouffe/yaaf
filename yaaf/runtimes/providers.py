@@ -323,8 +323,10 @@ VERTEX = Provider(
     search=True,
     search_usd=0.035,
     console_url="https://console.cloud.google.com/iam-admin/serviceaccounts",
-    failure_markers=("request had invalid authentication credentials", "permission_denied",
-                     "unauthenticated"),
+    # A dead key arrives as a 401 or 403, which the status already says; the
+    # words are for the 400s that mean the same. Never a bare "unauthenticated":
+    # a run's own summary can say that about anything.
+    failure_markers=("request had invalid authentication credentials",),
 )
 
 #: OpenAI's models on an Azure resource: the Responses API at the resource's
@@ -362,7 +364,7 @@ BEDROCK = Provider(
     base_url_template="https://bedrock-runtime.{region}.amazonaws.com",
     console_url="https://console.aws.amazon.com/bedrock/home#/api-keys",
     failure_markers=("unrecognizedclientexception", "the security token included in the "
-                     "request is invalid", "invalid api key"),
+                     "request is invalid"),
 )
 
 
@@ -413,23 +415,23 @@ QWEN = _chat("qwen", "Qwen (Alibaba Model Studio)",
              ("incorrect api key provided", "invalid_api_key"),
              "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key")
 GROQ = _chat("groq", "Groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY",
-             ("invalid api key",), "https://console.groq.com/keys")
+             ("invalid_api_key",), "https://console.groq.com/keys")
 TOGETHER = _chat("together", "Together AI", "https://api.together.xyz/v1", "TOGETHER_API_KEY",
-                 ("invalid api key", "unauthorized"), "https://api.together.ai/settings/api-keys")
+                 ("invalid_api_key",), "https://api.together.ai/settings/api-keys")
 FIREWORKS = _chat("fireworks", "Fireworks AI", "https://api.fireworks.ai/inference/v1",
-                  "FIREWORKS_API_KEY", ("invalid api key", "unauthorized"),
+                  "FIREWORKS_API_KEY", ("the api key you provided is invalid",),
                   "https://fireworks.ai/account/api-keys")
 CEREBRAS = _chat("cerebras", "Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY",
-                 ("wrong api key", "invalid api key"), "https://cloud.cerebras.ai")
+                 ("wrong api key", "invalid_api_key"), "https://cloud.cerebras.ai")
 COHERE = _chat("cohere", "Cohere", "https://api.cohere.ai/compatibility/v1", "COHERE_API_KEY",
                ("invalid api token",), "https://dashboard.cohere.com/api-keys")
 NVIDIA = _chat("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY",
-               ("authentication failed", "unauthorized"), "https://build.nvidia.com")
+               ("authentication failed for",), "https://build.nvidia.com")
 HUGGINGFACE = _chat("huggingface", "Hugging Face", "https://router.huggingface.co/v1",
                     "HF_TOKEN", ("invalid credentials", "invalid username or password"),
                     "https://huggingface.co/settings/tokens")
 ZAI = _chat("zai", "Z.ai (GLM)", "https://api.z.ai/api/paas/v4", "ZAI_API_KEY",
-            ("authentication", "token expired or incorrect"), "https://z.ai/manage-apikey/apikey-list")
+            ("token expired or incorrect",), "https://z.ai/manage-apikey/apikey-list")
 
 CUSTOM = Provider(
     name="custom",
@@ -508,11 +510,13 @@ def shape_error(provider_name: str | None, mode: str, plaintext: str) -> str | N
     return p.kind(mode).shape_error(plaintext)
 
 
-def failure_markers() -> tuple[str, ...]:
-    """Every provider's dead-credential fragments. The daemon reads a run's
-    summary against all of them: which provider a failed run was on is a fact
-    the summary does not always carry, and a marker one vendor uses is not
-    one another uses for something healthy."""
+def failure_markers(provider_name: str | None = None) -> tuple[str, ...]:
+    """Dead-credential fragments: the provider's own, for a run known to be on
+    it — another vendor's phrase in a run's summary says nothing about this
+    one's key, and with twenty providers the union matches ordinary prose —
+    or every provider's, for a run that recorded none."""
+    if provider_name in PROVIDERS:
+        return PROVIDERS[provider_name].failure_markers
     return tuple(dict.fromkeys(m for p in PROVIDERS.values() for m in p.failure_markers))
 
 

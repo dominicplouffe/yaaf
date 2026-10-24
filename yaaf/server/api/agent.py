@@ -152,7 +152,11 @@ def model_token(ctx: RunContext = Depends(run_auth), session: Session = Depends(
     if seller is None or not seller.mints_tokens:
         raise HTTPException(status_code=409, detail="this run's model credential is a key, "
                                                     "not one that mints tokens")
-    secret = project_credentials.credential_for(session, ctx.project, seller.name)
+    # The fallback counts as held here whether or not a failover is still on:
+    # a run leased onto it during an outage keeps running after the billing
+    # provider recovers, and its next token must not read as a dead key.
+    secret = project_credentials.credential_for(session, ctx.project, seller.name,
+                                                fallback=True)
     if secret is None:
         raise HTTPException(status_code=409, detail=f"this project no longer pays {seller.label}")
     try:

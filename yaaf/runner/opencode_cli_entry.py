@@ -337,7 +337,7 @@ class OpenCodeDriver(base.CliDriver):
         return f"OpenCode exited {exit_code}: {stderr[-self.STDERR_TAIL:].strip()}"
 
     def error_kind(self, exc: BaseException) -> str | None:
-        if isinstance(exc, BudgetReached | Unpriced):
+        if isinstance(exc, BudgetReached | Unpriced | base.LedgerTampered):
             return "fatal"
         data = getattr(exc, "data", None) or {}
         status = data.get("statusCode")
