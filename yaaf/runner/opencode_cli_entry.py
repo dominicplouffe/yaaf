@@ -112,6 +112,8 @@ class OpenCodeDriver(base.CliDriver):
         self.capped = False
         self.steps = 0
         self.spent = 0.0
+        #: Searches made through yaaf's tool server, billed as they land.
+        self.searches = base.SearchLedger()
 
     # ── what the run is told and offered ──────────────────────────────────
 
@@ -229,8 +231,10 @@ class OpenCodeDriver(base.CliDriver):
         return [OPENCODE, "run", "--format", "json", *(["--session", resume] if resume else [])]
 
     def env(self) -> dict[str, str]:
+        # The search key goes to yaaf's tool server (its `environment`, in
+        # the config) and never to OpenCode itself, whose shell the model has.
         env = {k: v for k, v in os.environ.items()
-               if k not in self._hidden() and k not in OVERRIDES}
+               if k not in self._hidden() and k not in OVERRIDES and k != base.SEARCH_KEY_ENV}
         env.update(LOCKDOWN)
         env["HOME"] = str(self.home)
         for name, path in self.dirs.items():
@@ -302,6 +306,9 @@ class OpenCodeDriver(base.CliDriver):
             self.steps += 1
             self.spent += bill.cost_usd or 0.0
             events.append(bill)
+            for search in self.searches.new():
+                self.spent += search.cost_usd or 0.0
+                events.append(search)
             if self.max_usd > 0 and self.spent >= self.max_usd:
                 self.cut = self.spent
                 self.stop()

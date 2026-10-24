@@ -64,6 +64,12 @@ MODEL_FLAGS = json.loads(os.environ.get("YAAF_MODEL_FLAGS") or "{}")
 # The provider, for a harness that calls its API itself: base URL, the variable
 # its key is injected under, whether it states costs and searches.
 PROVIDER = json.loads(os.environ.get("YAAF_PROVIDER") or "{}")
+# The install's own search backend, for a run promised `web` on a harness that
+# searches through yaaf (docs/PROVIDERS.md §6): its name, address and price
+# per query. Its key is YAAF_SEARCH_KEY, which no shell a harness gives the
+# model is handed.
+SEARCH = json.loads(os.environ.get("YAAF_SEARCH") or "null")
+SEARCH_KEY_ENV = "YAAF_SEARCH_KEY"
 
 WORKSPACE = Path("/workspace")
 STAGING = Path("/workspace/.yaaf")
@@ -2184,6 +2190,68 @@ def run_prompt(context: dict) -> str:
         "another agent: plain words, things named by what they are rather than by an "
         "ID, readable by someone who has never seen your task."
     )
+
+
+# ── the platform's search backend ──────────────────────────────────────────────
+
+
+async def platform_search(query: str, count: int = 8,
+                          transport=None) -> tuple[str, AttemptResult]:
+    """One query on the install's search backend: the results as the model
+    reads them, and the query's bill at the install's price — whatever the
+    model is, the meter and the priced check both carry it (`_priced`)."""
+    try:
+        import wire  # copied into the image beside this file
+    except ModuleNotFoundError:  # the control plane's tests
+        from yaaf.runtimes import wire
+
+    found = SEARCH or {}
+    hits = await wire.search_web(found.get("backend") or "", found.get("base_url") or "",
+                                 os.environ.get(SEARCH_KEY_ENV, ""), query, count,
+                                 transport=transport)
+    price = float(found.get("price_usd") or 0.0)
+    bill = AttemptResult(cost_usd=price, tokens_in=0, tokens_out=0, cache_creation=0,
+                         cache_read=0, subtype="web_search", search_usd=price)
+    if not hits:
+        return f"no results for {query!r}", bill
+    return "\n\n".join(f"{n}. {h.title}\n{h.url}\n{h.snippet}"
+                        for n, h in enumerate(hits, 1)), bill
+
+
+class SearchLedger:
+    """Searches a model made through a tool in another process — the stdio MCP
+    server a CLI harness mounts — as the bills they are. The server appends
+    one line per query; the driver reads what is new as the run goes, so a
+    search is under the per-run cap the moment it is made, not at the end."""
+
+    def __init__(self) -> None:
+        self.read = 0
+
+    @staticmethod
+    def path() -> Path:
+        return STAGING / f"search-{RUN_ID}.jsonl"
+
+    @classmethod
+    def charge(cls, bill: AttemptResult) -> None:
+        with cls.path().open("a") as ledger:
+            ledger.write(json.dumps({"usd": bill.cost_usd}) + "\n")
+
+    def new(self) -> list[AttemptResult]:
+        try:
+            lines = self.path().read_text().splitlines()
+        except OSError:
+            return []
+        fresh, self.read = lines[self.read:], len(lines)
+        out = []
+        for line in fresh:
+            try:
+                usd = float(json.loads(line).get("usd") or 0.0)
+            except (ValueError, AttributeError):
+                continue
+            out.append(AttemptResult(cost_usd=usd, tokens_in=0, tokens_out=0,
+                                     cache_creation=0, cache_read=0, subtype="web_search",
+                                     search_usd=usd))
+        return out
 
 
 async def run_harness(make_driver) -> int:

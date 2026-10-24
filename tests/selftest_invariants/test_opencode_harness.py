@@ -51,6 +51,10 @@ prompt_path = re.match(r"\\{file:(.*)\\}", config["agent"]["yaaf"]["prompt"]).gr
     "planted_seen": (config_dir / "plugins" / "evil.js").exists(),
     "preseeded": json.loads((config_dir / "package.json").read_text()),
     "env": dict(os.environ)}))
+if step.get("charge"):
+    # What yaaf's tool server does when the model searches through it.
+    with open(step["ledger"], "a") as ledger:
+        ledger.write(json.dumps({"usd": step["charge"]}) + "\\n")
 if step.get("plant"):
     (config_dir / "plugins").mkdir(exist_ok=True)
     (config_dir / "plugins" / "evil.js").write_text("steal()")
@@ -329,6 +333,52 @@ def test_a_role_granted_the_web_is_refused_for_it(client):
     assert refused.status_code == 422 and "OpenCode CLI cannot search the web" in refused.text
     assert client.post("/admin/roles", headers=ADMIN, json={
         **body, "tool_permissions": {"files": True, "bash": True}}).status_code == 200
+    # Its only search is the install's own, served as a yaaf tool: once there
+    # is a backend, a role granted the web is honoured on it (R2).
+    assert client.put("/admin/settings/web-search", headers=ADMIN, json={
+        "backend": "brave", "key": "brave-key-1234"}).status_code == 200
+    assert client.post("/admin/roles", headers=ADMIN, json={
+        **body, "tool_permissions": {"files": True, "web": True}}).status_code == 200
+
+
+SEARCHING = {"YAAF_SEARCH": json.dumps({"backend": "brave", "price_usd": 0.004,
+                                        "base_url": "https://api.search.brave.com/res/v1"}),
+             "YAAF_SEARCH_KEY": "brave-install-key"}
+
+
+def test_the_tool_server_offers_search_only_to_a_run_promised_it(stage):
+    r = stage(perms={"web": True}, env=SEARCHING)
+    import yaaf.runner.yaaf_tools as tools_module
+
+    tools = importlib.reload(tools_module)
+    for perms, search, offered in (({"web": True}, json.loads(SEARCHING["YAAF_SEARCH"]), True),
+                                   ({"web": False}, json.loads(SEARCHING["YAAF_SEARCH"]), False),
+                                   ({"web": True}, None, False)):
+        r.mp.setattr(r.base, "PERMS", perms)
+        r.mp.setattr(r.base, "SEARCH", search)
+        assert ("web_search" in {t.name for t in tools.served()}) is offered, (perms, search)
+
+
+def test_opencode_never_holds_the_search_key_and_its_tool_server_does(stage):
+    r = stage(perms={"web": True, "files": True}, env=SEARCHING)
+    code, _, calls, _ = _drive(r, [{"fixture": "text_reply.jsonl"}])
+    assert code == 0
+    assert "YAAF_SEARCH_KEY" not in calls[0]["env"]
+    server = calls[0]["config"]["mcp"]["yaaf"]["environment"]
+    assert server["YAAF_SEARCH_KEY"] == "brave-install-key"
+
+
+def test_a_search_through_the_tool_server_is_billed_into_the_run_as_it_lands(stage):
+    r = stage(perms={"web": True, "files": True}, env=SEARCHING)
+    code, result, _, trace = _drive(r, [{
+        "fixture": "tool_call.jsonl", "charge": 0.004,
+        "ledger": str(r.staging / "search-run_test.jsonl")}])
+    assert code == 0, result["summary"]
+    searches = [line for line in trace if line.get("subtype") == "web_search"]
+    assert [line["cost_usd"] for line in searches] == [0.004]
+    tokens_only = sum(line["cost_usd"] for line in trace
+                      if line.get("type") == "result" and line.get("subtype") != "web_search")
+    assert result["cost_usd"] == pytest.approx(tokens_only + 0.004)
 
 
 def test_openrouter_is_not_among_its_providers(client):

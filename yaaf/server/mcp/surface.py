@@ -269,6 +269,8 @@ WITHHELD = {
     "GET /admin/settings/llm-credentials/{credential_id}/models":
         "it spends a call on the credential's own key to list a provider's models; the "
         "lineup it helps set is an administrator's.",
+    "POST /admin/settings/llm-credentials/{credential_id}/smoke":
+        "it spends the credential's own money on a real call; an administrator's check.",
     "GET /admin/settings/web-search":
         "which search backend the install pays for is above every project.",
     "PUT /admin/settings/web-search":
@@ -278,6 +280,13 @@ WITHHELD = {
     "DELETE /admin/settings/web-search":
         "removing it refuses every searching seat on providers without search of their "
         "own; an administrator's decision.",
+    "POST /admin/settings/model-prices/import":
+        "importing prices sets the meter every project on the install is stopped by — "
+        "an administrator reviews the preview and applies it.",
+    "GET /admin/settings/price-feed":
+        "where the install reads prices from is install-wide.",
+    "PUT /admin/settings/price-feed":
+        "repointing the price feed changes what every future import trusts.",
     "GET /admin/settings/model-prices":
         "the install's price table is above every project a client is scoped to; a "
         "seat refused for want of a price says so in the refusal.",

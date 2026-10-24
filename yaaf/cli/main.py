@@ -572,14 +572,18 @@ def create_llm_credential(
     name: str,
     mode: str = typer.Option("api_key", "--mode"),
     provider: str = typer.Option("anthropic", "--provider",
-                                 help="Which provider it pays: anthropic, openai, "
-                                      "google, deepseek, openrouter, moonshot, qwen, "
-                                      "mistral, xai, custom"),
+                                 help="Which provider it pays — `yaaf providers` lists "
+                                      "every one this install knows"),
     base_url: str = typer.Option(None, "--base-url",
-                                 help="A custom endpoint's OpenAI-compatible address"),
+                                 help="The address, for a provider whose address is the "
+                                      "credential's own: a custom endpoint, a local "
+                                      "server, an Azure resource, a Bedrock region, a "
+                                      "Vertex project"),
 ) -> None:
-    """Create a named LLM credential in Settings (value prompted)."""
-    value = typer.prompt("Credential value", hide_input=True)
+    """Create a named LLM credential in Settings (value prompted; a local server
+    takes none — press enter)."""
+    value = typer.prompt("Credential value", hide_input=True, default="",
+                         show_default=False)
     body = {"name": name, "mode": mode, "value": value, "provider": provider}
     if base_url:
         body["base_url"] = base_url
@@ -606,6 +610,139 @@ def set_model_price(model: str, input_usd: float, output_usd: float,
         _show(client.put(f"/admin/settings/model-prices/{model}",
                          json={"input": input_usd, "output": output_usd,
                                "cache_read": cache_read_usd}))
+
+
+@app.command()
+def providers() -> None:
+    """Every provider this install can pay: its wire, the credential kinds it
+    takes and where a key comes from, and what each model class names on it."""
+    with _client() as client:
+        listed = _json_or_die(client.get("/admin/providers"))
+        lineups = _json_or_die(client.get("/admin/models"))["lineups"]
+    for row in listed:
+        kinds = ", ".join(f"{k['mode']} ({k['label']})" for k in row["kinds"])
+        typer.echo(f"{row['name']:<14} {row['label']} — {row['protocol'] or 'CLI only'}; "
+                   f"pays with {kinds}")
+        lineup = lineups.get(row["name"]) or {}
+        named = ", ".join(f"@{c}={lineup[c]}" for c in ("frontier", "balanced", "fast")
+                          if lineup.get(c))
+        typer.echo(f"{'':<14} {named or 'no lineup — set one with `yaaf set-lineup`'}")
+
+
+@app.command()
+def models() -> None:
+    """The install's lineups (what @frontier, @balanced and @fast name on each
+    provider), its default provider and its per-provider ceilings."""
+    with _client() as client:
+        _show(client.get("/admin/settings/models"))
+
+
+@app.command()
+def set_lineup(provider: str, model_class: str,
+               model: str = typer.Argument(None, help="Omit to go back to the shipped "
+                                                      "model")) -> None:
+    """Name what a class (frontier, balanced, fast) is on a provider. Every class
+    seat on every project that provider pays moves with it on its next run."""
+    with _client() as client:
+        _show(client.put("/admin/settings/models/lineup",
+                         json={"provider": provider, "class": model_class, "model": model}))
+
+
+@app.command()
+def set_default_provider(provider: str) -> None:
+    """Where a project that pays nobody yet resolves its classes, and the
+    Founder's before it has a key."""
+    with _client() as client:
+        _show(client.put("/admin/settings/models/default-provider",
+                         json={"provider": provider}))
+
+
+@app.command()
+def set_provider_ceiling(provider: str,
+                         limit: int = typer.Argument(None, help="Omit to lift it")) -> None:
+    """At most this many runs on a provider at once, across every project — its
+    rate limit, shared by the whole box."""
+    with _client() as client:
+        _show(client.put("/admin/settings/models/ceiling",
+                         json={"provider": provider, "limit": limit}))
+
+
+@app.command()
+def import_prices(
+    snapshot: bool = typer.Option(False, "--snapshot",
+                                  help="Read the dated snapshot shipped with yaaf instead "
+                                       "of the live feed"),
+    apply: bool = typer.Option(False, "--apply", help="Write them; without it, a preview"),
+    provider: str = typer.Option(None, "--provider",
+                                 help="Every chat model the feed lists for one provider"),
+    model: list[str] = typer.Option(None, "--model", help="Just these models"),
+    overwrite_own: bool = typer.Option(False, "--overwrite-own",
+                                       help="Replace prices an administrator typed"),
+    include_shipped: bool = typer.Option(False, "--include-shipped",
+                                         help="Replace the catalog's checked prices too"),
+) -> None:
+    """Price models from the price feed (or its snapshot): what would change,
+    model by model, and with --apply, write it — each row labelled with where
+    it came from. Hand-set prices and the catalog's checked ones are kept."""
+    body = {"source": "snapshot" if snapshot else "feed", "apply": apply,
+            "overwrite_own": overwrite_own, "include_shipped": include_shipped}
+    if provider:
+        body["provider"] = provider
+    if model:
+        body["models"] = list(model)
+    with _client() as client:
+        result = _json_or_die(client.post("/admin/settings/model-prices/import", json=body))
+    for row in result["rows"]:
+        proposed = row["proposed"]
+        price = (f"${proposed['input']:g} in / ${proposed['output']:g} out"
+                 if proposed else "—")
+        typer.echo(f"{row['action']:<8} {row['model']:<40} {price}")
+    verb = "wrote" if apply else "would write"
+    changed = [r for r in result["rows"] if r["action"] in ("add", "update")]
+    typer.echo(f"\n{verb} {len(changed)} price(s) from {result['source']}"
+               + ("" if apply or not changed else " — run again with --apply"))
+
+
+@app.command()
+def discover_models(credential_id: str) -> None:
+    """What the provider serves for this credential, by the names a seat or a
+    lineup uses — one free call to its own model list."""
+    with _client() as client:
+        _show(client.get(f"/admin/settings/llm-credentials/{credential_id}/models"))
+
+
+@app.command()
+def smoke(credential_id: str,
+          model: str = typer.Option(None, "--model",
+                                    help="The model to call; the provider's fast class "
+                                         "when omitted")) -> None:
+    """One real, trivial call on a credential, through the wire a seat on it
+    runs: which model answered, whether it called a tool, what it cost. Spends
+    a few hundred tokens of the credential's own money."""
+    with _client() as client:
+        result = _json_or_die(client.post(
+            f"/admin/settings/llm-credentials/{credential_id}/smoke",
+            json={"model": model} if model else {}))
+    typer.echo(json.dumps(result, indent=2))
+    if result.get("ok") is False:
+        raise typer.Exit(1)
+
+
+@app.command()
+def set_web_search(
+    backend: str = typer.Argument(..., help="brave, tavily, exa, serper, perplexity or "
+                                            "searxng"),
+    base_url: str = typer.Option(None, "--base-url", help="A self-hosted backend's address"),
+    price_usd: float = typer.Option(None, "--price", help="USD per query, billed into "
+                                                          "every run that searches"),
+) -> None:
+    """Name the search backend every seat whose provider cannot search uses
+    (key prompted; SearXNG takes none — press enter)."""
+    key = typer.prompt("Search API key", hide_input=True, default="", show_default=False)
+    body = {"backend": backend, "key": key or None, "base_url": base_url,
+            "price_usd": price_usd}
+    with _client() as client:
+        _show(client.put("/admin/settings/web-search", json=body))
 
 
 @app.command()

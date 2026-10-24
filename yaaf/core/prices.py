@@ -53,8 +53,10 @@ def table(session: Session) -> list[dict]:
         row = own.pop(model.id, None)
         out.append({"model": model.id, "provider": model.provider, "listed": True,
                     "shipped": shipped,
-                    "own": _row_price(row).as_dict() if row is not None else None})
+                    "own": _row_price(row).as_dict() if row is not None else None,
+                    "source": row.source if row is not None else None})
     for model_id, row in sorted(own.items()):
         out.append({"model": model_id, "provider": catalog.provider_of(model_id),
-                    "listed": False, "shipped": None, "own": _row_price(row).as_dict()})
+                    "listed": False, "shipped": None, "own": _row_price(row).as_dict(),
+                    "source": row.source})
     return out

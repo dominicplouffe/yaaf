@@ -856,6 +856,88 @@ def list_model_prices(session: Session = Depends(db)) -> list:
     return prices.table(session)
 
 
+class PriceImportIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: "feed" reads the install's price feed live; "snapshot" the dated copy
+    #: shipped in the repo, for an install that cannot reach it.
+    source: str = Field(default="feed", pattern="^(feed|snapshot)$")
+    #: False shows what would change; True writes it.
+    apply: bool = False
+    #: Which models. Absent: every model this install could run a seat on.
+    models: list[str] | None = Field(default=None, max_length=500)
+    #: Every chat model the feed lists for one provider, instead.
+    provider: str | None = Field(default=None, max_length=32)
+    #: Replace prices an administrator typed. Off: theirs win over any feed.
+    overwrite_own: bool = False
+    #: Replace the catalog's checked prices too. Off: the vendor's list wins.
+    include_shipped: bool = False
+
+
+@router.post("/model-prices/import", dependencies=[authority.INSTANCE_ADMIN])
+def import_model_prices(body: PriceImportIn, session: Session = Depends(db)) -> dict:
+    """Price models from a feed (docs/PROVIDERS.md §5): a preview by default,
+    written only with `apply`, every row labelled with where it came from.
+    Hand-set prices and the catalog's checked ones are kept unless asked."""
+    import httpx
+
+    from yaaf.core import price_feed
+    from yaaf.server.api.admin import _audit
+
+    if body.source == "snapshot":
+        feed, label = price_feed.snapshot_feed()
+    else:
+        url = price_feed.feed_url(session)
+        try:
+            feed = price_feed.fetch(url)
+        except (httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail=(
+                f"the price feed could not be read ({url}): {exc} — import the snapshot "
+                "instead, or point the feed at a mirror")) from exc
+        label = price_feed.source_label()
+    if body.provider and body.provider not in PROVIDERS:
+        raise HTTPException(status_code=422, detail=f"unknown provider '{body.provider}'")
+    models = (body.models if body.models is not None
+              else price_feed.provider_models(feed, body.provider) if body.provider
+              else price_feed.wanted(session))
+    rows = price_feed.preview(session, feed, models, source=label,
+                              overwrite_own=body.overwrite_own,
+                              include_shipped=body.include_shipped)
+    applied = price_feed.apply(session, rows) if body.apply else []
+    if applied:
+        _audit(session, None, "model_price.import", "feed", label,
+               {"models": applied, "source": body.source})
+    return {"source": label, "rows": rows, "applied": applied}
+
+
+@router.get("/price-feed", dependencies=[authority.INSTANCE_ADMIN])
+def get_price_feed(session: Session = Depends(db)) -> dict:
+    from yaaf.core import price_feed
+
+    found = price_feed.snapshot()
+    return {"url": price_feed.feed_url(session), "default_url": price_feed.DEFAULT_FEED_URL,
+            "snapshot_as_of": found["as_of"], "snapshot_models": len(found["models"])}
+
+
+class PriceFeedIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(max_length=500)
+
+
+@router.put("/price-feed", dependencies=[authority.INSTANCE_ADMIN])
+def put_price_feed(body: PriceFeedIn, session: Session = Depends(db)) -> dict:
+    """Point the importer at a mirror — an install's own copy of the feed, in
+    the same shape. Blank goes back to the default."""
+    from yaaf.core import price_feed
+
+    url = body.url.strip()
+    if url and not url.startswith("https://"):
+        raise HTTPException(status_code=422, detail="a price feed is read over https")
+    platform.set_setting(session, price_feed.FEED_URL, url)
+    return get_price_feed(session)
+
+
 @router.put("/model-prices/{model:path}", dependencies=[authority.INSTANCE_ADMIN])
 def put_model_price(model: str, body: ModelPriceIn, session: Session = Depends(db)) -> dict:
     from yaaf.core.models import ModelPrice, utcnow
@@ -1026,6 +1108,92 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
     return {"provider": seller.name, "models": [
         {"id": name if name in listed else f"{seller.name}/{name}", "name": name,
          "listed": name in listed} for name in names]}
+
+
+class SmokeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The model to call. Absent: the provider's fast class, the cheapest
+    #: thing that proves the key, the address and the wire.
+    model: str | None = Field(default=None, max_length=128)
+
+
+@router.post("/llm-credentials/{credential_id}/smoke",
+             dependencies=[authority.INSTANCE_ADMIN])
+def smoke_credential(credential_id: str, body: SmokeIn | None = None,
+                     session: Session = Depends(db)) -> dict:
+    """One real, trivial call on this credential, through the wire a seat on it
+    runs (docs/PROVIDERS.md §8): a one-line prompt with one tool offered, and
+    back the model that answered, whether it called the tool, its usage, and
+    what that call cost at this install's price. It spends a few hundred tokens
+    of the credential's own money — which is the point: nothing else can be
+    right about a credential, an address and a wire at once. A login pays only
+    its CLI, which runs only in a sandbox; it is shape-checked instead."""
+    import asyncio
+    import time
+
+    import httpx
+
+    from yaaf.core import model_policy, model_tokens
+    from yaaf.core import prices as install_prices
+    from yaaf.core.crypto import decrypt
+    from yaaf.runtimes import catalog, wire
+    from yaaf.runtimes.providers import provider, spec
+
+    row = _managed(session, credential_id, lock=False)
+    seller = provider(row.provider)
+    if seller.protocol is None or (row.llm_mode or "api_key") != "api_key":
+        return {"ok": None, "detail": f"a {seller.kind(row.llm_mode).label} pays only its own "
+                                      "CLI, which runs only inside a sandbox — its first run "
+                                      "is the check"}
+    ref = (body.model if body and body.model else catalog.class_ref("fast"))
+    model = model_policy.resolve(session, ref, provider=seller.name)
+    if model is None:
+        raise HTTPException(status_code=422, detail=(
+            f"{seller.label} has no Fast model set — name one to call (model), or set its "
+            "lineup in Settings → Models"))
+    key = decrypt(row.ciphertext)
+    if seller.mints_tokens:
+        try:
+            key, _ = model_tokens.mint(seller.name, key)
+        except model_tokens.MintError as exc:
+            return {"ok": False, "model": model, "detail": str(exc)}
+    endpoint = wire.Endpoint.from_spec(spec(seller, row.llm_mode, row.base_url), key)
+    probe = wire.ToolSpec("report_ready", "Call this once to say you are ready.",
+                          {"type": "object", "properties": {"ready": {"type": "boolean"}},
+                           "required": ["ready"]})
+    started = time.monotonic()
+    try:
+        replies = asyncio.run(_one_reply(wire.call(
+            endpoint, catalog.api_name(model), "You are a connectivity check.",
+            [wire.Turn("user", text="Call report_ready with ready=true, then stop.")],
+            [probe], 256)))
+    except (wire.WireError, httpx.HTTPError) as exc:
+        kind = getattr(exc, "kind", "transient")
+        return {"ok": False, "model": model, "kind": kind,
+                "detail": f"{seller.label} refused the call: {exc}"}
+    reply = replies[-1]
+    usage = reply.usage
+    price = install_prices.price(session, model)
+    priced = None
+    if price is not None:
+        priced = (usage.input * price.input + usage.output * price.output
+                  + usage.cache_read * price.cache_read) / 1_000_000
+    return {"ok": True, "model": model, "served": reply.model,
+            "latency_ms": int((time.monotonic() - started) * 1000),
+            "called_tool": any(c.name == "report_ready" for c in reply.turn.calls),
+            "usage": {"input": usage.input, "output": usage.output,
+                      "cache_read": usage.cache_read},
+            "priced_usd": priced if priced is not None else usage.cost_usd,
+            "price": price.as_dict() if price is not None else None,
+            "detail": (f"{seller.label} answered on {reply.model or model}"
+                       + ("" if price is not None or usage.cost_usd is not None
+                          else " — but this install has no price for it, so a seat on it "
+                               "would be refused (R3): import or set one"))}
+
+
+async def _one_reply(stream) -> list:
+    return [reply async for reply in stream]
 
 
 # ── web search: the platform's own backend ──────────────────────────────────────

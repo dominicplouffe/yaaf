@@ -65,10 +65,7 @@ FETCH_TIMEOUT_S = 30
 #: to pay for the model, and a key a shell can print is a key a transcript can
 #: carry anywhere (SECURITY.md).
 MODEL_CREDENTIAL_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN",
-                        "YAAF_SEARCH_KEY")
-#: The platform's search backend, when the install has one and this run was
-#: promised `web` on a provider that does not search (docs/PROVIDERS.md §6).
-SEARCH = json.loads(os.environ.get("YAAF_SEARCH") or "null")
+                        base.SEARCH_KEY_ENV)
 SEARCH_RESULTS_PER_QUERY = 8
 
 
@@ -461,7 +458,7 @@ class LoopDriver:
             # platform's backend. Neither is a grant the doors did not check
             # (R2): a run reaches here searchless only by a door nobody built.
             searcher = getattr(self.client, "search", None)
-            if searcher is not None or SEARCH:
+            if searcher is not None or base.SEARCH:
                 tools.append(base.Tool(
                     "WebSearch", "Search the web. Returns the top results — titles, addresses "
                     "and snippets — to read further with WebFetch.",
@@ -505,21 +502,12 @@ class LoopDriver:
             self.charges.append(bill)
             return _text(text)
         try:
-            hits = await wire.search_web(SEARCH["backend"], SEARCH.get("base_url") or "",
-                                         os.environ.get("YAAF_SEARCH_KEY", ""), query,
-                                         SEARCH_RESULTS_PER_QUERY, transport=SEARCH_TRANSPORT)
+            text, bill = await base.platform_search(query, SEARCH_RESULTS_PER_QUERY,
+                                                    transport=SEARCH_TRANSPORT)
         except (wire.WireError, httpx.HTTPError) as exc:
             return _text(f"search failed: {exc}", error=True)
-        price = float(SEARCH.get("price_usd") or 0.0)
-        # Billed at the install's price whatever the model is: the meter and
-        # the priced check both carry it (sandbox_entry._priced).
-        self.charges.append(base.AttemptResult(cost_usd=price, tokens_in=0, tokens_out=0,
-                                               cache_creation=0, cache_read=0,
-                                               subtype="web_search", search_usd=price))
-        if not hits:
-            return _text(f"no results for {query!r}")
-        return _text("\n\n".join(f"{n}. {h.title}\n{h.url}\n{h.snippet}"
-                                  for n, h in enumerate(hits, 1)))
+        self.charges.append(bill)
+        return _text(text)
 
     async def _skill(self, args: dict) -> dict:
         skill = self.skills.get(str(args.get("skill", "")))
