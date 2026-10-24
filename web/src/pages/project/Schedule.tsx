@@ -15,6 +15,12 @@ export default function ScheduleStrip({ ctx }: { ctx: ProjectCtx }) {
   const { data } = usePoll(
     () => get<ScheduleView>(`/observe/projects/${ctx.projectId}/schedule`), 60000, [ctx.projectId]);
   if (!data || data.rows.length === 0) return null;
+  // On a large team most rows would be empty: people who wake only when
+  // handed work and have not run. Those are counted, not drawn.
+  const QUIET_AFTER = 10;
+  const active = data.rows.filter((r) => r.ran.length || r.next.length);
+  const rows = data.rows.length > QUIET_AFTER ? active : data.rows;
+  const quiet = data.rows.length - rows.length;
   const from = new Date(data.from).getTime();
   const span = new Date(data.to).getTime() - from;
   const pos = (iso: string) => Math.min(100, Math.max(0, ((new Date(iso).getTime() - from) / span) * 100));
@@ -39,7 +45,7 @@ export default function ScheduleStrip({ ctx }: { ctx: ProjectCtx }) {
             ))}
           </span>
         </div>
-        {data.rows.map((r) => (
+        {rows.map((r) => (
           <div className={`sched-row${r.paused ? " paused" : ""}`} key={r.agent_id}>
             <button type="button" className="sched-who linkish" onClick={() => ctx.openAgent(r.agent_id)}
               title={`${r.name} wakes ${r.wakes}`}>
@@ -62,6 +68,12 @@ export default function ScheduleStrip({ ctx }: { ctx: ProjectCtx }) {
           </div>
         ))}
       </div>
+      {quiet > 0 && (
+        <p className="help sched-quiet">
+          {quiet} {quiet === 1 ? "other person" : "others"} did not run in the last 12 hours and
+          {quiet === 1 ? " has" : " have"} no scheduled wake: they work when handed work or a message.
+        </p>
+      )}
       <p className="help sched-key">
         <span className="sched-swatch run" /> ran <span className="sched-swatch next" /> scheduled wake ·
         anyone without a scheduled wake works when handed work or a message.

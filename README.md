@@ -41,7 +41,7 @@ true at once — [PLAN.md](docs/PLAN.md) says which claims are load-bearing and
 what would falsify them, and [SECURITY.md](SECURITY.md) says what contains an
 agent and what does not.
 
-<img src="docs/screenshots/cockpit-overview.png" alt="A project's home page is its team: the chairman at the top of the org chart with the decision waiting on them, the CEO beneath, and each team with what every person is doing, the model they run on, and what they have cost">
+<img src="docs/screenshots/team.png" alt="A project's Team page: the chairman at the top, the CEO beneath, and each team — a newly hired Risk team drawn dashed with the CEO's reason — with what every person is doing, the model they run on, and what they have cost">
 
 Three things to know before anything else:
 

@@ -11,6 +11,7 @@ import Boardroom from "./project/Boardroom";
 import Details from "./project/Details";
 import Member from "./project/Member";
 import Results from "./project/Results";
+import TeamPage from "./project/Team";
 
 export type { ProjectCtx } from "../projectCtx";
 
@@ -354,6 +355,7 @@ export default function ProjectPage() {
           <Overview ctx={ctx} onPause={() => setConfirming("pause")} onStop={() => setConfirming("stop")}
             setupBadge={setupBadge(ctx.health)} goalLead={goalLead(dash.goal)} />
         } />
+        <Route path="team" element={<TeamPage ctx={ctx} />} />
         <Route path="team/:agentId" element={<Member ctx={ctx} />} />
         <Route path="chat" element={<Boardroom projectId={projectId} dash={dash} org={ctx.org} />} />
         <Route path="results" element={<Results ctx={ctx} />} />
@@ -363,7 +365,6 @@ export default function ProjectPage() {
             that moved keeps working, query and all; nobody relearns a URL
             they wrote down. Ten sidebar pages became four: Overview and Team
             are the Team page, the rest are tabs of Details. */}
-        <Route path="team" element={<Navigate to={base} replace />} />
         <Route path="roadmap" element={<Moved to={`${base}/details/roadmap`} />} />
         <Route path="tasks" element={<Moved to={`${base}/details/tasks`} />} />
         <Route path="deliverables" element={<Moved to={`${base}/details/deliverables`} />} />
