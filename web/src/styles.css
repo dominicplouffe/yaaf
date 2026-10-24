@@ -2862,10 +2862,10 @@ del.bd { color: var(--ink-2); background: rgba(var(--critical-rgb), 0.12);
 .undo-host { position: fixed; left: 16px; bottom: 16px; z-index: 60; display: flex;
   flex-direction: column; gap: 8px; max-width: min(460px, calc(100vw - 32px)); }
 .undo-toast { display: flex; align-items: center; gap: 10px; padding: 10px 12px;
-  background: var(--ink); color: var(--bg, #fff); border-radius: 10px;
+  background: var(--ink); color: var(--page); border-radius: 10px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); font-size: 13.5px; }
 .undo-toast .help { color: inherit; opacity: 0.75; }
-.undo-toast.bad { background: var(--critical, #a33); }
+.undo-toast.bad { background: var(--critical); color: var(--on-critical); }
 
 /* Snooze: a menu on an Inbox item, and the rows it is holding. */
 .snooze { position: relative; display: inline-flex; align-items: center; gap: 8px; }
