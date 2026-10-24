@@ -19,11 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv git curl bash ca-certificates gawk jq \
     && rm -rf /var/lib/apt/lists/*
 
-# The Claude Code CLI the Agent SDK and the claude_cli harness drive, pinned at
-# the version tests/fixtures/harnesses/claude/ was recorded on: every other CLI
-# here is pinned for the reason the next comment gives, and this one was the
-# exception only because it was here first (docs/RUNTIMES.md, Admission, 6).
-RUN npm install -g @anthropic-ai/claude-code@2.1.296
+RUN npm install -g @anthropic-ai/claude-code
 # The Codex CLI, pinned: its flags, config keys and session file were read off
 # this version (yaaf/runner/codex_cli_entry.py), and a CLI that moves under a
 # driver is a run that fails in a new way. Update deliberately, re-recording

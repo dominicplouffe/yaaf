@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl \
 COPY --from=webbuild /usr/local/bin/node /usr/local/bin/node
 COPY --from=webbuild /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-    && npm install -g @anthropic-ai/claude-code@2.1.296 \
+    && npm install -g @anthropic-ai/claude-code \
     && claude --version
 
 WORKDIR /app
