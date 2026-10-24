@@ -3214,7 +3214,7 @@ def brief_propose(
         "old version is gone from their instructions.\n\n"
         + briefs.changes_markdown(was, proposed, since=since)
         + f"\n\n[Review the whole brief, edit and confirm]"
-          f"(#/projects/{ctx.project.id}/activity/decisions)")
+          f"(#/projects/{ctx.project.id}/details/activity/decisions)")
     chairman_notify(
         session, ctx.project, "Your CEO asks you to confirm the brief",
         "\n".join(lines), kind="approval_requested",
@@ -3806,7 +3806,7 @@ def artifact_put(
     from yaaf.server.notify import SLACK_VIA_DELIVERABLE, boardroom_line
 
     size = f"{len(data) / 1024:.0f} KB" if len(data) >= 1024 else f"{len(data)} B"
-    link = f"#/projects/{ctx.project.id}/deliverables?open={quote(key, safe='')}"
+    link = f"#/projects/{ctx.project.id}/details/deliverables?open={quote(key, safe='')}"
     # A name is any non-path string, so `]` or `*` in it must not end the link.
     label = "".join("\\" + c if c in "\\`*_[]" else c for c in filename)
     boardroom_line(

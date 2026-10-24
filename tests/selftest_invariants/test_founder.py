@@ -886,6 +886,111 @@ def test_a_turn_lost_to_a_restart_says_so_rather_than_looking_idle(client, found
     assert reloaded["interrupted"] is True
 
 
+# ── stopping a turn ─────────────────────────────────────────────────────────────
+
+
+def _endless(founder, monkeypatch) -> dict:
+    """A turn that only ends when it is cancelled — which is how a stop has to
+    end it, since the real one would go on spending the platform credential."""
+    founder()
+    seen = {"started": threading.Event(), "cancelled": threading.Event()}
+
+    async def forever(prompt, opts, stderr_sink=None, thread_id=""):
+        import asyncio
+        seen["started"].set()
+        try:
+            while True:
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            seen["cancelled"].set()
+            raise
+
+    monkeypatch.setattr("yaaf.founder.session.run", forever)
+    return seen
+
+
+def _settle(client, thread_id: str) -> dict:
+    for _ in range(200):
+        state = client.get(f"/admin/founder/threads/{thread_id}", headers=ADMIN).json()
+        if not state["running"]:
+            return state
+        time.sleep(0.05)
+    raise AssertionError("the turn never settled")
+
+
+def test_a_stop_takes_back_the_message_and_ends_the_work(client, founder, monkeypatch):
+    """The chairman stops a turn because what he sent was wrong. The work ends
+    rather than carrying on unwatched, and the mistake is not left on the
+    thread for the next turn to read as something he still means."""
+    seen = _endless(founder, monkeypatch)
+    thread = client.post("/admin/founder/threads",
+                         json={"message": "a project for my bakkery"}, headers=ADMIN).json()
+    assert seen["started"].wait(5)
+
+    stopped = client.post(f"/admin/founder/threads/{thread['id']}/stop", headers=ADMIN)
+    assert stopped.status_code == 202, stopped.text
+    state = _settle(client, thread["id"])
+
+    assert seen["cancelled"].wait(5)
+    assert state["turns"] == []
+    assert state["interrupted"] is False
+    assert state["last_error"] is None
+    assert client.get(f"/admin/founder/threads/{thread['id']}/progress",
+                      headers=ADMIN).json()["kind"] == "stopped"
+
+    # The corrected message is a turn like any other.
+    founder(reply="A bakery, then.")
+    again = start(client, "a project for my bakery", thread["id"])
+    assert [(t["role"], t["text"]) for t in again["turns"]] == [
+        ("chairman", "a project for my bakery"), ("founder", "A bakery, then.")]
+
+
+def test_a_stop_after_the_turn_finished_is_not_an_error(client, founder):
+    """The press and the reply can cross. Nothing is withdrawn from a turn that
+    has already been answered."""
+    founder(reply="Done.")
+    thread = start(client, "design me a project")
+    late = client.post(f"/admin/founder/threads/{thread['id']}/stop", headers=ADMIN)
+    assert late.status_code == 200
+    assert [t["role"] for t in late.json()["turns"]] == ["chairman", "founder"]
+
+
+def test_starting_over_mid_turn_stops_the_turn(client, founder, monkeypatch):
+    """Throwing the conversation away is a way out of a turn, not a way to
+    orphan one that goes on spending on a thread nobody has."""
+    seen = _endless(founder, monkeypatch)
+    thread = client.post("/admin/founder/threads",
+                         json={"message": "never mind"}, headers=ADMIN).json()
+    assert seen["started"].wait(5)
+    assert client.delete(f"/admin/founder/threads/{thread['id']}",
+                         headers=ADMIN).status_code == 200
+    assert seen["cancelled"].wait(5)
+    for _ in range(100):
+        if not progress.is_running(thread["id"]):
+            break
+        time.sleep(0.05)
+    assert not progress.is_running(thread["id"])
+
+
+def test_nobody_else_can_stop_your_turn(client, founder, monkeypatch):
+    from tests.conftest import headers_of, person
+
+    seen = _endless(founder, monkeypatch)
+    thread = client.post("/admin/founder/threads",
+                         json={"message": "mine"}, headers=ADMIN).json()
+    assert seen["started"].wait(5)
+    try:
+        other = person("other@example.com")
+        refused = client.post(f"/admin/founder/threads/{thread['id']}/stop",
+                              headers=headers_of(other))
+        assert refused.status_code == 404
+        assert progress.is_running(thread["id"])
+        assert not seen["cancelled"].is_set()
+    finally:
+        client.post(f"/admin/founder/threads/{thread['id']}/stop", headers=ADMIN)
+        _settle(client, thread["id"])
+
+
 # ── the two elements that let a project exceed its brief ────────────────────────
 
 

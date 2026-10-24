@@ -99,7 +99,7 @@ def test_the_boardroom_shows_him_the_brief_and_where_to_confirm_it(client):
     line = next(b for b in posted if "Confirm the brief" in b)
     assert "Max 15% of the book in one name" in line
     assert "25% trailing stop" in line
-    assert f"#/projects/{project['id']}/activity/decisions" in line
+    assert f"#/projects/{project['id']}/details/activity/decisions" in line
 
 
 def test_a_redraft_is_shown_as_what_it_changes_not_the_whole_brief_again(client):
