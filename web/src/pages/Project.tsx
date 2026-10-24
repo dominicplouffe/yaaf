@@ -295,6 +295,11 @@ function pageHead(path: string, ctx: ProjectCtx): { title: string; lede?: string
 
 /** An old address, kept working: everything after the old prefix lands in
     the same place under the new one. */
+/** Every route that renders this must be a splat (`roadmap/*`, not `roadmap`):
+    a route without its own `*` inherits the parent's, which here is the old
+    page's own name, so `deliverables` would redirect to
+    `details/deliverables/deliverables`, miss every tab, and land on the
+    roadmap with its `?open=` thrown away. */
 function Moved({ to }: { to: string }) {
   const { "*": rest = "" } = useParams();
   const { search } = useLocation();
@@ -364,13 +369,13 @@ export default function ProjectPage() {
             they wrote down. Ten sidebar pages became four: Overview and Team
             are the Team page, the rest are tabs of Details. */}
         <Route path="team" element={<Navigate to={base} replace />} />
-        <Route path="roadmap" element={<Moved to={`${base}/details/roadmap`} />} />
-        <Route path="tasks" element={<Moved to={`${base}/details/tasks`} />} />
-        <Route path="deliverables" element={<Moved to={`${base}/details/deliverables`} />} />
-        <Route path="spend" element={<Moved to={`${base}/details/spend`} />} />
-        <Route path="reviews" element={<Moved to={`${base}/details/reviews`} />} />
+        <Route path="roadmap/*" element={<Moved to={`${base}/details/roadmap`} />} />
+        <Route path="tasks/*" element={<Moved to={`${base}/details/tasks`} />} />
+        <Route path="deliverables/*" element={<Moved to={`${base}/details/deliverables`} />} />
+        <Route path="spend/*" element={<Moved to={`${base}/details/spend`} />} />
+        <Route path="reviews/*" element={<Moved to={`${base}/details/reviews`} />} />
         <Route path="activity/*" element={<Moved to={`${base}/details/activity`} />} />
-        <Route path="settings" element={<Moved to={`${base}/details/settings`} />} />
+        <Route path="settings/*" element={<Moved to={`${base}/details/settings`} />} />
         <Route path="boardroom" element={<Navigate to={`${base}/chat`} replace />} />
         <Route path="progress" element={<Navigate to={`${base}/details/roadmap`} replace />} />
         <Route path="progress/board" element={<Navigate to={`${base}/details/tasks`} replace />} />

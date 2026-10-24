@@ -652,7 +652,7 @@ def _delivered(session: Session, project: Project, since, until) -> list[dict]:
         seen.add(artifact.name)
         out.append({
             "name": artifact.name, "version": artifact.version,
-            "link": (f"{origin}/app/#/projects/{project.id}/deliverables"
+            "link": (f"{origin}/app/#/projects/{project.id}/details/deliverables"
                      f"?open={quote(artifact.storage_key, safe='')}") if origin else None,
         })
     return out

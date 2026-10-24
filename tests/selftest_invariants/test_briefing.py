@@ -843,7 +843,7 @@ def test_the_letter_opens_on_what_was_delivered_with_a_way_to_open_it(client, mo
     assert [d["name"] for d in delivered] == ["memo.md"]
     assert delivered[0]["version"] == 2
     assert delivered[0]["link"].startswith(
-        f"https://yaaf.example.com/app/#/projects/{project['id']}/deliverables?open=")
+        f"https://yaaf.example.com/app/#/projects/{project['id']}/details/deliverables?open=")
 
     text = briefing.render_text(brief)
     assert text.index("Delivered") < text.index("Window:")

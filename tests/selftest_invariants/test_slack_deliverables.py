@@ -300,5 +300,5 @@ def test_the_boardroom_line_links_to_the_file_itself(client):
             select(Artifact.storage_key).where(Artifact.project_id == project["id"])
         ).scalar_one()
     (line,) = [m for m in _boardroom_lines(project["id"]) if "draft" in m.body]
-    assert (f"[**q3 \\[draft\\]\\*.md**](#/projects/{project['id']}/deliverables"
+    assert (f"[**q3 \\[draft\\]\\*.md**](#/projects/{project['id']}/details/deliverables"
             f"?open={quote(key, safe='')})") in line.body
