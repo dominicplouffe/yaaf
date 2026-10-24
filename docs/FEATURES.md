@@ -550,9 +550,14 @@ evidence at all about your *project*.
   — dead billing, a credential that isn't a URL, an untested data source, a
   team running an outdated role version — in plain language, with a fix link. A
   healthy project shows nothing at all.
-- **Data sources prove themselves.** An MCP server is a one-form add (name,
-  URL, roles, Save): the URL is validated at the door, you can run a live check
-  against it, and the granted roles' sandboxes mount it as real tools.
+- **Data sources prove themselves.** An MCP server is a one-form add that asks
+  for the address first and checks it before anything is stored, including how
+  it wants you to sign in. Every source then shows one state in words with the
+  button that fixes it, and the granted roles' sandboxes mount it as real tools.
+- **Secrets & variables on one line each.** Plain settings show as they are;
+  secrets show their last four characters; an access map shows every grant,
+  variables and data sources alike, against every team, and saves ticks as one
+  batch. Rotating a key keeps who has it.
 - **Project export** downloads the whole project as one JSON file — goal,
   teams and their schedules, constitution, config, data sources, and every
   project service credential *value* (Slack tokens and webhook signing keys

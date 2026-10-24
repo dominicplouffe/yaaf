@@ -765,10 +765,33 @@ Data; everything after is occasional.
   until the window resets. The budget in force is shown read-only: the numbers
   themselves are constitution rules, so the card links to Rules in force rather
   than offering a second editor for them.
-- **Data & credentials** — MCP data sources (one form: name, URL, roles, Save,
-  plus a live check) and scoped variables/credentials for your teams.
 
 **Connections**
+
+- **Data sources** — the MCP servers agents call as tools, one line each. Every
+  source shows one state in words — *Working* (with its tool count), *Needs
+  sign-in*, *Sign-in expired*, *Credential refused*, *Wrong address*, *Not an MCP
+  server*, *Offers no tools*, *Blocked by the network*, *Not answering*, *Can't
+  connect* — with the one button that fixes it beside it (Connect, Reconnect,
+  Test again, Fix it) and the server's own sentence underneath. Test, edit and
+  remove live in the row's **⋯** menu. **Add data source** opens a drawer that
+  asks for the address first, checks it before anything is stored, and says how
+  the server wants you to sign in — no sign-in, a pasted token, or OAuth — so
+  the rest of the form follows from the answer.
+- **Secrets & variables** — what agents receive as environment variables, one
+  56px line each: the name agents see (`$NAME`), its type (**Secret**, **Plain
+  value** or **File**), enough of the value to tell two apart (a plain value
+  whole, a secret's last four characters, a file's name and size), who gets it
+  as team chips, and when it last changed. Search, a **What ⟨team⟩ gets**
+  filter, and an **Access map** — variables and data sources as rows, teams as
+  columns — answer "what does this team have?" on one screen; ticks there stage
+  with an amber ring and save as one batch. Every edit happens in a drawer with
+  one **Save changes**: the type, the value (reveal, copy, replace — each reveal
+  logged), who gets it, and the history in sentences. **Paste .env** splits a
+  pasted file into rows for review. A credential an agent asked for shows at the
+  top with **Add it**, which stores it, grants the asking team and answers the
+  request in one motion. Values a data source or the Slack bridge owns are
+  listed, locked, and link to where they are edited.
 
 - **Integrations** — the Slack bridge and the GitHub workspace. Slack starts
   out **inherited** from the app-wide connection, so the only thing this card

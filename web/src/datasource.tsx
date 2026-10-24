@@ -1,4 +1,5 @@
 import { ReactNode } from "react";
+import { TeamSwitches } from "./grants";
 import { SecretInput } from "./ui";
 
 /** One data source form, used by every screen that offers one. A source has
@@ -94,42 +95,31 @@ export function dataSourceBody(draft: DataSourceDraft) {
   };
 }
 
-export type RoleOption = { slug: string; teams: string[] };
+export type RoleOption = { slug: string; teams: string[]; people?: string[] };
 
-/** One checkbox per distinct role in the org, labelled with the team(s) running
-    it — grants are per role, so sibling teams share a box. */
-export function RoleTicks({ options, selected, onChange, emptyHint }: {
+/** The shared team picker, fed from the role options a data source form has
+    (the org's teams, or the wizard's chosen roles before any team exists). */
+export function RoleTicks({ options, selected, onChange, emptyHint, label, what }: {
   options: RoleOption[];
   selected: string[];
   onChange: (slugs: string[]) => void;
   emptyHint?: string;
+  label?: ReactNode;
+  what?: ReactNode;
 }) {
-  if (options.length === 0)
-    return (
-      <p className="help">
-        {emptyHint ?? "No teams yet — add one with “+ Add a team” on the Team page first."}
-      </p>
-    );
   return (
-    <div className="pill-row">
-      {options.map((option) => (
-        <label key={option.slug} style={{ display: "flex", gap: 5, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            style={{ width: "auto" }}
-            checked={selected.includes(option.slug)}
-            onChange={(e) =>
-              onChange(
-                e.target.checked
-                  ? [...selected, option.slug]
-                  : selected.filter((slug) => slug !== option.slug),
-              )
-            }
-          />
-          {option.teams.join(", ")} ({option.slug})
-        </label>
-      ))}
-    </div>
+    <TeamSwitches
+      options={options.map((option) => ({
+        slug: option.slug, name: option.teams.join(" + "), people: option.people,
+        hue: option.teams[0],
+      }))}
+      selected={selected}
+      onChange={onChange}
+      label={label}
+      what={what ?? "its tools"}
+      credential={false}
+      emptyHint={emptyHint ?? "No teams yet — add one with “+ Add a team” on the Team page first."}
+    />
   );
 }
 
@@ -141,18 +131,23 @@ export function AccessPicker({ value, onChange }: {
   onChange: (next: SourceAccess) => void;
 }) {
   return (
-    <>
-      <label className="field">How agents read it</label>
-      <select value={value} onChange={(e) => onChange(e.target.value as SourceAccess)}>
-        <option value="inline">inline — mounted as tools, results go into the model</option>
-        <option value="bulk">bulk — results go to a file, via data_fetch</option>
-      </select>
-      <div className="help" style={{ marginTop: 4 }}>
-        {value === "inline"
-          ? "Every result is copied into the agent's context and billed by the token. Right for small lookups; ruinous for exports."
-          : "The tools are not mounted at all, so nothing can pull rows into context by accident. Agents call data_fetch, which writes the full result to a workspace file they then process with code."}
+    <div className="tswitch-field">
+      <span className="lbl">How agents read results</span>
+      <div className="radio-cards" role="radiogroup">
+        <button type="button" role="radio" aria-checked={value === "inline"}
+                className={value === "inline" ? "on" : ""} onClick={() => onChange("inline")}>
+          <b>Into the conversation</b>
+          <span>Mounted as tools; every result goes into the model and is billed by the
+            token. Right for small lookups.</span>
+        </button>
+        <button type="button" role="radio" aria-checked={value === "bulk"}
+                className={value === "bulk" ? "on" : ""} onClick={() => onChange("bulk")}>
+          <b>To a file</b>
+          <span>Not mounted at all: agents call data_fetch, which writes the full result to a
+            workspace file they process with code. Right for exports.</span>
+        </button>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -166,10 +161,10 @@ export function AuthPicker({ value, onChange, oauthNote }: {
 }) {
   return (
     <>
-      <label className="field">How it authenticates</label>
+      <label className="field">Sign-in</label>
       <select value={value} onChange={(e) => onChange(e.target.value as SourceAuth)}>
-        <option value="none">none — the server is open</option>
-        <option value="bearer">bearer token — paste a credential</option>
+        <option value="none">No sign-in — the server is open</option>
+        <option value="bearer">Bearer token — paste a credential</option>
         <option value="oauth">OAuth — sign in through the provider</option>
       </select>
       {value === "oauth" && (
@@ -234,24 +229,16 @@ export function OAuthClientFields({
   );
 }
 
-/** What a data source is, said once. Both screens open with it so the
-    explanation a chairman reads while creating a project is the explanation
-    they meet again in Settings. */
+/** What a data source is, said once, in a sentence a person acts on. It used
+    to be two paragraphs about sandboxes and delivery mechanisms; the Data
+    sources page now says it in its subtitle, and the wizard says it here. */
 export function DataSourceIntro({ children }: { children?: ReactNode }) {
   return (
-    <>
-      <p className="subtitle">
-        A data source is an MCP server — a URL that offers tools. An agent's sandbox is a locked
-        box whose only way in is an environment variable you granted, so the address travels as
-        one: saving <code>ppc</code> stores its URL encrypted and hands the granted roles{" "}
-        <code>$MCP_PPC_URL</code>. That variable <em>is</em> the delivery mechanism, not a side
-        effect — which is why everything about a source is edited here and nowhere else.
-      </p>
-      <p className="help">
-        One save does all of it: validates the URL, stores it and any token encrypted, grants
-        them to the roles you tick, and calls the server to confirm it answers. {children}
-      </p>
-    </>
+    <p className="help">
+      A data source is an MCP server: an address that offers tools. Saving one checks that it
+      answers, stores its address and any token encrypted, and hands them to the teams you
+      switch on. {children}
+    </p>
   );
 }
 
@@ -268,7 +255,7 @@ export function DataSourceFields({
   bearerPlaceholder = "paste the credential",
   bearerDisabled = false,
   belowBearer,
-  rolesLabel = "Which roles get this source (nobody, until you tick)",
+  rolesLabel = "Who gets its tools",
   rolesEmptyHint,
   oauthNote,
 }: {
@@ -350,8 +337,8 @@ export function DataSourceFields({
         />
       )}
       <AccessPicker value={value.access} onChange={(access) => set({ access })} />
-      <label className="field">{rolesLabel}</label>
       <RoleTicks
+        label={rolesLabel}
         options={roleOptions}
         selected={value.roles}
         onChange={(roles) => set({ roles })}

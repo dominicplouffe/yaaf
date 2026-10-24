@@ -535,6 +535,7 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
     reader cannot click is read once and then skipped. */
 const WHERE_TO: Record<string, [string, string, boolean?]> = {
   settings: ["/details/settings", "fix in Settings"],
+  data_sources: ["/details/settings?s=sources", "open Data sources"],
   plan: ["/details/roadmap", "open the Roadmap"],
   boardroom: ["/chat", "open the chat"],
   team: ["/team", "see the team"],
