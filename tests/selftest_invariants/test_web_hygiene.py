@@ -294,3 +294,26 @@ def test_every_text_ink_clears_4_5_on_every_neutral_ground():
             for name, ground in grounds.items():
                 ratio = _contrast(rgb(tokens[ink]), ground)
                 assert ratio >= 4.5, f"{ink} {tokens[ink]} is {ratio:.2f}:1 on {name}"
+
+
+def test_nothing_is_set_below_the_12px_floor():
+    """`styles.css` opens its type scale with "12px is the floor. Nothing in the
+    product is set smaller." Twenty-four rules were — sidebar headings and
+    pills at 11px, the team's "lead" tag at 10.5px, a project tag's initials at
+    9px — and one SVG label on the roadmap, because nothing held the sentence
+    to account.
+    """
+    offenders: list[str] = []
+    css = (WEB_SRC / "styles.css").read_text()
+    for match in re.finditer(r"font-size:\s*([\d.]+)px", css):
+        if float(match.group(1)) < 12:
+            offenders.append(f"styles.css:{css[: match.start()].count(chr(10)) + 1}")
+    for path in _tsx_files():
+        source = path.read_text()
+        for match in re.finditer(r"fontSize[=:]\s*\{?\s*[\"']?([\d.]+)", source):
+            if float(match.group(1)) < 12:
+                line = source[: match.start()].count("\n") + 1
+                offenders.append(f"{path.relative_to(WEB_SRC.parents[1])}:{line}")
+    assert not offenders, (
+        "these set text below the 12px floor (use var(--t-micro)):\n  " + "\n  ".join(offenders)
+    )
