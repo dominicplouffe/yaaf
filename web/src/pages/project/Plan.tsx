@@ -214,9 +214,9 @@ function testLine(r: PlanRequirement): string {
     6,698,328 against 500,000" says the whole thing. */
 function MetricVerdict({ m }: { m: NonNullable<PlanRequirement["measurement"]> }) {
   const tone: Record<string, string> = {
-    losing: "var(--bad, var(--critical))",
-    gaining: "var(--good, var(--good))",
-    met: "var(--good, var(--good))",
+    losing: "var(--critical)",
+    gaining: "var(--good)",
+    met: "var(--good)",
   };
   return (
     <div style={{ marginTop: 6, fontSize: 12 }}>

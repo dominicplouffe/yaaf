@@ -951,7 +951,7 @@ function CardPicker({
         {help}
       </p>
       {staged && inForce && staged.value !== inForce.value && (
-        <p className="help" style={{ marginTop: 6, color: "var(--warn, var(--ink-2))" }}>
+        <p className="help" style={{ marginTop: 6, color: "var(--warning)" }}>
           Staged, not saved: {Object.keys(staged.constitution).length} rules move from
           {" "}<b>{inForce.label}</b> to <b>{staged.label}</b>, some of them on other tabs.
           Give a reason below and save, and it binds from the next agent call.
@@ -1579,13 +1579,13 @@ export default function Settings({
           Left behind on purpose: this project's history — runs, tasks, messages, memory, files,
           amendments.
         </p>
-        <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+        <p className="help" style={{ color: "var(--warning)" }}>
           ⚠ A twin is the same <i>shape</i> of project: its mode ({dash.mode}) and its teams are
           frozen at creation, exactly as this project's were. To change either — or anything else
           the creation form asks — don't twin it: download the setup file below and edit
           everything on the New Project page instead.
         </p>
-        <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+        <p className="help" style={{ color: "var(--warning)" }}>
           ⚠ The twin talks to the outside on its own wiring. Slack tokens come along but the
           channel map does not (two projects posting into one room helps nobody) — re-map rooms
           in the twin's Settings → Integrations. It also mints its own webhook signing secrets,
