@@ -50,22 +50,26 @@ def get_settings(session: Session = Depends(db)) -> dict:
     settings page that can show you a bot token is a settings page that can
     leak one into a screenshot, and rotating is the only thing anyone needs.
     """
+    founder = {
+        "configured": platform.has_credential(session),
+        "billing_mode": platform.billing_mode(session),
+        # Which provider it pays: the Founder runs on whichever one this says
+        # (docs/PROVIDERS.md §7).
+        "provider": platform.credential_provider(session),
+        "model": platform.founder_model(session),
+        # As set: a class resolves on whatever the credential pays.
+        "model_ref": platform.founder_model_ref(session),
+        # Its own key, or one of the LLM credentials below, borrowed.
+        "source": platform.credential_source(session),
+        "note": ("This key pays for product-wide conversations — the Founder. It is "
+                 "never injected into a sandbox and never reaches a project's agents: "
+                 "every project pays its own way with its own billing credential."),
+    }
     return {
-        "anthropic": {
-            "configured": platform.has_credential(session),
-            "billing_mode": platform.billing_mode(session),
-            # Which provider it pays — the section keeps its old name, and
-            # the Founder runs on whichever one this says (docs/RUNTIMES.md M6).
-            "provider": platform.credential_provider(session),
-            "model": platform.founder_model(session),
-            # As set: a class resolves on whatever the credential pays.
-            "model_ref": platform.founder_model_ref(session),
-            # Its own key, or one of the LLM credentials below, borrowed.
-            "source": platform.credential_source(session),
-            "note": ("This key pays for product-wide conversations — the Founder. It is "
-                     "never injected into a sandbox and never reaches a project's agents: "
-                     "every project pays its own way with its own billing credential."),
-        },
+        "platform": founder,
+        # The same section under the name it had when Anthropic was the only
+        # provider, for clients written then.
+        "anthropic": founder,
         "slack": slack_settings.platform_summary(session),
         "llm_credentials": _llm_counts(session),
     }
@@ -224,17 +228,23 @@ def check_credential(session: Session) -> dict:
     return {"ok": True, "detail": "the credential reached a model."}
 
 
+#: The platform credential's routes are `/platform-credential`; `/anthropic` is
+#: the name they had when it could pay nobody else, kept for clients written
+#: then. Both reach the same handler.
+@router.put("/platform-credential", dependencies=[authority.INSTANCE_ADMIN])
 @router.put("/anthropic", dependencies=[authority.INSTANCE_ADMIN])
 def put_anthropic(body: CredentialIn, session: Session = Depends(db)) -> dict:
     return install_credential(session, body.value, body.mode, body.provider, body.base_url,
                               body.model)
 
 
+@router.post("/platform-credential/test", dependencies=[authority.INSTANCE_ADMIN])
 @router.post("/anthropic/test", dependencies=[authority.INSTANCE_ADMIN])
 def test_anthropic(session: Session = Depends(db)) -> dict:
     return check_credential(session)
 
 
+@router.delete("/platform-credential", dependencies=[authority.INSTANCE_ADMIN])
 @router.delete("/anthropic", dependencies=[authority.INSTANCE_ADMIN])
 def delete_anthropic(session: Session = Depends(db)) -> dict:
     """Remove the platform key. Nothing else breaks: projects never used it,
@@ -247,6 +257,7 @@ class ModelIn(BaseModel):
     model: str = Field(min_length=3, max_length=200)
 
 
+@router.put("/platform-credential/model", dependencies=[authority.INSTANCE_ADMIN])
 @router.put("/anthropic/model", dependencies=[authority.INSTANCE_ADMIN])
 def put_anthropic_model(body: ModelIn, session: Session = Depends(db)) -> dict:
     return set_founder_model(session, body.model)

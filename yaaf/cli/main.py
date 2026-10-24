@@ -793,6 +793,14 @@ def delete_llm_credential(credential_id: str) -> None:
 @app.command()
 def set_platform_key(
     mode: str = typer.Option("api_key", "--mode", help="api_key | subscription"),
+    provider: str = typer.Option("anthropic", "--provider",
+                                 help="Which provider the key pays — `yaaf providers`"),
+    base_url: str = typer.Option(None, "--base-url",
+                                 help="The address, for a provider whose address is the "
+                                      "credential's own"),
+    model: str = typer.Option(None, "--model",
+                              help="The Founder's model; absent, the provider's frontier "
+                                   "class"),
     from_credential: str = typer.Option(
         None, "--from-credential",
         help="Draft on this LLM credential (name or id) instead of pasting a second key"),
@@ -817,8 +825,14 @@ def set_platform_key(
             _show(client.put("/admin/founder/credential/llm",
                              json={"credential_id": match["id"]}))
             return
-        value = typer.prompt("Credential value", hide_input=True)
-        _show(client.put("/admin/settings/anthropic", json={"value": value, "mode": mode}))
+        value = typer.prompt("Credential value", hide_input=True, default="",
+                             show_default=False)
+        body = {"value": value, "mode": mode, "provider": provider}
+        if base_url:
+            body["base_url"] = base_url
+        if model:
+            body["model"] = model
+        _show(client.put("/admin/settings/platform-credential", json=body))
 
 
 @app.command()

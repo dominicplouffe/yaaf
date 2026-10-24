@@ -295,6 +295,12 @@ WITHHELD = {
         "that could set one could price its own runs at zero and spend without limit.",
     "DELETE /admin/settings/model-prices/{model}":
         "same reason as setting one: the meter is the administrator's.",
+    "PUT /admin/settings/platform-credential": "a platform credential value, inbound.",
+    "POST /admin/settings/platform-credential/test": "reaches the platform credential.",
+    "DELETE /admin/settings/platform-credential":
+        "removes the install's platform credential — an administrator's decision.",
+    "PUT /admin/settings/platform-credential/model":
+        "product-wide configuration, not a project's.",
     "PUT /admin/settings/anthropic": "a platform credential value, inbound.",
     "POST /admin/settings/anthropic/test": "reaches the platform credential.",
     "DELETE /admin/settings/anthropic":
