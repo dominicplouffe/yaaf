@@ -112,8 +112,14 @@ def test_what_a_key_can_call_is_discoverable_by_the_names_a_seat_uses(client, mo
     listed = client.get(f"{CREDENTIALS}/{created.json()['id']}/models", headers=ADMIN)
     assert listed.status_code == 200, listed.text
     assert listed.json()["models"] == [
-        {"id": "deepseek-chat", "name": "deepseek-chat", "listed": True},
-        {"id": "deepseek/deepseek-v9", "name": "deepseek-v9", "listed": False}]
+        {"id": "deepseek-chat", "name": "deepseek-chat", "listed": True, "in_lineup": True},
+        {"id": "deepseek/deepseek-v9", "name": "deepseek-v9", "listed": False,
+         "in_lineup": False}]
+    # The lineup beside the list: a class whose model the key cannot call is
+    # visible before a seat on it is refused.
+    lineup = listed.json()["lineup"]
+    assert lineup["fast"] == {"model": "deepseek-chat", "served": True}
+    assert lineup["frontier"] == {"model": "deepseek-reasoner", "served": False}
 
 
 # ── the credential door ─────────────────────────────────────────────────────────

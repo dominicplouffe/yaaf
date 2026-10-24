@@ -101,7 +101,8 @@ def test_typing_over_an_imported_price_makes_it_the_administrators(client):
 
 FEED = {
     "groq/llama-4-maverick": {"litellm_provider": "groq", "mode": "chat",
-                              "input_cost_per_token": 2e-07, "output_cost_per_token": 6e-07},
+                              "input_cost_per_token": 2e-07, "output_cost_per_token": 6e-07,
+                              "max_input_tokens": 131072},
     "groq/whisper-large": {"litellm_provider": "groq", "mode": "audio_transcription",
                            "input_cost_per_token": 1e-07, "output_cost_per_token": 0},
     "gpt-6.1-sol": {"litellm_provider": "openai", "mode": "chat",
@@ -117,13 +118,35 @@ def test_a_live_feed_maps_onto_yaafs_names_and_reports_what_it_lacks(client, mon
     rows = _rows(client.post(IMPORT, headers=ADMIN, json={"provider": "groq"}))
     # A chat model, by the name a seat would use; never the audio one.
     assert set(rows) == {"groq/llama-4-maverick"}
+    # The window comes with the price: yaaf's own loop compacts against it.
     assert rows["groq/llama-4-maverick"]["proposed"] == {
-        "input": 0.2, "output": 0.6, "cache_read": 0.0, "cache_write": 0.0}
+        "input": 0.2, "output": 0.6, "cache_read": 0.0, "cache_write": 0.0,
+        "context_window": 131072}
     named = _rows(client.post(IMPORT, headers=ADMIN, json={
         "models": ["gpt-6.1-sol", "groq/no-such-model"]}))
     assert named["gpt-6.1-sol"]["proposed"]["cache_read"] == pytest.approx(0.1)
     assert named["groq/no-such-model"]["action"] == "missing"
     assert named["gpt-6.1-sol"]["source"].startswith("LiteLLM price feed 20")
+
+
+def test_a_models_window_reaches_the_run_that_compacts_against_it(client):
+    """The loop compacts a run's history before the model's window fills
+    (loop_harness). It learns the window from the lease: the install's own
+    figure where an administrator typed one, else the shipped snapshot's."""
+    from yaaf.core.db import db_session
+    from yaaf.core.prices import context_window
+
+    table = {r["model"]: r for r in client.get(PRICES, headers=ADMIN).json()}
+    assert table["deepseek-chat"]["context_window"] == 131072, "the snapshot's figure"
+    assert client.put(f"{PRICES}/deepseek-chat", headers=ADMIN, json={
+        "input": 0.3, "output": 0.5, "context_window": 64_000}).status_code == 200
+    with db_session() as session:
+        assert context_window(session, "deepseek-chat") == 64_000
+        assert context_window(session, "custom/never-heard-of-it") is None
+    # Typing a price again without a window keeps the window.
+    client.put(f"{PRICES}/deepseek-chat", headers=ADMIN, json={"input": 0.3, "output": 0.6})
+    with db_session() as session:
+        assert context_window(session, "deepseek-chat") == 64_000
 
 
 def test_an_unreachable_feed_says_so_and_points_at_the_snapshot(client, monkeypatch):

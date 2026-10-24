@@ -25,6 +25,12 @@ def held(session: Session, project: Project) -> dict[str, Secret]:
         secret = session.get(Secret, row.secret_id)
         if secret is not None:
             out[row.provider] = secret
+    # The fallback pays its provider where nothing else the project holds
+    # does: it is what a class seat moved there by failover runs on.
+    if project.fallback_secret_id:
+        fallback = session.get(Secret, project.fallback_secret_id)
+        if fallback is not None:
+            out.setdefault(fallback.provider or DEFAULT_PROVIDER, fallback)
     # The billing credential last, so it wins: a row naming the provider it
     # already pays is a stale row, not a second answer.
     if project.billing_secret_id:
@@ -55,6 +61,7 @@ def projects_using(session: Session, secret_id: str) -> list[Project]:
     ids = set(session.scalars(select(ProjectLlmCredential.project_id)
                               .where(ProjectLlmCredential.secret_id == secret_id)))
     ids |= set(session.scalars(select(Project.id).where(Project.billing_secret_id == secret_id)))
+    ids |= set(session.scalars(select(Project.id).where(Project.fallback_secret_id == secret_id)))
     if not ids:
         return []
     return list(session.scalars(select(Project).where(Project.id.in_(ids))
@@ -68,6 +75,8 @@ def usage(session: Session) -> dict[str, list[Project]]:
     out: dict[str, dict[str, Project]] = {}
     for project in session.scalars(select(Project).where(Project.billing_secret_id.is_not(None))):
         out.setdefault(project.billing_secret_id, {})[project.id] = project
+    for project in session.scalars(select(Project).where(Project.fallback_secret_id.is_not(None))):
+        out.setdefault(project.fallback_secret_id, {})[project.id] = project
     for row in session.scalars(select(ProjectLlmCredential)):
         project = session.get(Project, row.project_id)
         if project is not None:

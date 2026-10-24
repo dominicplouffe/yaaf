@@ -140,6 +140,23 @@ def primary_provider(session: Session, project: Project | None,
     return default_provider(session)
 
 
+def failover(session: Session, project: Project | None) -> Secret | None:
+    """The fallback credential a project's class seats run on right now: its
+    billing credential's breaker is open and the fallback's is not
+    (yaaf.core.breakers). None while the billing credential is healthy."""
+    from yaaf.core import breakers
+
+    if project is None or not project.fallback_secret_id or not project.billing_secret_id:
+        return None
+    if not breakers.is_open(session, project.billing_secret_id):
+        return None
+    fallback = session.get(Secret, project.fallback_secret_id)
+    if fallback is None or fallback.hidden_at is not None \
+            or breakers.is_open(session, fallback.id):
+        return None
+    return fallback
+
+
 def context(session: Session, project: Project | None = None, *,
             provider: str | None = None, modes: dict[str, str] | None = None) -> ModelContext:
     """A project's ModelContext — or, with no project, the install's (a role
@@ -153,7 +170,11 @@ def context(session: Session, project: Project | None = None, *,
         for name, secret in project_credentials.held(session, project).items():
             modes[name] = (project.billing_mode if secret.id == project.billing_secret_id
                            else secret.llm_mode or "api_key")
-    return ModelContext(provider=provider or primary_provider(session, project),
+    if provider is None:
+        moved = failover(session, project)
+        provider = (moved.provider or DEFAULT_PROVIDER) if moved is not None \
+            else primary_provider(session, project)
+    return ModelContext(provider=provider,
                         lineups=lineups(session), modes=modes or {},
                         platform_search=web_search.configured(session))
 

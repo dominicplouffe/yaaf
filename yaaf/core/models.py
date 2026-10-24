@@ -694,6 +694,9 @@ class Project(Base):
     # "api_key" | "subscription" — decides the budget's native unit (usd vs tokens)
     billing_mode: Mapped[str] = mapped_column(String(16), default="api_key")
     billing_secret_id: Mapped[str | None] = mapped_column(ForeignKey("secrets.id"))
+    # The credential class seats move to while the billing one's provider is
+    # failing (yaaf.core.breakers): another provider, metered the same way.
+    fallback_secret_id: Mapped[str | None] = mapped_column(ForeignKey("secrets.id"))
     # Domains/accounts the project controls; evidence from these can never be external.
     controlled_domains: Mapped[list] = mapped_column(JSONVariant, default=list)
     github_repo: Mapped[str | None] = mapped_column(String(255))
@@ -2280,6 +2283,53 @@ class ModelPrice(Base):
     #: Where the number came from: None for one an administrator typed, the
     #: feed and its date for one imported (yaaf.core.price_feed).
     source: Mapped[str | None] = mapped_column(String(200))
+    #: The model's input window in tokens, which yaaf's own loop compacts
+    #: against; None where nobody has said (yaaf.core.prices.context_window).
+    context_window: Mapped[int | None] = mapped_column(Integer)
+
+
+class CredentialBreaker(Base):
+    """Whether a credential's provider is failing, judged from its runs
+    (yaaf.core.breakers). Open: the projects it bills, where they hold a
+    fallback, resolve their class seats on the fallback's provider until it
+    closes. One row per credential, locked to update: concurrent runs
+    finishing must not lose each other's failures."""
+
+    __tablename__ = "credential_breakers"
+
+    secret_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    #: Transient failures in a row, reset by any run that worked.
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    #: How many times it opened since it last closed: each lengthens the wait.
+    trips: Mapped[int] = mapped_column(Integer, default=0)
+    opened_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    open_until: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class ProviderCheck(Base):
+    """One model checked on one credential: can it do yaaf's work
+    (yaaf.core.provider_check)? Kept, so a lineup is chosen from evidence and a
+    model that regressed shows as a newer row beside an older one."""
+
+    __tablename__ = "provider_checks"
+    __table_args__ = (Index("ix_provider_checks_secret_at", "secret_id", "started_at"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    secret_id: Mapped[str] = mapped_column(String(40))
+    provider: Mapped[str] = mapped_column(String(32))
+    model: Mapped[str] = mapped_column(String(128))
+    #: running → passed | partial | failed; `error` when it could not run at all.
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    summary: Mapped[str] = mapped_column(String(300), default="")
+    #: Each probe and task as it finished (provider_check.Outcome), in order.
+    outcomes: Mapped[list] = mapped_column(JSONVariant, default=list)
+    tasks: Mapped[bool] = mapped_column(Boolean, default=True)
+    cost_usd: Mapped[float | None] = mapped_column(Float)
+    started_by: Mapped[str | None] = mapped_column(String(40))
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class PlanReading(Base):

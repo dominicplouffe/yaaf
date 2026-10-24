@@ -34,6 +34,7 @@ import asyncio
 import dataclasses
 import json
 import os
+import re
 import time
 
 import httpx
@@ -66,6 +67,9 @@ _STOPS = {"end_turn": "end", "stop_sequence": "end", "tool_use": "tool_use",
 #: — so its class says nothing and its body says everything.
 _AUTH_TYPES = ("authentication_error", "permission_error", "billing_error")
 _TRANSIENT_TYPES = ("overloaded_error", "api_error", "rate_limit_error", "timeout_error")
+#: How the Messages API says a prompt outgrew the model's window.
+_TOO_LONG = re.compile(r"prompt is too long|exceeds? (the )?(model'?s? )?context|"
+                       r"context window", re.IGNORECASE)
 
 
 class AnthropicClient:
@@ -104,7 +108,9 @@ class AnthropicClient:
             "tools": [{"name": t.name, "description": t.description,
                        "input_schema": t.input_schema} for t in tools],
         }
-        if self.web_search:
+        # A call offered no tools is offered none: the summary a run compacts
+        # its history to is written, not searched for.
+        if self.web_search and tools:
             version = "20260209" if self.flags.get("web_tools") == "20260209" else "20250305"
             params["tools"].append({"type": f"web_search_{version}", "name": "web_search"})
         # Thinking is left to the model's default (adaptive where it has one).
@@ -180,6 +186,8 @@ class AnthropicClient:
             body = exc.body if isinstance(exc.body, dict) else {}
             error = body.get("error") if isinstance(body.get("error"), dict) else body
             kind = error.get("type")
+            if kind == "invalid_request_error" and _TOO_LONG.search(str(error.get("message"))):
+                return "context"
             if kind in _AUTH_TYPES:
                 return "auth"
             if kind in _TRANSIENT_TYPES:
@@ -253,7 +261,7 @@ class WireClient:
         await self._fresh_key()
         async for reply in wire.call(self.endpoint, self.model, system, transcript, tools,
                                      max_tokens, effort=self.effort,
-                                     web_search=self.native_search,
+                                     web_search=self.native_search and bool(tools),
                                      transport=self.transport or TRANSPORT):
             yield loop.Reply(turn=reply.turn, stop=reply.stop, usage=_bill(reply.usage),
                              model=reply.model, detail=reply.detail)

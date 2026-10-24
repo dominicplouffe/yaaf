@@ -114,6 +114,8 @@ def test_a_crew_on_another_provider_starts_and_every_seat_runs_on_it(library, pr
         assert job.provider == provider and job.harness == "yaaf_loop", job.agent_id
         assert job.model in lineup, job.model
         assert job.price is not None, f"{job.model} was leased with no price"
+        # The window its history is compacted against travels with it.
+        assert job.model_flags["context"] > 100_000, job.model
         assert set(job.billing_env) - {"YAAF_SEARCH", "YAAF_SEARCH_KEY"} == {
             {"openai": "OPENAI_API_KEY", "google": "GEMINI_API_KEY",
              "deepseek": "DEEPSEEK_API_KEY"}[provider]}

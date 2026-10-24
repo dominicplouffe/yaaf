@@ -729,6 +729,68 @@ def smoke(credential_id: str,
 
 
 @app.command()
+def check_provider(
+    credential_id: str,
+    model: list[str] = typer.Option(None, "--model",
+                                    help="A model to check (repeatable); what each class "
+                                         "resolves to on the provider when omitted"),
+    probes_only: bool = typer.Option(False, "--probes-only",
+                                     help="Skip the five agent tasks: about a quarter of "
+                                          "the calls"),
+    yes: bool = typer.Option(False, "--yes", help="Do not ask before spending"),
+) -> None:
+    """Can these models do yaaf's work? Probes (exact instructions, nested tool
+    arguments, a tool result used, parallel calls, the effort dial, search) and
+    five small agent tasks, graded mechanically. Spends the credential's own
+    money — the estimate is shown first."""
+    import time
+
+    path = f"/admin/settings/llm-credentials/{credential_id}"
+    body = {"models": list(model) if model else None, "tasks": not probes_only}
+    with _client() as client:
+        planned = _json_or_die(client.post(f"{path}/check", json={**body, "dry_run": True}))
+        cost = (f"about ${planned['estimate_usd']:.2f}" if planned["estimate_usd"] is not None
+                else "an unknown amount (a model has no price)")
+        typer.echo(f"{planned['steps']} steps on {', '.join(planned['models'])}: {cost}")
+        if not yes and not typer.confirm("Run it?"):
+            raise typer.Exit(1)
+        started = _json_or_die(client.post(f"{path}/check", json=body))
+        ids = {c["id"] for c in started["checks"]}
+        while True:
+            checks = [c for c in _json_or_die(client.get(f"{path}/checks")) if c["id"] in ids]
+            if checks and all(c["status"] != "running" for c in checks):
+                break
+            time.sleep(2)
+    failed = False
+    for check in checks:
+        spent = f"${check['cost_usd']:.4f}" if check["cost_usd"] is not None else "unpriced"
+        typer.echo(f"\n{check['model']}: {check['status'].upper()} — {check['summary']} "
+                   f"({spent})")
+        for outcome in check["outcomes"]:
+            mark = {True: "pass", False: "FAIL", None: "n/a "}[outcome["ok"]]
+            typer.echo(f"  {mark}  {outcome['kind']:<5} {outcome['name']:<15} "
+                       f"{outcome['detail']}")
+        failed |= check["status"] in ("failed", "error")
+    if failed:
+        raise typer.Exit(1)
+
+
+@app.command()
+def upkeep(enable: bool = typer.Option(None, "--enable/--disable",
+                                       help="Switch the daily pass on or off"),
+           run: bool = typer.Option(False, "--run", help="Run the pass now")) -> None:
+    """Keep models and prices current: re-read each key's model list and refresh
+    prices that came from the feed (never one typed by hand)."""
+    with _client() as client:
+        if enable is not None:
+            _json_or_die(client.put("/admin/settings/models/upkeep", json={"enabled": enable}))
+        if run:
+            _show(client.post("/admin/settings/models/upkeep/run"))
+            return
+        _show(client.get("/admin/settings/models"))
+
+
+@app.command()
 def set_web_search(
     backend: str = typer.Argument(..., help="brave, tavily, exa, serper, perplexity or "
                                             "searxng"),

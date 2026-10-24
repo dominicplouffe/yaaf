@@ -339,7 +339,11 @@ def test_a_seat_on_the_api_loop_is_leased_with_its_price_and_runs_on_its_entrypo
     assert (job.provider, job.harness) == ("anthropic", "yaaf_loop")
     row = catalog.model(job.model)
     assert job.price == row.price.as_dict()
+    # And the window its history is compacted against (loop_harness), from
+    # the shipped snapshot.
+    from yaaf.core.price_feed import shipped_window
+
     assert job.model_flags == {"effort": row.effort, "web_tools": row.web_tools,
-                               "efforts": None}
+                               "efforts": None, "context": shipped_window(job.model)}
     assert get_backend(job.harness).entrypoint == "loop_entry.py"
     assert json.loads(json.dumps(job.provider_spec))["protocol"] == "anthropic"

@@ -34,7 +34,7 @@ def unpaid(who: str, model: str, paid: list[str]) -> str:
 
 
 def seat_problem(session: Session, project: Project, agents: list[Agent], *,
-                 chat: bool = True) -> str | None:
+                 chat: bool = True, context=None) -> str | None:
     """The first seat of `agents` that could not run on this project, named,
     with why — or None. The doors raise it; the lease and the health checklist
     read it. `chat` asks R7 too — whether the CEO's seat can hold the
@@ -48,7 +48,9 @@ def seat_problem(session: Session, project: Project, agents: list[Agent], *,
     # health says so) or runs on the scripted backend, which reads none.
     pays = bool(project.billing_secret_id) and (
         (project.integrations or {}).get("runtime") != "mock")
-    context = model_policy.context(session, project)
+    # `context` names another provider for the bare classes — the fallback
+    # door asking whether the seats would run there.
+    context = context or model_policy.context(session, project)
     for agent in agents:
         role_version = role_version_for(session, agent)
         seat = seat_for(agent, role_version, context=context)

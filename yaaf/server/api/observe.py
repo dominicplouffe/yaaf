@@ -686,7 +686,7 @@ def project_flags(project_id: str, session: Session = Depends(db)) -> dict:
 
 @router.get("/projects/{project_id}", dependencies=[authority.READ])
 def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
-    from yaaf.server.api.admin import provider_credentials_view
+    from yaaf.server.api.admin import fallback_view, provider_credentials_view
 
     project = _project(session, project_id)
     cons = effective(session, project.id)
@@ -804,6 +804,9 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         # Every credential the project pays with, by provider — the billing
         # one first. Never a value.
         "credentials": provider_credentials_view(session, project),
+        # Where class seats go while the billing credential's provider fails,
+        # and whether they are there now.
+        "fallback": fallback_view(session, project),
         # Drought-clock anchors: the UI counts toward the refusal, not just
         # reporting it after the fact.
         "created_at": (
@@ -902,6 +905,37 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             f"paying {seller.label if seller else provider_name} with '{secret.name}'",
             "settings")
 
+    # Failover: whether class seats are on the fallback right now, and
+    # whether the fallback could still take them — a lineup or a price that
+    # moved since it was set would otherwise be found mid-outage.
+    from yaaf.server.api.admin import fallback_view
+
+    fallback = fallback_view(session, project)
+    if fallback["credential_id"]:
+        from yaaf.core import model_policy as models_policy
+        from yaaf.runtimes.providers import provider as seller_of
+        from yaaf.runtimes.seats import seat_for as seat_of
+        from yaaf.server.api.admin import _bare_class, _project_agents
+        from yaaf.server.contextpack import role_version_for as pinned_role
+        from yaaf.server.seat_checks import seat_problem
+
+        label = seller_of(fallback["provider"]).label
+        moving = [a for a in _project_agents(session, project.id)
+                  if _bare_class(seat_of(a, pinned_role(session, a)))]
+        problem = seat_problem(session, project, moving, context=models_policy.context(
+            session, project, provider=fallback["provider"]))
+        breaker = fallback["breaker"] or {}
+        if problem:
+            add("fallback", "warn", f"the fallback '{fallback['name']}' could no longer take "
+                f"the class seats on {label}: {problem}", "settings")
+        elif fallback["active"]:
+            add("fallback", "warn", f"the billing credential's provider is failing "
+                f"({breaker.get('last_error') or 'transient errors'}); class seats are "
+                f"running on '{fallback['name']}' ({label}) until it recovers", "settings")
+        else:
+            add("fallback", "ok", f"if the billing credential's provider fails, class seats "
+                f"move to '{fallback['name']}' ({label})", "settings")
+
     # Seats: every one on a harness that can serve its model, honour its
     # role's grants and pay with this credential. Every door that seats one
     # refuses otherwise; this is for the seat that reached here by another
@@ -932,6 +966,25 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         harness = HARNESSES.get(seat.harness or "")
         if harness is not None and harness.cost == "priced":
             metered.setdefault(seat.model, set()).add(harness.label)
+    # Models a provider no longer lists for the key: the class or pin a seat
+    # resolves to was retired, or this key was never given it. Named here
+    # before the seat's next run is refused for it (yaaf.core.model_upkeep).
+    from yaaf.core import model_upkeep
+
+    resolved: dict[str, list[str]] = {}
+    for agent in _project_agents(session, project.id):
+        seat = seat_for(agent, role_version_for(session, agent), context=context)
+        if seat.model:
+            resolved.setdefault(seat.model, []).append(agent.name)
+    for model, found in model_upkeep.not_served(session, sorted(resolved)).items():
+        names = resolved[model]
+        add(f"model-served:{model}", "warn",
+            f"{model} is not in the models {found['provider']} listed for its key on "
+            f"{found['at'][:10]} — {', '.join(names[:3])}"
+            f"{f' and {len(names) - 3} more' if len(names) > 3 else ''} would be refused "
+            "by the provider. Check the key's access, or move the class to a model it "
+            "lists (Settings → Models).",
+            "models")
     for gap in price_gaps(session, sorted(metered)):
         price = catalog.price(gap["model"])
         over = gap["drift"] > 0

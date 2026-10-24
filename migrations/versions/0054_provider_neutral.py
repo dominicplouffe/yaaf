@@ -8,6 +8,15 @@
 - `model_prices.source` — where an install's price came from: NULL for one an
   administrator typed, the feed and its date for one imported (yaaf.core.
   price_feed). The prices table can then say where each number came from.
+- `model_prices.context_window` — the model's input window in tokens, which
+  yaaf's own loop compacts against (a provider's API does not compact for it).
+  Imported with the price, or typed beside it.
+- `provider_checks` — one model checked on one credential: probes and small
+  agent tasks, graded mechanically (yaaf.core.provider_check).
+- `projects.fallback_secret_id` and `credential_breakers` — failover: a
+  credential whose provider keeps failing opens its breaker, and the projects
+  it bills move their class seats to their fallback credential's provider
+  until it closes (yaaf.core.breakers).
 - Model columns widen to 128, the width `model_prices.model` already had: a
   Bedrock inference profile or an OpenRouter route does not fit in 64.
 
@@ -17,7 +26,13 @@ Revises: 0053
 import sqlalchemy as sa
 from alembic import op
 
-from yaaf.core.migration_ops import add_column_if_missing
+from yaaf.core.migration_ops import (
+    add_column_if_missing,
+    create_fk_if_missing,
+    create_index_if_missing,
+    create_table_if_missing,
+)
+from yaaf.core.models import JSONVariant, UTCDateTime
 
 revision = "0054"
 down_revision = "0053"
@@ -34,6 +49,37 @@ def upgrade() -> None:
                            f"WHERE {column} IN :names").bindparams(
                                sa.bindparam("names", value=list(_RENAMED), expanding=True)))
     add_column_if_missing("model_prices", sa.Column("source", sa.String(200)))
+    add_column_if_missing("model_prices", sa.Column("context_window", sa.Integer))
+    create_table_if_missing(
+        "provider_checks",
+        sa.Column("id", sa.String(40), primary_key=True),
+        sa.Column("secret_id", sa.String(40), nullable=False),
+        sa.Column("provider", sa.String(32), nullable=False),
+        sa.Column("model", sa.String(128), nullable=False),
+        sa.Column("status", sa.String(16), nullable=False),
+        sa.Column("summary", sa.String(300), nullable=False),
+        sa.Column("outcomes", JSONVariant, nullable=False),
+        sa.Column("tasks", sa.Boolean, nullable=False),
+        sa.Column("cost_usd", sa.Float),
+        sa.Column("started_by", sa.String(40)),
+        sa.Column("started_at", UTCDateTime, nullable=False),
+        sa.Column("finished_at", UTCDateTime),
+    )
+    create_index_if_missing("ix_provider_checks_secret_at", "provider_checks",
+                            ["secret_id", "started_at"])
+    add_column_if_missing("projects", sa.Column("fallback_secret_id", sa.String(40)))
+    create_fk_if_missing("fk_projects_fallback_secret", "projects", "secrets",
+                         ["fallback_secret_id"], ["id"])
+    create_table_if_missing(
+        "credential_breakers",
+        sa.Column("secret_id", sa.String(40), primary_key=True),
+        sa.Column("failures", sa.Integer, nullable=False),
+        sa.Column("trips", sa.Integer, nullable=False),
+        sa.Column("opened_at", UTCDateTime),
+        sa.Column("open_until", UTCDateTime),
+        sa.Column("last_error", sa.String(300)),
+        sa.Column("updated_at", UTCDateTime, nullable=False),
+    )
     if op.get_bind().dialect.name == "postgresql":
         # SQLite does not hold a VARCHAR to its length; Postgres does.
         for table, column in _MODEL_COLUMNS:
@@ -41,4 +87,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_table("credential_breakers")
+    op.drop_column("projects", "fallback_secret_id")
+    op.drop_table("provider_checks")
+    op.drop_column("model_prices", "context_window")
     op.drop_column("model_prices", "source")

@@ -70,6 +70,8 @@ REACHED = {
         "project_configure (pay_provider) — by credential name, never a value",
     "DELETE /admin/projects/{project_id}/credentials/{provider_name}":
         "project_configure (stop_paying_provider)",
+    "PUT /admin/projects/{project_id}/fallback-credential":
+        "project_configure (set_fallback) — by credential name, never a value",
     "POST /admin/teams/{team_id}/stand_down": "lifecycle (stand_down)",
     "POST /admin/teams/{team_id}/recall": "lifecycle (recall)",
     "POST /admin/projects/{project_id}/mcp_servers": "data_source (add)",
@@ -266,11 +268,26 @@ WITHHELD = {
     "PUT /admin/settings/models/ceiling":
         "concurrency per provider is the install's rate-limit budget, shared by every "
         "project on it.",
+    "PUT /admin/settings/models/upkeep":
+        "whether the install reaches out daily to every provider and the price feed is "
+        "an administrator's decision.",
+    "POST /admin/settings/models/upkeep/run":
+        "it re-reads every key's model list and may move prices every project is "
+        "metered by.",
     "GET /admin/settings/llm-credentials/{credential_id}/models":
         "it spends a call on the credential's own key to list a provider's models; the "
         "lineup it helps set is an administrator's.",
     "POST /admin/settings/llm-credentials/{credential_id}/smoke":
         "it spends the credential's own money on a real call; an administrator's check.",
+    "POST /admin/settings/llm-credentials/{credential_id}/check":
+        "it spends the credential's own money on tens of real calls; an administrator's "
+        "check.",
+    "GET /admin/settings/llm-credentials/{credential_id}/checks":
+        "a credential's check results are about the install's keys, which a project "
+        "client never sees.",
+    "GET /admin/settings/provider-checks":
+        "which models an install has checked is evidence for its lineups — an "
+        "administrator's screen, above every project.",
     "GET /admin/settings/web-search":
         "which search backend the install pays for is above every project.",
     "PUT /admin/settings/web-search":

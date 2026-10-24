@@ -126,6 +126,10 @@ def janitor_all() -> None:
             verify_pending_evidence(session)
     except Exception:
         log.exception("evidence verification failed")
+    # The install's models and prices, re-read once a day where it opted in.
+    from yaaf.core import model_upkeep
+
+    model_upkeep.tick()
 
 
 def janitor_once(session: Session) -> None:

@@ -303,7 +303,9 @@ def _pin_seat(session: Session, run: Run, job: RunJob, seat) -> None:
     row = catalog.model(seat.model)
     job.model_flags = {"effort": _dial(seat, row, seller),
                        "web_tools": row.web_tools if row is not None else "basic",
-                       "efforts": list(row.efforts) if row is not None and row.efforts else None}
+                       "efforts": list(row.efforts) if row is not None and row.efforts else None,
+                       # What yaaf's own loop compacts against (loop_harness).
+                       "context": prices.context_window(session, seat.model)}
     run.model, run.effort = seat.model, seat.effort
     run.provider, run.harness = seat.provider, seat.harness
 
@@ -768,6 +770,14 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         if run.kind not in NON_WORK_RUN_KINDS and not run.produced:
             run.metered = False
 
+        # Every model run is evidence about its credential's provider: enough
+        # transient failures in a row open the breaker, and the projects it
+        # bills move their class seats to their fallback (yaaf.core.breakers).
+        if project is not None and job.provider and job.harness and job.harness != "mock" \
+                and job.kind in MODEL_RUN_KINDS and run.status in (RunStatus.DONE,
+                                                                   RunStatus.FAILED):
+            _record_breaker(session, project, job, run)
+
         # The run was told what is left on the plan behind its own credential.
         # Filing it here is the whole meter: no request to Anthropic, and it
         # refreshes exactly as often as the credential is actually used.
@@ -813,6 +823,65 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
             if project is not None and _looks_like_credential_failure(run):
                 _flag_credential_failure(session, project, run)
             _retry_failed_run(session, run)
+
+
+def _record_breaker(session: Session, project: Project, job: RunJob, run: Run) -> None:
+    from yaaf.core import breakers, project_credentials
+    from yaaf.core.models import AuditLog
+
+    secret = project_credentials.credential_for(session, project, job.provider)
+    if secret is None:
+        return
+    moved = breakers.record(session, secret.id, ok=run.status == RunStatus.DONE,
+                            kind=run.error_kind, detail=run.summary or "")
+    if moved is None:
+        return
+    seller = PROVIDERS.get(job.provider)
+    label = seller.label if seller else job.provider
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=None, actor="runner",
+        action=f"billing.breaker_{moved}", entity="secret", entity_id=secret.id,
+        detail={"provider": job.provider, "run_id": run.id,
+                "error": (run.summary or "")[:300]}))
+    _announce_failover(session, secret, label, moved)
+
+
+def _label(provider_name: str | None) -> str:
+    seller = PROVIDERS.get(provider_name or DEFAULT_PROVIDER)
+    return seller.label if seller else str(provider_name)
+
+
+def _announce_failover(session: Session, secret, label: str, moved: str) -> None:
+    """Tell each chairman whose project the move touched — after the fact:
+    the move itself already happened, by state."""
+    from yaaf.server.notify import Attention, chairman_notify, project_link
+
+    for project in session.scalars(select(Project).where(
+            Project.billing_secret_id == secret.id,
+            Project.status.in_((ProjectStatus.RUNNING, ProjectStatus.PAUSED)))):
+        fallback = session.get(Secret, project.fallback_secret_id) \
+            if project.fallback_secret_id else None
+        if moved == "opened":
+            body = (f"{label} is failing for '{secret.name}' — the last runs on it failed "
+                    "transiently in a row. "
+                    + (f"Class seats now run on '{fallback.name}' ({_label(fallback.provider)}) "
+                       "until it recovers; seats pinned to a model wait."
+                       if fallback is not None else
+                       "This project has no fallback credential, so its seats wait for it "
+                       "to recover — set one under Settings → Billing."))
+        else:
+            if fallback is None:
+                continue
+            body = f"{label} is answering again for '{secret.name}': class seats are back on it."
+        chairman_notify(session, project,
+                        f"{label} {'failing' if moved == 'opened' else 'recovered'}",
+                        "\n\n".join(filter(None, (body, project_link(project.id,
+                                                                     "settings")))),
+                        # Opened with nothing to move to, the project is stalled
+                        # until a person acts; a move that already happened is
+                        # a record.
+                        attention=(Attention.ALARM if moved == "opened" and fallback is None
+                                   else Attention.FYI))
 
 
 CREDENTIAL_FAILURE_MARKERS = failure_markers()

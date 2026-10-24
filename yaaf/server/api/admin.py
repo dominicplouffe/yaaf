@@ -1014,6 +1014,89 @@ def remove_project_credential(project_id: str, provider_name: str,
     return provider_credentials_view(session, project)
 
 
+class FallbackIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The credential class seats move to while the billing credential's
+    #: provider is failing; null removes it.
+    credential_id: str | None = None
+
+
+def _bare_class(seat) -> bool:
+    """A seat failover moves: one on a class with no provider named. A pinned
+    model, or `openai/@fast`, was put on its provider on purpose."""
+    provider, cls = catalog.parse(seat.ref)
+    return cls is not None and provider is None
+
+
+@router.put("/projects/{project_id}/fallback-credential", dependencies=[authority.STEER])
+def set_fallback_credential(project_id: str, body: FallbackIn,
+                            session: Session = Depends(db)) -> dict:
+    """Name the credential this project's class seats move to while its billing
+    credential's provider is failing (yaaf.core.breakers). Refused unless every
+    class seat could run there — resolved, paid, priced, able to do what its
+    role grants — because a fallback found wanting during an outage is no
+    fallback."""
+    from yaaf.core.llm_credentials import assigned_credential, bills
+    from yaaf.runtimes.seats import seat_for
+    from yaaf.server.contextpack import role_version_for
+    from yaaf.server.seat_checks import seat_problem
+
+    project = _get_project(session, project_id)
+    if not body.credential_id:
+        project.fallback_secret_id = None
+        _audit(session, project.id, "billing.fallback_removed", "project", project.id, {})
+        return fallback_view(session, project)
+    if not project.billing_secret_id:
+        raise HTTPException(status_code=422, detail=(
+            "attach a billing credential first — a fallback is what the class seats move "
+            "to when it fails"))
+    secret = assigned_credential(session, body.credential_id)
+    billing = session.get(Secret, project.billing_secret_id)
+    billing_provider = (billing.provider if billing else None) or runtime_providers.DEFAULT_PROVIDER
+    provider_name = secret.provider or runtime_providers.DEFAULT_PROVIDER
+    if provider_name == billing_provider:
+        raise HTTPException(status_code=422, detail=(
+            f"'{secret.name}' pays {runtime_providers.provider(provider_name).label}, the "
+            "provider the billing credential already pays — a fallback on the same provider "
+            "fails with it. Pick another provider's credential"))
+    if (secret.llm_mode or "api_key") != project.billing_mode:
+        raise HTTPException(status_code=422, detail=(
+            f"one project, one meter: this project's budget is kept in "
+            f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'}, and "
+            f"'{secret.name}' is a {bills(secret)} — pick one metered the same way"))
+    project.fallback_secret_id = secret.id
+    session.flush()
+    context = model_policy.context(session, project, provider=provider_name)
+    moving = [agent for agent in _project_agents(session, project.id)
+              if _bare_class(seat_for(agent, role_version_for(session, agent)))]
+    problem = seat_problem(session, project, moving, context=context)
+    if problem:
+        raise HTTPException(status_code=422, detail=(
+            f"'{secret.name}' cannot be this project's fallback: on "
+            f"{runtime_providers.provider(provider_name).label}, {problem}"))
+    _audit(session, project.id, "billing.fallback", "project", project.id,
+           {"credential_id": secret.id, "provider": provider_name,
+            "moves": [a.name for a in moving]})
+    return fallback_view(session, project)
+
+
+def fallback_view(session: Session, project: Project) -> dict:
+    """The fallback, whether it is in use right now, and what the billing
+    credential's breaker says — for the project's Settings and its header."""
+    from yaaf.core import breakers
+
+    fallback = session.get(Secret, project.fallback_secret_id) \
+        if project.fallback_secret_id else None
+    active = model_policy.failover(session, project)
+    return {"credential_id": fallback.id if fallback else None,
+            "name": fallback.name if fallback else None,
+            "provider": (fallback.provider or runtime_providers.DEFAULT_PROVIDER)
+            if fallback else None,
+            "active": active is not None,
+            "breaker": breakers.state(session, project.billing_secret_id)}
+
+
 @router.get("/providers", dependencies=[authority.SIGNED_IN])
 def list_providers() -> list[dict]:
     """Who sells the tokens, from the registry: everything the credential form
@@ -2852,6 +2935,14 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
             detail = _billing_shape_error(body.billing_mode, decrypt(secret.ciphertext))
             raise HTTPException(status_code=422,
                                 detail=detail or "billing mode must match the selected credential")
+        fallback = session.get(Secret, project.fallback_secret_id) \
+            if project.fallback_secret_id else None
+        if fallback is not None and (fallback.provider or runtime_providers.DEFAULT_PROVIDER) \
+                == (secret.provider or runtime_providers.DEFAULT_PROVIDER):
+            raise HTTPException(status_code=422, detail=(
+                f"this project's fallback '{fallback.name}' pays the same provider as "
+                f"'{secret.name}' — a fallback on the provider it backs up fails with it. "
+                "Remove or change the fallback first"))
         project.billing_secret_id = secret.id
         project.billing_mode = secret.llm_mode
         changed["billing_secret_id"] = secret.id

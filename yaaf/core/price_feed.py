@@ -25,6 +25,7 @@ prices included: a feed that is wrong shows up as drift on the health list.
 
 from __future__ import annotations
 
+import functools
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -84,10 +85,12 @@ class FeedPrice:
     output: float
     cache_read: float
     cache_write: float
+    #: The input window the feed states, which the loop compacts against.
+    context_window: int | None = None
 
     def as_dict(self) -> dict:
         return {"input": self.input, "output": self.output, "cache_read": self.cache_read,
-                "cache_write": self.cache_write}
+                "cache_write": self.cache_write, "context_window": self.context_window}
 
 
 def feed_url(session: Session) -> str:
@@ -117,7 +120,16 @@ def entry_price(entry: dict) -> FeedPrice | None:
     return FeedPrice(input=_per_million(entry["input_cost_per_token"]),
                      output=_per_million(entry["output_cost_per_token"]),
                      cache_read=_per_million(entry.get("cache_read_input_token_cost")),
-                     cache_write=_per_million(entry.get("cache_creation_input_token_cost")))
+                     cache_write=_per_million(entry.get("cache_creation_input_token_cost")),
+                     context_window=_tokens(entry.get("max_input_tokens")))
+
+
+def _tokens(value) -> int | None:
+    try:
+        tokens = int(value)
+    except (TypeError, ValueError):
+        return None
+    return tokens if tokens > 0 else None
 
 
 def lookup(feed: dict, model: str) -> FeedPrice | None:
@@ -183,6 +195,7 @@ def preview(session: Session, feed: dict, models: list[str], *, source: str,
                "current": ({"input": current.input, "output": current.output,
                             "cache_read": current.cache_read or 0.0,
                             "cache_write": current.cache_write or 0.0,
+                            "context_window": current.context_window,
                             "source": current.source} if current is not None else None),
                "shipped": shipped is not None}
         if found is None:
@@ -192,7 +205,8 @@ def preview(session: Session, feed: dict, models: list[str], *, source: str,
         elif current is None and shipped is not None and not include_shipped:
             row["action"] = "shipped"
         elif current is not None and all(
-                abs((getattr(current, k) or 0.0) - v) < 1e-9 for k, v in found.as_dict().items()):
+                abs((getattr(current, k) or 0.0) - (v or 0.0)) < 1e-9
+                for k, v in found.as_dict().items()):
             row["action"] = "same"
         else:
             row["action"] = "update" if current is not None else "add"
@@ -211,6 +225,8 @@ def apply(session: Session, rows: list[dict]) -> list[str]:
         proposed = row["proposed"]
         price.input, price.output = proposed["input"], proposed["output"]
         price.cache_read, price.cache_write = proposed["cache_read"], proposed["cache_write"]
+        # A feed that does not state a window leaves one somebody typed.
+        price.context_window = proposed.get("context_window") or price.context_window
         price.source = row["source"][:200]
         price.updated_at = utcnow()
         session.add(price)
@@ -219,10 +235,21 @@ def apply(session: Session, rows: list[dict]) -> list[str]:
     return written
 
 
+@functools.cache
+def _snapshot_text() -> str:
+    return SNAPSHOT.read_text()
+
+
 def snapshot() -> dict:
     """The dated snapshot shipped in the repo: the feed's rows for the models
     yaaf names, for an install that cannot reach the feed."""
-    return json.loads(SNAPSHOT.read_text())
+    return json.loads(_snapshot_text())
+
+
+def shipped_window(model: str) -> int | None:
+    """The input window the shipped snapshot states for a model, or None."""
+    found = lookup(snapshot()["models"], model)
+    return found.context_window if found is not None else None
 
 
 def snapshot_feed() -> tuple[dict, str]:

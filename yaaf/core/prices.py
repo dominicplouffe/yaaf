@@ -37,6 +37,18 @@ def price(session: Session, model: str) -> catalog.Price | None:
     return _row_price(row) if row is not None else catalog.price(model)
 
 
+def context_window(session: Session, model: str) -> int | None:
+    """The model's input window in tokens: the install's own figure, else the
+    shipped snapshot's, else None — and then yaaf's own loop compacts only
+    when the provider refuses a call for length."""
+    from yaaf.core import price_feed
+
+    row = session.get(ModelPrice, model)
+    if row is not None and row.context_window:
+        return row.context_window
+    return price_feed.shipped_window(model)
+
+
 def covered(session: Session, model: str) -> bool:
     """Whether a run on `model` can be metered in dollars: it has a price, or
     its provider states each call's cost (OpenRouter)."""
@@ -54,9 +66,10 @@ def table(session: Session) -> list[dict]:
         out.append({"model": model.id, "provider": model.provider, "listed": True,
                     "shipped": shipped,
                     "own": _row_price(row).as_dict() if row is not None else None,
-                    "source": row.source if row is not None else None})
+                    "source": row.source if row is not None else None,
+                    "context_window": context_window(session, model.id)})
     for model_id, row in sorted(own.items()):
         out.append({"model": model_id, "provider": catalog.provider_of(model_id),
                     "listed": False, "shipped": None, "own": _row_price(row).as_dict(),
-                    "source": row.source})
+                    "source": row.source, "context_window": context_window(session, model_id)})
     return out

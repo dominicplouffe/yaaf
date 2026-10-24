@@ -366,7 +366,9 @@ def test_a_model_the_catalog_does_not_list_is_leased_with_no_price(client):
     # No price, and nothing the catalog knows about it — except that on
     # Anthropic's own wire an unlisted model takes yaaf's effort names.
     assert job.price is None
-    assert job.model_flags == {"effort": True, "web_tools": "basic", "efforts": None}
+    # No window known either: the loop compacts on the provider's refusal.
+    assert job.model_flags == {"effort": True, "web_tools": "basic", "efforts": None,
+                               "context": None}
 
 
 def _bills(project_id: str, agent_id: str, model: str, reported: float, priced: float,
