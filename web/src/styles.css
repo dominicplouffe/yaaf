@@ -42,7 +42,7 @@
   --sunken: #121110;
   --ink: #f5f3ee;
   --ink-2: #b5b1a6;
-  --muted: #8c887d;
+  --muted: #928e83;
   --grid: #2e2c28;
   --border: #2e2c28;
   --border-strong: #413e38;
@@ -85,7 +85,7 @@
   --sunken: #f2f0ea;
   --ink: #1a1917;
   --ink-2: #56534b;
-  --muted: #757166;
+  --muted: #6c685d;
   --grid: #e5e2d9;
   --border: #e5e2d9;
   --border-strong: #d0ccc0;
@@ -125,7 +125,7 @@
   --sunken: #f2f0ea;
   --ink: #1a1917;
   --ink-2: #56534b;
-  --muted: #757166;
+  --muted: #6c685d;
   --grid: #e5e2d9;
   --border: #e5e2d9;
   --border-strong: #d0ccc0;
@@ -829,7 +829,6 @@ pre.block {
 
 /* Terminal projects are kept legible, not greyed into unreadability: the
    record is the point of keeping them. */
-.pcard.done, .prow.done { opacity: 0.72; }
 .pcard.done:hover, .prow.done:hover { opacity: 1; }
 
 /* One project on one line — the shape the archive is actually read in. */
@@ -1139,7 +1138,7 @@ table.csv .rownum {
 .j-sum { color: var(--muted); }
 /* What a closed branch holds, so a thousand records are not a thousand
    identical summaries. */
-.j-peek { color: var(--muted); opacity: 0.72; overflow: hidden;
+.j-peek { color: var(--muted); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .j-str { color: var(--json-str); overflow-wrap: anywhere; }
 .j-num { color: var(--json-num); }
@@ -1204,7 +1203,6 @@ table.csv .rownum {
 .rule.dirty { background: rgba(var(--accent-rgb), 0.07); border-radius: 6px; }
 /* A rule the current billing or project mode does not enforce. Dimmed, never
    hidden: a rule you cannot see is a rule you cannot change. */
-.rule.dimmed .lbl, .rule.dimmed .ctl { opacity: 0.5; }
 .rule.flash { animation: rule-flash 1.4s ease-out; }
 @keyframes rule-flash {
   from { background: rgba(var(--accent-rgb), 0.3); }
@@ -1363,7 +1361,6 @@ table.csv .rownum {
 .rrow.on { background: rgba(var(--accent-rgb), 0.09); }
 /* Already staffed here: still selectable — two teams may run one role — but
    never mistaken for a new hire. */
-.rrow.already .rn, .rrow.already .rd { opacity: 0.6; }
 .rrow .rn {
   font: 600 13px/1.35 inherit; color: var(--ink); background: none;
   border: 0; padding: 0; text-align: left; cursor: pointer; border-radius: 3px;
@@ -1705,13 +1702,11 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .drill-walk li { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; }
 .drill-walk .dm { width: 10px; flex: none; color: var(--muted); }
 .drill-walk li.ok .dm { color: var(--good); }
-.drill-walk li.na { opacity: 0.5; }
 .drill-walk .dl { flex: none; }
 .drill-walk .dd { color: var(--muted); min-width: 0; flex: 1; }
 .drill-walk .dt { font-size: var(--t-micro); color: var(--muted); white-space: nowrap; }
 .drill-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px;
   font-size: 12.5px; }
-.drill-list.quiet { opacity: 0.75; }
 
 /* ── founding: the conversation that designs a project ──────────────────────
    A conversation on the left, the project it is drafting on the right. The
@@ -1869,7 +1864,7 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .ledger-assumed { border-left-color: var(--warning); border-left-style: dashed; }
 .ledger-topic { font-size: var(--t-micro); color: var(--muted); display: flex; gap: 8px;
   align-items: baseline; }
-.ledger-source { font-size: 11px; opacity: 0.85; }
+.ledger-source { font-size: var(--t-micro); }
 .ledger-assumed .ledger-source { color: var(--warning); }
 .ledger-decision { color: var(--ink); font-size: var(--t-small); line-height: 1.45; }
 .ledger-change { position: absolute; right: 0; top: 6px; min-height: 0; padding: 2px 8px;
@@ -2001,7 +1996,6 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .cred-table { min-width: 790px; }
 .llm-credentials td.pick input, .llm-credentials th.pick input { width: auto; margin: 2px 0 0; }
 /* A hidden row is present, legible and plainly not participating. */
-.llm-credentials tr.is-hidden td:not(.llm-actions) { opacity: 0.62; }
 .llm-credentials td .help { margin: 2px 0 0; }
 @media (max-width: 640px) {
   .llm-header { align-items: stretch; flex-direction: column; gap: 12px; }
@@ -2108,11 +2102,11 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 }
 .avatar.sm { width: 24px; height: 24px; font-size: var(--t-micro); }
 .avatar.lg { width: 40px; height: 40px; font-size: var(--t-small); }
-.avatar.t1 { background: rgba(var(--accent-rgb), 0.2); color: var(--c1); }
-.avatar.t2 { background: rgba(var(--accent2-rgb), 0.2); color: var(--c2); }
-.avatar.t3 { background: rgba(30, 150, 168, 0.2); color: var(--c3); }
-.avatar.t4 { background: rgba(169, 129, 32, 0.22); color: var(--c4); }
-.avatar.t5 { background: rgba(165, 112, 219, 0.2); color: var(--c5); }
+.avatar.t1 { background: rgba(var(--accent-rgb), 0.2); color: color-mix(in srgb, var(--c1) 55%, var(--ink)); }
+.avatar.t2 { background: rgba(var(--accent2-rgb), 0.2); color: color-mix(in srgb, var(--c2) 55%, var(--ink)); }
+.avatar.t3 { background: rgba(30, 150, 168, 0.2); color: color-mix(in srgb, var(--c3) 55%, var(--ink)); }
+.avatar.t4 { background: rgba(169, 129, 32, 0.22); color: color-mix(in srgb, var(--c4) 55%, var(--ink)); }
+.avatar.t5 { background: rgba(165, 112, 219, 0.2); color: color-mix(in srgb, var(--c5) 55%, var(--ink)); }
 
 .person { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .person .pn { display: flex; flex-direction: column; line-height: 1.3; min-width: 0; }
@@ -2213,7 +2207,7 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 }
 .seg button:hover { background: transparent; color: var(--ink); border-color: transparent; }
 .seg button.on { background: var(--surface); color: var(--ink); box-shadow: var(--e1); }
-.seg button .n { font-weight: 500; opacity: 0.7; margin-left: 6px; }
+.seg button .n { font-weight: 500; margin-left: 6px; }
 
 /* ── nothing to show ──
    An empty state proves it is quiet rather than asserting it. */
@@ -2537,7 +2531,6 @@ button.linkish.inline { min-height: 0; padding: 0; border: 0; background: none; 
   border: 1px solid var(--border); border-radius: var(--radius); font-size: 13.5px;
 }
 .hrow { display: flex; gap: 10px; align-items: baseline; padding: 5px 0; font-size: 13px; }
-.hrow.ok, .hrow.put-away { opacity: 0.55; }
 .hrow > button.small { flex: none; }
 /* Where the header badge lands: a ring that fades, so the eye finds the card
    it was sent to without the card itself changing colour. */
@@ -2638,7 +2631,6 @@ button.onode:hover { background: var(--surface); border-color: var(--border-stro
 .onode.st-working { border-color: rgba(var(--accent-rgb), 0.4); }
 .onode.st-waiting { border-color: rgba(var(--warning-rgb), 0.5); }
 .onode.st-blocked { border-color: rgba(var(--serious-rgb), 0.45); }
-.onode.st-paused, .onode.st-stood_down { opacity: 0.7; }
 .on-id { display: flex; align-items: center; gap: 10px; }
 .on-name { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
 .on-name b { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
@@ -2858,6 +2850,15 @@ del.bd { color: var(--ink-2); background: rgba(var(--critical-rgb), 0.12);
 .opt-sec[open] > summary::before { content: "▾"; }
 .opt-sec > summary h2 { display: inline; margin: 0; }
 
+/* Receded: what is finished, paused, put away or gone. It steps one place
+   down the ink ramp rather than fading, because opacity takes the --muted text
+   inside it under 4.5:1, and --muted is already the floor that clears it. */
+.pcard.done, .prow.done, .req-card.settled, .rule.dimmed .lbl, .rule.dimmed .ctl,
+.rrow.already .rn, .rrow.already .rd, .drill-walk li.na, .drill-list.quiet,
+.llm-credentials tr.is-hidden td:not(.llm-actions), .hrow.ok, .hrow.put-away,
+.onode.st-paused, .onode.st-stood_down, .ib-snoozed-row, .org-branch.gone,
+.sched-row.paused, .team-c.gone { color: var(--ink-2); }
+
 /* Undo: decisions held a few seconds before they are sent. */
 .undo-host { position: fixed; left: 16px; bottom: 16px; z-index: 60; display: flex;
   flex-direction: column; gap: 8px; max-width: min(460px, calc(100vw - 32px)); }
@@ -2877,8 +2878,7 @@ del.bd { color: var(--ink-2); background: rgba(var(--critical-rgb), 0.12);
 .snooze-menu button:hover { background: rgba(var(--accent-rgb), 0.08); }
 .ib-snoozed { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 6px; }
 .ib-snoozed-h { padding: 6px 12px; font-weight: 600; letter-spacing: 0.3px; }
-.ib-snoozed-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 13.5px;
-  opacity: 0.8; }
+.ib-snoozed-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 13.5px; }
 
 /* A question with options: answered with one click. */
 .answer-options { margin-bottom: 14px; }
@@ -2900,7 +2900,6 @@ del.bd { color: var(--ink-2); background: rgba(var(--critical-rgb), 0.12);
 .team-h.new { border: 1.5px dashed rgba(var(--accent-rgb), 0.55); border-radius: var(--radius); padding: 8px 10px; }
 .team-why { font-size: 12.5px; color: var(--ink-2); line-height: 1.45; }
 .team-why q { font-style: italic; }
-.org-branch.gone { opacity: 0.7; }
 .org-gone { margin-top: 14px; font-size: 13px; text-align: center; }
 .org-gone .org-branches { margin-top: 10px; padding-top: 0; }
 .org-gone .org-branches::before, .org-gone .org-branch::before { content: none; }
@@ -2923,7 +2922,6 @@ del.bd { color: var(--ink-2); background: rgba(var(--critical-rgb), 0.12);
 .sched-axis i:first-child { transform: none; }
 .sched-axis i:last-child { transform: translateX(-100%); }
 .sched-who { text-align: left; min-height: 0; padding: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sched-row.paused { opacity: 0.6; }
 .sched-now { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: 0.5; }
 .sched-run { position: absolute; top: 3px; bottom: 3px; border-radius: 2px; background: var(--accent); }
 .sched-run.st-failed, .sched-run.st-reaped, .sched-run.st-terminated_refusals { background: var(--serious); }
@@ -3292,7 +3290,6 @@ table.accessmap tr:hover td.hot { background: rgba(var(--accent-rgb), 0.06); }
   border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
 .team-c.new { border: 1.5px dashed rgba(var(--accent-rgb), 0.55); }
 .team-c.new .team-h.new { border: 0; padding: 0; }
-.team-c.gone { opacity: 0.7; }
 .team-c .team-h { gap: 4px; }
 .team-c .team-role { min-height: 0; }
 .team-rows { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--border); padding-top: 6px; }
