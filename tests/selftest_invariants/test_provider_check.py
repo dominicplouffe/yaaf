@@ -224,3 +224,27 @@ def test_a_login_is_refused_not_faked(client):
         "value": "sk-ant-oat-test-placeholder"}).json()["id"]
     refused = client.post(f"{CREDENTIALS}/{credential}/check", headers=ADMIN, json={})
     assert refused.status_code == 422 and "only its own CLI" in refused.text
+
+
+def test_a_step_that_fails_partway_is_priced_at_the_calls_it_made(client, monkeypatch):
+    """Ten calls in and refused on the eleventh, a task was paid for ten — the
+    check's cost is what the credential spent, never the zero a fresh
+    failure record would say."""
+    credential = _deepseek(client)
+
+    def flaky(request):
+        body = json.loads(request.content)
+        tools = {t["function"]["name"] for t in body.get("tools") or []}
+        pages = [m for m in body["messages"] if m["role"] == "tool"]
+        if "list_orders" in tools and len(pages) >= 2:
+            return httpx.Response(500, json={"error": {"message": "upstream exploded"}})
+        return _competent(request)
+
+    monkeypatch.setattr(wire, "TRANSPORT", httpx.MockTransport(flaky))
+    client.post(f"{CREDENTIALS}/{credential}/check", headers=ADMIN,
+                json={"models": ["deepseek-chat"]})
+    [check] = _settled(client, credential)
+    aggregate = next(o for o in check["outcomes"] if o["name"] == "aggregate")
+    assert aggregate["ok"] is False and "refused a call (transient)" in aggregate["detail"]
+    assert aggregate["calls"] == 2
+    assert aggregate["cost_usd"] == pytest.approx(2 * (400 * 0.28 + 30 * 0.42) / 1e6)

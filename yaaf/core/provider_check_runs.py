@@ -32,8 +32,8 @@ from yaaf.runtimes.providers import provider, spec
 
 log = logging.getLogger("yaaf.provider_check")
 
-#: A row still `running` this long after it started was orphaned by a restart:
-#: no check takes this long, and a screen should not spin on it forever.
+#: A row still `running` this long after its last write was orphaned by a
+#: restart: no one step takes this long, and a screen should not spin on it.
 STALE_AFTER = timedelta(minutes=30)
 
 
@@ -100,7 +100,7 @@ def start(session: Session, secret: Secret, models: list[str], *, tasks: bool,
     checkable(secret)
     running = session.scalar(select(ProviderCheck).where(
         ProviderCheck.secret_id == secret.id, ProviderCheck.status == "running",
-        ProviderCheck.started_at > utcnow() - STALE_AFTER))
+        ProviderCheck.updated_at > utcnow() - STALE_AFTER))
     if running is not None:
         raise CheckRefused(f"a check of this credential is already running ({running.model})")
     rows = []
@@ -150,7 +150,9 @@ def _check(check_id: str) -> None:
             _record_error(row, str(exc))
             return
         steps, model = plan(row.tasks), row.model
-        row.summary = "running"
+        # Its own start, not the batch's: models run one after another, and a
+        # sixth model queued behind five is not stale.
+        row.summary, row.started_at = "running", utcnow()
     for name, kind, step in steps:
         outcome = run_step(target, name, kind, step)
         with db_session() as session:
@@ -158,13 +160,15 @@ def _check(check_id: str) -> None:
             if row is None:
                 return
             found = outcome.as_dict()
-            if found["cost_usd"] is None and found["ok"] is not None:
+            if found["cost_usd"] is None and found["calls"]:
                 price = install_prices.price(session, model)
                 if price is not None:
+                    seller = provider(row.provider)
                     found["cost_usd"] = (found["input_tokens"] * price.input
                                          + found["output_tokens"] * price.output
                                          + found["cache_read"] * price.cache_read
-                                         ) / 1_000_000
+                                         ) / 1_000_000 + found["web_searches"] * (
+                        seller.search_usd or catalog.WEB_SEARCH_USD)
             row.outcomes = [*row.outcomes, found]
             row.summary = f"running — {name} done"
         # A dead key fails every step the same way; one is the finding.
@@ -203,8 +207,9 @@ def _finish(check_id: str, status: str, summary: str) -> None:
 
 def render(row: ProviderCheck) -> dict:
     status = row.status
-    if status == "running" and row.started_at is not None and \
-            utcnow() - row.started_at > STALE_AFTER:
+    # Stale by its last write, not its start: a long check writes every step.
+    if status == "running" and row.updated_at is not None and \
+            utcnow() - row.updated_at > STALE_AFTER:
         status = "interrupted"
     graded = [o for o in row.outcomes if o.get("ok") is not None]
     return {"id": row.id, "credential_id": row.secret_id, "provider": row.provider,

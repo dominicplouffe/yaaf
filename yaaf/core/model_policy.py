@@ -158,7 +158,8 @@ def failover(session: Session, project: Project | None) -> Secret | None:
 
 
 def context(session: Session, project: Project | None = None, *,
-            provider: str | None = None, modes: dict[str, str] | None = None) -> ModelContext:
+            provider: str | None = None, modes: dict[str, str] | None = None,
+            fallback: bool | None = None) -> ModelContext:
     """A project's ModelContext — or, with no project, the install's (a role
     door, the Founder) on `provider` when one is named."""
     from yaaf.core import web_search
@@ -167,7 +168,8 @@ def context(session: Session, project: Project | None = None, *,
         from yaaf.core import project_credentials
 
         modes = {}
-        for name, secret in project_credentials.held(session, project).items():
+        for name, secret in project_credentials.held(session, project,
+                                                     fallback=fallback).items():
             modes[name] = (project.billing_mode if secret.id == project.billing_secret_id
                            else secret.llm_mode or "api_key")
     if provider is None:

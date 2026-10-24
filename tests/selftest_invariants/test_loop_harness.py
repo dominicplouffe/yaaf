@@ -584,7 +584,7 @@ def test_the_history_is_summarised_when_eliding_is_not_enough(run):
     compaction, resumed = run.requests[2], run.requests[3]
     # The summary call carries the history as text — no tool blocks, so no
     # provider's pairing rules — and is offered no tools, not even search.
-    assert compaction["tools"] == []
+    assert "tools" not in compaction
     [asked] = compaction["messages"]
     assert "being compacted" in asked["content"] and "RESULT of Read" in asked["content"]
     [message] = resumed["messages"]
@@ -618,3 +618,32 @@ def test_a_history_that_will_not_fit_even_summarised_is_fatal_not_a_loop(run):
     assert code == 1 and result["error_kind"] == "fatal"
     assert "larger window" in result["summary"]
     assert len(run.requests) == 3
+
+
+def test_a_prompt_whose_fixed_part_fills_the_window_ends_rather_than_thrashing(run):
+    """A summary is spent only once the history fits again. Reset after any
+    call that merely fit, a prompt whose fixed part alone filled the window
+    was summarised after every call — fifty paid summaries to the call limit,
+    no progress, and a run reported done."""
+    run.mp.setattr(run.base, "MODEL_FLAGS", {**FLAGS, "context": 7_000})
+    (run.workspace / "a.txt").write_text("x" * 50)
+    full = _reply([{"type": "tool_use", "id": "t1", "name": "Read",
+                    "input": {"file_path": "a.txt"}}], "tool_use",
+                  start=_usage(inp=6000, read=0, write=0))
+    summary = _reply([{"type": "text", "text": "summary"}],
+                     start=_usage(inp=3000, read=0, write=0), out=40)
+    code, result = _drive(run, [{"sse": full}, {"sse": summary}, {"sse": full},
+                                {"sse": summary}, {"sse": full}])
+    assert code == 1 and result["error_kind"] == "fatal"
+    assert "larger window" in result["summary"]
+    assert len(run.requests) == 3, "summarised again instead of stopping"
+
+
+def test_a_summary_that_came_back_empty_is_still_billed(run):
+    too_long = {"status": 400, "body": {"type": "error", "error": {
+        "type": "invalid_request_error", "message": "prompt is too long"}}}
+    empty = _reply([{"type": "text", "text": "   "}],
+                   start=_usage(inp=300_000, read=0, write=0), out=8000)
+    code, result = _drive(run, [too_long, {"sse": empty}])
+    assert code == 1 and "no summary" in result["summary"]
+    assert result["tokens_in"] >= 300_000, "a paid summary call went unmetered"

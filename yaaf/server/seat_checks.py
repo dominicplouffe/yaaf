@@ -34,7 +34,7 @@ def unpaid(who: str, model: str, paid: list[str]) -> str:
 
 
 def seat_problem(session: Session, project: Project, agents: list[Agent], *,
-                 chat: bool = True, context=None) -> str | None:
+                 chat: bool = True, context=None, fallback: bool | None = None) -> str | None:
     """The first seat of `agents` that could not run on this project, named,
     with why — or None. The doors raise it; the lease and the health checklist
     read it. `chat` asks R7 too — whether the CEO's seat can hold the
@@ -58,11 +58,13 @@ def seat_problem(session: Session, project: Project, agents: list[Agent], *,
             # R8 — a class with no model on its provider, before R5 asks who
             # pays for a model that does not exist.
             return f"{agent.name}: {unmodelled(seat.model)}"
-        credential = project_credentials.seat_credential(session, project, seat.provider)
+        credential = project_credentials.seat_credential(session, project, seat.provider,
+                                                         fallback=fallback)
         if credential is None and pays:
             # R5 — it fails at the door, not at 3am.
             return unpaid(agent.name, seat.model,
-                          sorted(project_credentials.held(session, project)))
+                          sorted(project_credentials.held(session, project,
+                                                          fallback=fallback)))
         problem = refusal(seat.harness, seat.model,
                           role_version.tool_permissions if role_version else {},
                           credential, priced=prices.covered(session, seat.model),

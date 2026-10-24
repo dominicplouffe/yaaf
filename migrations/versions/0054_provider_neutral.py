@@ -64,6 +64,7 @@ def upgrade() -> None:
         sa.Column("started_by", sa.String(40)),
         sa.Column("started_at", UTCDateTime, nullable=False),
         sa.Column("finished_at", UTCDateTime),
+        sa.Column("updated_at", UTCDateTime, nullable=False),
     )
     create_index_if_missing("ix_provider_checks_secret_at", "provider_checks",
                             ["secret_id", "started_at"])

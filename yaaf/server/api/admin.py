@@ -836,6 +836,9 @@ class ProjectCreate(BaseModel):
     # the billing credential's unit (R4); a seat on a provider with none is
     # refused (R5) — docs/RUNTIMES.md, M3.
     credentials: dict[str, str] = Field(default_factory=dict)
+    # The credential class seats move to while the billing one's provider is
+    # failing (yaaf.core.breakers) — held to the fallback door's rules.
+    fallback_secret_id: str | None = None
     teams: list[TeamSpec] = Field(default_factory=list)
     # Solo mode (the M2 single-agent arm): the CEO is placed as the sole member
     # — hence derived lead — of the only team, so one brain plans AND executes
@@ -918,6 +921,13 @@ def attach_provider_credential(session: Session, project: Project, provider_name
             f"one project, one meter: this project's budget is kept in "
             f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'}, and "
             f"'{secret.name}' is a {bills(secret)} — pick one metered the same way"))
+    fallback = session.get(Secret, project.fallback_secret_id) \
+        if project.fallback_secret_id else None
+    if fallback is not None and fallback.id != secret.id and \
+            (fallback.provider or runtime_providers.DEFAULT_PROVIDER) == provider_name:
+        raise HTTPException(status_code=422, detail=(
+            f"this project's fallback '{fallback.name}' is its {seller.label} credential — "
+            "pay with that one, or change the fallback first: one provider, one credential"))
     row = session.scalar(select(ProjectLlmCredential).where(
         ProjectLlmCredential.project_id == project.id,
         ProjectLlmCredential.provider == provider_name))
@@ -939,6 +949,17 @@ def _settle_provider_credentials(session: Session, project: Project) -> None:
     from yaaf.core.llm_credentials import bills
 
     billing = session.get(Secret, project.billing_secret_id) if project.billing_secret_id else None
+    fallback = session.get(Secret, project.fallback_secret_id) \
+        if project.fallback_secret_id else None
+    if fallback is not None and (fallback.llm_mode or "api_key") != project.billing_mode:
+        # The same rule the fallback door holds, held again when the money
+        # moves: a fallback in dollars on a budget kept in tokens would spend
+        # what no cap can stop.
+        raise HTTPException(status_code=422, detail=(
+            f"one project, one meter: the fallback '{fallback.name}' is a {bills(fallback)}, "
+            f"and this would keep the budget in "
+            f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'} — remove or "
+            "change the fallback first"))
     for row in session.scalars(select(ProjectLlmCredential).where(
             ProjectLlmCredential.project_id == project.id)).all():
         if billing is not None and row.provider == (billing.provider
@@ -1037,21 +1058,29 @@ def set_fallback_credential(project_id: str, body: FallbackIn,
     class seat could run there — resolved, paid, priced, able to do what its
     role grants — because a fallback found wanting during an outage is no
     fallback."""
-    from yaaf.core.llm_credentials import assigned_credential, bills
-    from yaaf.runtimes.seats import seat_for
-    from yaaf.server.contextpack import role_version_for
-    from yaaf.server.seat_checks import seat_problem
-
     project = _get_project(session, project_id)
     if not body.credential_id:
         project.fallback_secret_id = None
         _audit(session, project.id, "billing.fallback_removed", "project", project.id, {})
         return fallback_view(session, project)
+    apply_fallback(session, project, body.credential_id)
+    return fallback_view(session, project)
+
+
+def apply_fallback(session: Session, project: Project, credential_id: str) -> None:
+    """Name `credential_id` the project's fallback, or refuse with why: the
+    door's rules, shared with project creation and every importer."""
+    from yaaf.core import project_credentials
+    from yaaf.core.llm_credentials import assigned_credential, bills
+    from yaaf.runtimes.seats import seat_for
+    from yaaf.server.contextpack import role_version_for
+    from yaaf.server.seat_checks import seat_problem
+
     if not project.billing_secret_id:
         raise HTTPException(status_code=422, detail=(
             "attach a billing credential first — a fallback is what the class seats move "
             "to when it fails"))
-    secret = assigned_credential(session, body.credential_id)
+    secret = assigned_credential(session, credential_id)
     billing = session.get(Secret, project.billing_secret_id)
     billing_provider = (billing.provider if billing else None) or runtime_providers.DEFAULT_PROVIDER
     provider_name = secret.provider or runtime_providers.DEFAULT_PROVIDER
@@ -1065,12 +1094,18 @@ def set_fallback_credential(project_id: str, body: FallbackIn,
             f"one project, one meter: this project's budget is kept in "
             f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'}, and "
             f"'{secret.name}' is a {bills(secret)} — pick one metered the same way"))
+    paying = project_credentials.held(session, project, fallback=False).get(provider_name)
+    if paying is not None and paying.id != secret.id:
+        raise HTTPException(status_code=422, detail=(
+            f"this project already pays {runtime_providers.provider(provider_name).label} "
+            f"with '{paying.name}' — name that one as the fallback, or stop paying with it "
+            "first: one provider, one credential"))
     project.fallback_secret_id = secret.id
     session.flush()
-    context = model_policy.context(session, project, provider=provider_name)
+    context = model_policy.context(session, project, provider=provider_name, fallback=True)
     moving = [agent for agent in _project_agents(session, project.id)
               if _bare_class(seat_for(agent, role_version_for(session, agent)))]
-    problem = seat_problem(session, project, moving, context=context)
+    problem = seat_problem(session, project, moving, context=context, fallback=True)
     if problem:
         raise HTTPException(status_code=422, detail=(
             f"'{secret.name}' cannot be this project's fallback: on "
@@ -1078,7 +1113,6 @@ def set_fallback_credential(project_id: str, body: FallbackIn,
     _audit(session, project.id, "billing.fallback", "project", project.id,
            {"credential_id": secret.id, "provider": provider_name,
             "moves": [a.name for a in moving]})
-    return fallback_view(session, project)
 
 
 def fallback_view(session: Session, project: Project) -> dict:
@@ -1549,6 +1583,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     for provider_name, credential_id in body.credentials.items():
         attach_provider_credential(session, project, provider_name, credential_id)
     refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+    if body.fallback_secret_id:
+        apply_fallback(session, project, body.fallback_secret_id)
 
     # The boardroom on day one, when the chairman has already told us the
     # workspace. The ask behind app-wide Slack settings is "I made a project —
@@ -1776,6 +1812,10 @@ def export_project(project_id: str, include_values: bool = False,
             "credential_names": {c["provider"]: c["name"]
                                  for c in provider_credentials_view(session, project)
                                  if not c["billing"]},
+            # The fallback, by name, for the same reason.
+            "fallback_credential_name": (fallback.name if (fallback := session.get(
+                Secret, project.fallback_secret_id)) else None)
+            if project.fallback_secret_id else None,
             "ceo_role_slug": ceo_role_slug,
             "ceo_name": ceo.name,
             "ceo_daily_at": ceo.daily_at,
@@ -1953,6 +1993,10 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
             session.add(ProjectLlmCredential(id=ids.new_id(ids.PROJECT_CREDENTIAL),
                                              project_id=project.id, provider=row.provider,
                                              secret_id=row.secret_id))
+    # And its fallback, under the same rule.
+    if source.fallback_secret_id and project.billing_secret_id \
+            and resolve(session, credential_id=source.fallback_secret_id) is not None:
+        project.fallback_secret_id = source.fallback_secret_id
 
     source_ceo = session.execute(
         select(Agent).where(Agent.project_id == source.id, Agent.kind == AgentKind.CEO)

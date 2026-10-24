@@ -206,7 +206,9 @@ def preview(session: Session, feed: dict, models: list[str], *, source: str,
             row["action"] = "shipped"
         elif current is not None and all(
                 abs((getattr(current, k) or 0.0) - (v or 0.0)) < 1e-9
-                for k, v in found.as_dict().items()):
+                # A window the feed does not state changes nothing: the
+                # one the row has stays (apply keeps it).
+                for k, v in found.as_dict().items() if v is not None or k != "context_window"):
             row["action"] = "same"
         else:
             row["action"] = "update" if current is not None else "add"

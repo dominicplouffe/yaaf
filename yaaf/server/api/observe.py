@@ -923,7 +923,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         moving = [a for a in _project_agents(session, project.id)
                   if _bare_class(seat_of(a, pinned_role(session, a)))]
         problem = seat_problem(session, project, moving, context=models_policy.context(
-            session, project, provider=fallback["provider"]))
+            session, project, provider=fallback["provider"], fallback=True), fallback=True)
         breaker = fallback["breaker"] or {}
         if problem:
             add("fallback", "warn", f"the fallback '{fallback['name']}' could no longer take "
@@ -976,7 +976,8 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         seat = seat_for(agent, role_version_for(session, agent), context=context)
         if seat.model:
             resolved.setdefault(seat.model, []).append(agent.name)
-    for model, found in model_upkeep.not_served(session, sorted(resolved)).items():
+    paying = {name: secret.id for name, secret in project_credentials.held(session, project).items()}
+    for model, found in model_upkeep.not_served(session, sorted(resolved), paying).items():
         names = resolved[model]
         add(f"model-served:{model}", "warn",
             f"{model} is not in the models {found['provider']} listed for its key on "

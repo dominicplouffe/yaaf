@@ -103,9 +103,20 @@ FEED = {
 }
 
 
+class _Inline:
+    """The pass's own thread, run where the test can wait for it."""
+
+    def __init__(self, target, **kwargs):
+        self.target = target
+
+    def start(self):
+        self.target()
+
+
 def test_the_daily_pass_is_off_until_switched_on(client, monkeypatch):
     make_project(client, start=False)
     _deepseek(client)
+    monkeypatch.setattr(model_upkeep.threading, "Thread", _Inline)
     asked = _serves(monkeypatch, "deepseek-chat")
     model_upkeep.tick()
     assert asked == [], "an install that never opted in reached out to a provider"
@@ -176,3 +187,29 @@ def test_only_an_administrator_switches_it_on_or_runs_it(client):
     assert client.put(f"{MODELS}/upkeep", headers=member,
                       json={"enabled": True}).status_code == 403
     assert client.post(f"{MODELS}/upkeep/run", headers=member).status_code == 403
+
+
+def test_an_odd_answer_is_recorded_and_the_pass_is_not_due_again_until_tomorrow(
+        client, monkeypatch):
+    """A custom server behind a login proxy answers its model list with an
+    HTML page. Raised, it rolled the pass back with nothing recorded, so the
+    pass was due again — every janitor tick, against every provider."""
+    make_project(client, start=False)
+    credential = _deepseek(client)
+    monkeypatch.setattr(model_upkeep.threading, "Thread", _Inline)
+    asked = []
+
+    def login_page(request):
+        asked.append(request)
+        return httpx.Response(200, text="<html>Sign in</html>")
+
+    monkeypatch.setattr(wire, "TRANSPORT", httpx.MockTransport(login_page))
+    monkeypatch.setattr(price_feed, "TRANSPORT", httpx.MockTransport(
+        lambda r: httpx.Response(200, json=FEED)))
+    client.put(f"{MODELS}/upkeep", headers=ADMIN, json={"enabled": True})
+    model_upkeep.tick()
+    model_upkeep.tick()
+    assert len(asked) == 1
+    last = client.get(MODELS, headers=ADMIN).json()["upkeep"]["last"]
+    assert "error" in last["credentials"][credential]
+    assert "changed" in last["prices"], "one credential's odd answer stopped the price refresh"

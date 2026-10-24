@@ -353,6 +353,18 @@ outage is no fallback; the health checklist re-asks that question every day.
 The chairman is told after the fact (a record, or an alarm when there was
 nothing to move to); the move itself already happened, by state.
 
+The fallback pays only while seats are moved onto it — held always, it would
+also pay any seat pinned to its provider, which nobody named it for — and a
+project pays each provider with one credential, so the fallback and a
+"pays this provider too" credential cannot disagree about who pays. It is
+held to one meter when the billing credential moves as well as when it is
+named. It travels wherever its siblings do: a new project's body, a setup
+file (by name), a clone, the MCP `create_project` and `project_configure`
+tools, the CLI's import and the Founder's drafts.
+
+The breaker is written in a savepoint and never raised: a breaker row that
+cannot be written is a missed signal, never a run's booking rolled back.
+
 ---
 
 ## Migration — from what exists to the design

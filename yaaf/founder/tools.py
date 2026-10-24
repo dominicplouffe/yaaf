@@ -725,6 +725,17 @@ def _provider_credential_problems(project: dict, session: Session) -> list[str]:
         project["credentials"] = resolved
     else:
         project.pop("credentials", None)
+    # The fallback likewise, by name or by id.
+    fallback = project.pop("fallback_credential_name", None)
+    if fallback or project.get("fallback_secret_id"):
+        row = (llm_credentials.resolve(session, name=fallback) if fallback
+               else llm_credentials.resolve(session, credential_id=project["fallback_secret_id"]))
+        if row is None:
+            problems.append(f"fallback names no LLM credential {fallback or project.get('fallback_secret_id')!r}; "
+                            f"{llm_credentials.menu(session)}. Call list_credentials.")
+            project.pop("fallback_secret_id", None)
+        else:
+            project["fallback_secret_id"] = row.id
     return problems
 
 

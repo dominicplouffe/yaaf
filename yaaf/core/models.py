@@ -2330,6 +2330,8 @@ class ProviderCheck(Base):
     started_by: Mapped[str | None] = mapped_column(String(40))
     started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    #: Every step writes the row: a check is stale by this, not by its start.
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 class PlanReading(Base):

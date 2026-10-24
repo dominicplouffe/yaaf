@@ -98,9 +98,16 @@ class Target:
 async def _ask(target: Target, meter: _Meter, transcript: list[wire.Turn],
                tools: list[wire.ToolSpec], *, effort: str | None = None,
                web_search: bool = False) -> wire.Reply:
-    replies = [r async for r in wire.call(target.endpoint, target.model, SYSTEM, transcript,
-                                          tools, CALL_TOKENS, effort=effort,
-                                          web_search=web_search, transport=target.transport)]
+    try:
+        replies = [r async for r in wire.call(target.endpoint, target.model, SYSTEM,
+                                              transcript, tools, CALL_TOKENS, effort=effort,
+                                              web_search=web_search,
+                                              transport=target.transport)]
+    except Exception as exc:
+        # The calls already made were paid for: the step's failure carries
+        # them, so the check is priced at what it spent, not at zero.
+        exc.meter = meter  # type: ignore[attr-defined]
+        raise
     reply = replies[-1] if replies else None
     if reply is None:
         raise wire.WireError(0, {"error": {"message": "no reply"}}, "transient")
@@ -495,10 +502,14 @@ def run_step(target: Target, name: str, kind: str, step: Callable) -> Outcome:
     try:
         return asyncio.run(step(target))
     except wire.WireError as exc:
-        outcome = Outcome(name, kind, False, f"the provider refused a call ({exc.kind}): "
-                                             f"{str(exc)[:300]}")
+        detail = f"the provider refused a call ({exc.kind}): {str(exc)[:300]}"
+        failure: Exception = exc
     except (httpx.HTTPError, ValueError) as exc:
-        outcome = Outcome(name, kind, False, f"the call failed: {exc!r}"[:300])
+        detail = f"the call failed: {exc!r}"[:300]
+        failure = exc
+    meter = getattr(failure, "meter", None)
+    outcome = meter.outcome(name, kind, False, detail) if meter is not None \
+        else Outcome(name, kind, False, detail)
     outcome.latency_ms = int((time.monotonic() - started) * 1000)
     return outcome
 

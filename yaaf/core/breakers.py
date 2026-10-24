@@ -32,6 +32,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from yaaf.core.models import CredentialBreaker, utcnow
@@ -77,8 +78,15 @@ def record(session: Session, secret_id: str, *, ok: bool, kind: str | None,
     if row is None:
         if ok:
             return None
-        row = CredentialBreaker(secret_id=secret_id, failures=0, trips=0)
-        session.add(row)
+        # The first failure of an outage rarely comes alone, and a row that
+        # does not exist cannot be locked: two runs finishing at once would
+        # both insert it. One wins; the other reads the winner's row, locked.
+        try:
+            with session.begin_nested():
+                session.add(CredentialBreaker(secret_id=secret_id, failures=0, trips=0))
+        except IntegrityError:
+            pass
+        row = _row(session, secret_id, lock=True)
     now = utcnow()
     if ok:
         was_open = row.opened_at is not None

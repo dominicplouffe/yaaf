@@ -270,6 +270,10 @@ def rehearse(principal: Principal, session: Session, arguments: dict) -> dict:
                             "description": "What pays each provider the billing credential "
                                            "does not, as {provider: credential name} — "
                                            "{\"deepseek\": \"DeepSeek key\"}. Never a value"},
+            "fallback": {"type": "string",
+                         "description": "Optional: a stored credential's name, of another "
+                                        "provider, that class seats move to while the billing "
+                                        "credential's provider is failing"},
             "start": {"type": "boolean", "description": "Start it immediately (default false)"},
             "confirm": {"type": "string", "description": "The token from this tool's preview"},
             "detail": DETAIL_ARG,
@@ -323,8 +327,15 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
     wanted = {**(body.get("credential_names") or {}), **(arguments.get("credentials") or {})}
     paying = {provider_name: _billing_secret(session, name)
               for provider_name, name in wanted.items() if isinstance(name, str)}
+    # The fallback, by name likewise — from the arguments or the bundle.
+    fallback_name = arguments.get("fallback") or body.get("fallback_credential_name")
+    fallback = _billing_secret(session, fallback_name) if isinstance(fallback_name, str) \
+        else None
     body = {k: v for k, v in body.items()
-            if k not in ("billing_secret_id", "billing_secret_name", "credential_names")}
+            if k not in ("billing_secret_id", "billing_secret_name", "credential_names",
+                         "fallback_credential_name", "fallback_secret_id")}
+    if fallback is not None:
+        body["fallback_secret_id"] = fallback.id
     if billing is not None:
         body["billing_secret_id"] = billing.id
         body["billing_secret_name"] = billing.name  # for the summary; the endpoint ignores it

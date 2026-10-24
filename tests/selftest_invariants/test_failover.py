@@ -222,3 +222,110 @@ def test_only_someone_who_can_steer_the_project_sets_its_fallback(world):
         f"/admin/projects/{world['project']['id']}/fallback-credential",
         headers={"Authorization": f"Bearer {token}"}, json={"credential_id": world["gemini"]})
     assert agent.status_code in (401, 403), "an agent re-pointed its own project's money"
+
+
+def test_moving_billing_to_another_meter_is_refused_while_the_fallback_keeps_the_old_one(
+        world):
+    """One project, one meter (R4), held again when the money moves: a
+    fallback in dollars on a budget now kept in tokens would spend what no
+    cap can stop — the door refused it, and the billing change must too."""
+    assert _fallback(world, world["gemini"]).status_code == 200
+    plan = _credential(world["client"], "Claude plan", "anthropic",
+                       "sk-ant-oat01-failover-meter-placeholder", mode="subscription")
+    refused = world["client"].patch(f"/admin/projects/{world['project']['id']}",
+                                    headers=ADMIN, json={"billing_secret_id": plan})
+    assert refused.status_code == 422 and "the fallback 'Gemini'" in refused.text
+
+
+def test_the_fallback_pays_nothing_until_it_is_in_use(world):
+    """Named as a fallback, a credential pays class seats moved onto it — not
+    a seat pinned to its provider, at any hour, which nobody named it for."""
+    from yaaf.core import project_credentials
+    from yaaf.core.models import Project
+
+    _fallback(world, world["gemini"])
+    with db_session() as session:
+        project = session.get(Project, world["project"]["id"])
+        assert "google" not in project_credentials.held(session, project)
+    for _ in range(3):
+        _finish(world, ok=False, kind="transient")
+    with db_session() as session:
+        project = session.get(Project, world["project"]["id"])
+        assert project_credentials.held(session, project)["google"].id == world["gemini"]
+
+
+def test_one_provider_one_credential_between_the_fallback_and_a_paid_provider(world):
+    client, project_id = world["client"], world["project"]["id"]
+    _fallback(world, world["gemini"])
+    other = _credential(client, "Gemini 2", "google", "AIza-failover-second-key")
+    paid = client.put(f"/admin/projects/{project_id}/credentials/google", headers=ADMIN,
+                      json={"credential_id": other})
+    assert paid.status_code == 422 and "fallback 'Gemini'" in paid.text
+    _fallback(world, None)
+    assert client.put(f"/admin/projects/{project_id}/credentials/google", headers=ADMIN,
+                      json={"credential_id": other}).status_code == 200
+    refused = _fallback(world, world["gemini"])
+    assert refused.status_code == 422 and "name that one as the fallback" in refused.text
+
+
+def test_a_breaker_that_cannot_be_written_never_costs_a_run_its_booking(world, monkeypatch):
+    """The first failures of an outage arrive together, and two runs can race
+    to create one credential's breaker row. Whatever goes wrong there is a
+    missed signal — never a finalize rolled back, a run left RUNNING and its
+    bill unbooked."""
+    from yaaf.core import breakers
+    from yaaf.core.models import LedgerEntry, Run
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("duplicate key value violates unique constraint")
+
+    monkeypatch.setattr(breakers, "record", broken)
+    run_id, _ = live_token(world["project"]["id"], world["agents"]["CEO"])
+    job = RunJob(run_id=run_id, project_id=world["project"]["id"],
+                 agent_id=world["agents"]["CEO"], kind="agent_run", trigger={},
+                 task_id=None, attempt=1)
+    job.provider, job.harness = "openai", "yaaf_loop"
+    daemon.finalize(job, RunResult(ok=False, error_kind="transient", summary="529",
+                                   tokens_in=1000, tokens_out=10, cost_usd=0.02))
+    with db_session() as session:
+        assert session.get(Run, run_id).status == "failed"
+        assert session.query(LedgerEntry).filter_by(run_id=run_id).count() == 1
+
+
+def test_two_first_failures_make_one_breaker(world):
+    from yaaf.core import breakers
+
+    with db_session() as session:
+        breakers.record(session, world["openai"], ok=False, kind="transient")
+        breakers.record(session, world["openai"], ok=False, kind="transient")
+    with db_session() as session:
+        assert session.get(CredentialBreaker, world["openai"]).failures == 2
+
+
+def test_the_fallback_travels_with_the_project_like_the_credentials_beside_it(world):
+    """Its sibling's footprint: wherever what pays a second provider travels —
+    a setup file, a clone, a new project's body — the fallback travels too,
+    by name where values cannot."""
+    client, project_id = world["client"], world["project"]["id"]
+    _fallback(world, world["gemini"])
+    bundle = client.get(f"/admin/projects/{project_id}/export", headers=ADMIN).json()
+    assert bundle["project"]["fallback_credential_name"] == "Gemini"
+    twin = client.post(f"/admin/projects/{project_id}/clone", headers=ADMIN,
+                       json={"slug": "failover-twin"})
+    assert twin.status_code == 200, twin.text
+    twin_view = client.get(f"/observe/projects/{twin.json()['id']}", headers=ADMIN).json()
+    assert twin_view["fallback"]["credential_id"] == world["gemini"]
+    created = client.post("/admin/projects", headers=ADMIN, json={
+        "slug": "born-with-a-fallback", "name": "Born", "goal": "Prove the framework works.",
+        "chairman_email": "chair@example.com", "ceo_role_slug": "chief", "ceo_name": "CEO",
+        "billing_secret_id": world["openai"], "fallback_secret_id": world["gemini"],
+        "teams": [{"role_slug": "writer", "name": "Words", "employees": ["Ada"]}]})
+    assert created.status_code == 200, created.text
+    view = client.get(f"/observe/projects/{created.json()['id']}", headers=ADMIN).json()
+    assert view["fallback"]["name"] == "Gemini"
+    refused = client.post("/admin/projects", headers=ADMIN, json={
+        "slug": "same-provider-fallback", "name": "Same", "goal": "Prove the framework works.",
+        "chairman_email": "chair@example.com", "ceo_role_slug": "chief", "ceo_name": "CEO",
+        "billing_secret_id": world["openai"], "fallback_secret_id": world["openai"],
+        "teams": [{"role_slug": "writer", "name": "Words", "employees": ["Ada"]}]})
+    assert refused.status_code == 422 and "fails with it" in refused.text

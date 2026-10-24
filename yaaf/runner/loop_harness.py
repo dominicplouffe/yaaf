@@ -645,16 +645,34 @@ class LoopDriver:
         if room is not None and self.price is not None and self.price["output"] > 0:
             max_tokens = max(1, min(max_tokens, int(room / self.price["output"] * 1_000_000)))
         reply: Reply | None = None
-        async with aclosing(self.client.stream(
-                self.system, [Turn("user", text=COMPACT_PROMPT + self._history())], [],
-                max_tokens)) as events:
-            async for event in events:
-                if isinstance(event, Reply):
-                    reply = event
-        if reply is None or not reply.turn.text.strip():
-            raise ContextExhausted("the model returned no summary to compact the history to")
+        stated: base.AttemptResult | None = None
+        try:
+            async with aclosing(self.client.stream(
+                    self.system, [Turn("user", text=COMPACT_PROMPT + self._history())], [],
+                    max_tokens)) as events:
+                async for event in events:
+                    if isinstance(event, Reply):
+                        reply = event
+                        continue
+                    stated = event
+                    # The main loop's mid-call cut, for the same reason.
+                    if (room is not None and self.price is not None
+                            and base._priced(self.price, event) >= room):
+                        break
+        except Exception:
+            if stated is not None:
+                yield self._bill(stated, "interrupted")
+            raise
         self.calls += 1
+        if reply is None:
+            if stated is not None:
+                yield self._bill(stated, "budget_stop")
+            raise BudgetReached("per-run cap reached while compacting the history")
+        # Billed before it is judged: a summary that came back empty — its
+        # thinking ate the output — was still paid for.
         yield self._bill(reply.usage, "compaction")
+        if not reply.turn.text.strip():
+            raise ContextExhausted("the model returned no summary to compact the history to")
         first = next((t.text for t in self.transcript if t.role == "user" and t.text), "")
         self.transcript = [Turn("user", text=(
             f"{first}\n\n---\n[Context compacted: the conversation so far was summarised to fit "
@@ -787,10 +805,18 @@ class LoopDriver:
                                f"{base.MODEL} has no price on this install to meter it by")
             spent += bill.cost_usd
             self.transcript.append(reply.turn)
-            self.measured = (bill.tokens_in + bill.cache_read + bill.cache_creation
-                             + bill.tokens_out)
-            self.unmeasured_chars = 0
-            summarised = False
+            # What the next call will be sent: this prompt, and the reply as it
+            # goes back — its text and calls, never the reasoning its output
+            # tokens also counted, which is not replayed (and counting it made
+            # a thinking model look full when it was not).
+            self.measured = bill.tokens_in + bill.cache_read + bill.cache_creation
+            self.unmeasured_chars = len(reply.turn.text) + sum(
+                len(c.name) + len(json.dumps(c.input, default=str)) for c in reply.turn.calls)
+            # A summary is spent only once the history fits again: a prompt
+            # whose fixed part alone fills the window would otherwise be
+            # summarised after every call, forever, making no progress.
+            if not self._crowded():
+                summarised = False
             yield base.TraceLine({"type": "AssistantMessage", "model": reply.model,
                                   "stop": reply.stop,
                                   "calls": [c.name for c in reply.turn.calls]})

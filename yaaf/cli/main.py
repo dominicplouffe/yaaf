@@ -453,8 +453,9 @@ def create_project(spec_file: Path) -> None:
                     typer.echo(f"added role {role['slug']} from the setup file")
             wanted = project.pop("billing_secret_name", None)
             others = project.pop("credential_names", None) or {}
+            backup = project.pop("fallback_credential_name", None)
             listed = (_json_or_die(client.get("/admin/settings/llm-credentials"))
-                      if wanted or others else [])
+                      if wanted or others or backup else [])
 
             def named(name: str) -> dict | None:
                 return next((c for c in listed
@@ -477,6 +478,14 @@ def create_project(spec_file: Path) -> None:
                 else:
                     typer.echo(f"no {provider} credential called {name!r} on this install "
                                "— seats on that provider cannot run until one is assigned",
+                               err=True)
+            if backup:
+                match = named(backup)
+                if match:
+                    project["fallback_secret_id"] = match["id"]
+                else:
+                    typer.echo(f"no LLM credential called {backup!r} — the project is "
+                               "created with no fallback; name one in its Settings → Money",
                                err=True)
             spec = project
         _show(client.post("/admin/projects", json=spec))
@@ -770,7 +779,7 @@ def check_provider(
             mark = {True: "pass", False: "FAIL", None: "n/a "}[outcome["ok"]]
             typer.echo(f"  {mark}  {outcome['kind']:<5} {outcome['name']:<15} "
                        f"{outcome['detail']}")
-        failed |= check["status"] in ("failed", "error")
+        failed |= check["status"] in ("failed", "error", "interrupted")
     if failed:
         raise typer.Exit(1)
 

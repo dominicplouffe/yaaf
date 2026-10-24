@@ -655,6 +655,8 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
     # And what pays any other provider, for the same reason.
     body.pop("credentials", None)
     body.pop("credential_names", None)
+    body.pop("fallback_secret_id", None)
+    body.pop("fallback_credential_name", None)
     # The runtime is the whole point: scripted agents against the real API.
     integrations = dict(body.get("integrations") or {})
     integrations["runtime"] = "mock"

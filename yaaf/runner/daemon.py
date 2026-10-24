@@ -832,8 +832,16 @@ def _record_breaker(session: Session, project: Project, job: RunJob, run: Run) -
     secret = project_credentials.credential_for(session, project, job.provider)
     if secret is None:
         return
-    moved = breakers.record(session, secret.id, ok=run.status == RunStatus.DONE,
-                            kind=run.error_kind, detail=run.summary or "")
+    # In a savepoint, and never raised: a breaker that cannot be written is a
+    # missed signal; a finalize that rolls back is a run left RUNNING with its
+    # bill unbooked.
+    try:
+        with session.begin_nested():
+            moved = breakers.record(session, secret.id, ok=run.status == RunStatus.DONE,
+                                    kind=run.error_kind, detail=run.summary or "")
+    except Exception:
+        log.exception("could not record run %s against its credential's breaker", run.id)
+        return
     if moved is None:
         return
     seller = PROVIDERS.get(job.provider)

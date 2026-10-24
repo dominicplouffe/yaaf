@@ -105,14 +105,15 @@ class AnthropicClient:
                         "cache_control": {"type": "ephemeral"}}],
             "cache_control": {"type": "ephemeral"},
             "messages": [self._message(turn) for turn in transcript],
-            "tools": [{"name": t.name, "description": t.description,
-                       "input_schema": t.input_schema} for t in tools],
         }
+        if tools:
+            params["tools"] = [{"name": t.name, "description": t.description,
+                                "input_schema": t.input_schema} for t in tools]
         # A call offered no tools is offered none: the summary a run compacts
         # its history to is written, not searched for.
         if self.web_search and tools:
             version = "20260209" if self.flags.get("web_tools") == "20260209" else "20250305"
-            params["tools"].append({"type": f"web_search_{version}", "name": "web_search"})
+            params.setdefault("tools", []).append({"type": f"web_search_{version}", "name": "web_search"})
         # Thinking is left to the model's default (adaptive where it has one).
         # Effort only where the model takes it: Claude Haiku 4.5 rejects it.
         if self.flags.get("effort", True):

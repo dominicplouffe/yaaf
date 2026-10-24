@@ -1192,10 +1192,11 @@ def put_upkeep(body: UpkeepIn, session: Session = Depends(db)) -> dict:
 
 @router.post("/models/upkeep/run", dependencies=[authority.INSTANCE_ADMIN])
 def run_upkeep(session: Session = Depends(db)) -> dict:
-    """The daily pass, now, whether or not it is switched on."""
+    """The daily pass, now, whether or not it is switched on. It keeps its own
+    transactions, so none is held open across a provider's answer."""
     from yaaf.core import model_upkeep
 
-    return model_upkeep.run(session)
+    return model_upkeep.run()
 
 
 class SmokeIn(BaseModel):
@@ -1314,7 +1315,8 @@ def run_credential_check(credential_id: str, body: CheckIn | None = None,
     from yaaf.server.api.admin import _audit
 
     body = body or CheckIn()
-    row = _managed(session, credential_id, lock=False)
+    # Locked: two requests at once must not both find nothing running.
+    row = _managed(session, credential_id, lock=not body.dry_run)
     try:
         provider_check_runs.checkable(row)
     except provider_check_runs.CheckRefused as exc:
