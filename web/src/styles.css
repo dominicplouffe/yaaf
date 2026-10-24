@@ -419,17 +419,20 @@ button {
   border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink);
   transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
 }
-button:hover { background: var(--hover); border-color: var(--muted); }
+/* A disabled button keeps its resting look under the pointer. The hovers say so
+   themselves, inside :where() so they weigh what they always did: the old
+   reset painted every disabled button --surface on hover and left a primary's
+   --on-accent label on it, white on white, with nothing to click. */
+button:where(:not(:disabled)):hover { background: var(--hover); border-color: var(--muted); }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-button.primary:hover { background: var(--accent); filter: brightness(1.08); }
+button.primary:where(:not(:disabled)):hover { background: var(--accent); filter: brightness(1.08); }
 /* Destructive work is outlined, never filled, and never wordless: a filled red
    square with no label is the most dangerous control in the product and it
    looked like a decoration. */
 button.danger { background: transparent; border-color: rgba(var(--critical-rgb), 0.55); color: var(--critical); }
-button.danger:hover { background: rgba(var(--critical-rgb), 0.1); border-color: var(--critical); color: var(--critical); }
+button.danger:where(:not(:disabled)):hover { background: rgba(var(--critical-rgb), 0.1); border-color: var(--critical); color: var(--critical); }
 button.small { min-height: 30px; padding: 4px 11px; font-size: var(--t-micro); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
-button:disabled:hover { background: var(--surface); border-color: var(--border-strong); }
 
 .actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
 
@@ -1422,7 +1425,7 @@ button.linkish {
   background: none; border: 0; padding: 0; color: var(--accent); font-size: 12.5px;
   text-decoration: underline; text-underline-offset: 3px;
 }
-button.linkish:hover { border-color: transparent; filter: brightness(1.15); }
+button.linkish:where(:not(:disabled)):hover { border-color: transparent; filter: brightness(1.15); }
 
 .hire-detail {
   border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);
@@ -3028,7 +3031,7 @@ button.linklike {
 button.linklike:hover { background: none; text-decoration: underline; }
 button.linklike:disabled:hover { background: none; }
 button.danger-text { border-color: transparent; background: none; color: var(--critical); padding-left: 4px; }
-button.danger-text:hover { background: rgba(var(--critical-rgb), 0.08); border-color: transparent; }
+button.danger-text:where(:not(:disabled)):hover { background: rgba(var(--critical-rgb), 0.08); border-color: transparent; }
 
 .pagehead-row { display: flex; justify-content: space-between; align-items: flex-end;
   gap: var(--s4); flex-wrap: wrap; margin-bottom: var(--s4); }
