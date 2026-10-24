@@ -162,6 +162,31 @@ default — it is the harness this product has run in production longest.
 CLIs remain first-class choices — a seat can still be put on Codex, the Gemini
 CLI or OpenCode — they are simply no longer the only road to a vendor.
 
+**Every wire was checked against its vendor's own definition**, since no
+provider could be called from where this was built: request bodies were
+validated by machine against OpenAI's OpenAPI spec, the `anthropic` and
+`google-genai` SDK types, the Gemini and Vertex discovery documents and
+botocore's Bedrock models, and the old bodies were shown to fail the same
+check. What that caught — Responses tools without `strict`, OpenAI-compatible
+hosts that stream tool calls off-spec, Gemini schema fields Gemini refuses,
+finish reasons that read as "done", single-page model lists, DeepSeek's
+thinking mode refusing a tool loop that drops `reasoning_content` — is fixed
+and pinned by `test_wire_protocols.py`. What a spec cannot say (a vendor's
+exact wording for a too-long prompt) is matched conservatively and named as
+such there.
+
+**A run outgrowing its model's window makes room rather than dying.** Claude
+Code compacts its own history; a provider's API does not. yaaf's loop knows
+the model's input window (imported with its price, typed beside it, or read
+from the shipped snapshot; `model_prices.context_window`) and, past 80% of it,
+first replaces old tool output with a line saying what it was — the call and
+its pairing stay, since every provider refuses a result without its call —
+then, if that is not enough, has the model summarise the history onto the
+original prompt, billed as the call it is. A provider's own refusal for length
+(the wire's `context` kind) triggers the same, so a model with no known
+window is covered too. A history that will not fit even summarised ends the
+run, naming the reason, rather than looping.
+
 ### 4. Providers as data, including how to authenticate
 
 A provider row now carries everything every screen and every wire needs:
@@ -254,6 +279,38 @@ Claude credentials" any more.
 
 ### 8. Operations: knowing it works before 3am
 
+- **Readiness, before the first refusal.** Every half-set-up provider was
+  already refused somewhere — a class with no model (R8), a model with no price
+  (R3), a browsing role where nothing searches (R2), a model the key no longer
+  lists, a model that failed its check. `GET /admin/settings/providers/readiness`
+  (yaaf/core/readiness.py) reads them all at once, per provider the install
+  pays, each with its fix — usually one click: import these prices, connect a
+  search backend, pick a model for this class. Settings → Providers, the
+  connect flow, Home's first-run checklist and the New Project form all read it,
+  so a chairman sees the list before any door says no. It refuses nothing; the
+  doors still do.
+- **The provider check: can this model do yaaf's work?** A smoke call proves a
+  key answers; it cannot say whether the model behind it can drive a seat. The
+  check (yaaf/core/provider_check.py, "Run check" on a credential, `yaaf
+  check-provider`) runs two batteries through the seat's own wire, graded
+  mechanically — never by another model:
+  *probes* (an instruction followed exactly, a nested tool schema filled, a
+  tool result used, parallel calls, the effort dial, search) and *five small
+  agent tasks* over an in-memory workspace (aggregate a paginated tool, find a
+  fact across files, edit a config, recover from a refused write, follow an
+  output format to the letter). Nothing a model writes is executed; every
+  grader reads state. It runs in the background, writes each step as it
+  finishes, stops on a dead key rather than spending eleven calls on it, says
+  what it will cost first, and is kept per model — Settings → Models compares
+  every model the install has checked, which is the evidence a lineup is
+  chosen from.
+- **Keeping models and prices current** (yaaf/core/model_upkeep.py). Opt-in,
+  because it reaches out daily: each key's model list is re-read and
+  remembered, and prices that came from the feed are refreshed — never one an
+  administrator typed, never the catalog's checked ones, each change audited
+  with what it was. A seat whose model its key no longer lists is named on its
+  project's health checklist before its next run fails; a list older than two
+  weeks is not held against anybody.
 - **Live check per wire.** "Check" on a credential calls that provider's own
   model list through `wire.py` — the same address and header a run will use.
 - **Model discovery.** `GET /admin/providers/{name}/models?credential=…` lists
@@ -270,6 +327,32 @@ Claude credentials" any more.
   lease leaves a run queued while its provider is at its ceiling (RUNTIMES.md
   open question 2).
 
+### 9. Failover: an outage moves class seats, it does not stop the project
+
+A provider outage used to stop every project on it: each run failed
+transiently, was retried, failed again, and the work stood still until a
+person re-pointed billing by hand. A project can now name a **fallback
+credential** — another provider's, metered the same way (R4) — and the runs
+themselves are the signal (yaaf/core/breakers.py):
+
+- three transient failures in a row on a credential open its breaker;
+- while it is open, every project it bills that holds a fallback resolves its
+  bare classes on the fallback's provider — through
+  `model_policy.context`, which every reader resolves through, so the lease,
+  the seat doors, the boardroom and the health checklist all follow at once;
+- after a cooling-off (five minutes, doubling to an hour) the provider is
+  tried again: a run that works closes it, one that fails opens it for longer.
+
+What never moves: a seat pinned to a model, or a class named with its
+provider (`openai/@fast`) — somebody chose that provider on purpose. A dead
+key is not an outage (`auth` stays the three-strikes pause's). The fallback
+door refuses a fallback on the same provider (it fails with it), one metered
+in another unit, and one any class seat could not run on — resolved, priced,
+able to do what its role grants — because a fallback found wanting during an
+outage is no fallback; the health checklist re-asks that question every day.
+The chairman is told after the fact (a record, or an alarm when there was
+nothing to move to); the move itself already happened, by state.
+
 ---
 
 ## Migration — from what exists to the design
@@ -285,7 +368,8 @@ they ran on; role versions stay immutable.
 | `craft_model` → lineup `frontier` | in code |
 | `DEFAULT_MODEL`, `DEFAULT_FOUNDER_MODEL` → classes | an install that set a Founder model keeps it; one that never did resolves `@frontier` on its credential's provider, which is `claude-opus-5-5` on Anthropic — unchanged |
 | R6 translates a class seat's effort | in code; no seat that ran before runs differently — a pinned seat is held exactly as it was, and the shipped roles' classes resolve on Anthropic to models that take every effort |
-| `model_prices.source` | migration `0054`; existing rows read as hand-set |
+| `model_prices.source`, `model_prices.context_window` | migration `0054`; existing rows read as hand-set, with no window (the snapshot's figure is used where it has one) |
+| `provider_checks`, `credential_breakers`, `projects.fallback_secret_id` | migration `0054`; empty — no check run, no breaker open, no fallback named |
 | lineups, default provider, search backend, provider ceilings | platform settings; absent means the shipped defaults |
 
 **What deliberately did not move: `Project.billing_secret_id`.** A
@@ -323,6 +407,11 @@ Each ships with its attack in `tests/selftest_invariants/`.
 | OpenCode's search through the tool server | `yaaf/runner/yaaf_tools.py`, `opencode_cli_entry.py`, `sandbox_entry.SearchLedger` | `test_opencode_harness.py` |
 | The price feed, the snapshot, the smoke call | `yaaf/core/price_feed.py`, `yaaf/runtimes/price_snapshot.json`, `settings.smoke_credential` | `test_price_feed.py` |
 | The Founder and the grader on any provider | `yaaf/founder/loop.py`, `tools.py`, `yaaf/core/platform.py` | `test_founder_providers.py`, `test_conversations.py` |
+| Compaction against the model's window | `yaaf/runner/loop_harness.py`, `yaaf/core/prices.context_window` | `test_loop_harness.py`, `test_price_feed.py` |
+| The provider check | `yaaf/core/provider_check.py`, `provider_check_runs.py` | `test_provider_check.py` |
+| Readiness | `yaaf/core/readiness.py` | `test_readiness.py` |
+| Keeping models and prices current | `yaaf/core/model_upkeep.py`, `janitor_all` | `test_model_upkeep.py` |
+| Failover | `yaaf/core/breakers.py`, `model_policy.failover`, `daemon._record_breaker`, `admin.set_fallback_credential` | `test_failover.py` |
 
 ## Not built, and why
 

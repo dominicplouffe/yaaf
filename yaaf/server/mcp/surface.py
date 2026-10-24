@@ -268,6 +268,9 @@ WITHHELD = {
     "PUT /admin/settings/models/ceiling":
         "concurrency per provider is the install's rate-limit budget, shared by every "
         "project on it.",
+    "GET /admin/settings/providers/readiness":
+        "how ready the install's providers are is an administrator's setup screen, "
+        "above every project; a drafter reads `catalog (models)`.",
     "PUT /admin/settings/models/upkeep":
         "whether the install reaches out daily to every provider and the price feed is "
         "an administrator's decision.",

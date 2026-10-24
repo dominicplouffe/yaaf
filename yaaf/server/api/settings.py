@@ -1161,6 +1161,17 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
                 for name in names]}
 
 
+@router.get("/providers/readiness", dependencies=[authority.INSTANCE_ADMIN])
+def providers_readiness(session: Session = Depends(db)) -> dict:
+    """Every provider the install pays: what each class runs on, priced or not,
+    listed by the key or not, checked or not, whether it can search — and,
+    per gap, what fixes it (yaaf.core.readiness). What the doors would refuse,
+    read before anybody is refused."""
+    from yaaf.core import readiness
+
+    return readiness.readiness(session)
+
+
 class UpkeepIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

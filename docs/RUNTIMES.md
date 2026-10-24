@@ -942,8 +942,14 @@ Designed and tracked in [PROVIDERS.md](PROVIDERS.md); the short list:
 - [x] Prices imported from a feed or a dated snapshot, with provenance
 - [x] The platform's web search backend, metered per query
 - [x] Concurrency per provider; discovery; `yaaf smoke`
-- [ ] **`yaaf smoke` on a deployment, once per provider an install pays.**
-      Needs the keys; nothing here can tick it
+- [x] Every wire validated against its vendor's own spec and SDK types
+- [x] The loop compacts a history before it outgrows the model's window
+- [x] The provider check (probes and agent tasks, graded on state), readiness
+      with one-click fixes, opt-in daily upkeep of model lists and prices
+- [x] Failover: a failing provider's class seats move to the project's
+      fallback credential until it recovers
+- [ ] **`yaaf check-provider` on a deployment, once per provider an install
+      pays.** Needs the keys; nothing here can tick it
 
 ---
 

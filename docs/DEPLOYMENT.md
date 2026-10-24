@@ -410,7 +410,9 @@ are separate — rebuild both** when you change something that affects each.
 Every provider is reached from two places: the **sandbox**, where a seat's run
 calls its provider's API (yaaf's loop copies `yaaf/runtimes/wire.py` into the
 image for that), and the **control plane**, which calls the same APIs for the
-Founder, a credential's **Check**, model discovery and `yaaf smoke`. Both need
+Founder, a credential's **Check**, the provider check, model discovery and
+`yaaf smoke` — and, once a day if Settings → Models → *Keep models and prices
+current* is on, to re-read each key's model list. Both need
 outbound HTTPS to the providers an install pays — and the control plane needs
 it to `oauth2.googleapis.com` too if Vertex AI is one of them, because it mints
 Vertex's tokens there (the service account key never enters a sandbox).
@@ -420,7 +422,8 @@ Vertex's tokens there (the service account key never enters a sandbox).
   network — `http://ollama:11434/v1`, not `localhost` — and the server must be
   attached to that network (`YAAF_SANDBOX_NETWORK`).
 - **The price feed** is read by the control plane when an administrator
-  imports prices (Settings → Model prices → Import). An install with no route
+  imports prices (Settings → Model prices → Import), and daily when upkeep is
+  on (only prices that came from the feed are moved). An install with no route
   to `raw.githubusercontent.com` imports the snapshot shipped with yaaf, or
   points the feed at a mirror of its own.
 - **The web search backend**, when one is configured, is called from the
@@ -429,6 +432,10 @@ Vertex's tokens there (the service account key never enters a sandbox).
 After deploying, `yaaf smoke <credential>` makes one real, trivial call per
 credential through the wire its seats will use — the quickest proof that a
 key, an address and a network path all work before a project depends on them.
+`yaaf check-provider <credential>` goes further: probes and five small agent
+tasks on each model the credential's classes resolve to, graded
+mechanically, with the cost stated before it runs — whether the model can do
+the work, not only answer.
 
 ---
 
