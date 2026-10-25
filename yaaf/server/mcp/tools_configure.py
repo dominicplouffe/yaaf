@@ -23,7 +23,7 @@ import base64
 
 from sqlalchemy.orm import Session
 
-from yaaf.core.models import Team
+from yaaf.core.models import Agent, Team
 from yaaf.server.api import admin
 from yaaf.server.mcp import confirm, envelope
 from yaaf.server.mcp.auth import Principal, ToolRefusal, resolve_project
@@ -49,7 +49,9 @@ def _schema(required_args: list[str], **properties) -> dict:
         "The project's outward wiring: name, goal, deadline, controlled domains, which "
         "stored credential it bills against. Rules are not here — those are `amend`, "
         "with a reason. verb `add_team` hires a team; `repin` moves a team to the "
-        "library's current version of its role; `pay_provider` pays a second provider "
+        "library's current version of its role; `set_seat` puts one agent on another "
+        "model, effort or harness than its role's (an empty value returns that one to "
+        "the role's); `pay_provider` pays a second provider "
         "(provider, credential — a stored credential's name) for seats on its models; "
         "`stop_paying_provider` removes one; `set_fallback` names the credential (of "
         "another provider) class seats move to while the billing one's provider is "
@@ -57,7 +59,7 @@ def _schema(required_args: list[str], **properties) -> dict:
     ),
     input_schema=_schema([],
                          verb={"type": "string", "enum": ["settings", "add_team", "repin",
-                                                          "pay_provider",
+                                                          "set_seat", "pay_provider",
                                                           "stop_paying_provider",
                                                           "set_fallback"]},
                          provider={"type": "string",
@@ -75,6 +77,16 @@ def _schema(required_args: list[str], **properties) -> dict:
                          billing_secret={"type": "string",
                                          "description": "Name of a stored billing credential"},
                          team={"type": "string", "description": "repin: team id"},
+                         agent={"type": "string", "description": "set_seat: agent id"},
+                         model={"type": "string",
+                                "description": "set_seat: a model or a class (@balanced, "
+                                               "openai/@fast); empty for the role's"},
+                         effort={"type": "string",
+                                 "description": "set_seat: low, medium, high, xhigh, max; "
+                                                "empty for the role's"},
+                         harness={"type": "string",
+                                  "description": "set_seat: a harness name (catalog "
+                                                 "harnesses); empty for the role's"},
                          role_slug={"type": "string", "description": "add_team: the role to hire"},
                          team_name={"type": "string"},
                          employees={"type": "array", "items": {"type": "string"}},
@@ -146,6 +158,23 @@ def project_configure(principal: Principal, session: Session, arguments: dict) -
         if preview:
             return preview
         outcome = _call(principal, admin.repin_team, team_id=team.id, session=session)
+    elif verb == "set_seat":
+        agent = _owned(session, project, Agent, str(arguments.get("agent") or ""), "agent")
+        # Only what the call names changes; an empty string is "the role's".
+        changing = {k: arguments[k] or None for k in ("model", "effort", "harness")
+                    if k in arguments}
+        if not changing:
+            raise ToolRefusal("nothing to change: name a model, an effort or a harness")
+        preview = confirm.gate(session, principal, "project_configure", arguments, {
+            "verb": verb, "project": project.slug, "agent": agent.name,
+            "was": {"model": agent.model_override, "effort": agent.effort_override,
+                    "harness": agent.harness_override},
+            "changing": changing,
+            "note": "From this agent's next run; a run in flight finishes on what it has."})
+        if preview:
+            return preview
+        outcome = _call(principal, admin.set_agent_seat, agent_id=agent.id,
+                        body=admin.AgentSeat(**changing), session=session)
     else:
         billing = _billing_secret(session, arguments.get("billing_secret"))
         patch = admin.ProjectPatch(

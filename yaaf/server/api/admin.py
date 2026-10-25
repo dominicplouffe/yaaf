@@ -4164,6 +4164,55 @@ def set_agent_schedule(
     return {"id": agent.id, "name": agent.name, "daily_at": agent.daily_at}
 
 
+class AgentSeat(BaseModel):
+    # Each field the body names is set; null puts the seat back on its role's.
+    # A field the body leaves out is left as it is, so changing the model does
+    # not quietly drop an effort somebody chose for this seat last month.
+    model: str | None = Field(default=None, max_length=128)
+    effort: str | None = Field(default=None, pattern=_EFFORT_PATTERN)
+    harness: str | None = Field(default=None, max_length=32)
+
+
+@router.patch("/agents/{agent_id}/seat", dependencies=[authority.STEER])
+def set_agent_seat(agent_id: str, body: AgentSeat, session: Session = Depends(db)) -> dict:
+    """What one person runs on — model, effort, harness — after the project
+    exists. Creation, add-team and a clone were the only doors onto a seat's
+    overrides, so moving one agent off a model meant a new role version for the
+    whole team, or a new team.
+
+    The same check every other seat door runs (`refuse_unrunnable_seats`), so a
+    seat cannot be moved onto a model its project does not pay for, a harness
+    that cannot withhold what its role withholds, or an effort the model does
+    not take. A run already in flight keeps what it was leased on; the seat
+    changes from its next run."""
+    agent = session.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="unknown agent")
+    named = body.model_fields_set
+    if not named:
+        raise HTTPException(status_code=422, detail="nothing to change: name a model, "
+                                                    "an effort or a harness")
+    model = (body.model or "").strip() or None
+    if "model" in named and model and (bad := catalog.valid_ref(model)):
+        raise HTTPException(status_code=422, detail=f"{agent.name}'s model: {bad}")
+    was = {"model": agent.model_override, "effort": agent.effort_override,
+           "harness": agent.harness_override}
+    if "model" in named:
+        agent.model_override = model
+    if "effort" in named:
+        agent.effort_override = body.effort
+    if "harness" in named:
+        # A harness's old name is still understood, and never stored again.
+        agent.harness_override = canonical_harness((body.harness or "").strip() or None)
+    session.flush()
+    refuse_unrunnable_seats(session, _get_project(session, agent.project_id), [agent])
+    now = {"model": agent.model_override, "effort": agent.effort_override,
+           "harness": agent.harness_override}
+    _audit(session, agent.project_id, "agent.seat", "agent", agent.id,
+           {"name": agent.name, "was": was, "now": now})
+    return {"id": agent.id, "name": agent.name, **now}
+
+
 class NeedFulfillIn(BaseModel):
     secret_name: str = Field(min_length=2, max_length=120)
     value: str = Field(min_length=1)

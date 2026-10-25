@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { get, getText, post, ResultsView } from "../../api";
+import { get, getText, patch, post, ResultsView, SeatWork } from "../../api";
 import { TaskChain } from "../../chain";
 import { WhatTheyDid } from "../../did";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { firstName, ProjectCtx } from "../../projectCtx";
-import { useProviders } from "../../providers";
+import { ModelSelect, useModels, useProviders } from "../../providers";
 import { clip, fmtAgo } from "../../ui";
 import { Avatar, plainStatus } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
@@ -91,6 +91,84 @@ function PauseAction({ ctx, agentId, name, paused }: {
   );
 }
 
+/** One person moved onto another model, effort or harness than their role's.
+
+    The role is the team's charter and changes for everyone on it; this is the
+    one seat. Each choice can be put back to "the role's", which is the only
+    way an override ever goes away — the server refuses a seat that cannot run
+    (a provider the project does not pay, an effort the model does not take)
+    with the same sentence every other door gives. */
+function SeatEditor({ ctx, agentId, name, work, onDone }: {
+  ctx: ProjectCtx; agentId: string; name: string; work: Partial<SeatWork>; onDone: () => void;
+}) {
+  const catalog = useModels();
+  const registry = useProviders();
+  const [harnesses, setHarnesses] = useState<{ name: string; label: string }[]>([]);
+  useEffect(() => {
+    get<{ name: string; label: string }[]>("/admin/harnesses")
+      .then(setHarnesses)
+      .catch(() => setHarnesses([]));
+  }, []);
+  const [model, setModel] = useState(work.overrides?.model ?? "");
+  const [effort, setEffort] = useState(work.overrides?.effort ?? "");
+  const [harness, setHarness] = useState(work.overrides?.harness ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const credentials = ctx.dash.credentials ?? [];
+  const paid = credentials.map((c) => c.provider);
+  const billing = credentials.find((c) => c.billing)?.provider ?? catalog?.default_provider;
+  const role = work.role_seat;
+  const harnessLabel = (h: string | null | undefined) =>
+    h ? harnesses.find((x) => x.name === h)?.label ?? h : "whatever the paying credential runs on";
+
+  return (
+    <div className="addform">
+      <label className="field">Model
+        <ModelSelect value={model} onChange={setModel} info={catalog} registry={registry}
+          primary={billing} providersShown={paid.length ? paid : undefined}
+          qualified={paid.length > 1} disabled={busy}
+          empty={`The role's — ${role?.model ?? "the default"}`} />
+      </label>
+      <label className="field">Effort
+        <select value={effort} disabled={busy} onChange={(e) => setEffort(e.target.value)}>
+          <option value="">The role&apos;s — {role?.effort ?? "the default"}</option>
+          {(catalog?.efforts ?? ["low", "medium", "high", "xhigh", "max"]).map((level) => (
+            <option key={level} value={level}>{level}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field">Harness
+        <select value={harness} disabled={busy} onChange={(e) => setHarness(e.target.value)}>
+          <option value="">The role&apos;s — {harnessLabel(role?.harness)}</option>
+          {harnesses.map((h) => <option key={h.name} value={h.name}>{h.label}</option>)}
+        </select>
+      </label>
+      <p className="help">
+        Only {name} changes; the rest of the team stays on the role. A run in flight
+        finishes on what it has — the change takes effect from {name}&apos;s next run.
+      </p>
+      <div className="reason-acts">
+        <button className="small primary" disabled={busy} onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            await patch(`/admin/agents/${agentId}/seat`,
+              { model: model || null, effort: effort || null, harness: harness || null });
+            ctx.reloadOrg();
+            onDone();
+          } catch (e) {
+            setError((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}>Save</button>
+        <button className="small" disabled={busy} onClick={onDone}>Cancel</button>
+      </div>
+      {error && <div className="help" style={{ color: "var(--critical)" }}>{error}</div>}
+    </div>
+  );
+}
+
 const WEEK_MS = 7 * 86_400_000;
 
 export default function Member({ ctx }: { ctx: ProjectCtx }) {
@@ -98,6 +176,7 @@ export default function Member({ ctx }: { ctx: ProjectCtx }) {
   const navigate = useNavigate();
   const registry = useProviders();
   const { projectId } = ctx;
+  const [changingSeat, setChangingSeat] = useState(false);
   const { data: made } = usePoll(
     () => get<ResultsView>(`/observe/projects/${projectId}/results?agent_id=${encodeURIComponent(agentId)}`),
     30000, [projectId, agentId]);
@@ -265,7 +344,17 @@ export default function Member({ ctx }: { ctx: ProjectCtx }) {
                   <dt>Model</dt>
                   <dd>{work.model}{work.provider
                     ? ` · ${registry.find((p) => p.name === work.provider)?.label ?? work.provider}`
-                    : ""}</dd>
+                    : ""}{work.effort ? ` · ${work.effort} effort` : ""}
+                    {work.overrides && Object.values(work.overrides).some(Boolean) && (
+                      <span className="help"> · set for {seat.name}, not the role</span>
+                    )}
+                    {steer && seat.state !== "stood_down" && !changingSeat && (
+                      <> <button className="small" onClick={() => setChangingSeat(true)}>Change…</button></>
+                    )}
+                    {changingSeat && (
+                      <SeatEditor ctx={ctx} agentId={seat.id} name={seat.name} work={work}
+                        onDone={() => setChangingSeat(false)} />
+                    )}</dd>
                   <dt>This month</dt>
                   <dd>{fmtUsd(work.month_usd ?? 0)}{work.month_share ? ` · ${Math.round(work.month_share * 100)}% of the project` : ""}</dd>
                 </>

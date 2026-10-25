@@ -1670,10 +1670,21 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
     context = model_policy.context(session, project)
 
     def working(agent) -> dict:
-        seat = seat_for(agent, role_version_for(session, agent), context=context)
+        version = role_version_for(session, agent)
+        seat = seat_for(agent, version, context=context)
         usd = float(spent.get(agent.id, 0.0))
         return {"model": catalog.label(seat.model), "model_id": seat.model,
-                "provider": seat.provider, "month_usd": round(usd, 2),
+                "provider": seat.provider, "effort": seat.effort, "harness": seat.harness,
+                # What this seat says for itself, each null where it follows
+                # its role, beside what the role says — so a screen can tell a
+                # choice from an inheritance, and say what clearing one returns to.
+                "overrides": {"model": agent.model_override,
+                              "effort": agent.effort_override,
+                              "harness": agent.harness_override},
+                "role_seat": {"model": version.model if version else None,
+                              "effort": version.effort if version else None,
+                              "harness": version.harness if version else None},
+                "month_usd": round(usd, 2),
                 "month_share": round(usd / total, 3) if total else 0.0}
 
     # The last roster change on each team, with who made it and why — so a

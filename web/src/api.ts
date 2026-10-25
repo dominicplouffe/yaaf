@@ -1214,10 +1214,20 @@ export interface RunDid {
 
 /** What a person runs on and has cost this month (`month_share` is their part
     of the project's own month, 0..1). */
+/** Model, effort and harness, as a seat or its role names them. */
+export interface SeatChoice { model: string | null; effort: string | null; harness: string | null }
+
 export interface SeatWork {
   model: string;
   model_id: string;
   provider: string;
+  /** What it runs at and on, resolved: its own choice, else its role's. */
+  effort: string;
+  harness: string;
+  /** What the seat names for itself; each null follows the role. */
+  overrides: SeatChoice;
+  /** What the role names — what clearing an override returns the seat to. */
+  role_seat: SeatChoice;
   month_usd: number;
   month_share: number;
 }
