@@ -351,6 +351,27 @@ def say(thread_id: str, body: SayIn, session: Session = Depends(db),
     return _accepted(_render(thread))
 
 
+@router.post("/threads/{thread_id}/stop", dependencies=[authority.IN_HANDLER])
+def stop(thread_id: str, session: Session = Depends(db),
+         person: Person = Depends(person_auth)) -> dict:
+    """Stop the turn in flight.
+
+    A turn takes minutes, and the commonest reason to want one back is that the
+    message it is answering was a mistake. Without this the chairman watched
+    the Founder spend minutes and the platform's credential on it, with every
+    way off the page disabled until it finished.
+
+    Asked, not awaited: the turn notices within a fraction of a second, takes
+    the message it was answering off the thread, and ends — the page is already
+    polling for that. A turn that finished before the press is not an error;
+    there was simply nothing left to stop.
+    """
+    thread = _thread(session, thread_id, person)
+    if progress.request_stop(thread.id):
+        return _accepted(_render(thread, running=True))
+    return _render(thread)
+
+
 @router.get("/threads/{thread_id}/progress", dependencies=[authority.IN_HANDLER])
 def thread_progress(thread_id: str, session: Session = Depends(db),
                     person: Person = Depends(person_auth)) -> dict:
@@ -369,7 +390,11 @@ def thread_progress(thread_id: str, session: Session = Depends(db),
 @router.delete("/threads/{thread_id}", dependencies=[authority.IN_HANDLER])
 def delete_thread(thread_id: str, session: Session = Depends(db),
                   person: Person = Depends(person_auth)) -> dict:
-    session.delete(_thread(session, thread_id, person))
+    thread = _thread(session, thread_id, person)
+    # A conversation thrown away mid-turn takes its turn with it, or the
+    # Founder goes on spending the platform credential on a thread nobody has.
+    progress.request_stop(thread.id)
+    session.delete(thread)
     return {"ok": True}
 
 

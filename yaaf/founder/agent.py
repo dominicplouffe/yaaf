@@ -36,6 +36,14 @@ from yaaf.founder.prompt import system_prompt
 
 log = logging.getLogger("yaaf.founder")
 
+#: How often a running turn looks for the chairman's Stop. Short enough that
+#: Stop feels like a button; the check is a dictionary read under a lock.
+STOP_POLL_SECONDS = 0.25
+
+
+class TurnStopped(Exception):
+    """The chairman stopped the turn. Not a failure, so it carries no reason."""
+
 
 #: Which parts of the draft a field belongs to, in the words the page uses. A
 #: round's answers are only worth giving if they visibly move the draft, so the
@@ -207,14 +215,14 @@ def run_turn(session: Session, thread: FoundingThread) -> dict:
                 mcp_servers={tools.SERVER: founder_tools.server},
                 allowed_tools=tools.ALLOWED_TOOLS,
             )
-            reply = asyncio.run(
-                founder_session.run(_prompt(thread), opts, thread_id=thread.id))
+            reply = asyncio.run(_stoppable(
+                founder_session.run(_prompt(thread), opts, thread_id=thread.id), thread.id))
         else:
             from yaaf.founder import loop
 
-            reply = asyncio.run(loop.run(
+            reply = asyncio.run(_stoppable(loop.run(
                 _prompt(thread), env=env, model=model, system=system_prompt(),
-                tools=founder_tools.specs, thread_id=thread.id))
+                tools=founder_tools.specs, thread_id=thread.id), thread.id))
     except founder_session.FounderModelError as exc:
         raise _with_refusal(exc, state) from exc
 
@@ -234,6 +242,44 @@ def run_turn(session: Session, thread: FoundingThread) -> dict:
     thread.updated_at = utcnow()
     session.flush()
     return {"reply": reply, "draft_bundle": thread.draft_bundle}
+
+
+async def _stoppable(work, thread_id: str):
+    """Run the turn until it finishes or the chairman presses Stop.
+
+    Cancelling the task is what ends the work rather than just the wait: the
+    SDK's stream closes and takes the CLI subprocess with it, and an HTTP call
+    to another provider is abandoned mid-flight. A turn left running behind a
+    Stop would go on spending the platform credential on a message the chairman
+    has already taken back.
+    """
+    task = asyncio.ensure_future(work)
+    while not task.done():
+        if progress.stop_requested(thread_id):
+            task.cancel()
+            await asyncio.wait({task})
+            if not task.cancelled():
+                task.exception()  # retrieved, so it is not logged as lost
+            raise TurnStopped
+        await asyncio.wait({task}, timeout=STOP_POLL_SECONDS)
+    return task.result()
+
+
+def withdraw_turn(thread: FoundingThread) -> None:
+    """Undo `start_turn` for a turn the chairman stopped.
+
+    He stops a turn because what he sent was wrong, so the message it was
+    answering is taken off the thread rather than left there unanswered — the
+    next turn would otherwise read it as something he still means. The page
+    kept what he typed and puts it back in the box to be fixed.
+    """
+    turns = list(thread.transcript or [])
+    if turns and turns[-1].get("role") == "chairman":
+        turns.pop()
+    thread.transcript = turns
+    thread.turn_started_at = None
+    thread.last_error = None
+    thread.updated_at = utcnow()
 
 
 def _with_refusal(exc, state: dict):

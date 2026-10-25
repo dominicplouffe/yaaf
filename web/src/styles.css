@@ -1806,6 +1806,9 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
    over that is indistinguishable from a hang, which is how it was first
    reported. */
 .steps { list-style: none; margin: 0 0 8px; padding: 0; }
+.steps-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.steps-foot p { margin: 0; }
+.steps-foot button { flex: none; }
 .step { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; }
 .step-mark { width: 12px; flex: none; text-align: center; }
 .step-label { flex: 1; min-width: 0; }

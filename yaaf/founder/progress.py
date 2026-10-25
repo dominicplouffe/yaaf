@@ -77,6 +77,9 @@ class Turn:
     # The round of questions, the moment `ask` is called rather than when the
     # turn commits: the draft takes minutes more, and that is reading time.
     round: dict | None = None
+    # The chairman pressed Stop. The turn runs on a thread nothing else can
+    # reach, so it is asked here and the turn checks.
+    stop: bool = False
 
 
 _lock = threading.Lock()
@@ -165,6 +168,22 @@ def end(thread_id: str, *, ok: bool = True, error: str | None = None,
                 step.finished_at = now
         turn.running = False
         turn.ended_at = now
+
+
+def request_stop(thread_id: str) -> bool:
+    """Ask a running turn to stop. False when there is nothing to stop."""
+    with _lock:
+        turn = _turns.get(thread_id)
+        if turn is None or not turn.running:
+            return False
+        turn.stop = True
+        return True
+
+
+def stop_requested(thread_id: str) -> bool:
+    with _lock:
+        turn = _turns.get(thread_id)
+        return turn is not None and turn.running and turn.stop
 
 
 def is_running(thread_id: str) -> bool:
