@@ -23,7 +23,7 @@ import base64
 
 from sqlalchemy.orm import Session
 
-from yaaf.core.models import Team
+from yaaf.core.models import Agent, Team
 from yaaf.server.api import admin
 from yaaf.server.mcp import confirm, envelope
 from yaaf.server.mcp.auth import Principal, ToolRefusal, resolve_project
@@ -49,21 +49,27 @@ def _schema(required_args: list[str], **properties) -> dict:
         "The project's outward wiring: name, goal, deadline, controlled domains, which "
         "stored credential it bills against. Rules are not here — those are `amend`, "
         "with a reason. verb `add_team` hires a team; `repin` moves a team to the "
-        "library's current version of its role; `pay_provider` pays a second provider "
+        "library's current version of its role; `set_seat` puts one agent on another "
+        "model, effort or harness than its role's (an empty value returns that one to "
+        "the role's); `pay_provider` pays a second provider "
         "(provider, credential — a stored credential's name) for seats on its models; "
-        "`stop_paying_provider` removes one."
+        "`stop_paying_provider` removes one; `set_fallback` names the credential (of "
+        "another provider) class seats move to while the billing one's provider is "
+        "failing — empty credential removes it."
     ),
     input_schema=_schema([],
                          verb={"type": "string", "enum": ["settings", "add_team", "repin",
-                                                          "pay_provider",
-                                                          "stop_paying_provider"]},
+                                                          "set_seat", "pay_provider",
+                                                          "stop_paying_provider",
+                                                          "set_fallback"]},
                          provider={"type": "string",
                                    "description": "pay_provider / stop_paying_provider: "
                                                   "e.g. openai, google, deepseek, "
                                                   "openrouter, moonshot, qwen, mistral, "
                                                   "xai, custom"},
                          credential={"type": "string",
-                                     "description": "pay_provider: a stored credential's name"},
+                                     "description": "pay_provider / set_fallback: a stored "
+                                                    "credential's name"},
                          name={"type": "string"},
                          goal={"type": "string"},
                          deadline={"type": "string", "description": "ISO 8601, or empty to clear"},
@@ -71,6 +77,16 @@ def _schema(required_args: list[str], **properties) -> dict:
                          billing_secret={"type": "string",
                                          "description": "Name of a stored billing credential"},
                          team={"type": "string", "description": "repin: team id"},
+                         agent={"type": "string", "description": "set_seat: agent id"},
+                         model={"type": "string",
+                                "description": "set_seat: a model or a class (@balanced, "
+                                               "openai/@fast); empty for the role's"},
+                         effort={"type": "string",
+                                 "description": "set_seat: low, medium, high, xhigh, max; "
+                                                "empty for the role's"},
+                         harness={"type": "string",
+                                  "description": "set_seat: a harness name (catalog "
+                                                 "harnesses); empty for the role's"},
                          role_slug={"type": "string", "description": "add_team: the role to hire"},
                          team_name={"type": "string"},
                          employees={"type": "array", "items": {"type": "string"}},
@@ -121,6 +137,19 @@ def project_configure(principal: Principal, session: Session, arguments: dict) -
             outcome = _call(principal, admin.remove_project_credential,
                             project_id=project.id, provider_name=provider_name,
                             session=session)
+    elif verb == "set_fallback":
+        named = _billing_secret(session, arguments.get("credential") or None)
+        preview = confirm.gate(session, principal, "project_configure", arguments, {
+            "verb": verb, "project": project.slug,
+            "credential": named.name if named else None,
+            "warning": "While the billing credential's provider is failing, class seats "
+                       "run on this one and bill against it."
+            if named else "Class seats will wait out an outage of the billing provider."})
+        if preview:
+            return preview
+        outcome = _call(principal, admin.set_fallback_credential, project_id=project.id,
+                        body=admin.FallbackIn(credential_id=named.id if named else None),
+                        session=session)
     elif verb == "repin":
         team = _owned(session, project, Team, str(arguments.get("team") or ""), "team")
         preview = confirm.gate(session, principal, "project_configure", arguments, {
@@ -129,6 +158,23 @@ def project_configure(principal: Principal, session: Session, arguments: dict) -
         if preview:
             return preview
         outcome = _call(principal, admin.repin_team, team_id=team.id, session=session)
+    elif verb == "set_seat":
+        agent = _owned(session, project, Agent, str(arguments.get("agent") or ""), "agent")
+        # Only what the call names changes; an empty string is "the role's".
+        changing = {k: arguments[k] or None for k in ("model", "effort", "harness")
+                    if k in arguments}
+        if not changing:
+            raise ToolRefusal("nothing to change: name a model, an effort or a harness")
+        preview = confirm.gate(session, principal, "project_configure", arguments, {
+            "verb": verb, "project": project.slug, "agent": agent.name,
+            "was": {"model": agent.model_override, "effort": agent.effort_override,
+                    "harness": agent.harness_override},
+            "changing": changing,
+            "note": "From this agent's next run; a run in flight finishes on what it has."})
+        if preview:
+            return preview
+        outcome = _call(principal, admin.set_agent_seat, agent_id=agent.id,
+                        body=admin.AgentSeat(**changing), session=session)
     else:
         billing = _billing_secret(session, arguments.get("billing_secret"))
         patch = admin.ProjectPatch(
@@ -235,7 +281,9 @@ def data_source(principal: Principal, session: Session, arguments: dict) -> dict
     description=(
         "Store or re-scope a credential. Values go in and never come back out: no tool "
         "on this surface reads one, at any scope. Omit `value` to change which roles "
-        "get an existing credential without re-pasting it. Set `filename` when the "
+        "get an existing credential without re-pasting it; omit `roles` to keep who has "
+        "it. `visibility` plain marks a setting (a timezone, an account id) that is not "
+        "secret — still never readable here. Set `filename` when the "
         "credential IS a file — a service-account key, a PEM, a kubeconfig — and "
         "granted roles receive the path to it rather than its contents."
     ),
@@ -249,17 +297,20 @@ def data_source(principal: Principal, session: Session, arguments: dict) -> dict
                                                   "on disk in the sandbox. Text files only "
                                                   "here; binary goes through the dashboard"},
                          roles={"type": "array", "items": {"type": "string"}},
+                         visibility={"type": "string", "enum": ["secret", "plain"]},
                          kind={"type": "string", "enum": ["service"]}),
 )
 def credential(principal: Principal, session: Session, arguments: dict) -> dict:
     project = resolve_project(session, principal, required(arguments, "project"))
     if (arguments.get("verb") or "list") == "list":
         rows = _call(principal, admin.list_secrets, project_id=project.id, session=session)
-        # The endpoint returns names and scopes only; asserted here as well
-        # because this is the surface where a leak would be worst.
+        # The endpoint hands a person who could reveal a value its plain form
+        # or its last four characters. A model is not that person: both are
+        # stripped here, because this is the surface where a leak would be worst.
         return envelope.fit({
             "project": project.slug,
-            "credentials": [{k: v for k, v in r.items() if k != "value"} for r in rows],
+            "credentials": [{k: v for k, v in r.items() if k not in ("value", "hint")}
+                            for r in rows],
         }, arguments.get("detail"))
 
     name = required(arguments, "name")
@@ -267,7 +318,10 @@ def credential(principal: Principal, session: Session, arguments: dict) -> dict:
     preview = confirm.gate(session, principal, "credential",
                            {k: v for k, v in arguments.items() if k != "value"}, {
                                "verb": "save", "project": project.slug, "name": name,
-                               "roles": arguments.get("roles") or [],
+                               # Omitted keeps who has it, so the preview must
+                               # not read as "nobody".
+                               "roles": arguments.get("roles", "unchanged"),
+                               "visibility": arguments.get("visibility") or "unchanged",
                                "kind": arguments.get("kind") or "service",
                                "filename": filename,
                                "value_supplied": bool(arguments.get("value")),
@@ -289,7 +343,8 @@ def credential(principal: Principal, session: Session, arguments: dict) -> dict:
                     body=admin.SecretIn(project_id=project.id, name=name,
                                         value=value,
                                         filename=filename,
-                                        role_scopes=arguments.get("roles") or [],
+                                        role_scopes=arguments.get("roles"),
+                                        visibility=arguments.get("visibility"),
                                         kind=arguments.get("kind")),
                     session=session)
     scrubbed = {k: v for k, v in arguments.items() if k != "value"}

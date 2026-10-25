@@ -405,6 +405,38 @@ decision; see docs/AUTONOMY.md). It still isolates stacks from each other.
 `deploy/sandbox/Dockerfile` builds the image agent runs execute inside. **They
 are separate — rebuild both** when you change something that affects each.
 
+### Providers, and what they need from the network
+
+Every provider is reached from two places: the **sandbox**, where a seat's run
+calls its provider's API (yaaf's loop copies `yaaf/runtimes/wire.py` into the
+image for that), and the **control plane**, which calls the same APIs for the
+Founder, a credential's **Check**, the provider check, model discovery and
+`yaaf smoke` — and, once a day if Settings → Models → *Keep models and prices
+current* is on, to re-read each key's model list. Both need
+outbound HTTPS to the providers an install pays — and the control plane needs
+it to `oauth2.googleapis.com` too if Vertex AI is one of them, because it mints
+Vertex's tokens there (the service account key never enters a sandbox).
+
+- **A local model server** (Ollama, LM Studio, vLLM) is reached *from the
+  sandbox*, so its credential's address is the server's name on the sandbox
+  network — `http://ollama:11434/v1`, not `localhost` — and the server must be
+  attached to that network (`YAAF_SANDBOX_NETWORK`).
+- **The price feed** is read by the control plane when an administrator
+  imports prices (Settings → Model prices → Import), and daily when upkeep is
+  on (only prices that came from the feed are moved). An install with no route
+  to `raw.githubusercontent.com` imports the snapshot shipped with yaaf, or
+  points the feed at a mirror of its own.
+- **The web search backend**, when one is configured, is called from the
+  sandbox, like the providers.
+
+After deploying, `yaaf smoke <credential>` makes one real, trivial call per
+credential through the wire its seats will use — the quickest proof that a
+key, an address and a network path all work before a project depends on them.
+`yaaf check-provider <credential>` goes further: probes and five small agent
+tasks on each model the credential's classes resolve to, graded
+mechanically, with the cost stated before it runs — whether the model can do
+the work, not only answer.
+
 ---
 
 ## Exposing the MCP server to claude.ai
@@ -530,7 +562,7 @@ these polling floors, never a replacement for them.
 
 - `GET /healthz` — process liveness.
 - `GET /observe/projects/{id}/health` — the per-project setup checklist, the
-  same one the Team page renders. All green = the UI hides the card.
+  same one the project's Inbox renders. All green = the UI hides the card.
 - Dispatcher, janitor, and Slack threads log at INFO to the `api` container. A
   plan meter throttled by Anthropic logs one WARNING naming the token digest and
   how long it is staying quiet; it never retries through a `Retry-After`. A
@@ -636,7 +668,7 @@ difference. Three things are worth knowing:
 - **The names are placeholders.** A migrated key is called
   `Migrated <old name> (<id>)`, because two projects could each have had a key
   named `anthropic-api-key` and the shared list needs distinct names. Open
-  Settings → LLM credentials once and rename them; the Team page of every
+  Settings → Providers once and rename them; the Inbox of every
   project on a credential shows the name.
 - **Its billing mode is read from the project it paid for.** A key no project
   was attached to is decrypted to tell an API key from a subscription token —

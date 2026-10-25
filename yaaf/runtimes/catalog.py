@@ -1,5 +1,14 @@
-"""The models a seat can be hired on: how they rank, what they cost, and what
-the API accepts for each.
+"""The models a seat can be hired on: how they rank, what they cost, what the
+API accepts for each — and the classes a role names instead of any of them.
+
+A role says how much model it needs, not whose (docs/PROVIDERS.md §1): a model
+reference is a concrete model (`gpt-6.1-sol`), a model of a provider the
+catalog does not list (`openrouter/qwen/qwen3-coder`), a class (`@balanced`,
+resolved on the project's primary provider) or a class of a named provider
+(`openai/@balanced`). Each provider's lineup (yaaf.runtimes.providers) says
+what each class is on it; an install overrides any of it (yaaf.core.
+model_policy). Resolution is `resolve`, and nothing hands a reference to a
+provider without going through it.
 
 Data, not logic. A model this file does not list can still be named on a role.
 It ranks 0, so `stakes: high` lifts it rather than leaving it, and it is
@@ -19,9 +28,26 @@ health checklist of every project the price meters (docs/RUNTIMES.md).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from yaaf.runtimes.providers import DEFAULT_PROVIDER, PROVIDERS
+
+#: How hard a model thinks, in yaaf's words — weakest to strongest. A role and
+#: a seat say effort this way whatever the vendor; each model's `efforts` are
+#: the rungs of this ladder it takes (R6).
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+_EFFORT_RANK = {name: i for i, name in enumerate(EFFORTS)}
+
+#: The classes a role names instead of a model, weakest to strongest.
+CLASSES = ("fast", "balanced", "frontier")
+CLASS_LABELS = {"frontier": "Frontier", "balanced": "Balanced", "fast": "Fast"}
+CLASS_BLURBS = {
+    "frontier": "the most capable model the provider sells",
+    "balanced": "the one you would run all day",
+    "fast": "cheap and quick: triage, formatting, lookups",
+}
+CLASS_SIGIL = "@"
 
 
 @dataclass(frozen=True)
@@ -62,8 +88,10 @@ class Model:
     #: The server web tools this model takes: "20260209" (dynamic filtering)
     #: or "basic" (`web_search_20250305` / `web_fetch_20250910`).
     web_tools: str = "basic"
-    #: The efforts the model takes, where its maker publishes the list; None
-    #: when it does not, and then only the harness's own list is held (R6).
+    #: The rungs of yaaf's effort ladder the model takes, where its maker
+    #: publishes the list; None when it does not, and then only the harness's
+    #: own list is held (R6). A pinned seat must name one of these; a class
+    #: seat runs at the lowest one at or above what it asked for (`rung`).
     efforts: tuple[str, ...] | None = None
 
 
@@ -111,17 +139,138 @@ MODELS: tuple[Model, ...] = (
     Model("gemini-3.8-flash", "google", 3, efforts=("low", "high")),
     Model("gemini-2.5-pro", "google", 4, efforts=("high",)),
     Model("gemini-3.1-pro-preview", "google", 5, efforts=("low", "high")),
+    # The names Mistral keeps pointed at its current model of each size, as
+    # DeepSeek does. Unpriced, for the reason above; no effort dial on the
+    # chat API.
+    Model("mistral-small-latest", "mistral", 1, effort=False),
+    Model("mistral-medium-latest", "mistral", 2, effort=False),
+    Model("mistral-large-latest", "mistral", 3, effort=False),
 )
 
 _BY_ID = {m.id: m for m in MODELS}
 
-#: What a seat with no role version, and a role nobody gave a model, runs on.
-DEFAULT_MODEL = "claude-sonnet-5-5"
+#: What a seat with no role version, and a role nobody gave a model, runs on:
+#: the project's primary provider's balanced model.
+DEFAULT_MODEL = "@balanced"
 DEFAULT_EFFORT = "high"
 
 
 def model(model_id: str | None) -> Model | None:
     return _BY_ID.get(model_id or "")
+
+
+# ── references: a model, or a class of one ─────────────────────────────────────
+
+
+class Unresolved(ValueError):
+    """A class reference read as a model without a provider to resolve it on.
+    Raised rather than guessed: a reader that forgot to resolve must fail in a
+    test, not bill the default provider in production."""
+
+
+def parse(ref: str | None) -> tuple[str | None, str | None]:
+    """(provider, class) of a class reference — provider None when the project's
+    primary provider is meant — or (None, None) for a concrete model."""
+    ref = ref or ""
+    prefix, slash, rest = ref.partition("/")
+    # A class name is one word. A path after the sigil is a model some hosts
+    # name that way — Cloudflare's `@cf/meta/llama-3.1-8b-instruct` behind a
+    # custom endpoint — and is passed to the provider as written.
+    if slash and rest.startswith(CLASS_SIGIL) and prefix in PROVIDERS and "/" not in rest:
+        return prefix, rest[1:]
+    if ref.startswith(CLASS_SIGIL) and "/" not in ref:
+        return None, ref[1:]
+    return None, None
+
+
+def is_class(ref: str | None) -> bool:
+    return parse(ref)[1] is not None
+
+
+def class_ref(cls: str, provider: str | None = None) -> str:
+    return f"{provider}/{CLASS_SIGIL}{cls}" if provider else f"{CLASS_SIGIL}{cls}"
+
+
+def valid_ref(ref: str | None) -> str | None:
+    """Why `ref` cannot be a model reference, or None. A class must be one of
+    the three, and a provider named before it must exist; anything else is a
+    model name and is the provider's to know."""
+    if not (ref or "").strip():
+        return "a model is required"
+    _, cls = parse(ref)
+    if cls is not None and cls not in CLASSES:
+        return (f"'{ref}' names no class — a class is "
+                f"{', '.join(class_ref(c) for c in reversed(CLASSES))}")
+    prefix, slash, rest = (ref or "").partition("/")
+    if slash and rest.startswith(CLASS_SIGIL) and prefix not in PROVIDERS:
+        return f"'{ref}' names a class of '{prefix}', which is not a provider here"
+    return None
+
+
+def lineup_of(provider: str, overrides: Mapping[str, Mapping[str, str]] | None = None
+              ) -> dict[str, str]:
+    """A provider's lineup: what it ships, under what the install says."""
+    shipped = dict(PROVIDERS[provider].lineup or {}) if provider in PROVIDERS else {}
+    shipped.update({k: v for k, v in ((overrides or {}).get(provider) or {}).items() if v})
+    return shipped
+
+
+def resolve(ref: str | None, provider: str,
+            overrides: Mapping[str, Mapping[str, str]] | None = None) -> str | None:
+    """The concrete model `ref` names when the project's primary provider is
+    `provider`, or None when the class has no model on that provider (R8 —
+    refused at every door, never filled in with some other model)."""
+    named, cls = parse(ref)
+    if cls is None:
+        return ref
+    return lineup_of(named or provider, overrides).get(cls)
+
+
+def class_label(ref: str | None) -> str:
+    """A class reference as a person says it: "@balanced" is "Balanced",
+    "openai/@fast" is "Fast (OpenAI)"."""
+    provider, cls = parse(ref)
+    name = CLASS_LABELS.get(cls or "", cls or "")
+    return f"{name} ({PROVIDERS[provider].label})" if provider else name
+
+
+def class_rank(ref: str | None) -> int:
+    _, cls = parse(ref)
+    return CLASSES.index(cls) if cls in CLASSES else -1
+
+
+# ── effort: yaaf's ladder, and each model's rungs on it (R6) ────────────────────
+
+
+def rungs(model_id: str | None, harness_efforts: tuple[str, ...] | None) -> tuple[str, ...] | None:
+    """The rungs a seat on this model and harness can run at: the model's own
+    list where its maker publishes one, else the harness's. None: yaaf's names
+    pass as they are (the Claude harnesses). Empty: there is no dial."""
+    row = model(model_id)
+    if row is not None and not row.effort and row.efforts is None:
+        return ()
+    if harness_efforts is not None and row is not None and row.efforts is not None:
+        return tuple(e for e in row.efforts if e in harness_efforts) or harness_efforts
+    if row is not None and row.efforts is not None:
+        return row.efforts
+    return harness_efforts
+
+
+def rung(effort: str, available: tuple[str, ...] | None) -> str | None:
+    """The rung a class seat asking for `effort` runs at: the lowest one at or
+    above it, or the top one when it asked for more than the model has. Never
+    lower while a higher rung exists — "max sent as high is a seat run cheaper
+    than it was hired at" (R6) — and None where there is no dial at all."""
+    if available is None:
+        return effort
+    if not available:
+        return None
+    ordered = sorted(available, key=lambda e: _EFFORT_RANK.get(e, 99))
+    want = _EFFORT_RANK.get(effort, 0)
+    for candidate in ordered:
+        if _EFFORT_RANK.get(candidate, 99) >= want:
+            return candidate
+    return ordered[-1]
 
 
 _SPELLED = {"gpt": "GPT", "deepseek": "DeepSeek"}
@@ -132,6 +281,8 @@ def label(model_id: str | None) -> str:
     "gpt-5.6-luna" is "GPT 5.6 Luna". Runs of version digits join with dots."""
     if not model_id:
         return "the default model"
+    if is_class(model_id):
+        return class_label(model_id)
     words: list[str] = []
     for part in model_id.split("/")[-1].split("-"):
         if part.isdigit() and words and words[-1].replace(".", "").isdigit():
@@ -147,6 +298,13 @@ def tier(model_id: str | None) -> int:
 
 
 def provider_of(model_id: str | None) -> str:
+    """The provider a concrete model — or a class of a named provider — is
+    sold by. A bare class has no provider until it is resolved."""
+    named, cls = parse(model_id)
+    if cls is not None:
+        if named is None:
+            raise Unresolved(f"'{model_id}' is a class; resolve it on a provider first")
+        return named
     found = model(model_id)
     if found:
         return found.provider

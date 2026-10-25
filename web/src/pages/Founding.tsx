@@ -11,7 +11,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, del, get, post, ProjectBundle, put } from "../api";
 import Markdown from "../Markdown";
-import { SecretInput, SEND_HINT, sendOnEnter } from "../ui";
+import { BaseUrlFields, DEFAULT_PROVIDER, KeyHelp, KeyInput, useProviders } from "../providers";
+import { SEND_HINT, sendOnEnter } from "../ui";
 import { Badge } from "../ui/kit";
 import type { Credential } from "../llmCredentials";
 import {
@@ -138,12 +139,26 @@ function Steps({ progress, onStop, stopping }: {
   );
 }
 
-/** The one thing that has to be true before the Founder can talk at all. */
+/** The one thing that has to be true before the Founder can talk at all.
+
+    Any provider with an API can pay for it: the Founder runs in the control
+    plane, on that provider's own wire — or, for a Claude subscription, on the
+    Claude Code CLI — and its model is the provider's Frontier class unless
+    somebody names another in Settings. */
 function CredentialGate({ onSaved }: { onSaved: () => void }) {
   const [value, setValue] = useState("");
+  const [provider, setProvider] = useState(DEFAULT_PROVIDER);
   const [mode, setMode] = useState("api_key");
+  const [baseUrl, setBaseUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const sellers = useProviders().filter((p) => p.protocol);
+  const seller = sellers.find((p) => p.name === provider);
+  // A login the Founder can hold is one the Claude Code CLI holds; every other
+  // provider is paid with its API key.
+  const kinds = (seller?.kinds ?? []).filter(
+    (k) => k.mode === "api_key" || k.default_harness === "claude_agent_sdk");
+  const kind = kinds.find((k) => k.mode === mode) ?? kinds[0];
   // The keys this install already holds for projects. Most installs have
   // exactly one, and asking for it a second time under a second name was the
   // whole of this screen.
@@ -169,7 +184,9 @@ function CredentialGate({ onSaved }: { onSaved: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await put("/admin/founder/credential", { value: value.trim(), mode });
+      await put("/admin/settings/platform-credential", {
+        value: value.trim(), mode: kind?.mode ?? "api_key", provider,
+        ...(seller?.credential_base_url ? { base_url: baseUrl.trim() } : {}) });
       onSaved();
     } catch (err) {
       setError((err as Error).message);
@@ -199,32 +216,41 @@ function CredentialGate({ onSaved }: { onSaved: () => void }) {
         </>
       )}
       <label>
-        Key type
-        <select value={mode} onChange={(e) => setMode(e.target.value)}>
-          <option value="api_key">Anthropic API key</option>
-          <option value="subscription">Claude subscription token</option>
+        Provider
+        <select value={provider} disabled={busy}
+          onChange={(e) => { setProvider(e.target.value); setMode("api_key"); setBaseUrl(""); }}>
+          {sellers.length === 0 && <option value={provider}>Loading providers…</option>}
+          {sellers.map((p) => <option key={p.name} value={p.name}>{p.label}</option>)}
         </select>
       </label>
-      <SecretInput
-        value={value}
-        onChange={setValue}
-        placeholder={mode === "subscription" ? "sk-ant-oat…" : "sk-ant-api…"}
-      />
+      {kinds.length > 1 && <label>
+        Key type
+        <select value={kind?.mode} disabled={busy} onChange={(e) => setMode(e.target.value)}>
+          {kinds.map((k) => <option key={k.mode} value={k.mode}>{k.bills.split(",")[0]}</option>)}
+        </select>
+      </label>}
+      {seller?.credential_base_url && <BaseUrlFields provider={seller} value={baseUrl}
+        onChange={setBaseUrl} secret={value} disabled={busy} />}
+      <KeyInput kind={kind} value={value} onChange={setValue} disabled={busy}
+        placeholder={seller?.local ? "Leave blank — it takes no key" : undefined} />
+      <KeyHelp provider={seller} kind={kind} />
       <p className="muted">
-        {mode === "subscription"
-          ? "A subscription token comes from `claude setup-token` and starts sk-ant-oat."
-          : "An API key comes from the Anthropic console and starts sk-ant-api."}{" "}
-        Pasting one where the other belongs is refused here rather than failing
-        on your first message.
+        The Founder drafts on {seller?.label ?? "this provider"}&apos;s most capable model —
+        its Frontier class{seller?.lineup.frontier ? <>, <code>{seller.lineup.frontier}</code></> : ""}{" "}
+        — unless you name another in Settings. Pasting a key where another kind belongs is
+        refused here rather than failing on your first message.
       </p>
       {error && <p className="error">{error}</p>}
-      <button className="primary" disabled={busy || value.trim().length < 8} onClick={save}>
+      <button className="primary"
+        disabled={busy || (!seller?.local && value.trim().length < 8)
+          || (!!seller?.credential_base_url && !baseUrl.trim())}
+        onClick={save}>
         {busy ? "Saving…" : "Save and start"}
       </button>
       <p className="muted">
         You can also <a href="#/projects/new/form">fill the form yourself</a>{" "}
         instead — the fire drill runs for nothing either way. Once the key is
-        set, it lives in <a href="#/settings">Settings</a>, where you can test,
+        set, it lives in <a href="#/settings?section=founder">Settings</a>, where you can test,
         rotate or remove it.
       </p>
     </div>
@@ -269,7 +295,7 @@ function DraftPanel({ bundle, changed = [] }: { bundle: ProjectBundle | null; ch
       <h4>Who pays<Moved on={changed.includes("pays")} /></h4>
       <p className="muted">
         {p.billing_secret_name
-          ? <>{p.billing_secret_name} — {p.billing_mode === "subscription" ? "a Claude subscription, metered in tokens" : "an Anthropic API key, billed in USD"}</>
+          ? <>{p.billing_secret_name} — {p.billing_mode === "subscription" ? "a subscription, metered in tokens" : "an API key, billed in USD"}</>
           : "Not chosen yet. The Founder asks when there is more than one credential; you can also pick one on the form."}
       </p>
 

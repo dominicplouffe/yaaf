@@ -37,6 +37,14 @@ Four things, and it is worth being exact because a fifth used to be on this list
    those and nothing else. File-shaped credentials are written to a tmpfs
    outside `/workspace`, mode 0600, so a key never reaches a disk and cannot be
    swept into a `git add -A` from the workspace the agent commits from.
+   The model credential is not a role credential: it reaches the harness, never
+   the shell a harness gives the model — yaaf's own loop runs `Bash` without
+   it, and without the install's web search key either. A provider whose
+   credential is a key file (Vertex AI's service account) never sends the file
+   into a sandbox at all: the control plane mints an hour-long token from it,
+   and the run asks `/agent/model-token` for the next one with its own run
+   token — so a leaked token is worth an hour, and only for the provider the
+   run was leased on (`docs/PROVIDERS.md` §4).
 3. **A metered budget.** Every run is priced, killed ones included. At the hard
    stop the project pauses itself and live run tokens are revoked.
 4. **An audited API.** Agents act only through `/agent/*` on a per-run token.

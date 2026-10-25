@@ -17,6 +17,8 @@ with no price cannot be hired onto a harness that meters by price).
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from tests.conftest import (
@@ -83,8 +85,10 @@ def test_the_picker_offers_every_harness_a_seat_may_run_on_and_not_the_test_swit
     offered = {h["name"] for h in client.get("/admin/harnesses", headers=ADMIN).json()}
     assert "mock" not in offered
     assert offered == {name for name, h in harnesses.HARNESSES.items() if h.family != "mock"}
-    assert {"claude_agent_sdk", "claude_cli", "anthropic_api", "openai_compatible",
-            "codex_cli", "gemini_cli", "opencode"} <= offered
+    assert {"claude_agent_sdk", "claude_cli", "yaaf_loop", "codex_cli", "gemini_cli",
+            "opencode"} <= offered
+    # A name a harness used to go by is understood, never offered.
+    assert not offered & set(harnesses.ALIASES)
 
 
 def test_a_role_on_the_cli_runs_its_seats_on_the_cli(client):
@@ -292,7 +296,8 @@ def test_a_subscription_cannot_pay_for_a_seat_on_the_api_loop(client):
     refused = client.post("/admin/projects", headers=ADMIN, json=_project_body(
         "loop-on-a-plan", billing_secret_id=subscription, teams=teams))
     assert refused.status_code == 422
-    assert "Anthropic API (yaaf's own loop) cannot pay with a Claude subscription" in refused.text
+    assert ("yaaf agent loop (the provider's own API) cannot pay with a Claude subscription"
+            in refused.text)
     accepted = client.post("/admin/projects", headers=ADMIN, json=_project_body(
         "loop-on-a-key", billing_secret_id=key, teams=teams))
     assert accepted.status_code == 200, accepted.text
@@ -329,8 +334,115 @@ def test_a_seat_on_the_api_loop_is_leased_with_its_price_and_runs_on_its_entrypo
         dispatch_once(session)
     job = next(j for j in lease_and_prepare(limit=20)
                if j.agent_id == project["ceo_agent_id"])
-    assert (job.provider, job.harness) == ("anthropic", "anthropic_api")
+    # Named by its old name, stored and run under its new one.
+    assert client.get("/admin/roles/ceo", headers=ADMIN).json()["harness"] == "yaaf_loop"
+    assert (job.provider, job.harness) == ("anthropic", "yaaf_loop")
     row = catalog.model(job.model)
     assert job.price == row.price.as_dict()
-    assert job.model_flags == {"effort": row.effort, "web_tools": row.web_tools}
-    assert get_backend(job.harness).entrypoint == "anthropic_api_entry.py"
+    # And the window its history is compacted against (loop_harness), from
+    # the shipped snapshot.
+    from yaaf.core.price_feed import shipped_window
+
+    assert job.model_flags == {"effort": row.effort, "web_tools": row.web_tools,
+                               "efforts": None, "context": shipped_window(job.model)}
+    assert get_backend(job.harness).entrypoint == "loop_entry.py"
+    assert json.loads(json.dumps(job.provider_spec))["protocol"] == "anthropic"
+
+
+# ── one seat changed after the project exists ───────────────────────────────────
+
+
+def _seat(client, agent_id: str, **fields):
+    return client.patch(f"/admin/agents/{agent_id}/seat", headers=ADMIN, json=fields)
+
+
+def _org_seat(client, project: dict, name: str) -> dict:
+    org = client.get(f"/observe/projects/{project['id']}/org", headers=ADMIN).json()
+    if name == "CEO":
+        return org["ceo"]
+    return next(a for t in org["teams"] for a in t["agents"] if a["name"] == name)
+
+
+def test_one_seat_can_be_moved_off_its_roles_model_and_back(client):
+    """Only the fields named change; null hands that one back to the role. The
+    org view says which is which, so a screen can offer "the role's" honestly."""
+    project = make_project(client, slug="moved", start=False)
+    emp2 = agent_by_name(project, "Emp2")
+    moved = _seat(client, emp2, model="claude-sonnet-5-5", effort="low", harness="claude_cli")
+    assert moved.status_code == 200, moved.text
+    seat = _org_seat(client, project, "Emp2")
+    assert seat["overrides"] == {"model": "claude-sonnet-5-5", "effort": "low",
+                                 "harness": "claude_cli"}
+    assert (seat["model_id"], seat["effort"], seat["harness"]) == \
+        ("claude-sonnet-5-5", "low", "claude_cli")
+    # Nobody else on the team moved.
+    assert _org_seat(client, project, "Lead")["overrides"] == \
+        {"model": None, "effort": None, "harness": None}
+
+    # Naming one field leaves the others as chosen.
+    assert _seat(client, emp2, effort=None).status_code == 200
+    seat = _org_seat(client, project, "Emp2")
+    assert seat["overrides"] == {"model": "claude-sonnet-5-5", "effort": None,
+                                 "harness": "claude_cli"}
+    assert seat["effort"] == seat["role_seat"]["effort"]
+
+    # It is the chairman's change, and it is on the record with what it was.
+    with db_session() as session:
+        from yaaf.core.models import AuditLog
+
+        row = session.query(AuditLog).filter(AuditLog.action == "agent.seat") \
+            .order_by(AuditLog.at.desc()).first()
+        assert row.detail["was"]["effort"] == "low" and row.detail["now"]["effort"] is None
+
+
+def test_a_seat_cannot_be_moved_onto_a_harness_its_credential_cannot_pay(client, picky):
+    """The new door runs the check every other door does (R1), and a refusal
+    leaves the seat exactly as it was."""
+    make_project(client, start=False)
+    subscription = _credential(client, "Plan", "subscription")
+    project = make_project(client, slug="seat-door", billing_secret_id=subscription)
+    lead = agent_by_name(project, "Lead")
+    refused = _seat(client, lead, harness="key_only", effort="low")
+    assert refused.status_code == 422
+    assert "cannot pay with a Claude subscription" in refused.text
+    with db_session() as session:
+        agent = session.get(Agent, lead)
+        assert (agent.harness_override, agent.effort_override) == (None, None)
+
+
+def test_a_seat_cannot_be_moved_onto_a_provider_the_project_does_not_pay(client):
+    """R5 at the seat door: a GPT model on a project only Anthropic pays fails
+    here, not at its first run."""
+    make_project(client, start=False)
+    key = _credential(client, "Key", "api_key")
+    project = make_project(client, slug="unpaid-seat", billing_secret_id=key)
+    refused = _seat(client, agent_by_name(project, "Emp2"), model="gpt-6-luna")
+    assert refused.status_code == 422 and "Emp2" in refused.text
+
+
+def test_a_seat_change_names_something_real(client):
+    project = make_project(client, slug="nonsense", start=False)
+    emp2 = agent_by_name(project, "Emp2")
+    assert _seat(client, emp2).status_code == 422
+    assert _seat(client, emp2, effort="ludicrous").status_code == 422
+    assert _seat(client, emp2, harness="mock").status_code == 422
+    assert _seat(client, "agt_nobody", effort="low").status_code == 404
+
+
+def test_a_model_client_changes_a_seat_through_the_same_door(client):
+    """`project_configure` verb `set_seat`: previewed first, then the admin
+    handler itself — so its refusals are the browser's, word for word."""
+    from tests.selftest_invariants.test_mcp_confirm import call
+    from tests.selftest_invariants.test_mcp_secrets import configurer
+
+    project = make_project(client, slug="mcp-seat", start=False)
+    emp2 = agent_by_name(project, "Emp2")
+    token = configurer(client)["token"]
+    arguments = {"project": "mcp-seat", "verb": "set_seat", "agent": emp2, "effort": "low"}
+    failed, preview = call(client, token, "project_configure", arguments)
+    assert failed is False and preview["confirm_required"] is True
+    assert _org_seat(client, project, "Emp2")["overrides"]["effort"] is None
+    failed, done = call(client, token, "project_configure",
+                        {**arguments, "confirm": preview["confirm"]})
+    assert failed is False, done
+    assert _org_seat(client, project, "Emp2")["overrides"]["effort"] == "low"

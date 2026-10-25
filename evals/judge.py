@@ -126,6 +126,9 @@ class ModelTranscriptJudge:
     """
 
     env: dict[str, str]
+    #: The judge's model: Claude Opus where an Anthropic credential pays, and
+    #: the frontier model of whatever provider the credential is for otherwise
+    #: (`judge_credential`).
     model: str = "claude-opus-5-5"
     goal: str = ""
     #: Observed in practice: a judge asked for JSON sometimes answers with
@@ -209,18 +212,40 @@ def judge_transcript(
     agent in this product runs under.
     """
     if judge is None:
-        env = env or {
-            name: os.environ[name]
-            for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
-            if os.environ.get(name)
-        }
+        found_env, model = judge_credential()
+        env = env or found_env
         if not env:
             raise JudgeUnavailable(
-                "no ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN; the planning-quality "
+                "no model credential in the environment (ANTHROPIC_API_KEY, OPENAI_API_KEY, "
+                "GEMINI_API_KEY, … — any provider's own variable); the planning-quality "
                 "judge calls a model and cannot grade without one."
             )
-        judge = ModelTranscriptJudge(env=env, goal=goal)
+        judge = ModelTranscriptJudge(env=env, model=model, goal=goal)
     return judge.judge(scenario_name, transcript)
+
+
+def judge_credential() -> tuple[dict[str, str], str]:
+    """Whichever model credential this machine carries, in the variable its
+    own provider reads, and the model to judge with: `YAAF_JUDGE_MODEL` where
+    it is set, else that provider's frontier model. Anthropic is looked for
+    first only because it is what the goldens were tuned against."""
+    from yaaf.founder.loop import BASE_URL_ENV
+    from yaaf.runtimes import catalog
+    from yaaf.runtimes.providers import PROVIDERS
+
+    for seller in PROVIDERS.values():
+        for kind in seller.kinds:
+            value = os.environ.get(kind.env_var)
+            if not value:
+                continue
+            env = {kind.env_var: value}
+            if seller.credential_base_url and os.environ.get(BASE_URL_ENV):
+                env[BASE_URL_ENV] = os.environ[BASE_URL_ENV]
+            model = (os.environ.get("YAAF_JUDGE_MODEL")
+                     or catalog.resolve("@frontier", seller.name) or "")
+            if model:
+                return env, model
+    return {}, ""
 
 
 

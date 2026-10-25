@@ -240,7 +240,7 @@ function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDes
         </div>
       )}
       <p className="ib-foot-note help">
-        <Link to={`/projects/${item.project.id}`}>Open {item.project.name} →</Link>
+        <Link className="ib-open-project" to={`/projects/${item.project.id}`}>Open {item.project.name} →</Link>
       </p>
     </div>
   );
@@ -521,11 +521,19 @@ function AllClear({ projects, items }: { projects: DeskProject[]; items: Item[] 
 }
 
 export default function Inbox() {
+  return <InboxView />;
+}
+
+/** The Inbox, everywhere it appears: across every project on its own page,
+    and as one project's home with `project` set. One component, so the rows,
+    the counts and the buttons are the same thing in both places — a project's
+    inbox that drifted from the real one would be a second list to trust. */
+export function InboxView({ project }: { project?: string }) {
   const desk = useDesk();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const tab = (params.get("tab") as Tab | null) ?? "needs";
-  const only = params.get("project");
+  const only = project ?? params.get("project");
   const projects = desk.data?.projects ?? [];
   const { updates, toNote, unread, reload: reloadUpdates } = useUpdates(projects);
   const decided = useDecided(projects, tab === "done");
@@ -550,7 +558,7 @@ export default function Inbox() {
               <span className="ib-r1"><span className="ib-kind">{it.kind}</span><span className="grow" />
                 {it.clocked && <span className={`help${it.at - Date.now() < 6 * 3_600_000 ? " warn" : ""}`}>{fmtSoon(new Date(it.at).toISOString())}</span>}</span>
               <span className="ib-t">{it.title}{it.amountUsd ? <span className="amt">${it.amountUsd.toLocaleString()}</span> : null}</span>
-              <span className="ib-r3"><ProjectTag p={it.project} /></span>
+              {!project && <span className="ib-r3"><ProjectTag p={it.project} /></span>}
             </span>
           </>
         ),
@@ -566,7 +574,7 @@ export default function Inbox() {
                 <span className="ib-r1"><span className="ib-kind">{u.type === "flag" ? "A problem, raised" : u.type === "heads_up" ? "You asked to be told" : "While you were away"}</span>
                   <span className="grow" /><span className="help">{u.at ? fmtAgo(u.at) : ""}</span></span>
                 <span className="ib-t">{u.type === "flag" ? flagPlain(u.flag.kind).title : u.type === "heads_up" ? u.heads.title : clip(u.brief.headline, 120)}</span>
-                <span className="ib-r3"><ProjectTag p={u.project} />
+                <span className="ib-r3">{!project && <ProjectTag p={u.project} />}
                   {isAck(u) && !unnoted(u) && <span className="help">noted</span>}</span>
               </span>
             </>
@@ -582,7 +590,7 @@ export default function Inbox() {
                 <span className="ib-r1"><span className="ib-kind">{d.type === "approval" ? "Approval" : "Question"}</span>
                   <span className="grow" /><span className="help">{fmtAgo(d.at)}</span></span>
                 <span className="ib-t">{d.row.title}</span>
-                <span className="ib-r3"><ProjectTag p={d.project} /><span className="help">{d.row.status}</span></span>
+                <span className="ib-r3">{!project && <ProjectTag p={d.project} />}<span className="help">{d.row.status}</span></span>
               </span>
             </>
           ),
@@ -599,7 +607,7 @@ export default function Inbox() {
   const setTab = (t: Tab) => {
     const next = new URLSearchParams();
     if (t !== "needs") next.set("tab", t);
-    if (only) next.set("project", only);
+    if (only && !project) next.set("project", only);
     setParams(next, { replace: true });
   };
 
@@ -620,11 +628,19 @@ export default function Inbox() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  // The list scrolls to keep the chosen row in view, and only the list:
+  // scrollIntoView moves every scroller above it too, so on a project's Inbox
+  // with a card above the list, opening the page scrolled its header away.
   useEffect(() => {
-    listRef.current?.querySelector(".ib-row.on")?.scrollIntoView({ block: "nearest" });
+    const list = listRef.current;
+    const row = list?.querySelector<HTMLElement>(".ib-row.on");
+    if (!list || !row) return;
+    const lr = list.getBoundingClientRect(), rr = row.getBoundingClientRect();
+    if (rr.top < lr.top) list.scrollTop -= lr.top - rr.top;
+    else if (rr.bottom > lr.bottom) list.scrollTop += rr.bottom - lr.bottom;
   }, [selected?.key]);
 
-  const soonest = soonestClock(desk.mine);
+  const soonest = soonestClock(needs);
   const withItems = projects.filter((p) => desk.items.some((i) => i.project.id === p.id) || updates.some((u) => u.project.id === p.id));
   // The proof an empty tab gives is about what you are looking at: filtered to
   // a paused project, "2 projects are running" would be true and beside the point.
@@ -634,13 +650,13 @@ export default function Inbox() {
   if (desk.error && !desk.data) return <div className="error">{desk.error}</div>;
 
   return (
-    <div className="inbox">
+    <div className={`inbox${project ? " embedded" : ""}`}>
       <div className="ib-list">
         <div className="ib-head">
-          <h1>Inbox</h1>
+          {project ? <h2 className="ib-h2">Inbox</h2> : <h1>Inbox</h1>}
           <p className="ib-sub">
-            {desk.mine.length === 0 ? "Nothing needs a decision from you."
-              : <><b>{desk.mine.length} thing{desk.mine.length === 1 ? "" : "s"} need{desk.mine.length === 1 ? "s" : ""} you.</b>
+            {needs.length === 0 ? `Nothing ${project ? "on this project " : ""}needs a decision from you.`
+              : <><b>{needs.length} thing{needs.length === 1 ? "" : "s"} need{needs.length === 1 ? "s" : ""} you{project ? " here" : ""}.</b>
                 {soonest && <> The soonest decides itself {fmtSoon(new Date(soonest.at).toISOString())}.</>}</>}
           </p>
           <Seg<Tab>
@@ -654,7 +670,7 @@ export default function Inbox() {
               { key: "done", label: "Done" },
             ]}
           />
-          {withItems.length > 1 && (
+          {!project && withItems.length > 1 && (
             <div className="ib-filter">
               <button className={`qchip${!only ? " on" : ""}`} onClick={() => { const n = new URLSearchParams(params); n.delete("project"); n.delete("item"); setParams(n, { replace: true }); }}>All projects</button>
               {withItems.map((p) => (

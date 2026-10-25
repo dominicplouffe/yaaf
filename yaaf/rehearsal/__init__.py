@@ -335,6 +335,50 @@ def _install_prices() -> list[dict]:
         return []
 
 
+def _install_models(project_spec: dict) -> dict:
+    """What decides which model each seat of this draft runs on, read from the
+    install the way `_install_prices` reads its prices: the install's lineups,
+    its search backend (never its key — the drill searches nothing), and the
+    provider the draft's billing credential pays, which the drill's own
+    database cannot know because it holds no credentials. Without it a draft
+    for Groq would be drilled on the install's default provider, and pass or
+    fail for a project nobody is creating. Empty when there is no database."""
+    try:
+        from yaaf.core import llm_credentials, model_policy, web_search
+        from yaaf.core.db import db_session
+
+        with db_session() as session:
+            found = {"lineups": model_policy.lineups(session),
+                     "default_provider": model_policy.default_provider(session),
+                     "search": (web_search.config(session) if web_search.configured(session)
+                                else None)}
+            billing = llm_credentials.resolve(
+                session, credential_id=project_spec.get("billing_secret_id"),
+                name=project_spec.get("billing_secret_name"))
+            if billing is not None:
+                found["default_provider"] = billing.provider or found["default_provider"]
+            return found
+    except Exception:
+        return {}
+
+
+def _apply_models(client: httpx.Client, models: dict) -> None:
+    for provider, row in (models.get("lineups") or {}).items():
+        for cls, model in row.items():
+            client.put("/admin/settings/models/lineup",
+                       json={"provider": provider, "class": cls, "model": model})
+    if models.get("default_provider"):
+        client.put("/admin/settings/models/default-provider",
+                   json={"provider": models["default_provider"]})
+    search = models.get("search")
+    if search:
+        # A stand-in key: the drill's agents are scripted and search nothing,
+        # and a seat promised `web` is held to R2 exactly as it would be live.
+        client.put("/admin/settings/web-search", json={
+            "backend": search["backend"], "base_url": search["base_url"],
+            "price_usd": search["price_usd"], "key": "rehearsal-stand-in"})
+
+
 def _client(email: str) -> httpx.Client:
     """An in-process client over the real app. No socket is ever opened.
 
@@ -547,6 +591,9 @@ def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
     # seat priced only here would be refused in a database that never heard
     # of them (R3). Read before the drill swaps the database out from under us.
     prices = _install_prices()
+    # And for the same reason the lineups, the search backend and the
+    # provider the draft will pay (`_install_models`).
+    models = _install_models(project_spec)
     with tempfile.TemporaryDirectory(prefix="yaaf-rehearsal-") as tmp:
         restore_engine = _isolate(Path(tmp))
         restore_state = _isolate_state_roots(Path(tmp))
@@ -557,6 +604,7 @@ def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
         try:
             for row in prices:
                 client.put(f"/admin/settings/model-prices/{row.pop('model')}", json=row)
+            _apply_models(client, models)
             return _run(client, project_spec, spec_roles, roles_dir, days,
                         usd_per_run, max_ticks, crew, report, mock_backend,
                         install)
@@ -607,6 +655,8 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
     # And what pays any other provider, for the same reason.
     body.pop("credentials", None)
     body.pop("credential_names", None)
+    body.pop("fallback_secret_id", None)
+    body.pop("fallback_credential_name", None)
     # The runtime is the whole point: scripted agents against the real API.
     integrations = dict(body.get("integrations") or {})
     integrations["runtime"] = "mock"

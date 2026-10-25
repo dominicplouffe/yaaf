@@ -8,10 +8,10 @@ A backend executes one leased job and returns a result — one per harness
 - ``claude_agent_sdk``: the Claude Agent SDK inside a Docker sandbox — the real thing
 - ``claude_cli``: the Claude Code CLI (``claude -p``) in the same sandbox, driven
   directly — the reference every other CLI harness is built from
-- ``anthropic_api``: yaaf's own agent loop on the Messages API, in the same
-  sandbox — the reference every provider reached by plain API is built from
-- ``openai_compatible``: the same loop on the OpenAI-compatible chat API —
-  DeepSeek, OpenRouter, a custom server; one client, a registry row each
+- ``yaaf_loop``: yaaf's own agent loop, in the same sandbox, on whichever
+  wire the seat's provider speaks (yaaf.runtimes.wire) — Anthropic's, OpenAI's
+  and Azure's, Gemini's and Vertex's, Bedrock's, and the OpenAI chat shape of
+  every other provider; a registry row each
 - ``codex_cli``: OpenAI's Codex CLI (``codex exec --json``), the first CLI
   harness that is not Claude's
 - ``gemini_cli``: Google's Gemini CLI (``gemini --output-format stream-json``)
@@ -37,13 +37,18 @@ class RunnerBackend(Protocol):
 
 def get_backend(name: str) -> RunnerBackend:
     """The backend that executes a harness (yaaf.runtimes.harnesses). Accepts
-    the harness name, and "agent_sdk" — what `integrations.runtime` held before
-    seats had harnesses of their own — as the SDK's old name."""
+    the harness name, and any name a harness used to go by (harnesses.ALIASES)
+    — "agent_sdk", what `integrations.runtime` held before seats had harnesses
+    of their own, and the two loop harnesses before the wire became the
+    provider's."""
+    from yaaf.runtimes.harnesses import canonical
+
+    name = canonical(name) or name
     if name == "mock":
         from yaaf.runner.backends.mock import MockBackend
 
         return MockBackend()
-    if name in ("claude_agent_sdk", "agent_sdk"):
+    if name == "claude_agent_sdk":
         from yaaf.runner.backends.agent_sdk import SandboxBackend
 
         return SandboxBackend("sandbox_entry.py")
@@ -51,14 +56,10 @@ def get_backend(name: str) -> RunnerBackend:
         from yaaf.runner.backends.agent_sdk import SandboxBackend
 
         return SandboxBackend("claude_cli_entry.py")
-    if name == "anthropic_api":
+    if name == "yaaf_loop":
         from yaaf.runner.backends.agent_sdk import SandboxBackend
 
-        return SandboxBackend("anthropic_api_entry.py")
-    if name == "openai_compatible":
-        from yaaf.runner.backends.agent_sdk import SandboxBackend
-
-        return SandboxBackend("openai_compatible_entry.py")
+        return SandboxBackend("loop_entry.py")
     if name == "codex_cli":
         from yaaf.runner.backends.agent_sdk import SandboxBackend
 

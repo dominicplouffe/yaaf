@@ -61,17 +61,23 @@ MAX_DRILL_DAYS = 90
     description=(
         "Search the role and crew library — who you can hire, and the pre-built teams. "
         "Roles carry the credentials they will need, which is a fact about hiring one "
-        "rather than something to discover when a run fails. `credentials` lists what "
-        "a project can pay Claude with — names and billing modes, never values — so "
-        "you can ask the chairman which one before `create_project`. `harnesses` lists "
-        "what can drive a seat's model; name one in a team's `harness_overrides` only "
-        "when the chairman asks for it — absent, a seat runs on its role's default."
+        "rather than something to discover when a run fails. A role names a model class "
+        "(@frontier, @balanced, @fast) or a model; a class runs on the project's own "
+        "provider — the one its billing credential pays. `credentials` lists what a "
+        "project can pay its model calls with — names, providers and billing modes, "
+        "never values — and what each class would run on if it paid, so you can ask the "
+        "chairman which one before `create_project`. `models` lists the classes, each "
+        "provider's lineup and every catalog model with whether it can be metered. "
+        "`harnesses` lists what can drive a seat's model; name one in a team's "
+        "`harness_overrides` only when the chairman asks for it — absent, a seat runs on "
+        "its credential's default."
     ),
     input_schema={
         "type": "object",
         "properties": {
             "what": {"type": "string",
-                     "enum": ["roles", "crews", "credentials", "harnesses", "providers"]},
+                     "enum": ["roles", "crews", "credentials", "models", "harnesses",
+                              "providers"]},
             "query": {"type": "string"},
             "category": {"type": "string",
                          "enum": ["leadership", "research", "build", "content",
@@ -94,6 +100,10 @@ def catalog(principal: Principal, session: Session, arguments: dict) -> dict:
         from yaaf.server.api.admin import list_providers
 
         payload = list_providers()
+    elif what == "models":
+        from yaaf.server.api.admin import list_models
+
+        payload = list_models(session)
     elif what == "crews":
         payload = founder_tools.search_crews(session, query=arguments.get("query"))
     else:
@@ -157,7 +167,6 @@ def grade_goal(principal: Principal, session: Session, arguments: dict) -> dict:
     half still runs and says so, because a rubric the caller can read is better
     than a refusal.
     """
-    import asyncio
 
     from yaaf.core.platform import NoPlatformCredential, founder_env, founder_model
     from yaaf.founder.grade import GOAL_ELEMENTS
@@ -180,7 +189,10 @@ def grade_goal(principal: Principal, session: Session, arguments: dict) -> dict:
                      "install's LLM credentials (Settings → Founder) and ask again."),
         }, arguments.get("detail"))
 
-    grade = asyncio.run(run_grade(goal, env=env, model=founder_model(session)))
+    from yaaf.runtimes.wire import run_sync
+
+    # Called on the MCP endpoint's event loop, where asyncio.run refuses.
+    grade = run_sync(run_grade(goal, env=env, model=founder_model(session)))
     return envelope.fit({"graded": True, **grade.to_dict()}, arguments.get("detail"))
 
 
@@ -260,6 +272,10 @@ def rehearse(principal: Principal, session: Session, arguments: dict) -> dict:
                             "description": "What pays each provider the billing credential "
                                            "does not, as {provider: credential name} — "
                                            "{\"deepseek\": \"DeepSeek key\"}. Never a value"},
+            "fallback": {"type": "string",
+                         "description": "Optional: a stored credential's name, of another "
+                                        "provider, that class seats move to while the billing "
+                                        "credential's provider is failing"},
             "start": {"type": "boolean", "description": "Start it immediately (default false)"},
             "confirm": {"type": "string", "description": "The token from this tool's preview"},
             "detail": DETAIL_ARG,
@@ -313,8 +329,15 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
     wanted = {**(body.get("credential_names") or {}), **(arguments.get("credentials") or {})}
     paying = {provider_name: _billing_secret(session, name)
               for provider_name, name in wanted.items() if isinstance(name, str)}
+    # The fallback, by name likewise — from the arguments or the bundle.
+    fallback_name = arguments.get("fallback") or body.get("fallback_credential_name")
+    fallback = _billing_secret(session, fallback_name) if isinstance(fallback_name, str) \
+        else None
     body = {k: v for k, v in body.items()
-            if k not in ("billing_secret_id", "billing_secret_name", "credential_names")}
+            if k not in ("billing_secret_id", "billing_secret_name", "credential_names",
+                         "fallback_credential_name", "fallback_secret_id")}
+    if fallback is not None:
+        body["fallback_secret_id"] = fallback.id
     if billing is not None:
         body["billing_secret_id"] = billing.id
         body["billing_secret_name"] = billing.name  # for the summary; the endpoint ignores it

@@ -1,4 +1,4 @@
-"""The signed-in person's own state: today, their snoozes.
+"""The signed-in person's own state: today, their snoozes, their pins.
 
 A snooze is "not now" on one row of one person's Inbox. It hides the row from
 that person's Needs-you list and badge until `until`, and from nobody else.
@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
-from yaaf.core.models import Approval, ApprovalStatus, Ask, Snooze, utcnow
+from yaaf.core.models import Approval, ApprovalStatus, Ask, Snooze, User, utcnow
 from yaaf.server import authority
 from yaaf.server.deps import db
 from yaaf.server.identity import Person, signed_in
@@ -121,3 +121,67 @@ def wake(item_key: str, person: Person = Depends(signed_in),
     if row is not None:
         session.delete(row)
     return {"item_key": item_key, "snoozed": False}
+
+
+# ── pins ─────────────────────────────────────────────────────────────────────────
+#
+# The places a person keeps going back to, one click away under the project in
+# the sidebar. The sidebar holds a project's five pages and no more, because
+# ten made every one of them look equally important; which of the pages under
+# them matters most differs by person, so each person pins their own, and
+# nobody else's sidebar grows.
+
+#: The most pins a person may keep. Past five the pins are the old ten-row
+#: sidebar again, chosen one at a time.
+MAX_PINS = 5
+#: What a person who never touched their pins has. Deliverables is where the
+#: team's work is, drafts and all, and it is the page people asked for most
+#: once it moved under Details.
+DEFAULT_PINS = ({"to": "details/deliverables", "label": "Deliverables", "project_id": None},)
+#: A place inside a project: a relative path, optionally with a query. The
+#: browser puts it under /projects/<id>/, so it can never name another site —
+#: no scheme, no leading slash, nothing but path characters before the query.
+PIN_TARGET = r"^[a-z][a-z0-9/_-]{0,120}(\?[A-Za-z0-9=&_%.~+!*'()-]{0,160})?$"
+
+
+class PinIn(BaseModel):
+    to: str = Field(min_length=1, max_length=300, pattern=PIN_TARGET)
+    label: str = Field(min_length=1, max_length=80)
+    #: Set for a pin that only makes sense in one project, like one file.
+    project_id: str | None = Field(default=None, max_length=40)
+
+
+class PinsIn(BaseModel):
+    pins: list[PinIn] = Field(max_length=MAX_PINS)
+
+
+def _pins_view(session: Session, person: Person, user: User) -> dict:
+    reachable = {p.id for p in authority.reachable(session, person.id, person.is_admin)}
+    stored = user.pins
+    pins = list(DEFAULT_PINS) if stored is None else [
+        p for p in stored if not p.get("project_id") or p["project_id"] in reachable]
+    return {"pins": pins, "default": stored is None, "max": MAX_PINS}
+
+
+@router.get("/pins", dependencies=[authority.SIGNED_IN])
+def pins(person: Person = Depends(signed_in), session: Session = Depends(db)) -> dict:
+    return _pins_view(session, person, session.get(User, person.id))
+
+
+@router.put("/pins", dependencies=[authority.SIGNED_IN])
+def set_pins(body: PinsIn, person: Person = Depends(signed_in),
+             session: Session = Depends(db)) -> dict:
+    """Replace this person's pins, in the order given."""
+    reachable = {p.id for p in authority.reachable(session, person.id, person.is_admin)}
+    seen: set[tuple[str, str | None]] = set()
+    kept: list[dict] = []
+    for pin in body.pins:
+        if pin.project_id is not None and pin.project_id not in reachable:
+            raise HTTPException(status_code=404, detail="no such project")
+        if (pin.to, pin.project_id) in seen:
+            continue
+        seen.add((pin.to, pin.project_id))
+        kept.append({"to": pin.to, "label": pin.label.strip(), "project_id": pin.project_id})
+    user = session.get(User, person.id)
+    user.pins = kept
+    return _pins_view(session, person, user)

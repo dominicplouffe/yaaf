@@ -60,7 +60,7 @@ def assigned_credential(session: Session, credential_id: str) -> Secret:
         raise HTTPException(
             status_code=422,
             detail=f"'{row.name}' is hidden and cannot be assigned — un-hide it under "
-                   "Settings → LLM credentials, or pick another")
+                   "Settings → Providers, or pick another")
     if row is None or row.llm_mode is None or row.project_id is not None:
         raise HTTPException(status_code=422, detail="Select an LLM credential configured in Settings")
     return row

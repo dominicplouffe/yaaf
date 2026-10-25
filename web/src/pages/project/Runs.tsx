@@ -366,7 +366,7 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
             )}
           </div>
           {storms.some((r) => (r.last_refusal ?? "").startsWith("Memory cap")) ? (
-            <Link to={`/projects/${projectId}/details/settings`}>give it more room →</Link>
+            <Link to={`/projects/${projectId}/settings`}>give it more room →</Link>
           ) : (
             <Link to={`/projects/${projectId}/chat`}>give direction →</Link>
           )}

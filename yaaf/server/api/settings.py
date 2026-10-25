@@ -50,20 +50,26 @@ def get_settings(session: Session = Depends(db)) -> dict:
     settings page that can show you a bot token is a settings page that can
     leak one into a screenshot, and rotating is the only thing anyone needs.
     """
+    founder = {
+        "configured": platform.has_credential(session),
+        "billing_mode": platform.billing_mode(session),
+        # Which provider it pays: the Founder runs on whichever one this says
+        # (docs/PROVIDERS.md §7).
+        "provider": platform.credential_provider(session),
+        "model": platform.founder_model(session),
+        # As set: a class resolves on whatever the credential pays.
+        "model_ref": platform.founder_model_ref(session),
+        # Its own key, or one of the LLM credentials below, borrowed.
+        "source": platform.credential_source(session),
+        "note": ("This key pays for product-wide conversations — the Founder. It is "
+                 "never injected into a sandbox and never reaches a project's agents: "
+                 "every project pays its own way with its own billing credential."),
+    }
     return {
-        "anthropic": {
-            "configured": platform.has_credential(session),
-            "billing_mode": platform.billing_mode(session),
-            # Which provider it pays — the section keeps its old name, and
-            # the Founder runs on whichever one this says (docs/RUNTIMES.md M6).
-            "provider": platform.credential_provider(session),
-            "model": platform.founder_model(session),
-            # Its own key, or one of the LLM credentials below, borrowed.
-            "source": platform.credential_source(session),
-            "note": ("This key pays for product-wide conversations — the Founder. It is "
-                     "never injected into a sandbox and never reaches a project's agents: "
-                     "every project pays its own way with its own billing credential."),
-        },
+        "platform": founder,
+        # The same section under the name it had when Anthropic was the only
+        # provider, for clients written then.
+        "anthropic": founder,
         "slack": slack_settings.platform_summary(session),
         "llm_credentials": _llm_counts(session),
     }
@@ -97,7 +103,8 @@ def _llm_counts(session: Session) -> dict:
 
 
 class CredentialIn(BaseModel):
-    value: str = Field(min_length=8)
+    #: Blank only for a local server, which takes no key (`_key_value`).
+    value: str = Field(default="", max_length=10000)
     mode: str = Field(default="api_key", pattern=MODE_PATTERN)
     provider: str = DEFAULT_PROVIDER
     base_url: str | None = Field(default=None, max_length=500)
@@ -106,12 +113,24 @@ class CredentialIn(BaseModel):
     model: str | None = Field(default=None, min_length=3, max_length=200)
 
 
-def _founder_model_problem(model: str, provider_name: str) -> str | None:
+def _founder_model_problem(session: Session, ref: str, provider_name: str) -> str | None:
     """A Founder's model the platform credential does not pay for. The model
-    picks the road (`yaaf.founder.session.on_sdk`); the credential pays it."""
+    picks the road (`yaaf.founder.session.on_sdk`); the credential pays it. A
+    class resolves on the credential's provider — which is why a credential
+    of any provider with a lineup needs no model named at all."""
+    from yaaf.core import model_policy
     from yaaf.runtimes import catalog
 
+    bad = catalog.valid_ref(ref)
+    if bad:
+        return bad
     seller = PROVIDERS[provider_name]
+    model = model_policy.resolve(session, ref, provider=provider_name)
+    if model is None:
+        label = catalog.class_label(ref)
+        return (f"the Founder runs on the {label} class, and {seller.label} has no {label} "
+                f"model set — name the Founder's model ({seller.name}/<model>), or set "
+                f"{seller.label}'s lineup on its card in Settings → Providers")
     if catalog.provider_of(model) == seller.name:
         return None
     owner = PROVIDERS[catalog.provider_of(model)].label
@@ -138,10 +157,11 @@ def install_credential(session: Session, value: str, mode: str,
     """
     from yaaf.founder.session import refusal
 
-    value = value.strip()
     base_url = _check_provider(provider, mode, base_url)
+    value = _key_value(provider, value)
     problem = (refusal(provider, mode) or platform.shape_error(mode, value, provider)
-               or _founder_model_problem((model or platform.founder_model(session)).strip(),
+               or _founder_model_problem(session,
+                                         (model or platform.founder_model_ref(session)).strip(),
                                          provider))
     if problem:
         raise HTTPException(status_code=422, detail=problem)
@@ -165,10 +185,10 @@ def borrow_llm_credential(session: Session, credential_id: str) -> dict:
     row = llm_credentials.resolve(session, credential_id=credential_id)
     if row is None:
         raise HTTPException(status_code=422, detail=(
-            "no such LLM credential — pick one listed under Settings → LLM credentials"))
+            "no such LLM credential — pick one listed under Settings → Providers"))
     provider = row.provider or DEFAULT_PROVIDER
     problem = (refusal(provider, row.llm_mode)
-               or _founder_model_problem(platform.founder_model(session), provider))
+               or _founder_model_problem(session, platform.founder_model_ref(session), provider))
     if problem:
         raise HTTPException(status_code=422, detail=problem)
     platform.use_llm_credential(session, row.id)
@@ -180,13 +200,15 @@ def borrow_llm_credential(session: Session, credential_id: str) -> dict:
 def set_founder_model(session: Session, model: str) -> dict:
     """The Founder's model, held to the provider the platform credential pays.
     Shared with ``/admin/founder/model``."""
+    from yaaf.runtimes import catalog
+
     model = model.strip()
-    if platform.has_credential(session):
-        problem = _founder_model_problem(model, platform.credential_provider(session))
-        if problem:
-            raise HTTPException(status_code=422, detail=problem)
+    problem = (_founder_model_problem(session, model, platform.credential_provider(session))
+               if platform.has_credential(session) else catalog.valid_ref(model))
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
     platform.set_setting(session, platform.FOUNDER_MODEL, model)
-    return {"model": model}
+    return {"model": platform.founder_model(session), "ref": model}
 
 
 def check_credential(session: Session) -> dict:
@@ -206,17 +228,23 @@ def check_credential(session: Session) -> dict:
     return {"ok": True, "detail": "the credential reached a model."}
 
 
+#: The platform credential's routes are `/platform-credential`; `/anthropic` is
+#: the name they had when it could pay nobody else, kept for clients written
+#: then. Both reach the same handler.
+@router.put("/platform-credential", dependencies=[authority.INSTANCE_ADMIN])
 @router.put("/anthropic", dependencies=[authority.INSTANCE_ADMIN])
 def put_anthropic(body: CredentialIn, session: Session = Depends(db)) -> dict:
     return install_credential(session, body.value, body.mode, body.provider, body.base_url,
                               body.model)
 
 
+@router.post("/platform-credential/test", dependencies=[authority.INSTANCE_ADMIN])
 @router.post("/anthropic/test", dependencies=[authority.INSTANCE_ADMIN])
 def test_anthropic(session: Session = Depends(db)) -> dict:
     return check_credential(session)
 
 
+@router.delete("/platform-credential", dependencies=[authority.INSTANCE_ADMIN])
 @router.delete("/anthropic", dependencies=[authority.INSTANCE_ADMIN])
 def delete_anthropic(session: Session = Depends(db)) -> dict:
     """Remove the platform key. Nothing else breaks: projects never used it,
@@ -229,6 +257,7 @@ class ModelIn(BaseModel):
     model: str = Field(min_length=3, max_length=200)
 
 
+@router.put("/platform-credential/model", dependencies=[authority.INSTANCE_ADMIN])
 @router.put("/anthropic/model", dependencies=[authority.INSTANCE_ADMIN])
 def put_anthropic_model(body: ModelIn, session: Session = Depends(db)) -> dict:
     return set_founder_model(session, body.model)
@@ -327,7 +356,8 @@ class LlmCredentialIn(BaseModel):
 
     name: str = Field(min_length=1, max_length=120)
     mode: str = Field(pattern=MODE_PATTERN)
-    value: str = Field(min_length=8, max_length=10000)
+    #: Blank only for a local server, which takes no key (`_key_value`).
+    value: str = Field(default="", max_length=10000)
     #: Which provider it pays (yaaf.runtimes.providers). Absent is Anthropic,
     #: which every credential was before there was a second.
     provider: str = Field(default=DEFAULT_PROVIDER, max_length=32)
@@ -356,16 +386,39 @@ def _check_provider(provider_name: str, mode: str, base_url: str | None) -> str 
             f"{seller.label} takes {', '.join(k.bills for k in seller.kinds)} — not '{mode}'"))
     base_url = (base_url or "").strip() or None
     if seller.credential_base_url:
-        if not base_url or not base_url.startswith(("http://", "https://")):
+        # A local server is plain HTTP on the sandbox network; everything
+        # else carries a key, and a key goes over TLS or not at all.
+        schemes = ("http://", "https://") if seller.local or seller.name == "custom" \
+            else ("https://",)
+        if not base_url or not base_url.startswith(schemes) or "{" in base_url:
+            example = (seller.base_url_template or "").replace("{base_url}",
+                                                               "http://ollama:11434/v1")
             raise HTTPException(status_code=422, detail=(
                 f"a {seller.label} credential carries the server's address — give its "
-                "base URL, e.g. http://ollama:11434/v1"))
+                f"base URL, e.g. {example or 'http://ollama:11434/v1'}"))
         return base_url.rstrip("/")
     if base_url:
         raise HTTPException(status_code=422, detail=(
             f"{seller.label} is reached at its own address; a base URL is only for a "
-            "custom endpoint"))
+            "provider whose address is the credential's own"))
     return None
+
+
+#: What a local server's credential holds when it was given no key: the wire
+#: sends nothing for it (its auth is "none"), and the column is not nullable.
+NO_KEY = "no-key"
+
+
+def _key_value(provider_name: str, value: str | None) -> str:
+    """The value to store: as given, or — for a local server, which takes no
+    key — a stand-in when it was left blank. Anything else needs a key."""
+    value = (value or "").strip()
+    seller = PROVIDERS.get(provider_name)
+    if not value and seller is not None and seller.local:
+        return NO_KEY
+    if len(value) < 8:
+        raise HTTPException(status_code=422, detail="Enter a credential of at least 8 characters")
+    return value
 
 
 def _token_groups(session: Session) -> dict[str, tuple[str | None, int]]:
@@ -432,7 +485,11 @@ def _llm_summary(session: Session, row: Secret, projects: list | None = None,
         from yaaf.core.project_credentials import projects_using
 
         projects = projects_using(session, row.id)
-    out = [{"id": p.id, "name": p.name, "status": p.status, "live": p.status not in TERMINAL}
+    # How it serves each: pays it, or stands by as its fallback — in use
+    # either way (it cannot be deleted from under either), said apart.
+    out = [{"id": p.id, "name": p.name, "status": p.status, "live": p.status not in TERMINAL,
+            "as": "fallback" if p.fallback_secret_id == row.id and p.billing_secret_id != row.id
+            else "pays"}
            for p in projects]
     if groups is None:
         groups = _token_groups(session)
@@ -468,10 +525,9 @@ def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> di
     if duplicate:
         raise HTTPException(status_code=409, detail="A credential with this name already exists")
     if value is not None:
-        value = value.strip()
-        if len(value) < 8:
-            raise HTTPException(status_code=422, detail="Enter a credential of at least 8 characters")
-        problem = platform.shape_error(row.llm_mode, value, row.provider)
+        value = _key_value(row.provider, value)
+        problem = (None if value == NO_KEY
+                   else platform.shape_error(row.llm_mode, value, row.provider))
         if problem:
             raise HTTPException(status_code=422, detail=problem)
         row.ciphertext = encrypt(value)
@@ -767,6 +823,16 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
                           "the monthly budget below is the meter that applies",
                 "windows": [], "fetched_at": None, "cached": False,
                 "token_digest": None}
+    seller = PROVIDERS.get(row.provider or DEFAULT_PROVIDER)
+    if seller is None or not seller.plan_meter:
+        # The probe asks Anthropic. A ChatGPT or Google login sent there would
+        # be one vendor's credential handed to another — and answered with
+        # nothing anyway.
+        return {"credential_id": credential_id, "mode": mode, "available": False,
+                "reason": f"{seller.label if seller else row.provider} reports no plan "
+                          "meter yaaf can read — the run ceiling and the token budget are "
+                          "the meters that apply",
+                "windows": [], "fetched_at": None, "cached": False, "token_digest": None}
     token = decrypt(row.ciphertext)
     outcome = plan_probe.refresh(session, token) if refresh else None
     found = plan_usage.stored(session, token)
@@ -806,6 +872,9 @@ class ModelPriceIn(BaseModel):
     output: float = Field(ge=0, le=10_000)
     cache_read: float = Field(default=0.0, ge=0, le=10_000)
     cache_write: float = Field(default=0.0, ge=0, le=10_000)
+    #: The model's input window in tokens, which yaaf's own loop compacts
+    #: against. Left out, whatever the install already had stays.
+    context_window: int | None = Field(default=None, ge=1_000, le=100_000_000)
 
 
 @router.get("/model-prices", dependencies=[authority.INSTANCE_ADMIN])
@@ -813,6 +882,88 @@ def list_model_prices(session: Session = Depends(db)) -> list:
     from yaaf.core import prices
 
     return prices.table(session)
+
+
+class PriceImportIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: "feed" reads the install's price feed live; "snapshot" the dated copy
+    #: shipped in the repo, for an install that cannot reach it.
+    source: str = Field(default="feed", pattern="^(feed|snapshot)$")
+    #: False shows what would change; True writes it.
+    apply: bool = False
+    #: Which models. Absent: every model this install could run a seat on.
+    models: list[str] | None = Field(default=None, max_length=500)
+    #: Every chat model the feed lists for one provider, instead.
+    provider: str | None = Field(default=None, max_length=32)
+    #: Replace prices an administrator typed. Off: theirs win over any feed.
+    overwrite_own: bool = False
+    #: Replace the catalog's checked prices too. Off: the vendor's list wins.
+    include_shipped: bool = False
+
+
+@router.post("/model-prices/import", dependencies=[authority.INSTANCE_ADMIN])
+def import_model_prices(body: PriceImportIn, session: Session = Depends(db)) -> dict:
+    """Price models from a feed (docs/PROVIDERS.md §5): a preview by default,
+    written only with `apply`, every row labelled with where it came from.
+    Hand-set prices and the catalog's checked ones are kept unless asked."""
+    import httpx
+
+    from yaaf.core import price_feed
+    from yaaf.server.api.admin import _audit
+
+    if body.source == "snapshot":
+        feed, label = price_feed.snapshot_feed()
+    else:
+        url = price_feed.feed_url(session)
+        try:
+            feed = price_feed.fetch(url)
+        except (httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail=(
+                f"the price feed could not be read ({url}): {exc} — import the snapshot "
+                "instead, or point the feed at a mirror")) from exc
+        label = price_feed.source_label()
+    if body.provider and body.provider not in PROVIDERS:
+        raise HTTPException(status_code=422, detail=f"unknown provider '{body.provider}'")
+    models = (body.models if body.models is not None
+              else price_feed.provider_models(feed, body.provider) if body.provider
+              else price_feed.wanted(session))
+    rows = price_feed.preview(session, feed, models, source=label,
+                              overwrite_own=body.overwrite_own,
+                              include_shipped=body.include_shipped)
+    applied = price_feed.apply(session, rows) if body.apply else []
+    if applied:
+        _audit(session, None, "model_price.import", "feed", label,
+               {"models": applied, "source": body.source})
+    return {"source": label, "rows": rows, "applied": applied}
+
+
+@router.get("/price-feed", dependencies=[authority.INSTANCE_ADMIN])
+def get_price_feed(session: Session = Depends(db)) -> dict:
+    from yaaf.core import price_feed
+
+    found = price_feed.snapshot()
+    return {"url": price_feed.feed_url(session), "default_url": price_feed.DEFAULT_FEED_URL,
+            "snapshot_as_of": found["as_of"], "snapshot_models": len(found["models"])}
+
+
+class PriceFeedIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(max_length=500)
+
+
+@router.put("/price-feed", dependencies=[authority.INSTANCE_ADMIN])
+def put_price_feed(body: PriceFeedIn, session: Session = Depends(db)) -> dict:
+    """Point the importer at a mirror — an install's own copy of the feed, in
+    the same shape. Blank goes back to the default."""
+    from yaaf.core import price_feed
+
+    url = body.url.strip()
+    if url and not url.startswith("https://"):
+        raise HTTPException(status_code=422, detail="a price feed is read over https")
+    platform.set_setting(session, price_feed.FEED_URL, url)
+    return get_price_feed(session)
 
 
 @router.put("/model-prices/{model:path}", dependencies=[authority.INSTANCE_ADMIN])
@@ -824,16 +975,51 @@ def put_model_price(model: str, body: ModelPriceIn, session: Session = Depends(d
     model = model.strip()
     if not model or len(model) > 128:
         raise HTTPException(status_code=422, detail="Name the model, as a seat names it")
+    if catalog.is_class(model):
+        raise HTTPException(status_code=422, detail=(
+            f"{model} is a class, not a model — price the model it resolves to "
+            "(each provider's card in Settings → Providers shows its lineup)"))
     row = session.get(ModelPrice, model) or ModelPrice(model=model)
     row.input, row.output = body.input, body.output
     row.cache_read, row.cache_write = body.cache_read, body.cache_write
+    if body.context_window is not None:
+        row.context_window = body.context_window
     row.updated_at = utcnow()
+    # Typed by an administrator: whatever a feed said before, this is theirs.
+    row.source = None
     session.add(row)
     session.flush()
     _audit(session, None, "model_price.set", "model", model, body.model_dump())
     # Which provider the name resolves to, said back: a typo in the provider
     # part lands on the default provider, and the screen should show that.
     return {"model": model, "provider": catalog.provider_of(model), **body.model_dump()}
+
+
+class ContextWindowIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Tokens the model reads at once; null goes back to the imported or
+    #: shipped figure.
+    context_window: int | None = Field(default=None, ge=1_000, le=100_000_000)
+
+
+@router.put("/model-context/{model:path}", dependencies=[authority.INSTANCE_ADMIN])
+def put_context_window(model: str, body: ContextWindowIn,
+                       session: Session = Depends(db)) -> dict:
+    """A model's input window, apart from its price — which yaaf's own loop
+    compacts a run's history against. Setting it never turns a shipped price
+    into a hand-typed one."""
+    from yaaf.core import prices
+    from yaaf.runtimes import catalog
+    from yaaf.server.api.admin import _audit
+
+    model = model.strip()
+    if not model or len(model) > 128 or catalog.is_class(model):
+        raise HTTPException(status_code=422, detail="Name the model, as a seat names it")
+    prices.set_window(session, model, body.context_window)
+    _audit(session, None, "model_context.set", "model", model,
+           {"context_window": body.context_window})
+    return {"model": model, "context_window": prices.context_window(session, model)}
 
 
 @router.delete("/model-prices/{model:path}", dependencies=[authority.INSTANCE_ADMIN])
@@ -849,6 +1035,448 @@ def delete_model_price(model: str, session: Session = Depends(db)) -> dict:
     session.delete(row)
     _audit(session, None, "model_price.clear", "model", model, {})
     return {"model": model, "removed": True}
+
+
+# ── models: lineups, the default provider, per-provider ceilings ─────────────────
+
+
+@router.get("/models", dependencies=[authority.INSTANCE_ADMIN])
+def get_models(session: Session = Depends(db)) -> dict:
+    """Settings → Models: what each class names on each provider, where bare
+    classes resolve when a project pays nobody yet, and how many runs each
+    provider may carry at once (docs/PROVIDERS.md §1, §8)."""
+    from yaaf.core import model_policy, model_upkeep, provider_check_runs
+    from yaaf.runtimes import catalog
+
+    lists = model_upkeep.served(session)
+    checks = {row["model"]: row for row in provider_check_runs.scoreboard(session)}
+    lineups = model_policy.lineup_table(session)
+    for row in lineups:
+        found = lists.get(row["provider"])
+        names = set(found["models"]) if found else None
+        for entry in row["classes"].values():
+            model = entry["model"]
+            # Whether the provider's own list (as last read) still has it, and
+            # what the last check of it said: the evidence beside the choice.
+            entry["served"] = (catalog.api_name(model) in names
+                               if model and names is not None else None)
+            check = checks.get(model) if model else None
+            entry["check"] = ({"status": check["status"], "summary": check["summary"],
+                               "at": check["finished_at"]} if check else None)
+        row["served"] = ({"at": found["at"], "count": len(found["models"])}
+                         if found else None)
+    return {"default_provider": model_policy.default_provider(session),
+            "lineups": lineups,
+            "ceilings": model_policy.ceilings(session),
+            "upkeep": {"enabled": model_upkeep.enabled(session),
+                       "last": model_upkeep.last(session) or None}}
+
+
+class LineupIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(max_length=32)
+    #: frontier | balanced | fast
+    cls: str = Field(alias="class", max_length=16)
+    #: The model it names on that provider; null goes back to the shipped one.
+    model: str | None = Field(default=None, max_length=128)
+
+
+@router.put("/models/lineup", dependencies=[authority.INSTANCE_ADMIN])
+def put_lineup(body: LineupIn, session: Session = Depends(db)) -> dict:
+    """Name what a class is on a provider. Every class seat on every project
+    whose primary provider this is moves with it on its next run — which is
+    the point, and why it is an administrator's door. The seats it would now
+    refuse are named in the answer rather than discovered at 3am."""
+    from yaaf.core import model_policy
+    from yaaf.server.api.admin import _audit
+
+    model_policy.set_lineup(session, body.provider, body.cls, body.model)
+    _audit(session, None, "models.lineup", "provider", body.provider,
+           {"class": body.cls, "model": body.model})
+    session.flush()
+    return {**get_models(session), "unrunnable": _unrunnable_seats(session)}
+
+
+class DefaultProviderIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(max_length=32)
+
+
+@router.put("/models/default-provider", dependencies=[authority.INSTANCE_ADMIN])
+def put_default_provider(body: DefaultProviderIn, session: Session = Depends(db)) -> dict:
+    from yaaf.core import model_policy
+    from yaaf.server.api.admin import _audit
+
+    model_policy.set_default_provider(session, body.provider)
+    _audit(session, None, "models.default_provider", "provider", body.provider, {})
+    return get_models(session)
+
+
+class CeilingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(max_length=32)
+    #: At most this many runs on the provider at once; null lifts it.
+    limit: int | None = Field(default=None, ge=1, le=1000)
+
+
+@router.put("/models/ceiling", dependencies=[authority.INSTANCE_ADMIN])
+def put_ceiling(body: CeilingIn, session: Session = Depends(db)) -> dict:
+    from yaaf.core import model_policy
+    from yaaf.server.api.admin import _audit
+
+    model_policy.set_ceiling(session, body.provider, body.limit)
+    _audit(session, None, "models.ceiling", "provider", body.provider, {"limit": body.limit})
+    return get_models(session)
+
+
+def _unrunnable_seats(session: Session) -> list[str]:
+    """Seats of live projects that a lineup change left unable to run, by name."""
+    from sqlalchemy import select
+
+    from yaaf.core.models import Agent, Project
+    from yaaf.server.seat_checks import seat_problem
+
+    out = []
+    live = session.scalars(select(Project).where(Project.status.in_(("running", "paused"))))
+    for project in live:
+        agents = list(session.scalars(select(Agent).where(Agent.project_id == project.id)))
+        problem = seat_problem(session, project, agents, chat=False)
+        if problem:
+            out.append(f"{project.name} — {problem}")
+    return out
+
+
+@router.get("/llm-credentials/{credential_id}/models",
+            dependencies=[authority.INSTANCE_ADMIN])
+def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
+    """What the provider actually serves for this credential, by the names a
+    seat or a lineup would use (`provider/model` for one the catalog does not
+    list) — so a Groq lineup is picked from Groq's list, not typed from memory
+    (docs/PROVIDERS.md §8). One free call to the provider's own model list."""
+    import httpx
+
+    from yaaf.core import model_policy, model_tokens, model_upkeep
+    from yaaf.runtimes import catalog, wire
+    from yaaf.runtimes.providers import provider
+
+    row = _managed(session, credential_id, lock=False)
+    seller = provider(row.provider)
+    if seller.protocol is None:
+        raise HTTPException(status_code=422, detail=f"{seller.label} lists no models")
+    try:
+        names = model_upkeep.list_served(session, row)
+    except model_tokens.MintError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (wire.WireError, httpx.HTTPError) as exc:
+        raise HTTPException(status_code=502, detail=f"{seller.label} would not list its "
+                                                    f"models: {exc}") from exc
+    # Remembered: a seat whose model drops off this list is named on its
+    # project's health checklist (yaaf.core.model_upkeep).
+    model_upkeep.record(session, row, names)
+    listed = {m.id for m in catalog.MODELS if m.provider == seller.name}
+    served = set(names)
+    lineup = {cls: model_policy.resolve(session, catalog.class_ref(cls), provider=seller.name)
+              for cls in reversed(catalog.CLASSES)}
+    in_lineup = {m for m in lineup.values() if m}
+    return {"provider": seller.name,
+            "lineup": {cls: {"model": model,
+                             "served": catalog.api_name(model) in served if model else None}
+                       for cls, model in lineup.items()},
+            "models": [
+                {"id": name if name in listed else f"{seller.name}/{name}", "name": name,
+                 "listed": name in listed,
+                 "in_lineup": (name if name in listed else f"{seller.name}/{name}") in in_lineup}
+                for name in names]}
+
+
+@router.get("/providers/readiness", dependencies=[authority.INSTANCE_ADMIN])
+def providers_readiness(session: Session = Depends(db)) -> dict:
+    """Every provider the install pays: what each class runs on, priced or not,
+    listed by the key or not, checked or not, whether it can search — and,
+    per gap, what fixes it (yaaf.core.readiness). What the doors would refuse,
+    read before anybody is refused."""
+    from yaaf.core import readiness
+
+    return readiness.readiness(session)
+
+
+class UpkeepIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
+@router.put("/models/upkeep", dependencies=[authority.INSTANCE_ADMIN])
+def put_upkeep(body: UpkeepIn, session: Session = Depends(db)) -> dict:
+    """Keep models and prices current: once a day, re-read each key's model
+    list and refresh feed-sourced prices (yaaf.core.model_upkeep)."""
+    from yaaf.core import model_upkeep
+    from yaaf.server.api.admin import _audit
+
+    model_upkeep.set_enabled(session, body.enabled)
+    _audit(session, None, "models.upkeep", "platform", "upkeep", {"enabled": body.enabled})
+    return get_models(session)
+
+
+@router.post("/models/upkeep/run", dependencies=[authority.INSTANCE_ADMIN])
+def run_upkeep(session: Session = Depends(db)) -> dict:
+    """The daily pass, now, whether or not it is switched on. It keeps its own
+    transactions, so none is held open across a provider's answer."""
+    from yaaf.core import model_upkeep
+
+    return model_upkeep.run()
+
+
+class SmokeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The model to call. Absent: the provider's fast class, the cheapest
+    #: thing that proves the key, the address and the wire.
+    model: str | None = Field(default=None, max_length=128)
+
+
+@router.post("/llm-credentials/{credential_id}/smoke",
+             dependencies=[authority.INSTANCE_ADMIN])
+def smoke_credential(credential_id: str, body: SmokeIn | None = None,
+                     session: Session = Depends(db)) -> dict:
+    """One real, trivial call on this credential, through the wire a seat on it
+    runs (docs/PROVIDERS.md §8): a one-line prompt with one tool offered, and
+    back the model that answered, whether it called the tool, its usage, and
+    what that call cost at this install's price. It spends a few hundred tokens
+    of the credential's own money — which is the point: nothing else can be
+    right about a credential, an address and a wire at once. A login pays only
+    its CLI, which runs only in a sandbox; it is shape-checked instead."""
+    import asyncio
+    import time
+
+    import httpx
+
+    from yaaf.core import model_policy, model_tokens
+    from yaaf.core import prices as install_prices
+    from yaaf.core.crypto import decrypt
+    from yaaf.runtimes import catalog, wire
+    from yaaf.runtimes.providers import provider, spec
+
+    row = _managed(session, credential_id, lock=False)
+    seller = provider(row.provider)
+    if seller.protocol is None or (row.llm_mode or "api_key") != "api_key":
+        return {"ok": None, "detail": f"a {seller.kind(row.llm_mode).label} pays only its own "
+                                      "CLI, which runs only inside a sandbox — its first run "
+                                      "is the check"}
+    ref = (body.model if body and body.model else catalog.class_ref("fast"))
+    model = model_policy.resolve(session, ref, provider=seller.name)
+    if model is None:
+        raise HTTPException(status_code=422, detail=(
+            f"{seller.label} has no Fast model set — name one to call (model), or set its "
+            "lineup on its card in Settings → Providers"))
+    key = decrypt(row.ciphertext)
+    if seller.mints_tokens:
+        try:
+            key, _ = model_tokens.mint(seller.name, key)
+        except model_tokens.MintError as exc:
+            return {"ok": False, "model": model, "detail": str(exc)}
+    endpoint = wire.Endpoint.from_spec(spec(seller, row.llm_mode, row.base_url), key)
+    probe = wire.ToolSpec("report_ready", "Call this once to say you are ready.",
+                          {"type": "object", "properties": {"ready": {"type": "boolean"}},
+                           "required": ["ready"]})
+    started = time.monotonic()
+    try:
+        replies = asyncio.run(_one_reply(wire.call(
+            endpoint, catalog.api_name(model), "You are a connectivity check.",
+            [wire.Turn("user", text="Call report_ready with ready=true, then stop.")],
+            [probe], 256)))
+    except (wire.WireError, httpx.HTTPError) as exc:
+        kind = getattr(exc, "kind", "transient")
+        return {"ok": False, "model": model, "kind": kind,
+                "detail": f"{seller.label} refused the call: {exc}"}
+    reply = replies[-1]
+    usage = reply.usage
+    price = install_prices.price(session, model)
+    priced = None
+    if price is not None:
+        priced = (usage.input * price.input + usage.output * price.output
+                  + usage.cache_read * price.cache_read) / 1_000_000
+    return {"ok": True, "model": model, "served": reply.model,
+            "latency_ms": int((time.monotonic() - started) * 1000),
+            "called_tool": any(c.name == "report_ready" for c in reply.turn.calls),
+            "usage": {"input": usage.input, "output": usage.output,
+                      "cache_read": usage.cache_read},
+            "priced_usd": priced if priced is not None else usage.cost_usd,
+            "price": price.as_dict() if price is not None else None,
+            "detail": (f"{seller.label} answered on {reply.model or model}"
+                       + ("" if price is not None or usage.cost_usd is not None
+                          else " — but this install has no price for it, so a seat on it "
+                               "would be refused (R3): import or set one"))}
+
+
+async def _one_reply(stream) -> list:
+    return [reply async for reply in stream]
+
+
+# ── the provider check: can this model do yaaf's work ───────────────────────────
+
+
+class CheckIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The models to check. Absent: what each class resolves to on this
+    #: credential's provider — the models its seats would be hired on.
+    models: list[str] | None = Field(default=None, max_length=6)
+    #: The five agent tasks as well as the probes. Off: the probes alone, about
+    #: a quarter of the calls.
+    tasks: bool = True
+    #: Only say what it would run and roughly what it would cost.
+    dry_run: bool = False
+
+
+@router.post("/llm-credentials/{credential_id}/check",
+             dependencies=[authority.INSTANCE_ADMIN])
+def run_credential_check(credential_id: str, body: CheckIn | None = None,
+                         session: Session = Depends(db),
+                         person: Person = Depends(person_auth)) -> dict:
+    """Probes and small agent tasks on each model, graded mechanically
+    (yaaf.core.provider_check) — whether a model can drive a seat, not only
+    answer a ping. Runs in the background; poll the checks route. Spends the
+    credential's own money: `dry_run` says roughly how much first."""
+    from yaaf.core import model_policy, provider_check_runs
+    from yaaf.runtimes import catalog
+    from yaaf.server.api.admin import _audit
+
+    body = body or CheckIn()
+    # Locked: two requests at once must not both find nothing running.
+    row = _managed(session, credential_id, lock=not body.dry_run)
+    try:
+        provider_check_runs.checkable(row)
+    except provider_check_runs.CheckRefused as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    models = []
+    for ref in body.models or provider_check_runs.default_models(session, row):
+        model = model_policy.resolve(session, ref.strip(), provider=row.provider)
+        if model is None:
+            raise HTTPException(status_code=422, detail=(
+                f"{ref} names no model on this provider — set its lineup in Settings → "
+                "Models, or name a model"))
+        if catalog.provider_of(model) != row.provider:
+            raise HTTPException(status_code=422, detail=(
+                f"{model} is not served by this credential's provider ({row.provider})"))
+        if model not in models:
+            models.append(model)
+    if not models:
+        raise HTTPException(status_code=422, detail=(
+            "this provider has no lineup to check — name the models to check"))
+    estimate = provider_check_runs.estimate_usd(session, models, body.tasks)
+    from yaaf.core.provider_check import plan
+
+    planned = {"models": models, "steps": len(plan(body.tasks)), "estimate_usd": estimate}
+    if body.dry_run:
+        return {**planned, "checks": []}
+    try:
+        rows = provider_check_runs.start(session, row, models, tasks=body.tasks,
+                                         started_by=person.id)
+    except provider_check_runs.CheckRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _audit(session, None, "credential.check", "secret", row.id,
+           {"models": models, "tasks": body.tasks})
+    rendered = [provider_check_runs.render(r) for r in rows]
+    # The thread opens its own session: started before this one commits, it
+    # would find no rows to fill.
+    from yaaf.server.api.founder import _after_commit
+
+    _after_commit(session, lambda: provider_check_runs.submit([r["id"] for r in rendered]))
+    return {**planned, "checks": rendered}
+
+
+@router.get("/llm-credentials/{credential_id}/checks",
+            dependencies=[authority.INSTANCE_ADMIN])
+def credential_checks(credential_id: str, session: Session = Depends(db)) -> list:
+    from yaaf.core import provider_check_runs
+
+    _managed(session, credential_id, lock=False)
+    return provider_check_runs.latest(session, credential_id)
+
+
+@router.get("/provider-checks", dependencies=[authority.INSTANCE_ADMIN])
+def provider_scoreboard(session: Session = Depends(db)) -> list:
+    """Every model this install has checked, newest result each: the evidence
+    a lineup is picked from (Settings → Models)."""
+    from yaaf.core import provider_check_runs
+
+    return provider_check_runs.scoreboard(session)
+
+
+# ── web search: the platform's own backend ──────────────────────────────────────
+
+
+@router.get("/web-search", dependencies=[authority.INSTANCE_ADMIN])
+def get_web_search(session: Session = Depends(db)) -> dict:
+    from yaaf.core import web_search
+    from yaaf.runtimes.wire import SEARCH_BACKENDS
+
+    return {"configured": web_search.config(session),
+            "backends": [{"name": b.name, "label": b.label, "base_url": b.base_url,
+                          "suggested_usd": b.suggested_usd, "key": b.key,
+                          "console_url": b.console_url} for b in SEARCH_BACKENDS.values()]}
+
+
+class WebSearchIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    backend: str = Field(max_length=32)
+    key: str | None = Field(default=None, max_length=1000)
+    base_url: str | None = Field(default=None, max_length=500)
+    #: What one query costs, in USD — billed into every run that searches.
+    price_usd: float | None = Field(default=None, ge=0, le=10)
+
+
+@router.put("/web-search", dependencies=[authority.INSTANCE_ADMIN])
+def put_web_search(body: WebSearchIn, session: Session = Depends(db)) -> dict:
+    """Name the backend every harness without search of its own searches with.
+    From the next run, a role granting `web` is honoured on every provider
+    (R2), and each query is billed into the run at this price."""
+    from yaaf.core import web_search
+    from yaaf.server.api.admin import _audit
+
+    found = web_search.configure(session, body.backend, key=body.key, base_url=body.base_url,
+                                 price_usd=body.price_usd)
+    _audit(session, None, "web_search.configure", "backend", body.backend,
+           {"price_usd": found.get("price_usd")})
+    return get_web_search(session)
+
+
+@router.post("/web-search/test", dependencies=[authority.INSTANCE_ADMIN])
+def test_web_search(session: Session = Depends(db)) -> dict:
+    """One real query, so the key is known to work before a run depends on it."""
+    import asyncio
+
+    import httpx
+
+    from yaaf.core import platform as plat
+    from yaaf.core import web_search
+    from yaaf.runtimes import wire
+
+    found = web_search.config(session)
+    if found is None:
+        raise HTTPException(status_code=422, detail="no web search backend is configured")
+    try:
+        hits = asyncio.run(wire.search_web(found["backend"], found["base_url"],
+                                           plat.secret_value(session, web_search.SECRET) or "",
+                                           "yaaf agent framework", 3))
+    except (wire.WireError, httpx.HTTPError) as exc:
+        return {"ok": False, "detail": f"the search failed: {exc}"}
+    return {"ok": True, "detail": f"{found['label']} answered with {len(hits)} results."}
+
+
+@router.delete("/web-search", dependencies=[authority.INSTANCE_ADMIN])
+def delete_web_search(session: Session = Depends(db)) -> dict:
+    """Forget the backend. Seats promised `web` on a provider that does not
+    search are refused at their next door and their next lease (R2)."""
+    from yaaf.core import web_search
+
+    return {"removed": web_search.clear(session),
+            "unrunnable": _unrunnable_seats(session)}
 
 
 # ── doctor: is this install able to do its job? ─────────────────────────────────
@@ -906,7 +1534,7 @@ def doctor(session: Session = Depends(db)) -> dict:
                "yaaf seed-crews crews/ — the 'start from a crew' picker is empty without it",
                problem=False),
         _check("a key to pay with", keys > 0, f"{keys} LLM credential(s)",
-               "add one under Settings → LLM credentials, or `yaaf create-llm-credential "
+               "connect one under Settings → Providers, or `yaaf create-llm-credential "
                "NAME` — a project with none is created unable to start"),
         _check("the Founder's key", platform.has_credential(session),
                "the Founder can draft" if platform.has_credential(session)

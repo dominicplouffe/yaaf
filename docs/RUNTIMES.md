@@ -7,8 +7,12 @@ local server); the Codex CLI on an OpenAI key or a ChatGPT plan; the Gemini
 CLI on a Gemini key or a Google login; OpenCode for every chat-API provider;
 the boardroom chat on the CEO's own seat, whatever its harness; and the
 Founder and goal grader on any provider's platform key. Each milestone's
-unticked line is a live seat on it, which only a deployment can tick; the
-Cursor CLI is not built, for want of a binary to read it off.** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
+unticked line is a live seat on it, which only a deployment can tick — `yaaf
+smoke` is the check that does it; the Cursor CLI is not built, for want of a
+binary to read it off. M7 made the content above the registries
+provider-neutral too — roles name model classes, one loop speaks every
+provider's own wire, prices import from a feed, search is a platform
+capability — and is designed in [PROVIDERS.md](PROVIDERS.md).** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
 the Claude CLI driven directly, the Anthropic API under yaaf's own loop, and
 then Codex, Gemini, OpenCode and whatever comes after them. Update the
 checkboxes as milestones land; if a decision here turns out wrong, change the
@@ -379,13 +383,14 @@ All of them read manifests and the catalog; none names a harness.
 
 | # | Rule | Where it fires |
 |---|---|---|
-| R1 | **A credential the seat's harness cannot accept is refused** — a subscription token on `anthropic_api`, a ChatGPT login on a Gemini seat. | creation, add-team, hire, repin, credential change, recall; lease backstop; health (built in M1) |
-| R2 | **A harness that cannot withhold a tool the role does not grant is refused for that role** — and, from M3, one that cannot *honour* a grant: a role granting `web` on yaaf's loop needs a provider that searches (open question 6). Codex always offers its own file edits; a role without `files` cannot be hired onto it. Widening a role's tools silently because the transport is clumsy is exactly what the role version exists to prevent; halving them silently is its mirror. | the role version itself, and every door R1 is at (built in M1; the web half in M3) |
+| R1 | **A credential the seat's harness cannot accept is refused** — a subscription token on `anthropic_api`, a ChatGPT login on a Gemini seat. | creation, add-team, hire, repin, a seat changed (`PATCH /admin/agents/{id}/seat`), credential change, recall; lease backstop; health (built in M1) |
+| R2 | **A harness that cannot withhold a tool the role does not grant is refused for that role** — and, from M3, one that cannot *honour* a grant: a role granting `web` needs something that searches — the harness, the provider's wire, or (from M7) the install's web search backend (open question 6). Codex always offers its own file edits; a role without `files` cannot be hired onto it. Widening a role's tools silently because the transport is clumsy is exactly what the role version exists to prevent; halving them silently is its mirror. | the role version itself, and every door R1 is at (built in M1; the web half in M3; the platform backend in M7) |
 | R3 | **A model with no price is refused on a harness that prices its runs, under a dollar meter.** A run nobody can price is a run the budget cannot stop. A harness that reports its own bill (both CLI harnesses) is not metered by the catalog and takes any model; a provider that states each call's cost (OpenRouter) needs no price; a credential metered in tokens is stopped in tokens. The price is the install's (Settings → Model prices) over the shipped catalog. | the role version, and every door R1 is at; lease backstop; the loop itself refuses to make a call it cannot price (built in M2; install prices in M3) |
 | R4 | **One project, one meter.** All of a project's credentials meter in USD or all in tokens. Two units cannot share one cap, and inventing an exchange rate between them is inventing a number. (Open question 1.) | project creation, a provider's credential attached, the billing credential changed (built in M3) |
 | R5 | **A seat whose provider has no credential on the project cannot be hired, and a project with such a seat cannot start.** It fails at the door, not at 3am. | every door R1 is at, the start, removing a provider's credential; lease backstop; health (built in M3) |
-| R6 | **An effort the model does not support is refused**, with the list it does. Never mapped silently, in either direction. The harness's list first (a loop on the OpenAI shape has no dial at all), then the model's. | the role version, hire, repin, override, and every door R1 is at; lease backstop (built in M4) |
+| R6 | **An effort a pinned model does not support is refused**, with the list it does. Never mapped silently, in either direction. The harness's list first, then the model's. A seat naming a *class* was written for no model in particular: it runs at its model's lowest published rung at or above the effort it asked for (the top one when it asked for more), shown on the seat and handed to the harness, while the run keeps the effort asked for ([PROVIDERS.md](PROVIDERS.md) §2). | the role version, hire, repin, override, and every door R1 is at; lease backstop (built in M4; the class rung in M7) |
 | R7 | **A CEO seat holding the boardroom chat must be on a harness with `conversation`.** Every harness registered today has it; a new one has it only once it is shown to resume a session turn after turn. | the CEO role version, every door R1 is at for the CEO's seat while the chat is on, the door that turns the chat on; health; the chat supervisor holds no session for one that slipped past (built in M6) |
+| R8 | **A class seat on a provider with no model for that class is refused**, naming the class, the provider and Settings → Models — never filled in with another provider's model. | every door R5 is at, the lease, health (built in M7) |
 
 Every one of them also shows in the health checklist and the fire drill's
 "where it stopped", because both read the same functions.
@@ -450,9 +455,9 @@ The promise is that this list is the whole job:
 | A new… | Files |
 |---|---|
 | **CLI harness** | `yaaf/runner/<name>_entry.py` (`argv`, `env`, its config, `parse`, `error_kind` — a `CliDriver` subclass, exposing `make_driver`); a `Harness` entry; a backend line; a pinned install line and a `COPY` in the image; recorded stream fixtures and a contract test file (as built for Codex, Gemini and OpenCode) |
-| **API provider, OpenAI-compatible** | a `Provider` entry — base URL, credential kind, whether it states its costs or searches — and nothing else: the M3 client serves every one (`openai_compatible_entry.py`). Its models price in Settings, or ship priced in `catalog.py` once checked against the vendor's own list |
-| **API provider, another shape** | `<name>_entry.py` (a `ModelClient` on `loop_harness`); a `Provider` entry with its credential kinds; a `Harness` entry; fake-server contract tests |
-| **model** | a row in `catalog.py` — or none: `provider/model` names any model of a registered provider, ranked 0 |
+| **API provider of a known shape** | a `Provider` entry — its `protocol`, address (or `base_url_template`), how a key is presented, its credential kind with where to get one, a lineup where its models can be checked, whether it states its costs or searches — and its name in `LOOP_PROVIDERS` (and `OPENCODE_PROVIDERS` for the chat shape). yaaf's loop serves every one through `yaaf/runtimes/wire.py`, and so do the Founder, the live check, discovery and `yaaf smoke`. Its models price in Settings — typed or imported from the feed — or ship priced in `catalog.py` once checked against the vendor's own list (M7) |
+| **API provider of another shape** | a protocol in `wire.py` (request, reply, usage, errors, model list); a `Provider` entry; fake-server contract tests in `test_wire_protocols.py` (M7) |
+| **model** | a row in `catalog.py` — or none: `provider/model` names any model of a registered provider, ranked 0; a lineup can name it for a class |
 
 Where the providers people ask for actually land:
 
@@ -464,6 +469,9 @@ Where the providers people ask for actually land:
 | Gemini | `gemini_cli`, plus the `google` provider with an API key or a Google account login | M5 ✅ |
 | Several at once | `opencode` — one CLI for every provider on the OpenAI-compatible chat API | M5 ✅ |
 | Kimi, Qwen, Mistral, Grok | `Provider` entries on the M3 client — `moonshot`, `qwen`, `mistral`, `xai` | M5 ✅ |
+| OpenAI and Gemini by API key, natively | `yaaf_loop` on the Responses API and the Gemini API — native search and reasoning dials, every grant withholdable | M7 ✅ |
+| Azure OpenAI, AWS Bedrock, Google Vertex AI | `Provider` entries on the Responses, Converse and Gemini wires; Vertex's service account minted into hour-long tokens in the control plane | M7 ✅ |
+| Groq, Together, Fireworks, Cerebras, Cohere, NVIDIA, Hugging Face, Z.ai, Ollama, LM Studio | `Provider` entries on the chat shape; local servers keyless | M7 ✅ |
 
 Everything else — the credential form, the role editor's pickers, the health
 checklist, the fire drill, the spend report, the receipt, the MCP `catalog`,
@@ -530,7 +538,7 @@ touches, and whether a new provider edits it:
 
 | Surface | Change | Per provider? |
 |---|---|---|
-| Settings → LLM credentials, New Project picker, Founder's list, MCP `catalog`/`create_project` | provider + kind from the registry, via `llm_credentials.choices` | no |
+| Settings → Providers, New Project picker, Founder's list, MCP `catalog`/`create_project` | provider + kind from the registry, via `llm_credentials.choices` | no |
 | Role editor, `roles/*.json`, `seed-roles` | `harness` beside `model`; pickers and validation from manifests and the catalog | no |
 | Roster / agent overrides | `harness_override` beside `model_override` | no |
 | Project Settings → runtime | per seat; project-wide only for `mock` | no |
@@ -598,7 +606,9 @@ scaffolding*:
       `SandboxBackend`, one entry script per harness
 - [x] `RoleVersion.harness`, `Agent.harness_override` (migration `0042`); the
       role editor's picker, fed by `GET /admin/harnesses`; overrides through
-      project create, add-team, export, clone and the New Project form
+      project create, add-team, export, clone and the New Project form — and,
+      after creation, one seat at a time from its person's page
+      (`PATCH /admin/agents/{id}/seat`, MCP `project_configure` `set_seat`)
 - [x] `yaaf_tools.py` — the catalog over stdio MCP, serving the SDK harness's
       own server object
 - [x] `CliDriver`; `claude_cli` on it — flags read off the SDK's own argv
@@ -915,6 +925,34 @@ What M4 found on the way — each now configured against, with a test:
       mean a CLI on the control plane for one conversation; the chat API is
       the shape every provider but Anthropic already speaks
 
+### M7 — Provider-neutral by construction ✅ (but the live runs)
+
+Designed and tracked in [PROVIDERS.md](PROVIDERS.md); the short list:
+
+- [x] Roles name classes (`@frontier`, `@balanced`, `@fast`); each provider
+      ships a lineup and an install overrides it; R8; the shipped roles moved
+- [x] R6 for class seats: the model's rung at or above the effort asked
+- [x] One loop harness, `yaaf_loop`, on every provider's own wire
+      (`yaaf/runtimes/wire.py`, shared with the Founder, the live check,
+      discovery and smoke); `anthropic_api` and `openai_compatible` folded
+      into it (migration `0055`, aliases kept)
+- [x] The default harness is the credential kind's; OpenAI and Gemini keys
+      run natively on the loop
+- [x] Azure OpenAI, Bedrock, Vertex (minted tokens, refreshed by the run),
+      Groq, Together, Fireworks, Cerebras, Cohere, NVIDIA, Hugging Face, Z.ai,
+      Ollama, LM Studio
+- [x] Prices imported from a feed or a dated snapshot, with provenance
+- [x] The platform's web search backend, metered per query
+- [x] Concurrency per provider; discovery; `yaaf smoke`
+- [x] Every wire validated against its vendor's own spec and SDK types
+- [x] The loop compacts a history before it outgrows the model's window
+- [x] The provider check (probes and agent tasks, graded on state), readiness
+      with one-click fixes, opt-in daily upkeep of model lists and prices
+- [x] Failover: a failing provider's class seats move to the project's
+      fallback credential until it recovers
+- [ ] **`yaaf check-provider` on a deployment, once per provider an install
+      pays.** Needs the keys; nothing here can tick it
+
 ---
 
 ## Open questions
@@ -924,7 +962,9 @@ What M4 found on the way — each now configured against, with a test:
    would not. Worth building only when somebody asks.
 2. **Concurrency per provider.** `max_concurrent_runs` protects "the provider
    rate limit every project on the box shares" — with two providers that is two
-   limits. Probably a per-provider ceiling beside the global one.
+   limits. **Built in M7**: Settings → Models takes a ceiling per provider, and
+   the lease leaves a saturated provider's runs queued without holding up any
+   other provider's.
 3. **One image or one per harness.** One image is simpler and gets large.
    Per-harness images are smaller and multiply builds. Started with one, and
    it now carries four CLIs (Claude's, Codex, Gemini's, OpenCode) beside the
@@ -955,7 +995,12 @@ What M4 found on the way — each now configured against, with a test:
 
    **Decided in M3: refuse** — R2's other half, built and attacked. The
    second answer waits for the first loop provider without search that is
-   actually wanted on a seat that needs it.
+   actually wanted on a seat that needs it. **M7 built the second answer**:
+   with provider-neutral roles, every provider without a server tool is that
+   provider. An install names one backend (Brave, Tavily, Exa, Serper,
+   Perplexity, SearXNG) and its price per query; yaaf's loop and OpenCode
+   offer `WebSearch` from it, each query billed into the run under its cap,
+   and R2 refuses `web` only where nothing at all can search.
 
 ## Appendix — invocation notes, to verify against pinned versions
 

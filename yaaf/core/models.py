@@ -588,6 +588,12 @@ class User(Base):
     #: A timestamp rather than a delete, for the reason McpClient.revoked_at
     #: gives: the record names this person forever, so the row has to survive.
     deactivated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    #: The places this person pinned under a project in the sidebar, in their
+    #: order: [{"to", "label", "project_id"}]. NULL is someone who never
+    #: changed them, and reads as the default (yaaf.server.api.me.DEFAULT_PINS)
+    #: — so a default changed later reaches everyone who kept it, and an empty
+    #: list stays the deliberate "nothing pinned" it was.
+    pins: Mapped[list | None] = mapped_column(JSONVariant)
 
 
 class UserSession(Base):
@@ -694,6 +700,9 @@ class Project(Base):
     # "api_key" | "subscription" — decides the budget's native unit (usd vs tokens)
     billing_mode: Mapped[str] = mapped_column(String(16), default="api_key")
     billing_secret_id: Mapped[str | None] = mapped_column(ForeignKey("secrets.id"))
+    # The credential class seats move to while the billing one's provider is
+    # failing (yaaf.core.breakers): another provider, metered the same way.
+    fallback_secret_id: Mapped[str | None] = mapped_column(ForeignKey("secrets.id"))
     # Domains/accounts the project controls; evidence from these can never be external.
     controlled_domains: Mapped[list] = mapped_column(JSONVariant, default=list)
     github_repo: Mapped[str | None] = mapped_column(String(255))
@@ -747,6 +756,12 @@ class Project(Base):
     # When he last confirmed the brief. Null on a project still running on the
     # goal it was founded with.
     brief_confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # The setup checklist's own state: {"skipped": [step, ...], "closed_at",
+    # "closed_by"}. Only what a person decided is stored — whether a step is
+    # done is read from the project itself every time (yaaf.server.checklist),
+    # so the list can never claim a key is connected after it was removed.
+    # NULL is a project whose setup nobody has touched yet.
+    setup: Mapped[dict | None] = mapped_column(JSONVariant)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -850,10 +865,11 @@ class RoleVersion(Base):
     version: Mapped[int] = mapped_column(Integer)
     description: Mapped[str] = mapped_column(Text)
     system_prompt: Mapped[str] = mapped_column(Text)
-    model: Mapped[str] = mapped_column(String(64), default=DEFAULT_MODEL)
+    model: Mapped[str] = mapped_column(String(128), default=DEFAULT_MODEL)
     effort: Mapped[str] = mapped_column(String(8), default=DEFAULT_EFFORT)
-    # What drives the model (yaaf.runtimes.harnesses). NULL is the provider's
-    # default — which is every role written before there was a choice.
+    # What drives the model (yaaf.runtimes.harnesses). NULL is the default of
+    # whatever credential kind pays the seat — which is every role written
+    # before there was a choice.
     harness: Mapped[str | None] = mapped_column(String(32))
     # {"bash": true, "web": true, "github": false}
     tool_permissions: Mapped[dict] = mapped_column(JSONVariant, default=dict)
@@ -941,7 +957,7 @@ class Agent(Base):
     # actually reads and could not buy it more thinking, because effort was
     # readable only from the role version every project on the install shares.
     # Raising it in the library would have raised it everywhere.
-    model_override: Mapped[str | None] = mapped_column(String(64))
+    model_override: Mapped[str | None] = mapped_column(String(128))
     effort_override: Mapped[str | None] = mapped_column(String(16))
     # The same for what drives the model (yaaf.runtimes.harnesses): null is the
     # role's harness, and the role's null is its provider's default.
@@ -1898,7 +1914,7 @@ class Run(Base):
     priced_usd: Mapped[float | None] = mapped_column(Float)
     # Pinned at lease time, not resolved at read time: a role repin or model
     # change must never silently re-attribute historical spend.
-    model: Mapped[str | None] = mapped_column(String(64))
+    model: Mapped[str | None] = mapped_column(String(128))
     effort: Mapped[str | None] = mapped_column(String(16))
     # Who served the model and what drove it (docs/RUNTIMES.md), pinned beside
     # the model for the same reason. NULL on every run from before they were
@@ -2113,6 +2129,12 @@ class ChairmanNote(Base):
     reply: Mapped[str | None] = mapped_column(Text)
     # True: it applies beyond this one item, and the brief now carries it.
     standing: Mapped[bool | None] = mapped_column(Boolean)
+    # The boardroom line his note became. Every CEO lane reads the boardroom;
+    # only some read this table, and none read it once it is answered.
+    message_id: Mapped[str | None] = mapped_column(String(40))
+    # The CEO's answer to it in the boardroom: its first line there after his.
+    # One answer, said where he reads, and the same words under his note.
+    reply_message_id: Mapped[str | None] = mapped_column(String(40))
 
 
 class Ask(Base):
@@ -2225,7 +2247,19 @@ class Secret(Base):
     # would turn every existing `kind == "service"` test into a membership
     # check, which is the change spreading instead of staying put.
     filename: Mapped[str | None] = mapped_column(String(120))
+    # "secret" (masked; read back only by a deliberate, audited reveal) or
+    # "plain" (an ad account id, a timezone — shown as is to whoever could
+    # reveal it anyway). Both are encrypted at rest and injected identically;
+    # the axis is how a person sees it, never what a sandbox receives. A
+    # timezone masked like a refresh token makes every row look the same, and
+    # telling two of them apart then costs two audited reveals.
+    visibility: Mapped[str] = mapped_column(String(8), default="secret",
+                                            server_default="secret")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # Any write — a rotation, a regrant, a visibility change. The list says
+    # "updated Oct 21" so a stale key is visible without opening anything.
+    updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, default=utcnow,
+                                                        onupdate=utcnow)
     # An LLM credential retired from every menu without being destroyed.
     # Lifting per-project keys above projects made one managed credential per
     # historical key, so installs woke up choosing from a list mostly made of
@@ -2276,6 +2310,58 @@ class ModelPrice(Base):
     cache_read: Mapped[float] = mapped_column(Float, default=0.0)
     cache_write: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    #: Where the number came from: None for one an administrator typed, the
+    #: feed and its date for one imported (yaaf.core.price_feed).
+    source: Mapped[str | None] = mapped_column(String(200))
+    #: The model's input window in tokens, which yaaf's own loop compacts
+    #: against; None where nobody has said (yaaf.core.prices.context_window).
+    context_window: Mapped[int | None] = mapped_column(Integer)
+
+
+class CredentialBreaker(Base):
+    """Whether a credential's provider is failing, judged from its runs
+    (yaaf.core.breakers). Open: the projects it bills, where they hold a
+    fallback, resolve their class seats on the fallback's provider until it
+    closes. One row per credential, locked to update: concurrent runs
+    finishing must not lose each other's failures."""
+
+    __tablename__ = "credential_breakers"
+
+    secret_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    #: Transient failures in a row, reset by any run that worked.
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    #: How many times it opened since it last closed: each lengthens the wait.
+    trips: Mapped[int] = mapped_column(Integer, default=0)
+    opened_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    open_until: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class ProviderCheck(Base):
+    """One model checked on one credential: can it do yaaf's work
+    (yaaf.core.provider_check)? Kept, so a lineup is chosen from evidence and a
+    model that regressed shows as a newer row beside an older one."""
+
+    __tablename__ = "provider_checks"
+    __table_args__ = (Index("ix_provider_checks_secret_at", "secret_id", "started_at"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    secret_id: Mapped[str] = mapped_column(String(40))
+    provider: Mapped[str] = mapped_column(String(32))
+    model: Mapped[str] = mapped_column(String(128))
+    #: running → passed | partial | failed; `error` when it could not run at all.
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    summary: Mapped[str] = mapped_column(String(300), default="")
+    #: Each probe and task as it finished (provider_check.Outcome), in order.
+    outcomes: Mapped[list] = mapped_column(JSONVariant, default=list)
+    tasks: Mapped[bool] = mapped_column(Boolean, default=True)
+    cost_usd: Mapped[float | None] = mapped_column(Float)
+    started_by: Mapped[str | None] = mapped_column(String(40))
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    #: Every step writes the row: a check is stale by this, not by its start.
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 class PlanReading(Base):

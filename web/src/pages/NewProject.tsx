@@ -1,4 +1,10 @@
-import { CredentialPicker, resolveCredential, useProviders } from "../llmCredentials";
+import { CredentialPicker, resolveCredential } from "../llmCredentials";
+import { ProviderReadinessInline } from "../readiness";
+import { FallbackPicker } from "../fallback";
+import {
+  CLASS_ORDER, DEFAULT_PROVIDER, isPriced, ModelSelect, parseRef, providerOf as refProvider,
+  resolveRef, useModels, useProviders,
+} from "../providers";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { CrewSummary, get, McpServerEntry, post, ProjectBundle,
@@ -16,6 +22,7 @@ import {
   savedName,
   sourceReady,
 } from "../datasource";
+import { TeamSwitches } from "../grants";
 import { CeoPicker, HirePanel, needsOf, roughMonthly } from "../roles";
 import { clip, CredentialValue, SecretInput } from "../ui";
 import type { FounderStatus, PresetCard } from "./StartProject";
@@ -41,6 +48,8 @@ interface CredentialDraft {
   /** Set => the credential IS a file and `value` is base64 of its bytes. */
   filename: string | null;
   grants: string[]; // role slugs
+  /** Carried from a full backup so a plain setting stays plain on the twin. */
+  visibility?: "secret" | "plain";
 }
 
 function slugify(name: string): string {
@@ -178,15 +187,24 @@ export default function NewProject() {
   // What pays each provider the billing credential does not: {provider: id}.
   // A seat on another provider's model needs one, and is refused without it.
   const [otherCredentials, setOtherCredentials] = useState<Record<string, string>>({});
+  // Where class seats move while the billing provider is failing. Optional,
+  // and refused at create unless every class seat could run there.
+  const [fallbackId, setFallbackId] = useState("");
   const [otherProvider, setOtherProvider] = useState("");
   const registry = useProviders();
-  // Which provider the billing credential pays, and — when the roles run on
-  // another provider's models — the one model every seat is moved to. Never
-  // chosen for the chairman: a key that pays DeepSeek under a roster of
-  // Claude roles is a choice between moving the seats and paying Anthropic
-  // too, and both are his to make.
-  const [billingProvider, setBillingProvider] = useState("anthropic");
+  // Which provider the billing credential pays — the project's own provider,
+  // where every role naming a class runs — and, optionally, the one model or
+  // class every seat is moved to. A role pinned to another provider's model
+  // is a choice between moving the seat and paying that provider too, and
+  // both are the chairman's to make.
+  const [billingProvider, setBillingProvider] = useState(DEFAULT_PROVIDER);
   const [seatModel, setSeatModel] = useState("");
+  // Moved when a readiness fix (a price import) changes what the catalog says
+  // is priced, so the lineup sentence below stops saying "no price yet".
+  const [catalogNonce, setCatalogNonce] = useState(0);
+  const catalog = useModels(catalogNonce);
+  // The install's own prices, for a model the catalog does not list (an
+  // administrator's table — empty for anyone else, who reads the catalog's).
   const [modelTable, setModelTable] = useState<{
     model: string; provider: string; shipped: object | null; own: object | null }[]>([]);
   useEffect(() => {
@@ -619,7 +637,7 @@ export default function NewProject() {
       resolveCredential(p.billing_secret_id, p.billing_secret_name).then((found) => {
         if (found && pick === billingPick.current) {
           setBillingCredentialId(found.id); setBillingMode(found.mode);
-          setBillingProvider(found.provider ?? "anthropic");
+          setBillingProvider(found.provider ?? DEFAULT_PROVIDER);
         }
       });
       // The other providers' credentials travel by name too, and resolve the
@@ -627,11 +645,18 @@ export default function NewProject() {
       setOtherCredentials({});
       Object.entries(p.credential_names ?? {}).forEach(([provider, credName]) => {
         resolveCredential(null, credName).then((found) => {
-          if (found && (found.provider ?? "anthropic") === provider) {
+          if (found && (found.provider ?? DEFAULT_PROVIDER) === provider) {
             setOtherCredentials((prev) => ({ ...prev, [provider]: found.id }));
           }
         });
       });
+      // The fallback travels by name as well, and is checked again at create.
+      setFallbackId("");
+      if (p.fallback_credential_name) {
+        resolveCredential(null, p.fallback_credential_name).then((found) => {
+          if (found) setFallbackId(found.id);
+        });
+      }
       // The file's whole job here is review-and-supply-keys, so land on the
       // step that shows the project it describes rather than the first field
       // of eleven sections it already filled.
@@ -657,7 +682,8 @@ export default function NewProject() {
           // name did not travel, so "" asks the door to name it — which is the
           // same answer the door gives anyone who does not supply one.
           .map((s) => ({ name: s.name, value: s.value ?? "",
-                         filename: s.file ? "" : null, grants: s.role_scopes })),
+                         filename: s.file || s.filename ? s.filename ?? "" : null,
+                         grants: s.role_scopes, visibility: s.visibility })),
       );
       // Which cards the file IS — the bar, the tempo and the authority group —
       // read together in `cardsFromBundle`, because all three need the served
@@ -796,21 +822,6 @@ export default function NewProject() {
     ),
   );
 
-  function toggleGrant(i: number, slug: string) {
-    setCredentials((prev) =>
-      prev.map((c, j) =>
-        j === i
-          ? {
-              ...c,
-              grants: c.grants.includes(slug)
-                ? c.grants.filter((g) => g !== slug)
-                : [...c.grants, slug],
-            }
-          : c,
-      ),
-    );
-  }
-
   // The fire drill. Nothing here creates anything: the spec is run as a
   // project in a throwaway process on the mock runtime, and what comes back is
   // a report. It is the one thing on this form that can answer "will this
@@ -837,11 +848,21 @@ export default function NewProject() {
     }
   }
 
-  /** The provider a model belongs to, as the server reads it: the catalog's,
-      else a `provider/model` prefix, else Anthropic. */
+  /** The provider a seat's model belongs to, as the server reads it: a class
+      resolves on the billing credential's provider (or the one it names), a
+      model is the catalog's, else its `provider/` prefix's, else the default. */
   function providerOf(model: string): string {
-    return modelTable.find((r) => r.model === model)?.provider
-      ?? registry.find((r) => model.startsWith(`${r.name}/`))?.name ?? "anthropic";
+    const resolved = resolveRef(model, billingProvider, catalog) ?? model;
+    return modelTable.find((r) => r.model === resolved)?.provider
+      ?? refProvider(resolved, catalog, registry, billingProvider || DEFAULT_PROVIDER);
+  }
+
+  /** Whether this install can meter a model in dollars, as far as the screen
+      can tell: its own price, a shipped one, or a provider that states costs. */
+  function pricedModel(model: string): boolean | null {
+    const row = modelTable.find((r) => r.model === model);
+    if (row) return !!(row.own || row.shipped);
+    return isPriced(model, catalog, registry);
   }
 
   /** Every seat on the form and the model it would run on — its role's, or
@@ -876,6 +897,7 @@ export default function NewProject() {
           ...(Object.values(otherCredentials).some(Boolean)
             ? { credentials: Object.fromEntries(
                 Object.entries(otherCredentials).filter(([, id]) => id)) } : {}),
+          ...(fallbackId && billingCredentialId ? { fallback_secret_id: fallbackId } : {}),
           mode,
           ...(mode === "explore" && exploreDeadline
             ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
@@ -1061,12 +1083,13 @@ export default function NewProject() {
             role_scopes: cred.grants.filter((g) => usedRoleSlugs.includes(g) || g === chosenCeo),
             kind: "service",
             ...(cred.filename === null ? {} : { filename: cred.filename }),
+            ...(cred.visibility && cred.filename === null ? { visibility: cred.visibility } : {}),
           });
         }
       } catch (err) {
         // The project exists either way — send them to Settings to finish.
         alert(`Project created, but storing a credential failed: ${(err as Error).message}. ` +
-              "Add it in Settings → Service credentials.");
+              "Add it in Settings → Secrets & variables.");
       }
       // Shape was checked above; this asks the harder question — does anything
       // answer at that address? A source that cannot answer is a project whose
@@ -1109,7 +1132,7 @@ export default function NewProject() {
             "form tests an address and holds the Connect button — then start the project.",
         );
         if (created.webhooks) setDone(created.id);
-        else navigate(`/projects/${created.id}/details/settings?s=data`);
+        else navigate(`/projects/${created.id}/settings?s=sources`);
         return;
       }
       // The chairman already explained all of this to the Founder and argued
@@ -1167,7 +1190,7 @@ export default function NewProject() {
               Open the project
             </button>
             {!canStartNow && (
-              <button onClick={() => navigate(`/projects/${done}/details/settings?s=money`)}>
+              <button onClick={() => navigate(`/projects/${done}/settings?s=money`)}>
                 Add a key to start
               </button>
             )}
@@ -1454,7 +1477,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             ))}
           </div>
           {modeNotice && (
-            <p className="help" style={{ marginTop: 10, color: "var(--warn, var(--ink-2))" }}>
+            <p className="help" style={{ marginTop: 10, color: "var(--warning)" }}>
               {modeNotice}
             </p>
           )}
@@ -1508,7 +1531,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         </div>
         <h2>Teams</h2>
         {missingRoleSlugs.length > 0 && (
-          <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+          <p className="help" style={{ color: "var(--warning)" }}>
             This setup file hires {missingRoleSlugs.length === 1 ? "a role" : "roles"} this
             install does not have: <strong>{missingRoleSlugs.join(", ")}</strong>. The examples
             hire from the role library by slug rather than carrying their prompts, so a role
@@ -1613,6 +1636,17 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             setBillingProvider(provider);
           }} />
           <p className="help">The selected credential determines the budget unit. Without a credential, the project can be saved as a draft but cannot run models.</p>
+          {billingCredentialId && runtime !== "mock" && <ProviderReadinessInline provider={billingProvider}
+            onChanged={() => setCatalogNonce((n) => n + 1)} />}
+          {billingCredentialId && runtime !== "mock" && <div className="wiz-fallback">
+            <label className="field" htmlFor="wiz-fallback">Fallback credential <span className="help">optional</span></label>
+            <FallbackPicker id="wiz-fallback" value={fallbackId} onChange={setFallbackId}
+              billingProvider={billingProvider} billingMode={billingMode} />
+            <p className="help">If {registry.find((r) => r.name === billingProvider)?.label ?? "the billing provider"} keeps
+              failing, class seats move here until it recovers; seats pinned to a model wait. It must be
+              another provider&apos;s credential, metered the same way, with a model for every class the
+              team names — the project is refused at create otherwise, with the reason.</p>
+          </div>}
           {Object.entries(otherCredentials).map(([provider]) => (
             <div key={provider} style={{ marginTop: 6 }}>
               <CredentialPicker provider={provider} value={otherCredentials[provider]}
@@ -1630,7 +1664,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               setOtherProvider("");
               if (chosen) setOtherCredentials((prev) => ({ ...prev, [chosen]: prev[chosen] ?? "" }));
             }}>
-              <option value="">— for seats on DeepSeek, OpenRouter or your own server —</option>
+              <option value="">— for seats pinned to another provider&apos;s models —</option>
               {registry.filter((r) => !(r.name in otherCredentials))
                 .map((r) => <option key={r.name} value={r.name}>{r.label}</option>)}
             </select></label>
@@ -1638,33 +1672,56 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             const labelOf = (p: string) => registry.find((r) => r.name === p)?.label ?? p;
             const paid = [billingProvider, ...Object.entries(otherCredentials)
               .filter(([, id]) => id).map(([p]) => p)];
-            const choices = modelTable.filter((r) => paid.includes(r.provider));
-            const priced = (m: string) => {
-              const row = modelTable.find((r) => r.model === m);
-              return !!(row?.own || row?.shipped)
-                || !!registry.find((r) => r.name === row?.provider)?.reports_cost;
-            };
-            const unpaid = seatModel || runtime === "mock" || !billingCredentialId ? []
-              : seatModels().filter((s) => s.model && !paid.includes(providerOf(s.model)));
+            // Only a dollar meter needs prices; a subscription is stopped in tokens.
+            const dollars = billingMode !== "subscription";
+            const lineup = CLASS_ORDER.map((cls) => {
+              const model = resolveRef(`@${cls}`, billingProvider, catalog);
+              return { cls, model, priced: model ? pricedModel(model) : null };
+            });
+            const effective = seatModel ? resolveRef(seatModel, billingProvider, catalog) : null;
+            const active = runtime !== "mock" && !!billingCredentialId;
+            const seats = seatModel ? [] : seatModels().filter((s) => s.model);
+            const unmodelled = active ? seats.filter((s) => !resolveRef(s.model, billingProvider, catalog)) : [];
+            const unpaid = active ? seats.filter((s) => resolveRef(s.model, billingProvider, catalog)
+              && !paid.includes(providerOf(s.model))) : [];
             return <>
-              <label className="field" style={{ maxWidth: 380 }}>Run every seat on
-                <select value={seatModel} onChange={(e) => setSeatModel(e.target.value)}>
-                  <option value="">each role&apos;s own model</option>
-                  {choices.map((r) => <option key={r.model} value={r.model}>
-                    {r.model} — {labelOf(r.provider)}{priced(r.model) ? "" : " · no price yet"}
-                  </option>)}
-                </select></label>
-              {seatModel && !priced(seatModel) && <p className="help">
-                {seatModel} has no price on this install, and a seat metered in dollars
-                needs one: set it under <Link to="/settings?section=prices" target="_blank"
+              {billingCredentialId && <p className="help">
+                On {labelOf(billingProvider)} the roles&apos; classes run on:{" "}
+                {lineup.map((l, i) => <span key={l.cls}>{i > 0 && " · "}
+                  {l.cls} → {l.model ? <code>{l.model}</code> : <b>none set</b>}
+                  {dollars && l.model && l.priced === false ? " (no price yet)" : ""}</span>)}.
+                {(lineup.some((l) => !l.model) || (dollars && lineup.some((l) => l.priced === false))) && <>
+                  {" "}A seat on an unset class, or on an unpriced model under an API key, is refused:{" "}
+                  set the lineup on <Link to={`/settings?section=providers&provider=${billingProvider}`} target="_blank"
+                    rel="noreferrer">{labelOf(billingProvider)}&apos;s card in Settings → Providers ↗</Link> and import prices under{" "}
+                  <Link to="/settings?section=prices" target="_blank"
+                    rel="noreferrer">Settings → Model prices ↗</Link>.</>}
+              </p>}
+              <label className="field" style={{ maxWidth: 480 }}>Run every seat on
+                <ModelSelect value={seatModel} onChange={setSeatModel} info={catalog}
+                  registry={registry} primary={billingProvider} providersShown={paid}
+                  qualified={paid.length > 1} empty="each role's own model" />
+              </label>
+              {seatModel && !effective && <p className="help">
+                {labelOf(parseRef(seatModel).provider ?? billingProvider)} has no model set for
+                that class — choose another, or set one on its card under Settings → Providers.</p>}
+              {effective && dollars && pricedModel(effective) === false && <p className="help">
+                {effective} has no price on this install, and a seat metered in dollars
+                needs one: import or set it under <Link to="/settings?section=prices" target="_blank"
                 rel="noreferrer">Settings → Model prices ↗</Link> first.</p>}
+              {unmodelled.length > 0 && <p className="notice-box">
+                {unmodelled.slice(0, 4).map((s) => s.who).join(", ")}
+                {unmodelled.length > 4 ? ` and ${unmodelled.length - 4} more` : ""}{" "}
+                {unmodelled.length === 1 ? "names a class" : "name classes"}{" "}
+                {labelOf(billingProvider)} has no model for. Pick one on its card under
+                Settings → Providers, or run every seat on a model above.</p>}
               {unpaid.length > 0 && <p className="notice-box">
                 This project pays {paid.map(labelOf).join(" and ")}, and{" "}
                 {unpaid.slice(0, 4).map((s) => `${s.who} (${s.model})`).join(", ")}
                 {unpaid.length > 4 ? ` and ${unpaid.length - 4} more` : ""} run on{" "}
                 {[...new Set(unpaid.map((s) => labelOf(providerOf(s.model))))].join(" and ")}{" "}
                 models it does not pay. Run every seat on one of {labelOf(billingProvider)}&apos;s
-                models above, or pay {[...new Set(unpaid.map((s) => labelOf(providerOf(s.model))))]
+                classes or models above, or pay {[...new Set(unpaid.map((s) => labelOf(providerOf(s.model))))]
                   .join(" and ")} too.</p>}
             </>;
           })()}
@@ -1676,7 +1733,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <div style={{ marginTop: 8, maxWidth: 380 }}>
               <label className="field">Runtime</label>
               <select value={runtime} onChange={(e) => setRuntime(e.target.value)}>
-                <option value="agent_sdk">agent_sdk — real model in the sandbox</option>
+                <option value="agent_sdk">real — each seat on its own harness, in the sandbox</option>
                 <option value="mock">mock — scripted, $0 (CI / tire-kicking)</option>
               </select>
               <p className="help">
@@ -1713,7 +1770,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             ))}
           </div>
           {autonomyNotice && (
-            <p className="help" style={{ marginTop: 10, color: "var(--warn, var(--ink-2))" }}>
+            <p className="help" style={{ marginTop: 10, color: "var(--warning)" }}>
               {autonomyNotice}
             </p>
           )}
@@ -1816,7 +1873,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           </div>
           {needsReviewSeat && (
             <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8,
-              border: "1px solid var(--warn, var(--border))",
+              border: "1px solid var(--warning)",
               background: "rgba(var(--warning-rgb), 0.09)", fontSize: 13 }}>
               This preset asks for the work to be read by somebody who did not write it,
               and no team on your roster does that — so the only reader of a deliverable
@@ -2157,7 +2214,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             already added — otherwise two paragraphs of plumbing sat between
             the summary and the button that creates the project. */}
         <details className="opt-sec" open={requiredScopes.length > 0 || credentials.length > 0}>
-        <summary><h2>Service credentials (optional)</h2>
+        <summary><h2>Secrets &amp; variables (optional)</h2>
           <span className="help">keys for WordPress, GitHub, Stripe… — or add them later in Settings</span></summary>
         <p className="subtitle">
           Keys your agents will need for outside services (WordPress, GitHub, Stripe…). Encrypted
@@ -2218,24 +2275,13 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 )}
               </div>
             </div>
-            <label className="field">Which roles receive it (nobody, until you grant)</label>
-            {usedRoleSlugs.length === 0 ? (
-              <p className="help">Pick your teams' roles above first.</p>
-            ) : (
-              <div className="pill-row">
-                {usedRoleSlugs.map((slug) => (
-                  <label key={slug} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <input
-                      type="checkbox"
-                      style={{ width: "auto" }}
-                      checked={cred.grants.includes(slug)}
-                      onChange={() => toggleGrant(i, slug)}
-                    />
-                    {roleLabel(slug)}
-                  </label>
-                ))}
-              </div>
-            )}
+            <TeamSwitches
+              options={usedRoleSlugs.map((slug) => ({ slug, name: roleLabel(slug) }))}
+              selected={cred.grants}
+              onChange={(grants) => setCredential(i, { grants })}
+              what={cred.name.trim() ? <code>${envVarName(cred.name)}</code> : "it"}
+              emptyHint="Pick your teams' roles above first."
+            />
             <div className="actions">
               <button
                 type="button"

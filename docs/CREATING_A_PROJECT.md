@@ -77,12 +77,15 @@ you like, run the fire drill for nothing, and create it.
 It needs one thing first: a key for the Founder, set once under Settings →
 Founder. The quickest is **one you already added** as an LLM credential —
 one click, and rotating that credential rotates this too; adding your first
-LLM credential offers it, ticked. Or give the Founder a key of its own,
-Anthropic's or any other provider's with one of its models. Either way it pays
-for drafting only, and no project's agents ever see it. Every project you create still pays its own way,
-and the Founder knows it: it reads the list of LLM credentials, names the one
-that pays in its draft when there is only one, and asks you which when there
-are several. That is an instruction to the model, not a rule the server can
+LLM credential offers it, ticked. Or give the Founder a key of its own, from
+any provider — it runs on that provider's frontier model unless you name
+another. Either way it pays for drafting only, and no project's agents ever see
+it. Every project you create still pays its own way, and the Founder knows it:
+it reads the list of LLM credentials — each with what the roles' model classes
+would run on if it paid — names the one that pays in its draft when there is
+only one, and asks you which when there are several. Whichever pays, the role
+library is the same: roles name a class of model, and the project's provider
+supplies it ([PROVIDERS.md](PROVIDERS.md)). That is an instruction to the model, not a rule the server can
 enforce, so the draft panel says which credential it chose — look before you
 click Review.
 
@@ -161,7 +164,7 @@ on approvals and boardroom messages, and if the server has SMTP configured
 alerts get mailed. Remembered for your next project.
 
 **Billing.** Pick which **LLM credential** pays — one an administrator
-created under Settings → LLM credentials: an **Anthropic API key** (budget in
+created under Settings → Providers: an **Anthropic API key** (budget in
 dollars, the normal choice) or a **Claude subscription token** (budget in
 tokens). The credential decides the budget's unit; nothing is pasted here and
 no value ever enters a sandbox. Leave it unselected and the project can be
@@ -274,7 +277,7 @@ The constitution card also carries your reporting cadence — **hours between
 unprompted status reports** (default 1), an optional reporting window like
 `09:00-20:00`, and your timezone (guessed from the browser).
 
-**Service credentials (optional).** If you already know the keys the agents
+**Secrets & variables (optional).** If you already know the keys the agents
 will need, add them here: a name, the value, and tick which roles receive
 them. Agents get them as environment variables in their sandboxes and never
 see the values in chat. You can also do this later in Settings.
@@ -294,16 +297,22 @@ needs a credential — without one the project is created stopped.)
 
 ## Step 2 — Connect billing (if you skipped it at creation)
 
-Open your new project → **Settings** → "How agents pay for Claude". Pick a
+Open your new project. Its Inbox starts with **Finish setting up**, a list of
+what the project still needs, and **Model key** is first: it opens Settings →
+**Money** (the gear beside the project's name in the sidebar gets you there
+too). Pick a
 credential from the list, click **Save assignment**, then **Test connection**
 — if the key is bad, you find out now, not at 9am tomorrow. No credentials in
-the list? An administrator adds one under Settings → LLM credentials; a
+the list? An administrator adds one under Settings → Providers; a
 subscription credential also shows there what Anthropic says is left on its
 plan.
 
 ## Step 3 — Connect the data (if the work needs it)
 
-Settings → **Data sources — MCP servers**. A data source *is* an MCP server:
+The **Data sources** step on the checklist, or Settings → **Data sources** —
+the sidebar's **Finish setup** row opens whichever step is next, and every step
+sits in a strip across the top of Settings while any is left. A data source
+*is* an MCP server:
 a URL that offers tools. This is one form:
 
 - **Name**: a short label, like `ppc`. Agents will see the source's tools
@@ -327,13 +336,13 @@ So the address travels as one: saving `ppc` hands the granted roles
 the sandbox rebuilds the connection from those. **The variable is the
 delivery mechanism, not a side effect.**
 
-You'll see those variable names listed under the source's name in the table.
-They don't appear in *Variables & credentials* — that card is for credentials
-you create by hand. One data source is one thing, edited in one place.
+Those variables are listed under *Secrets & variables* in a locked group, "Set
+up by your data sources", with a link back here — they belong to the source and
+are edited with it. One data source is one thing, edited in one place.
 
 ### Changing one
 
-Press **edit** on its row. The stored address is fetched and shown in full —
+Open the row's **⋯** menu and press **Edit**. The stored address is fetched and shown in full —
 an address is not a password, and you can't fix a port you can't see. Change
 what you need and save; leaving the token box blank keeps the current token,
 so a URL-only edit never disarms the auth header. There's a tickbox to remove
@@ -345,8 +354,11 @@ You are the chairman. Whoever can change a project's credentials can read them
 back — you and your co-chairs, never an observer — and the box's own
 credentials are the instance admin's. Every stored project value — service
 credentials, a data source's address and token, the Slack tokens, the webhook
-signing secrets — is masked in the UI and one press of the **eye** from being
-readable, with a copy button and an inline edit to rotate it. Debugging a connection shouldn't require a database client. The
+signing secrets — is masked in the UI and one press of **Reveal** from being
+readable, with a copy button and **Replace value** to rotate it; each reveal is
+logged to that credential's history. A value you mark **Plain value** (a
+timezone, an account id) is shown as it is instead, to the same people.
+Debugging a connection shouldn't require a database client. The
 LLM credentials projects pay with live above projects, under app-wide
 Settings, where they can be renamed and rotated but are never shown back.
 
@@ -363,8 +375,10 @@ reveals as its own text and can be edited in place to rotate.
 
 ## Step 4 — Follow the checklist
 
-Go to the project's **Team** page. If anything about the setup is wrong or
-missing, a **Setup & health** card sits at the top naming each problem in
+Go to the project's **Inbox**. **Finish setting up** lists what the project
+does not have yet — each step ticks itself off when it does, and every step but
+the model key can be skipped; **Done for now** puts the list away. If anything
+about the setup is wrong, a **Setup & health** card further down names each problem in
 plain English with a link to fix it — a dead or missing billing credential, a credential that
 should be a URL but isn't, a team running an outdated role version. Fix the
 red **problem** rows; amber **suggestion** rows are advice you can act on or
@@ -429,7 +443,7 @@ You can watch all of it in **Roadmap**, **Tasks** and **Team**, and in
   recent completed work and evidence claims. Fail anything that doesn't hold up —
   the CEO is told its team's work is suspect. You are the one reviewer that
   doesn't approve everything put in front of it.
-- **Watch the money if you want to** — the money line under the Team page's chart warns at
+- **Watch the money if you want to** — the money line on the project's Inbox warns at
   80%. Crossing 100% does **not** stop the project — it is a plan, and going
   over obliges the CEO to account for what the extra bought. The wall is
   `hard_stop_multiple` times the plan (3x by default), and that is the only
@@ -454,10 +468,12 @@ project pauses itself rather than burning money against a wall.
 1. New project → goal above → **Deliver** → credential picked → three one-person
    teams (researcher, engineer, writer) → `ppc` data source + engineer role →
    budget cap → Create.
-2. (Or later: Settings → billing → pick a credential → Save assignment → Test.)
-3. (Or later: Settings → Data sources → `ppc` + the MCP URL + engineer
+2. (Or later: Finish setting up → Model key → pick a credential → Save
+   assignment → Test.)
+3. (Or later: Finish setting up → Data sources → `ppc` + the MCP URL + engineer
    role → Save, auto-tested.)
-4. Team page → fix anything the health card names → card disappears.
+4. The project's Inbox → finish or skip the rest of the checklist, and fix
+   anything the health card names → both disappear.
 5. Chat → brief the CEO.
 6. Roadmap → accept the requirements you want, cut the rest, sign the date.
 7. Done. Check back in the morning.

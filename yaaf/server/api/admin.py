@@ -10,6 +10,7 @@ discipline is the product.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -22,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import credential_files, ids, platform, prices
+from yaaf.core import credential_files, ids, model_policy, platform, prices, web_search
 from yaaf.core.constitution import (
     GROUP_THEMES,
     THEME_ORDER,
@@ -90,8 +91,9 @@ from yaaf.core.naming import env_var_name, is_reserved
 from yaaf.founder import doctrine
 from yaaf.runtimes import catalog
 from yaaf.runtimes import providers as runtime_providers
-from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL
-from yaaf.runtimes.seats import choosable
+from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS
+from yaaf.runtimes.harnesses import canonical as canonical_harness
+from yaaf.runtimes.seats import choosable, class_role_refusal
 from yaaf.runtimes.seats import refusal as seat_refusal
 from yaaf.server import acting, authority, briefing, policy, unread
 from yaaf.server.api.agent import WAKE_CHANNEL
@@ -438,11 +440,10 @@ ROLE_CATEGORIES = (
 )
 ROLE_DOMAINS = ("general", "markets", "data", "games", "education")
 
-#: How hard the model thinks, as the Agent SDK names it. A closed set, so a
-#: typo is worth a 422 here rather than a container that starts, spends the
-#: claim, and dies inside the sandbox where the chairman sees only "the run
-#: failed".
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
+#: How hard the model thinks, in yaaf's words whatever the vendor
+#: (yaaf.runtimes.catalog.EFFORTS). A closed set, so a typo is worth a 422
+#: here rather than a container that starts, spends the claim, and dies inside
+#: the sandbox where the chairman sees only "the run failed".
 _EFFORT_PATTERN = f"^({'|'.join(EFFORTS)})$"
 
 
@@ -491,10 +492,21 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
                    f"pick from {', '.join(ROLE_DOMAINS)}",
         )
     # A role whose grants its harness cannot honour, or whose model it cannot
-    # serve, is refused here — at the version, before any project pins it.
-    problem = seat_refusal(body.harness, body.model, body.tool_permissions,
-                           priced=prices.covered(session, body.model), effort=body.effort,
-                           converses=body.is_ceo_role)
+    # serve, is refused here — at the version, before any project pins it. A
+    # role naming a class is bound to no model yet: only what holds wherever
+    # it lands is checked here, and the rest at every seat door.
+    bad_ref = catalog.valid_ref(body.model)
+    if bad_ref:
+        raise HTTPException(status_code=422, detail=f"role '{body.slug}': {bad_ref}")
+    body.harness = canonical_harness(body.harness)
+    if catalog.is_class(body.model):
+        problem = class_role_refusal(body.harness, body.tool_permissions, body.effort,
+                                     converses=body.is_ceo_role)
+    else:
+        problem = seat_refusal(body.harness, body.model, body.tool_permissions,
+                               priced=prices.covered(session, body.model), effort=body.effort,
+                               converses=body.is_ceo_role,
+                               platform_search=web_search.configured(session))
     if problem:
         raise HTTPException(status_code=422, detail=f"role '{body.slug}': {problem}")
     role = session.execute(select(Role).where(Role.slug == body.slug)).scalar_one_or_none()
@@ -534,6 +546,53 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
     )
     session.add(row)
     return {"role_id": role.id, "role_version_id": row.id, "version": version}
+
+
+class AdoptClassIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The class the library's file now names: @frontier, @balanced or @fast.
+    model: str
+
+
+@router.post("/roles/{slug}/adopt-class", dependencies=[authority.INSTANCE_ADMIN])
+def adopt_class(slug: str, body: AdoptClassIn, session: Session = Depends(db)) -> dict:
+    """Move a library role onto the model class its shipped file now names —
+    the step an update runs for roles an install already has, which a re-seed
+    leaves alone so as not to overwrite an administrator's edits.
+
+    A new version identical to the newest but for its model, and only where
+    the newest still names the Claude model that class resolves to on
+    Anthropic — the model the file named before. A role an administrator moved
+    to another model is theirs, and is left as it is (409). Teams stay pinned;
+    on a project paying Anthropic nothing is even offered (yaaf.core.
+    role_versions), because nothing a team runs would change."""
+    from yaaf.core import role_versions
+
+    provider, cls = catalog.parse(body.model)
+    if cls not in catalog.CLASSES or provider is not None:
+        raise HTTPException(status_code=422, detail=(
+            f"'{body.model}' is not one of {', '.join(catalog.class_ref(c) for c in catalog.CLASSES)}"))
+    role = session.scalar(select(Role).where(Role.slug == slug))
+    latest = role_versions.newest(session, role.id) if role else None
+    if role is None or latest is None:
+        raise HTTPException(status_code=404, detail="unknown role")
+    if latest.model == body.model:
+        return {"slug": slug, "changed": False, "version": latest.version}
+    was = catalog.lineup_of(runtime_providers.DEFAULT_PROVIDER, {}).get(cls)
+    if latest.model != was:
+        raise HTTPException(status_code=409, detail=(
+            f"'{slug}' names {latest.model}, not {was} — it was moved by hand, so it is left "
+            "as it is"))
+    row = RoleVersion(
+        id=ids.new_id(ids.ROLE_VERSION), role_id=role.id, version=latest.version + 1,
+        description=latest.description, system_prompt=latest.system_prompt,
+        model=body.model, effort=latest.effort, harness=latest.harness,
+        tool_permissions=latest.tool_permissions, secret_scopes=latest.secret_scopes)
+    session.add(row)
+    _audit(session, None, "role.adopt_class", "role", role.id,
+           {"from": latest.model, "to": body.model, "version": row.version})
+    return {"slug": slug, "changed": True, "version": row.version}
 
 
 @router.get("/roles/{slug}", dependencies=[authority.SIGNED_IN])
@@ -625,14 +684,19 @@ def list_roles(session: Session = Depends(db)) -> list[dict]:
         latest = versions[0] if versions else None
         # Blast radius: every team pinned to any version of this role. Editing
         # a role is only scary when you can't see who runs it.
+        from yaaf.core import role_versions
+
         usage = [
             {
-                "project_name": project_name,
+                "project_name": project.name,
                 "team_name": team_name,
-                "pinned_version": pinned,
+                "pinned_version": pinned.version,
+                # Behind only where adopting would change what the team runs.
+                "behind": role_versions.offered(session, project, pinned, team_id).version
+                > pinned.version,
             }
-            for team_name, project_name, pinned in session.execute(
-                select(Team.name, Project.name, RoleVersion.version)
+            for team_name, team_id, project, pinned in session.execute(
+                select(Team.name, Team.id, Project, RoleVersion)
                 .join(RoleVersion, RoleVersion.id == Team.role_version_id)
                 .join(Project, Project.id == Team.project_id)
                 .where(RoleVersion.role_id == role.id)
@@ -825,6 +889,9 @@ class ProjectCreate(BaseModel):
     # the billing credential's unit (R4); a seat on a provider with none is
     # refused (R5) — docs/RUNTIMES.md, M3.
     credentials: dict[str, str] = Field(default_factory=dict)
+    # The credential class seats move to while the billing one's provider is
+    # failing (yaaf.core.breakers) — held to the fallback door's rules.
+    fallback_secret_id: str | None = None
     teams: list[TeamSpec] = Field(default_factory=list)
     # Solo mode (the M2 single-agent arm): the CEO is placed as the sole member
     # — hence derived lead — of the only team, so one brain plans AND executes
@@ -907,6 +974,13 @@ def attach_provider_credential(session: Session, project: Project, provider_name
             f"one project, one meter: this project's budget is kept in "
             f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'}, and "
             f"'{secret.name}' is a {bills(secret)} — pick one metered the same way"))
+    fallback = session.get(Secret, project.fallback_secret_id) \
+        if project.fallback_secret_id else None
+    if fallback is not None and fallback.id != secret.id and \
+            (fallback.provider or runtime_providers.DEFAULT_PROVIDER) == provider_name:
+        raise HTTPException(status_code=422, detail=(
+            f"this project's fallback '{fallback.name}' is its {seller.label} credential — "
+            "pay with that one, or change the fallback first: one provider, one credential"))
     row = session.scalar(select(ProjectLlmCredential).where(
         ProjectLlmCredential.project_id == project.id,
         ProjectLlmCredential.provider == provider_name))
@@ -928,6 +1002,17 @@ def _settle_provider_credentials(session: Session, project: Project) -> None:
     from yaaf.core.llm_credentials import bills
 
     billing = session.get(Secret, project.billing_secret_id) if project.billing_secret_id else None
+    fallback = session.get(Secret, project.fallback_secret_id) \
+        if project.fallback_secret_id else None
+    if fallback is not None and (fallback.llm_mode or "api_key") != project.billing_mode:
+        # The same rule the fallback door holds, held again when the money
+        # moves: a fallback in dollars on a budget kept in tokens would spend
+        # what no cap can stop.
+        raise HTTPException(status_code=422, detail=(
+            f"one project, one meter: the fallback '{fallback.name}' is a {bills(fallback)}, "
+            f"and this would keep the budget in "
+            f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'} — remove or "
+            "change the fallback first"))
     for row in session.scalars(select(ProjectLlmCredential).where(
             ProjectLlmCredential.project_id == project.id)).all():
         if billing is not None and row.provider == (billing.provider
@@ -957,7 +1042,9 @@ def provider_credentials_view(session: Session, project: Project) -> list[dict]:
         out.append({"provider": provider_name,
                     "label": seller.label if seller else provider_name,
                     "credential_id": secret.id, "name": secret.name, "bills": bills(secret),
-                    "billing": secret.id == project.billing_secret_id})
+                    "billing": secret.id == project.billing_secret_id,
+                    # Held only while a failover has moved seats onto it.
+                    "fallback": secret.id == project.fallback_secret_id})
     return sorted(out, key=lambda c: (not c["billing"], c["label"]))
 
 
@@ -1003,16 +1090,142 @@ def remove_project_credential(project_id: str, provider_name: str,
     return provider_credentials_view(session, project)
 
 
+class FallbackIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The credential class seats move to while the billing credential's
+    #: provider is failing; null removes it.
+    credential_id: str | None = None
+
+
+def _bare_class(seat) -> bool:
+    """A seat failover moves: one on a class with no provider named. A pinned
+    model, or `openai/@fast`, was put on its provider on purpose."""
+    provider, cls = catalog.parse(seat.ref)
+    return cls is not None and provider is None
+
+
+@router.put("/projects/{project_id}/fallback-credential", dependencies=[authority.STEER])
+def set_fallback_credential(project_id: str, body: FallbackIn,
+                            session: Session = Depends(db)) -> dict:
+    """Name the credential this project's class seats move to while its billing
+    credential's provider is failing (yaaf.core.breakers). Refused unless every
+    class seat could run there — resolved, paid, priced, able to do what its
+    role grants — because a fallback found wanting during an outage is no
+    fallback."""
+    project = _get_project(session, project_id)
+    if not body.credential_id:
+        project.fallback_secret_id = None
+        _audit(session, project.id, "billing.fallback_removed", "project", project.id, {})
+        return fallback_view(session, project)
+    apply_fallback(session, project, body.credential_id)
+    return fallback_view(session, project)
+
+
+def apply_fallback(session: Session, project: Project, credential_id: str) -> None:
+    """Name `credential_id` the project's fallback, or refuse with why: the
+    door's rules, shared with project creation and every importer."""
+    from yaaf.core import project_credentials
+    from yaaf.core.llm_credentials import assigned_credential, bills
+    from yaaf.runtimes.seats import seat_for
+    from yaaf.server.contextpack import role_version_for
+    from yaaf.server.seat_checks import seat_problem
+
+    if not project.billing_secret_id:
+        raise HTTPException(status_code=422, detail=(
+            "attach a billing credential first — a fallback is what the class seats move "
+            "to when it fails"))
+    secret = assigned_credential(session, credential_id)
+    billing = session.get(Secret, project.billing_secret_id)
+    billing_provider = (billing.provider if billing else None) or runtime_providers.DEFAULT_PROVIDER
+    provider_name = secret.provider or runtime_providers.DEFAULT_PROVIDER
+    if provider_name == billing_provider:
+        raise HTTPException(status_code=422, detail=(
+            f"'{secret.name}' pays {runtime_providers.provider(provider_name).label}, the "
+            "provider the billing credential already pays — a fallback on the same provider "
+            "fails with it. Pick another provider's credential"))
+    if (secret.llm_mode or "api_key") != project.billing_mode:
+        raise HTTPException(status_code=422, detail=(
+            f"one project, one meter: this project's budget is kept in "
+            f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'}, and "
+            f"'{secret.name}' is a {bills(secret)} — pick one metered the same way"))
+    paying = project_credentials.held(session, project, fallback=False).get(provider_name)
+    if paying is not None and paying.id != secret.id:
+        raise HTTPException(status_code=422, detail=(
+            f"this project already pays {runtime_providers.provider(provider_name).label} "
+            f"with '{paying.name}' — name that one as the fallback, or stop paying with it "
+            "first: one provider, one credential"))
+    project.fallback_secret_id = secret.id
+    session.flush()
+    context = model_policy.context(session, project, provider=provider_name, fallback=True)
+    moving = [agent for agent in _project_agents(session, project.id)
+              if _bare_class(seat_for(agent, role_version_for(session, agent)))]
+    problem = seat_problem(session, project, moving, context=context, fallback=True)
+    if problem:
+        raise HTTPException(status_code=422, detail=(
+            f"'{secret.name}' cannot be this project's fallback: on "
+            f"{runtime_providers.provider(provider_name).label}, {problem}"))
+    _audit(session, project.id, "billing.fallback", "project", project.id,
+           {"credential_id": secret.id, "provider": provider_name,
+            "moves": [a.name for a in moving]})
+
+
+def fallback_view(session: Session, project: Project) -> dict:
+    """The fallback, whether it is in use right now, and what the billing
+    credential's breaker says — for the project's Settings and its header."""
+    from yaaf.core import breakers
+
+    fallback = session.get(Secret, project.fallback_secret_id) \
+        if project.fallback_secret_id else None
+    active = model_policy.failover(session, project)
+    return {"credential_id": fallback.id if fallback else None,
+            "name": fallback.name if fallback else None,
+            "provider": (fallback.provider or runtime_providers.DEFAULT_PROVIDER)
+            if fallback else None,
+            "active": active is not None,
+            "breaker": breakers.state(session, project.billing_secret_id)}
+
+
 @router.get("/providers", dependencies=[authority.SIGNED_IN])
 def list_providers() -> list[dict]:
-    """Who sells the tokens, from the registry: the credential kinds each
-    takes, whether its credential carries an address, whether it searches and
-    states its costs — what the credential form and a drafter need to know."""
-    return [{"name": p.name, "label": p.label, "default_harness": p.default_harness,
-             "kinds": [{"mode": k.mode, "meter": k.meter, "bills": k.bills} for k in p.kinds],
-             "credential_base_url": p.credential_base_url, "search": p.search,
-             "reports_cost": p.reports_cost}
-            for p in runtime_providers.PROVIDERS.values()]
+    """Who sells the tokens, from the registry: everything the credential form
+    needs to ask for a key (its kinds, where to get one, the address it
+    carries), and what a drafter needs to choose (the wire, the lineup, whether
+    it searches and states its costs)."""
+    return [provider_view(p) for p in runtime_providers.PROVIDERS.values()]
+
+
+def provider_view(p) -> dict:
+    return {"name": p.name, "label": p.label, "protocol": p.protocol,
+            "default_harness": p.default_harness(),
+            "kinds": [{"mode": k.mode, "meter": k.meter, "bills": k.bills, "label": k.label,
+                       "placeholder": k.placeholder, "help": k.help,
+                       "multiline": k.multiline, "default_harness": k.default_harness}
+                      for k in p.kinds],
+            "credential_base_url": p.credential_base_url,
+            "base_url_template": p.base_url_template, "console_url": p.console_url,
+            "lineup": dict(p.lineup or {}), "search": p.search,
+            "reports_cost": p.reports_cost, "plan_meter": p.plan_meter, "local": p.local}
+
+
+@router.get("/models", dependencies=[authority.SIGNED_IN])
+def list_models(session: Session = Depends(db)) -> dict:
+    """Everything a model picker offers: the classes a role can name, each
+    provider's lineup as this install resolves it, and every catalog model
+    with whether this install can meter it — read by the role editor, the
+    seat pickers, the New Project form and the Founder."""
+    own = model_policy.lineups(session)
+    return {
+        "default_provider": model_policy.default_provider(session),
+        "classes": [{"name": c, "ref": catalog.class_ref(c), "label": catalog.CLASS_LABELS[c],
+                     "blurb": catalog.CLASS_BLURBS[c]} for c in reversed(catalog.CLASSES)],
+        "lineups": {p: catalog.lineup_of(p, own) for p in runtime_providers.PROVIDERS},
+        "models": [{"id": m.id, "provider": m.provider, "label": catalog.label(m.id),
+                    "tier": m.tier, "efforts": list(m.efforts) if m.efforts else None,
+                    "priced": prices.covered(session, m.id)}
+                   for m in catalog.MODELS],
+        "efforts": list(EFFORTS),
+    }
 
 
 @router.get("/harnesses", dependencies=[authority.SIGNED_IN])
@@ -1052,6 +1265,13 @@ def _check_team_people(spec: TeamSpec) -> None:
             status_code=422,
             detail=f"team '{spec.name}' schedule '{bad_time}' is not HH:MM",
         )
+    bad_model = next((problem for problem in map(catalog.valid_ref,
+                                                 spec.model_overrides.values()) if problem), None)
+    if bad_model is not None:
+        raise HTTPException(status_code=422, detail=f"team '{spec.name}': {bad_model}")
+    # A harness's old name is still understood, and never stored again.
+    spec.harness_overrides = {name: canonical_harness(h) or h
+                              for name, h in spec.harness_overrides.items()}
     bad_effort = next((v for v in spec.effort_overrides.values()
                        if v not in EFFORTS), None)
     if bad_effort is not None:
@@ -1169,12 +1389,27 @@ def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamS
     _refuse_without_review_seat(session, {spec.role_slug for spec in teams})
 
 #: What "this matters" buys a producing seat in effort. Only ever upward: a
-#: role already at or above it keeps what it has. The model half is the seat's
-#: own provider's `craft_model`, ranked by the catalog's tiers — weakest to
-#: strongest, where a model this install has never heard of ranks 0, so it is
-#: lifted rather than left: an unknown string is not evidence of strength.
+#: role already at or above it keeps what it has. The model half is the
+#: frontier class of the seat's own provider (`_craft_model`), ranked by the
+#: catalog's tiers — weakest to strongest, where a model this install has never
+#: heard of ranks 0, so it is lifted rather than left: an unknown string is not
+#: evidence of strength.
 CRAFT_EFFORT = "xhigh"
 _EFFORT_RANK = {name: i for i, name in enumerate(EFFORTS)}
+
+
+def _craft_model(session: Session, ref: str) -> str | None:
+    """What a producing seat on `ref` is lifted to, within its own provider —
+    or None to leave it. A class lifts to the frontier class of the same
+    provider, so the seat still follows the project's provider; a pinned model
+    lifts to its provider's frontier model, unless it already ranks at or
+    above it (the library may have put it on something stronger)."""
+    named, cls = catalog.parse(ref)
+    if cls is not None:
+        return None if cls == "frontier" else catalog.class_ref("frontier", named)
+    provider = catalog.provider_of(ref)
+    craft = catalog.lineup_of(provider, model_policy.lineups(session)).get("frontier")
+    return None if craft is None or catalog.tier(ref) >= catalog.tier(craft) else craft
 
 
 def _craft_lift(
@@ -1199,9 +1434,7 @@ def _craft_lift(
     role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
     if role is None or role.category not in CRAFT_CATEGORIES:
         return None, None
-    craft_model = runtime_providers.provider(catalog.provider_of(version.model)).craft_model
-    model = (None if craft_model is None
-             or catalog.tier(version.model) >= catalog.tier(craft_model) else craft_model)
+    model = _craft_model(session, version.model)
     at_least = _EFFORT_RANK.get(CRAFT_EFFORT, 0)
     effort = (None if _EFFORT_RANK.get(version.effort, 0) >= at_least else CRAFT_EFFORT)
     return model, effort
@@ -1250,6 +1483,9 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         raise HTTPException(status_code=422, detail="every team needs at least one employee")
     for spec in body.teams:
         _check_team_people(spec)
+    if body.ceo_model_override and (bad := catalog.valid_ref(body.ceo_model_override)):
+        raise HTTPException(status_code=422, detail=f"the CEO's model: {bad}")
+    body.ceo_harness_override = canonical_harness(body.ceo_harness_override)
     # The constitution freezes at creation. Overrides are validated against the
     # schema; a spec with no opinion about the authority dial — or about how
     # often the project should think — is given one here, so the form, the
@@ -1402,6 +1638,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     for provider_name, credential_id in body.credentials.items():
         attach_provider_credential(session, project, provider_name, credential_id)
     refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+    if body.fallback_secret_id:
+        apply_fallback(session, project, body.fallback_secret_id)
 
     # The boardroom on day one, when the chairman has already told us the
     # workspace. The ask behind app-wide Slack settings is "I made a project —
@@ -1553,7 +1791,8 @@ def export_project(project_id: str, include_values: bool = False,
             # neither `{` nor `-----BEGIN`, so the file-shaped refusal at the
             # door cannot catch it either.
             {"name": s.name, "role_scopes": s.role_scopes, "kind": s.kind,
-             "filename": s.filename, "value": decrypt(s.ciphertext)}
+             "filename": s.filename, "visibility": s.visibility or "secret",
+             "value": decrypt(s.ciphertext)}
             for s in session.execute(
                 select(Secret)
                 .where(Secret.project_id == project.id)
@@ -1628,7 +1867,11 @@ def export_project(project_id: str, include_values: bool = False,
             # travels: an import resolves the names against what exists there.
             "credential_names": {c["provider"]: c["name"]
                                  for c in provider_credentials_view(session, project)
-                                 if not c["billing"]},
+                                 if not c["billing"] and not c["fallback"]},
+            # The fallback, by name, for the same reason.
+            "fallback_credential_name": (fallback.name if (fallback := session.get(
+                Secret, project.fallback_secret_id)) else None)
+            if project.fallback_secret_id else None,
             "ceo_role_slug": ceo_role_slug,
             "ceo_name": ceo.name,
             "ceo_daily_at": ceo.daily_at,
@@ -1773,7 +2016,8 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
             continue
         copy = Secret(id=ids.new_id(ids.SECRET), project_id=project.id, name=row.name,
                       ciphertext=row.ciphertext, role_scopes=list(row.role_scopes or []),
-                      kind=row.kind, filename=row.filename)
+                      kind=row.kind, filename=row.filename,
+                      visibility=row.visibility or "secret")
         session.add(copy)
         ciphertexts[row.name] = row.ciphertext
     billing_credential_hidden = None
@@ -1806,6 +2050,10 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
             session.add(ProjectLlmCredential(id=ids.new_id(ids.PROJECT_CREDENTIAL),
                                              project_id=project.id, provider=row.provider,
                                              secret_id=row.secret_id))
+    # And its fallback, under the same rule.
+    if source.fallback_secret_id and project.billing_secret_id \
+            and resolve(session, credential_id=source.fallback_secret_id) is not None:
+        project.fallback_secret_id = source.fallback_secret_id
 
     source_ceo = session.execute(
         select(Agent).where(Agent.project_id == source.id, Agent.kind == AgentKind.CEO)
@@ -2203,6 +2451,12 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
 
     So speak MCP instead: initialize, then tools/list, and say which tools came
     back. `transport` is a seam for tests; production passes nothing.
+
+    Every answer carries a `state`, because a screen that has one red word for
+    "wrong port", "token rejected", "proxy refused" and "no tools" teaches the
+    chairman to read red as noise — the same mistake the old GET made with
+    green. The state picks the label and the one button that fixes it; the
+    `detail` stays the sentence.
     """
     import httpx
 
@@ -2223,23 +2477,27 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
                            "clientInfo": {"name": "yaaf", "version": "1.0"}},
             }, None)
             if opened.status_code in (401, 403):
-                return {"ok": False, "code": "unauthorized",
+                return {"ok": False, "code": "unauthorized", "state": "unauthorized",
                         "detail": f"the server refused the credential (HTTP "
                                   f"{opened.status_code}) — check the bearer token"}
             if opened.status_code == 404:
-                return {"ok": False, "detail": "no MCP endpoint at that path (HTTP 404) — the "
+                return {"ok": False, "state": "not_found",
+                        "detail": "no MCP endpoint at that path (HTTP 404) — the "
                                                "address needs the server's own path, often /mcp"}
             if opened.status_code >= 400:
-                return {"ok": False, "detail": f"something is listening, but it did not accept an "
-                                               f"MCP handshake (HTTP {opened.status_code})"}
+                return {"ok": False, "state": "not_mcp",
+                        "detail": f"something is listening, but it did not accept an "
+                                  f"MCP handshake (HTTP {opened.status_code})"}
             try:
                 envelope = _sse_or_json(opened) or {}
             except ValueError:
-                return {"ok": False, "detail": "that address answered, but not with MCP — it "
-                                               "looks like an ordinary web page or API"}
+                return {"ok": False, "state": "not_mcp",
+                        "detail": "that address answered, but not with MCP — it "
+                                  "looks like an ordinary web page or API"}
             if "error" in envelope:
                 message = (envelope["error"] or {}).get("message", "unknown error")
-                return {"ok": False, "detail": f"the server refused the handshake: {message}"}
+                return {"ok": False, "state": "not_mcp",
+                        "detail": f"the server refused the handshake: {message}"}
 
             info = (envelope.get("result") or {}).get("serverInfo") or {}
             named = " ".join(str(p) for p in (info.get("name"), info.get("version")) if p)
@@ -2254,21 +2512,35 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
                     tools = ((_sse_or_json(listed) or {}).get("result") or {}).get("tools") or []
                 except ValueError:
                     tools = []
+    except httpx.ProxyError:
+        # Before ConnectError: a proxy refusal is not "nothing is listening",
+        # and telling someone to check a port that is fine sends them the wrong way.
+        return {"ok": False, "state": "blocked",
+                "detail": "a proxy between yaaf and that address refused the connection — "
+                          "the host probably needs allowing on this network"}
     except httpx.ConnectError:
-        return {"ok": False, "detail": "nothing is listening at that address — check "
-                                       "host and port, and that the server is running"}
+        return {"ok": False, "state": "unreachable",
+                "detail": "nothing is listening at that address — check "
+                          "host and port, and that the server is running"}
+    except httpx.TimeoutException:
+        return {"ok": False, "state": "timeout",
+                "detail": "no answer within 10 seconds — the server may be down, or a "
+                          "firewall is dropping the connection"}
     except httpx.HTTPError as exc:
-        return {"ok": False, "detail": f"could not connect: {exc.__class__.__name__}"}
+        return {"ok": False, "state": "unreachable",
+                "detail": f"could not connect: {exc.__class__.__name__}"}
 
     who = f"MCP server{f' {named}' if named else ''}"
     if not tools:
         # The handshake is real, so the address and credential are right — but
         # a source that offers an agent nothing is not a working data source.
-        return {"ok": False, "detail": f"{who} answered the handshake but offers no tools — "
-                                       "agents would mount it and find nothing to call"}
+        return {"ok": False, "state": "no_tools", "tools": 0,
+                "detail": f"{who} answered the handshake but offers no tools — "
+                          "agents would mount it and find nothing to call"}
     shown = ", ".join(t.get("name", "?") for t in tools[:4])
     more = f", +{len(tools) - 4} more" if len(tools) > 4 else ""
-    return {"ok": True, "detail": f"{who} ready — {len(tools)} tool(s): {shown}{more}"}
+    return {"ok": True, "state": "ok", "tools": len(tools),
+            "detail": f"{who} ready — {len(tools)} tool(s): {shown}{more}"}
 
 
 def _oauth_checked(url: str, token: str, entry: dict, transport=None) -> dict:
@@ -2278,7 +2550,8 @@ def _oauth_checked(url: str, token: str, entry: dict, transport=None) -> dict:
     check = _check_data_source(url, token, transport)
     if check.get("code") == "unauthorized":
         entry["oauth"] = {**(entry.get("oauth") or {}), "status": "needs_reauth"}
-        check = {**check, "detail": "the server rejected the access token — press Reconnect"}
+        check = {**check, "state": "needs_reauth",
+                 "detail": "the server rejected the access token — press Reconnect"}
     return check
 
 
@@ -2385,7 +2658,8 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         if token:
             check = _oauth_checked(body.url.strip(), token, entry)
         else:
-            check = {"ok": False, "detail": "OAuth connection required — press Connect"}
+            check = {"ok": False, "state": "needs_signin",
+                     "detail": "OAuth connection required — press Connect"}
     else:
         # Three cases, because an edit that changes only the URL must not silently
         # disarm the auth header. Absent (None) keeps whatever the source already
@@ -2455,7 +2729,8 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
 
         token = ensure_fresh_token(session, project, entry)
         if token is None:
-            check = {"ok": False, "detail": "OAuth connection required — press Connect"}
+            check = {"ok": False, "state": "needs_signin",
+                     "detail": "OAuth connection required — press Connect"}
         else:
             check = _oauth_checked(url, token, entry)
     else:
@@ -2470,6 +2745,95 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
     _audit(session, project.id, "mcp_server.check", "project", project.id,
            {"name": name, "ok": check["ok"]})
     return check
+
+
+class DataSourceRolesIn(BaseModel):
+    # At least one, for the reason DataSourceIn says so: a source nobody
+    # receives is an address stored for no one. Removing it is a delete.
+    roles: list[str] = Field(min_length=1)
+
+
+@router.post("/projects/{project_id}/mcp_servers/{name}/roles", dependencies=[authority.STEER])
+def regrant_data_source(project_id: str, name: str, body: DataSourceRolesIn,
+                        session: Session = Depends(db)) -> dict:
+    """Change who receives a source, and nothing else.
+
+    Saving the source again would do it, but a save needs the address, re-runs
+    the check and — for an OAuth source whose address the form re-sends — can
+    land the chairman on the provider's consent screen. The access map moves a
+    tick, so this moves a tick: the entry's roles and the role grants of the
+    two secrets a sandbox actually reads (the address and the token). The
+    refresh token and an OAuth client secret stay ungranted, as they always are.
+    """
+    project = _get_project(session, project_id)
+    servers = (project.integrations or {}).get("mcp_servers", [])
+    entry = next((s for s in servers if s.get("name") == name), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="unknown data source")
+    try:
+        policy.check_roles_on_project(session, project.id, body.roles)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    was = list(entry.get("roles") or [])
+    entry["roles"] = list(body.roles)
+    for secret_name in (entry.get("url_secret"), entry.get("bearer_secret")):
+        row = _project_secret(session, project.id, secret_name) if secret_name else None
+        if row is not None:
+            row.role_scopes = list(body.roles)
+    from yaaf.server.mcp_oauth import persist_entry
+
+    persist_entry(project, entry)
+    _audit(session, project.id, "mcp_server.roles", "project", project.id,
+           {"name": name, "was": was, "roles": body.roles})
+    return {"name": name, "roles": body.roles, "was": was,
+            "note": "Effective on each granted role's next run."}
+
+
+class DataSourceProbeIn(BaseModel):
+    url: str
+    bearer: str | None = None
+
+
+@router.post("/projects/{project_id}/mcp_servers/probe", dependencies=[authority.STEER])
+def probe_data_source(project_id: str, body: DataSourceProbeIn,
+                      session: Session = Depends(db)) -> dict:
+    """The check a save runs, run before anything is saved — and the one
+    question the old form made the chairman answer blind: how does this
+    server want you to sign in?
+
+    The form asked for a name, an address, an auth mode, a read mode and roles
+    all at once, before anyone knew whether the server answered. Now the
+    address comes first: a server that refuses an anonymous handshake and
+    publishes OAuth metadata wants a browser sign-in; one that refuses and
+    publishes none wants a pasted token; one that answers wants nothing.
+    Nothing is stored and nothing is granted. It reaches out exactly as the
+    save would, from the same seat, for the same people."""
+    _get_project(session, project_id)
+    _parse_source_url(
+        body.url,
+        "that is not a URL — a data source needs a full address like "
+        "https://host:1234/path (schemes http/https only)",
+    )
+    import httpx
+
+    url = body.url.strip()
+    check = _check_data_source(url, body.bearer or None)
+    auth = "bearer" if body.bearer else "none"
+    if check.get("state") == "unauthorized" and not body.bearer:
+        from yaaf.server import mcp_oauth
+
+        try:
+            mcp_oauth.discover(url)
+            auth = "oauth"
+            check = {"ok": False, "state": "needs_signin",
+                     "detail": "the server asks you to sign in with OAuth — saving opens "
+                               "its sign-in in a new tab"}
+        except (mcp_oauth.OAuthSetupError, httpx.HTTPError, ValueError):
+            # No metadata at any rung: it wants a pasted token.
+            auth = "bearer"
+            check = {**check, "detail": "the server wants a credential and publishes no "
+                                        "OAuth sign-in — paste its token"}
+    return {"check": check, "auth": auth}
 
 
 @router.post("/projects/{project_id}/mcp_servers/{name}/oauth/start", dependencies=[authority.STEER])
@@ -2605,6 +2969,7 @@ def stand_down_team(team_id: str, body: TeamStandDown,
     staffing.check_stand_down(session, project, team, by_chairman=True)
     outcome = staffing.stand_down(session, project, team, body.reason,
                                   actor=acting.stamp())
+    _his_words(session, project, "team", team.id, f"Stood down {team.name}", body.reason)
     staffing.notify_ceo(
         session, project,
         f"The chairman stood down {team.name}: {body.reason[:400]} Plan around a "
@@ -2626,6 +2991,7 @@ def recall_team(team_id: str, body: TeamStandDown,
     project = _get_project(session, team.project_id)
     outcome = staffing.recall(session, project, team, body.reason,
                               actor=acting.stamp())
+    _his_words(session, project, "team", team.id, f"Recalled {team.name}", body.reason)
     staffing.notify_ceo(
         session, project,
         f"The chairman recalled {team.name}: {body.reason[:400]} That seat is "
@@ -2788,6 +3154,14 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
             detail = _billing_shape_error(body.billing_mode, decrypt(secret.ciphertext))
             raise HTTPException(status_code=422,
                                 detail=detail or "billing mode must match the selected credential")
+        fallback = session.get(Secret, project.fallback_secret_id) \
+            if project.fallback_secret_id else None
+        if fallback is not None and (fallback.provider or runtime_providers.DEFAULT_PROVIDER) \
+                == (secret.provider or runtime_providers.DEFAULT_PROVIDER):
+            raise HTTPException(status_code=422, detail=(
+                f"this project's fallback '{fallback.name}' pays the same provider as "
+                f"'{secret.name}' — a fallback on the provider it backs up fails with it. "
+                "Remove or change the fallback first"))
         project.billing_secret_id = secret.id
         project.billing_mode = secret.llm_mode
         changed["billing_secret_id"] = secret.id
@@ -2906,46 +3280,60 @@ def billing_check(project_id: str, provider: str | None = None,
                 else secret.llm_mode or "api_key")
     plaintext = decrypt(secret.ciphertext)
     shape_error = _billing_shape_error(mode, plaintext, secret.provider)
+    seller = runtime_providers.provider(secret.provider)
     if shape_error:
         result = {"ok": False, "detail": shape_error}
     elif mode == "api_key":
-        result = _live_check(secret, plaintext)
+        result = live_check(secret, plaintext)
     else:
+        # A login authenticates through its own CLI, which runs only inside a
+        # sandbox: the shape is all that can be checked from here.
         result = {"ok": True,
-                  "detail": "token has the right shape (sk-ant-oat…); full validation "
-                            "happens on the first run — expired tokens surface there"}
+                  "detail": f"{seller.kind(mode).label} has the right shape; full validation "
+                            "happens on the first run — an expired login surfaces there"}
     _audit(session, project.id, "billing.check", "project", project.id,
            {"ok": result["ok"], "provider": secret.provider})
     return result
 
 
-def _live_check(secret: Secret, plaintext: str) -> dict:
-    """One free call that only a live key answers: the provider's models list.
-    Anthropic's by its own header; every OpenAI-compatible provider's by
-    bearer, at its address — the credential's own, for a custom server."""
+def live_check(secret: Secret, plaintext: str, *, transport=None) -> dict:
+    """One free call that only a live key answers: the provider's own model
+    list, through the wire a run uses (yaaf.runtimes.wire) — the same
+    address, the same header. A key file is minted into a token first; a
+    local server is asked the same question, keyless."""
+
     import httpx
 
+    from yaaf.core import model_tokens
+    from yaaf.runtimes import wire
+
     seller = runtime_providers.provider(secret.provider)
-    if seller.name == runtime_providers.DEFAULT_PROVIDER:
-        url, headers = ("https://api.anthropic.com/v1/models",
-                        {"x-api-key": plaintext, "anthropic-version": "2023-06-01"})
-    else:
-        base = (secret.base_url if seller.credential_base_url else seller.base_url) or ""
-        if not base:
-            return {"ok": False, "detail": f"no address to check a {seller.label} key against"}
-        url, headers = f"{base.rstrip('/')}/models", {"Authorization": f"Bearer {plaintext}"}
+    if seller.protocol is None:
+        return {"ok": True, "detail": f"{seller.label} is reached only through its CLI; "
+                                      "the first run is the check"}
+    found = runtime_providers.spec(seller, secret.llm_mode or "api_key", secret.base_url)
+    if not found["base_url"]:
+        return {"ok": False, "detail": f"no address to check a {seller.label} key against"}
+    key = plaintext
+    if seller.mints_tokens:
+        try:
+            key, _ = model_tokens.mint(seller.name, plaintext)
+        except model_tokens.MintError as exc:
+            return {"ok": False, "detail": str(exc)}
     try:
-        response = httpx.get(url, headers=headers, timeout=15)
+        models = wire.run_sync(wire.list_models(wire.Endpoint.from_spec(found, key),
+                                              transport=transport))
     except httpx.HTTPError as exc:
         return {"ok": False, "detail": f"could not reach the API: {exc.__class__.__name__}"}
-    if response.status_code == 200:
-        return {"ok": True, "detail": "API key verified against the live API."}
-    if response.status_code in (401, 403):
-        return {"ok": False,
-                "detail": f"the API rejected this key (revoked or mistyped) — paste a fresh "
-                          f"one from {seller.label}"}
-    return {"ok": False, "detail": f"unexpected API response ({response.status_code}); "
-                                   "try again shortly"}
+    except wire.WireError as exc:
+        if exc.kind == "auth":
+            return {"ok": False,
+                    "detail": f"the API rejected this key (revoked or mistyped) — paste a "
+                              f"fresh one from {seller.label}"}
+        return {"ok": False, "detail": f"unexpected API response ({exc.status}); "
+                                       "try again shortly"}
+    return {"ok": True, "detail": "API key verified against the live API.",
+            "models": len(models)}
 
 
 @router.post("/projects/{project_id}/regrade-goal", dependencies=[authority.STEER])
@@ -2964,7 +3352,7 @@ async def regrade_goal(project_id: str, session: Session = Depends(db)) -> dict:
     the drift it is fixing. What the chairman gets is the same grade the Founder
     would have had to satisfy today, on the goal he is actually running.
     """
-    from yaaf.core.platform import NoPlatformCredential, founder_env
+    from yaaf.core.platform import NoPlatformCredential, founder_env, founder_model
     from yaaf.founder.grade import LOAD_BEARING, grade_goal
 
     project = _get_project(session, project_id)
@@ -2975,7 +3363,9 @@ async def regrade_goal(project_id: str, session: Session = Depends(db)) -> dict:
         # missing platform credential is a thing the chairman fixes in Settings,
         # not a bug.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    grade = await grade_goal(project.goal, env=env)
+    # On the Founder's model, which is what the credential pays: grading on a
+    # default would send a Claude model to whatever provider the key is for.
+    grade = await grade_goal(project.goal, env=env, model=founder_model(session))
     return {
         "project_id": project.id,
         "graded_at": utcnow().isoformat(),
@@ -3041,6 +3431,9 @@ def pause_project(
     project = _get_project(session, project_id)
     project.status = ProjectStatus.PAUSED
     project.status_reason = body.reason or "paused by chairman"
+    # Nothing runs to read it now; the CEO answers it on resume, which is when
+    # "why did he stop us" is the first thing it needs.
+    _his_words(session, project, "project", project.id, "Paused the project", body.reason)
     revoked = _revoke_running(session, project.id)
     _audit(session, project.id, "project.pause", "project", project.id,
            {"revoked_runs": revoked})
@@ -3474,6 +3867,28 @@ class HealthAck(BaseModel):
     ack: bool = True
 
 
+class SetupAction(BaseModel):
+    action: Literal["skip", "unskip", "close", "reopen"]
+    step: str | None = Field(default=None, max_length=32)
+
+
+@router.post("/projects/{project_id}/setup", dependencies=[authority.STEER])
+def setup_action(project_id: str, body: SetupAction, session: Session = Depends(db)) -> dict:
+    """Skip or bring back one setup step, or close or reopen the checklist.
+    Steering, not reading: the list is the project's, so putting it away puts
+    it away for everyone who opens the project."""
+    from yaaf.server import checklist
+
+    project = _get_project(session, project_id)
+    try:
+        out = checklist.act(session, project, body.action, body.step, acting.user_id())
+    except checklist.Refused as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _audit(session, project.id, f"setup.{body.action}", "project", project.id,
+           {"step": body.step} if body.step else None)
+    return out
+
+
 @router.post("/projects/{project_id}/health/ack", dependencies=[authority.READ])
 def health_ack(project_id: str, body: HealthAck, session: Session = Depends(db)) -> dict:
     """Put one health-card suggestion away for the person reading — or, with
@@ -3552,7 +3967,7 @@ def _apply_decision(session: Session, approval: Approval, project: Project,
     held = chairman_notes.record(
         session, approval.project_id, "approval", approval.id,
         f"{'Approved' if approve else 'Declined'}: {approval.title}",
-        note if his_words is None else his_words)
+        note if his_words is None else his_words, user_id=approval.decided_by_user_id)
     if held is not None:
         notice_body += (f" Answer his note with note_answer(note_id='{held.id}'): one line "
                         "he reads under it, and whether it applies from now on.")
@@ -3692,9 +4107,9 @@ def _decide_capacity(session: Session, approval: Approval, project: Project,
         # he makes on purpose, never the side effect of approving a raise.
         moved = f"“{dial}” is already {current:g}, so nothing changed."
     else:
-        amend_constitution(project.id, AmendmentIn(
+        _amend(project.id, AmendmentIn(
             reason=f"Approved the CEO's capacity request: {approval.title}"[:500],
-            changes={rule: to}), session)
+            changes={rule: to}), session, his_words=False)
         moved = f"“{dial}” is now {to:g} (was {current:g}), in force now."
     edited = body.to is not None and float(body.to) != float(ask["to"])
     _apply_decision(session, approval, project, True, body.note,
@@ -3747,6 +4162,55 @@ def set_agent_schedule(
     _audit(session, agent.project_id, "agent.schedule", "agent", agent.id,
            {"name": agent.name, "was": was, "now": body.daily_at})
     return {"id": agent.id, "name": agent.name, "daily_at": agent.daily_at}
+
+
+class AgentSeat(BaseModel):
+    # Each field the body names is set; null puts the seat back on its role's.
+    # A field the body leaves out is left as it is, so changing the model does
+    # not quietly drop an effort somebody chose for this seat last month.
+    model: str | None = Field(default=None, max_length=128)
+    effort: str | None = Field(default=None, pattern=_EFFORT_PATTERN)
+    harness: str | None = Field(default=None, max_length=32)
+
+
+@router.patch("/agents/{agent_id}/seat", dependencies=[authority.STEER])
+def set_agent_seat(agent_id: str, body: AgentSeat, session: Session = Depends(db)) -> dict:
+    """What one person runs on — model, effort, harness — after the project
+    exists. Creation, add-team and a clone were the only doors onto a seat's
+    overrides, so moving one agent off a model meant a new role version for the
+    whole team, or a new team.
+
+    The same check every other seat door runs (`refuse_unrunnable_seats`), so a
+    seat cannot be moved onto a model its project does not pay for, a harness
+    that cannot withhold what its role withholds, or an effort the model does
+    not take. A run already in flight keeps what it was leased on; the seat
+    changes from its next run."""
+    agent = session.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="unknown agent")
+    named = body.model_fields_set
+    if not named:
+        raise HTTPException(status_code=422, detail="nothing to change: name a model, "
+                                                    "an effort or a harness")
+    model = (body.model or "").strip() or None
+    if "model" in named and model and (bad := catalog.valid_ref(model)):
+        raise HTTPException(status_code=422, detail=f"{agent.name}'s model: {bad}")
+    was = {"model": agent.model_override, "effort": agent.effort_override,
+           "harness": agent.harness_override}
+    if "model" in named:
+        agent.model_override = model
+    if "effort" in named:
+        agent.effort_override = body.effort
+    if "harness" in named:
+        # A harness's old name is still understood, and never stored again.
+        agent.harness_override = canonical_harness((body.harness or "").strip() or None)
+    session.flush()
+    refuse_unrunnable_seats(session, _get_project(session, agent.project_id), [agent])
+    now = {"model": agent.model_override, "effort": agent.effort_override,
+           "harness": agent.harness_override}
+    _audit(session, agent.project_id, "agent.seat", "agent", agent.id,
+           {"name": agent.name, "was": was, "now": now})
+    return {"id": agent.id, "name": agent.name, **now}
 
 
 class NeedFulfillIn(BaseModel):
@@ -3851,6 +4315,10 @@ def extend_hypothesis(
     row.status = HypothesisStatus.ACTIVE
     row.extended_once = True
     row.extension_reason = body.reason
+    # Stored and shown to nobody, until now: the CEO is the one running the bet.
+    _his_words(session, _get_project(session, row.project_id), "hypothesis", row.id,
+               f"Extended the bet to {body.new_kill_date:%Y-%m-%d}: {row.statement[:200]}",
+               body.reason)
     # Unblock tasks the expiry froze.
     for task in session.execute(
         select(Task).where(Task.hypothesis_id == row.id, Task.status == "blocked")
@@ -3976,6 +4444,8 @@ def decide_overrun(
     overrun.chairman_note = body.note.strip()
     overrun.decided_at = utcnow()
     overrun.decided_by_user_id = _decider(project)
+    _his_words(session, project, "overrun", overrun.id,
+               f"Ruled {body.outcome} on the {overrun.period:%B} overrun", body.note)
 
     raised = None
     if body.new_budget is not None:
@@ -3988,7 +4458,7 @@ def decide_overrun(
             reason=f"After the {overrun.period:%B} overrun: {body.note.strip()[:300]}",
             changes={key: body.new_budget},
         )
-        raised = amend_constitution(project.id, amendment, session)
+        raised = _amend(project.id, amendment, session, his_words=False)
 
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=project.id, actor="chairman",
@@ -4144,6 +4614,8 @@ def adjust_spend_window(
                "checkpoint_hours": window.checkpoint_hours},
     }
     window.adjustments = [*(window.adjustments or []), entry]
+    _his_words(session, project, "spend_window", window.id,
+               "Adjusted the measurement window", body.reason)
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=project.id, actor="chairman",
         action="spend_window.adjusted", entity="spend_window", entity_id=window.id,
@@ -4243,6 +4715,14 @@ def _apply_craft_lift(session: Session, project_id: str, cons: ConstitutionDoc) 
 def amend_constitution(
     project_id: str, body: AmendmentIn, session: Session = Depends(db)
 ) -> dict:
+    return _amend(project_id, body, session, his_words=True)
+
+
+def _amend(project_id: str, body: AmendmentIn, session: Session, *,
+           his_words: bool) -> dict:
+    """`his_words=False` for an amendment the platform writes the reason of —
+    approving a capacity request, ruling on an overrun — where his own note is
+    recorded on that decision instead, so it is said once."""
     project = _get_project(session, project_id)
     # A rule may not be amended into a state the roster cannot keep. Creation
     # refuses this; amendment is the other door onto the same rule, and a rule
@@ -4260,6 +4740,9 @@ def amend_constitution(
         raise HTTPException(status_code=422, detail=f"invalid amendment: {exc}") from exc
     if not amendments:
         raise HTTPException(status_code=422, detail="the amendment changes nothing")
+    if his_words:
+        _his_words(session, project, "amendment", amendments[0].id,
+                   f"Changed {', '.join(sorted(body.changes))}", body.reason)
     applied_now = amendments  # nothing waits; the split existed for the cooling-off
     for amendment in amendments:
         _audit(session, project.id, "constitution.amend", "amendment", amendment.id,
@@ -4399,6 +4882,18 @@ def _notice_ceo(session: Session, project_id: str, kind: str, body: str) -> None
         )
 
 
+def _his_words(session: Session, project: Project, kind: str, source_id: str,
+               about: str, text: str | None) -> None:
+    """What he typed on this door: said in the boardroom as his, and held until
+    the CEO answers it. A notice alone was read by whichever lane got there
+    first and was gone after a day; the boardroom is the record every lane of
+    the CEO reads. `chairman_notes.DOORS` names every route that calls this."""
+    from yaaf.server import chairman_notes
+
+    chairman_notes.record(session, project.id, kind, source_id, about, text,
+                          user_id=_decider(project))
+
+
 @router.post("/evidence/{evidence_id}/audit", dependencies=[authority.STEER])
 def audit_evidence(
     evidence_id: str, body: EvidenceAudit, session: Session = Depends(db)
@@ -4408,6 +4903,9 @@ def audit_evidence(
         raise HTTPException(status_code=404, detail="unknown evidence")
     row.verification = VerificationStatus.VERIFIED if body.ok else VerificationStatus.FAILED
     row.verifier_notes = ((row.verifier_notes or "") + f"\n[chairman audit] {body.note}").strip()
+    _his_words(session, _get_project(session, row.project_id), "evidence", row.id,
+               f"{'Passed' if body.ok else 'Failed'} the evidence: {row.description[:200]}",
+               body.note)
     _audit(session, row.project_id, "evidence.audit", "evidence", row.id, {"ok": body.ok})
     if not body.ok:
         _notice_ceo(
@@ -4436,6 +4934,9 @@ def audit_task(task_id: str, body: TaskAudit, session: Session = Depends(db)) ->
         raise HTTPException(status_code=409, detail="only completed tasks can be audited")
     row.audit_status = "passed" if body.ok else "failed"
     row.audit_note = body.note or None
+    _his_words(session, _get_project(session, row.project_id), "task", row.id,
+               f"{'Passed' if body.ok else 'Failed'} the completion of {row.title[:200]}",
+               body.note)
     _audit(session, row.project_id, "task.audit", "task", row.id, {"ok": body.ok})
     if not body.ok:
         _notice_ceo(
@@ -4473,7 +4974,8 @@ def acknowledge_heads_up(heads_up_id: str, body: HeadsUpAck,
     if row.acknowledged_at is None:
         heads.acknowledge(session, row)
     held = chairman_notes.record(session, row.project_id, "heads_up", row.id,
-                                 f"Noted: {row.title}", body.note)
+                                 f"Noted: {row.title}", body.note,
+                                 user_id=_decider(_get_project(session, row.project_id)))
     if held is not None:
         # Only a note is worth a wake. A bare "seen" rides the next run.
         _notice_ceo(session, row.project_id, NoticeKind.HEADS_UP_NOTED,
@@ -4520,7 +5022,8 @@ def acknowledge_flag(flag_id: str, body: FlagAck, session: Session = Depends(db)
     _audit(session, flag.project_id, "flag.ack", "flag", flag.id,
            {"kind": flag.kind, "status": flag.status})
     held = chairman_notes.record(session, flag.project_id, "flag", flag.id,
-                                 f"Noted: {flag.summary[:300]}", body.note)
+                                 f"Noted: {flag.summary[:300]}", body.note,
+                                 user_id=_decider(project))
     _notice_ceo(
         session, flag.project_id, NoticeKind.FLAG_ACKNOWLEDGED,
         f"The chairman answered the {flag.kind.replace('_', ' ')} flag you raised"
@@ -4560,6 +5063,9 @@ def decide_audit_sample(
     row.status = AuditSampleStatus.PASSED if body.ok else AuditSampleStatus.FAILED
     row.decided_at = utcnow()
     row.note = body.note or None
+    _his_words(session, _get_project(session, row.project_id), "audit_sample", row.id,
+               f"{'Passed' if body.ok else 'Failed'} the sampled close of "
+               f"{task.title[:200] if task is not None else 'a task'}", body.note)
     if task is not None:
         task.audit_status = "passed" if body.ok else "failed"
         task.audit_note = body.note or None
@@ -4886,9 +5392,12 @@ def accept_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_accept(session, project, row,
-                            acting.stamp(),
-                            body.stage, body.note, _decider(project))
+        out = apply_accept(session, project, row,
+                           acting.stamp(),
+                           body.stage, body.note, _decider(project))
+        _his_words(session, project, "requirement", row.id,
+                   f"Accepted {row.key}: {row.statement[:200]}", body.note)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -4909,8 +5418,11 @@ def cut_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_cut(session, project, row,
-                         acting.stamp(), body.reason)
+        out = apply_cut(session, project, row,
+                        acting.stamp(), body.reason)
+        _his_words(session, project, "requirement", row.id,
+                   f"Cut {row.key}: {row.statement[:200]}", body.reason)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -4948,8 +5460,12 @@ def requirement_verdict(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_verdict(session, project, row,
-                             acting.stamp(), body.ok, body.note)
+        out = apply_verdict(session, project, row,
+                            acting.stamp(), body.ok, body.note)
+        _his_words(session, project, "requirement", row.id,
+                   f"{'Met' if body.ok else 'Not met'}: {row.key}: {row.statement[:200]}",
+                   body.note)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -4981,8 +5497,11 @@ def reopen_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_reopen(session, project, row,
-                            acting.stamp(), body.reason)
+        out = apply_reopen(session, project, row,
+                           acting.stamp(), body.reason)
+        _his_words(session, project, "requirement", row.id,
+                   f"Reopened {row.key}: {row.statement[:200]}", body.reason)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5003,9 +5522,12 @@ def restage_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_restage(session, project, row,
-                             acting.stamp(),
-                             body.stage, body.reason)
+        out = apply_restage(session, project, row,
+                            acting.stamp(),
+                            body.stage, body.reason)
+        _his_words(session, project, "requirement", row.id,
+                   f"Moved {row.key} to stage {body.stage}", body.reason)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5028,9 +5550,12 @@ def reestimate_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_reestimate(session, project, row,
-                                acting.stamp(),
-                                body.est_runs, body.reason)
+        out = apply_reestimate(session, project, row,
+                               acting.stamp(),
+                               body.est_runs, body.reason)
+        _his_words(session, project, "requirement", row.id,
+                   f"Re-estimated {row.key} at {body.est_runs} runs", body.reason)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5052,9 +5577,14 @@ def remove_requirement_edge(body: EdgeRemove, session: Session = Depends(db)) ->
     try:
         if project is None:
             raise policy.Refusal("no such dependency edge", status_code=404)
-        return apply_edge_remove(session, project, acting.stamp(),
-                                 body.from_requirement_id, body.to_requirement_id,
-                                 body.reason)
+        out = apply_edge_remove(session, project, acting.stamp(),
+                                body.from_requirement_id, body.to_requirement_id,
+                                body.reason)
+        target = session.get(Requirement, body.to_requirement_id)
+        _his_words(session, project, "requirement", source.id,
+                   f"Let {source.key} start without waiting on "
+                   f"{target.key if target is not None else 'its dependency'}", body.reason)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5114,6 +5644,8 @@ def add_requirement(
     _audit(session, project.id, "requirement.add", "requirement", requirement.id,
            {"key": requirement.key, "stage": requirement.stage,
             "est_runs": requirement.est_runs})
+    _his_words(session, project, "requirement", requirement.id,
+               f"Added {requirement.key}: {requirement.statement[:200]}", body.note)
     _notice_ceo(
         session, project.id, NoticeKind.GOAL_CHANGED,
         f"The chairman ADDED {requirement.key} to scope himself: "
@@ -5143,9 +5675,12 @@ def reword_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_reword(session, project, row,
-                            acting.stamp(),
-                            body.statement, body.reason)
+        out = apply_reword(session, project, row,
+                           acting.stamp(),
+                           body.statement, body.reason)
+        _his_words(session, project, "requirement", row.id,
+                   f"Reworded {row.key}: {row.statement[:200]}", body.reason)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5233,6 +5768,9 @@ def pull_review_lever(
         detail = f"raised the monthly cap to {body.amount:,.0f}"
     else:  # accept_slip
         detail = "accepted the slip"
+        # The other levers are said by the route each one runs through.
+        _his_words(session, project, "review", review.id,
+                   f"Accepted the slip at review #{review.number}", body.reason)
         _notice_ceo(
             session, project.id, NoticeKind.GOAL_CHANGED,
             f"At review #{review.number} the chairman ACCEPTED THE SLIP: "
@@ -5269,6 +5807,8 @@ def close_review(
     project = _get_project(session, review.project_id)
     decisions = finish_review(session, project, review, by_user_id=_decider(project),
                               note=body.note)
+    _his_words(session, project, "review", review.id,
+               f"Closed review #{review.number}", body.note)
     _audit(session, project.id, "review.close", "review", review.id,
            {"number": review.number, "decisions": len(decisions)})
     return {"id": review.id, "number": review.number, "status": review.status,
@@ -5386,6 +5926,8 @@ def accept_commitment(
     row.accepted_by_user_id = _decider(project)
     row.accepted_at = utcnow()
     _freeze_commitment_basis(session, project, row, cons)
+    _his_words(session, project, "commitment", row.id,
+               f"Accepted the commitment for {row.deliver_by:%Y-%m-%d}", body.note)
     _audit(session, project.id, "commitment.accept", "commitment", row.id,
            {"deliver_by": row.deliver_by.isoformat(),
             "constitution_version": row.constitution_version,
@@ -5428,6 +5970,8 @@ def decline_commitment(
     project = _get_project(session, row.project_id)
     _audit(session, project.id, "commitment.decline", "commitment", row.id,
            {"reason": body.reason, "deliver_by": row.deliver_by.isoformat()})
+    _his_words(session, project, "commitment", row.id,
+               f"Declined the commitment for {row.deliver_by:%Y-%m-%d}", body.reason)
     _notice_ceo(
         session, project.id, NoticeKind.GOAL_CHANGED,
         f"The chairman DECLINED the proposed commitment ({row.deliver_by:%Y-%m-%d}). "
@@ -5465,6 +6009,8 @@ def move_commitment(
         deliver_by = deliver_by.replace(tzinfo=UTC)
     old = row.deliver_by
     row.deliver_by = deliver_by
+    _his_words(session, project, "commitment", row.id,
+               f"Moved the date from {old:%Y-%m-%d} to {deliver_by:%Y-%m-%d}", body.reason)
     _audit(session, project.id, "commitment.move", "commitment", row.id,
            {"from": old.isoformat(), "to": deliver_by.isoformat(),
             "reason": body.reason})
@@ -5488,7 +6034,14 @@ class SecretIn(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     # Omit value to update role grants only — no re-pasting to change access.
     value: str | None = Field(default=None, min_length=1)
-    role_scopes: list[str] = Field(default_factory=list)
+    # Omitted means "unchanged" on an update and "nobody" on a create. It used
+    # to default to [] on both, so rotating a key — sending only its new value,
+    # which is what the Settings eye-and-save did — silently took it away from
+    # every role that had it, and the first anyone heard was an agent's 401.
+    role_scopes: list[str] | None = None
+    # "secret" or "plain"; omitted keeps it (and creates "secret"). See
+    # Secret.visibility for why the axis exists at all.
+    visibility: Literal["secret", "plain"] | None = None
     # Fixed at creation; omit on update. "billing" credentials refuse role
     # grants — they are injected everywhere by the billing path, so a grant
     # would hand agents the raw model credential under a second name.
@@ -5503,8 +6056,17 @@ class SecretIn(BaseModel):
 
 @router.get("/secrets", dependencies=[authority.IN_HANDLER])
 def list_secrets(project_id: str | None = None, session: Session = Depends(db)) -> list[dict]:
-    """Names and scopes only. The list is polled every few seconds, so values
-    never ride it — reading one is a deliberate act, and has its own endpoint.
+    """Names and scopes. The list is polled every few seconds, so a secret's
+    value never rides it — reading one is a deliberate act, and has its own
+    endpoint.
+
+    Two things do ride it, and only to a caller who could press the eye
+    anyway: a *plain* value whole, because the chairman said it is not a
+    secret, and a secret's last four characters, which is how a person tells
+    two keys apart and matches one against the provider's own dashboard
+    (Stripe and OpenAI print the same four). Neither is shown to an observer,
+    and the MCP surface strips both. A value shorter than twelve characters
+    gets no hint at all: four of eight is half a password.
 
     One project's to any of its members; every project's, and the platform's
     own, to the instance admin alone."""
@@ -5514,11 +6076,61 @@ def list_secrets(project_id: str | None = None, session: Session = Depends(db)) 
         stmt = stmt.where(Secret.project_id == project_id)
     else:
         authority.require_admin_here(session)
-    return [
-        {"id": s.id, "name": s.name, "project_id": s.project_id,
-         "role_scopes": s.role_scopes, "kind": s.kind, "filename": s.filename}
-        for s in session.execute(stmt.order_by(Secret.created_at)).scalars()
-    ]
+    rows = list(session.execute(stmt.order_by(Secret.created_at)).scalars())
+    readers = {p: _may_read_values(session, p) for p in {r.project_id for r in rows}}
+    return [_secret_row(s, readers[s.project_id]) for s in rows]
+
+
+def _may_read_values(session: Session, project_id: str | None) -> bool:
+    """Whether this caller could reveal this project's values — the same test
+    the reveal route applies, asked without refusing."""
+    try:
+        _require_secret_steer(session, project_id)
+    except HTTPException:
+        return False
+    return True
+
+
+def _secret_row(s: Secret, may_read: bool) -> dict:
+    from yaaf.core.crypto import decrypt
+
+    row = {"id": s.id, "name": s.name, "project_id": s.project_id,
+           "role_scopes": s.role_scopes, "kind": s.kind, "filename": s.filename,
+           "visibility": s.visibility or "secret",
+           "created_at": s.created_at.isoformat() if s.created_at else None,
+           "updated_at": (s.updated_at or s.created_at).isoformat()
+           if (s.updated_at or s.created_at) else None}
+    # Billing credentials are rotated, never read — not even four characters.
+    if not may_read or s.llm_mode is not None or s.kind == "billing":
+        return row
+    try:
+        value = decrypt(s.ciphertext)
+    except Exception:  # an undecryptable row still lists; the reveal says why
+        return row
+    if s.filename:
+        with contextlib.suppress(credential_files.BadCredentialFile):
+            row["size_bytes"] = len(credential_files.decode(value))
+    elif row["visibility"] == "plain":
+        row["value"] = value
+    elif len(value) >= 12:
+        row["hint"] = value[-4:]
+    return row
+
+
+def _secret_owner(session: Session, project_id: str | None, name: str) -> str | None:
+    """What owns this secret, in words, when it is not the chairman's own:
+    a data source's address or token, or a Slack token. Those are edited where
+    they live and stay masked, so a person reading "plain" never mistakes one
+    for an ordinary setting."""
+    source = _data_source_owning(session, project_id, name)
+    if source is not None:
+        return f"data source '{source}'"
+    project = session.get(Project, project_id) if project_id else None
+    slack = ((project.integrations or {}).get("slack") or {}) if project else {}
+    if name in {slack.get(k) for k in ("bot_token_secret", "signing_secret",
+                                       "app_token_secret") if slack.get(k)}:
+        return "the Slack bridge"
+    return None
 
 
 @router.get("/secrets/{secret_id}/value", dependencies=[authority.IN_HANDLER])
@@ -5574,6 +6186,111 @@ def reveal_secret(secret_id: str, session: Session = Depends(db)) -> dict:
             return {"id": row.id, "name": row.name, "filename": row.filename,
                     "value": None, "binary": True, "size_bytes": len(body)}
     return {"id": row.id, "name": row.name, "value": decrypt(row.ciphertext)}
+
+
+#: What each write to a secret means, as the drawer's history says it.
+_SECRET_HISTORY = ("secret.create", "secret.rotate", "secret.rescope", "secret.visibility",
+                   "secret.reveal", "credential.scope")
+
+
+@router.get("/secrets/{secret_id}/history", dependencies=[authority.IN_HANDLER])
+def secret_history(secret_id: str, session: Session = Depends(db)) -> list[dict]:
+    """Who did what to one credential, newest first, in sentences.
+
+    Every row here was already in the audit log; this is that log read back
+    for one credential, because "who gave Data this key, and when did anyone
+    last look at it" is the question asked while debugging, and the answer was
+    on the record and nowhere on screen. It includes every reveal, so it is
+    for the people who may reveal — the same test the eye applies. A need
+    fulfilled through the Inbox is on the approval, not the secret, and is
+    found by the name it stored."""
+    row = session.get(Secret, secret_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown secret")
+    _require_secret_steer(session, row.project_id)
+    entries = list(session.execute(
+        select(AuditLog).where(AuditLog.entity == "secret", AuditLog.entity_id == row.id,
+                               AuditLog.action.in_(_SECRET_HISTORY))
+    ).scalars())
+    if row.project_id is not None:
+        entries += [
+            a for a in session.execute(
+                select(AuditLog).where(AuditLog.project_id == row.project_id,
+                                       AuditLog.action == "approval.decide")
+            ).scalars()
+            if (a.detail or {}).get("secret_name") == row.name
+        ]
+    entries.sort(key=lambda a: a.at, reverse=True)
+    names = _actor_names(session, [a.actor for a in entries])
+    # Grants are stored as role slugs; a person reads them as the teams they
+    # hired. A slug nobody here runs any more stays a slug, which is the truth.
+    teams: dict[str, list[str]] = {}
+    if row.project_id is not None:
+        from yaaf.server.staffing import team_role_slug
+
+        for team in session.execute(select(Team).where(Team.project_id == row.project_id)
+                                    .order_by(Team.created_at)).scalars():
+            slug = team_role_slug(session, team)
+            if slug:
+                teams.setdefault(slug, []).append(team.name)
+        ceo = policy.ceo_of(session, row.project_id)
+        version = session.get(RoleVersion, ceo.role_version_id) if ceo else None
+        role = session.get(Role, version.role_id) if version else None
+        if role is not None:
+            teams.setdefault(role.slug, []).append("CEO")
+    label = {slug: " + ".join(named) for slug, named in teams.items()}
+    return [{"at": a.at.isoformat(), "action": a.action, "by": names.get(a.actor, "yaaf"),
+             "what": _secret_history_line(a.action, a.detail or {}, label), "reason":
+             (a.detail or {}).get("reason")} for a in entries[:100]]
+
+
+def _actor_names(session: Session, stamps: list[str]) -> dict[str, str]:
+    """`user:…` / `agent:…` stamps to the names a person recognises, with the
+    door kept when it was not the person's own hand."""
+    out: dict[str, str] = {}
+    for stamp in set(stamps):
+        base, _, via = stamp.partition(" via ")
+        kind, _, ident = base.partition(":")
+        name = None
+        if kind == "user":
+            user = session.get(User, ident)
+            name = user.display_name if user else None
+        elif kind == "agent":
+            agent = session.get(Agent, ident)
+            name = agent.name if agent else None
+        if name:
+            out[stamp] = f"{name} (via {via.split(':', 1)[-1]})" if via else name
+    return out
+
+
+def _secret_history_line(action: str, detail: dict, label: dict[str, str]) -> str:
+    def named(slugs) -> str:
+        return ", ".join(label.get(s, s) for s in slugs) or "nobody"
+
+    roles = named(detail.get("role_scopes") or detail.get("now") or [])
+    if action == "secret.create":
+        return f"Added it for {roles}"
+    if action == "secret.rotate":
+        return "Replaced the value"
+    if action == "secret.reveal":
+        return "Revealed the value"
+    if action == "secret.visibility":
+        return ("Made it a plain value" if detail.get("visibility") == "plain"
+                else "Made it a secret")
+    if action == "approval.decide":
+        given = named(detail.get("roles") or [])
+        return f"Stored it to fulfil an agent's request, for {given}"
+    if "was" not in detail:  # written before rescopes recorded what they replaced
+        return f"Set who gets it: {roles}"
+    was = set(detail.get("was") or [])
+    now = set(detail.get("role_scopes") or detail.get("now") or [])
+    gave, took = sorted(now - was), sorted(was - now)
+    if not gave and not took:
+        return "Saved it unchanged"
+    parts = ([f"gave it to {named(gave)}"] if gave else []) + \
+            ([f"took it from {named(took)}"] if took else [])
+    line = "; ".join(parts)
+    return line[:1].upper() + line[1:]  # not .capitalize(): it lowercases the team names
 
 
 @router.delete("/secrets/{secret_id}", dependencies=[authority.IN_HANDLER])
@@ -5822,6 +6539,26 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         except policy.Refusal as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
+    if body.visibility == "plain":
+        # A list row shows a plain value whole, so "plain" is refused wherever
+        # whole would be wrong: a file (bytes, not a line of text), a
+        # credential something else owns, and anything that pays for models.
+        if as_file:
+            raise HTTPException(
+                status_code=422,
+                detail=f"'{body.name}' is a file credential — the list shows its name and "
+                       "size, never its contents, so it stays secret")
+        owner = _secret_owner(session, body.project_id, body.name)
+        if owner is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"'{body.name}' belongs to {owner} and stays masked — change it there")
+        if body.project_id is None or (existing is not None and (
+                existing.kind == "billing" or existing.llm_mode is not None)):
+            raise HTTPException(
+                status_code=422,
+                detail="only a project's own service credentials can be plain values")
+
     if existing:
         if existing.llm_mode is not None:
             raise HTTPException(status_code=422, detail="Manage LLM credentials in Settings")
@@ -5844,11 +6581,26 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
             existing.ciphertext = encrypt(value)
             existing.filename = filename  # a rotated file may be named differently
             rotated = True
-        existing.role_scopes = body.role_scopes
-        _audit(session, body.project_id, "secret.rotate" if rotated else "secret.rescope",
-               "secret", existing.id, {"role_scopes": body.role_scopes})
+        was = list(existing.role_scopes or [])
+        if body.role_scopes is not None:
+            existing.role_scopes = body.role_scopes
+        was_visibility = existing.visibility or "secret"
+        if body.visibility is not None:
+            existing.visibility = body.visibility
+        now = list(existing.role_scopes or [])
+        if rotated:
+            action = "secret.rotate"
+        elif sorted(was) != sorted(now):
+            action = "secret.rescope"
+        elif was_visibility != existing.visibility:
+            action = "secret.visibility"
+        else:
+            action = "secret.rescope"
+        _audit(session, body.project_id, action, "secret", existing.id,
+               {"name": existing.name, "role_scopes": now, "was": was,
+                "visibility": existing.visibility, "was_visibility": was_visibility})
         return {"id": existing.id, "rotated": rotated, "role_scopes": existing.role_scopes,
-                "filename": existing.filename}
+                "filename": existing.filename, "visibility": existing.visibility}
     if value is None:
         raise HTTPException(status_code=422, detail="a new secret needs a value")
     kind = "service"  # the only kind this door creates; billing was refused above
@@ -5857,15 +6609,17 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         project_id=body.project_id,
         name=body.name,
         ciphertext=encrypt(value),
-        role_scopes=body.role_scopes,
+        role_scopes=body.role_scopes or [],
         kind=kind,
         filename=filename,
+        visibility=body.visibility or "secret",
     )
     session.add(row)
     _audit(session, body.project_id, "secret.create", "secret", row.id,
-           {"role_scopes": body.role_scopes, "kind": kind, "filename": filename})
+           {"name": body.name, "role_scopes": row.role_scopes, "kind": kind,
+            "filename": filename, "visibility": row.visibility})
     return {"id": row.id, "rotated": False, "role_scopes": row.role_scopes, "kind": kind,
-            "filename": row.filename}
+            "filename": row.filename, "visibility": row.visibility}
 
 
 # ── MCP clients ─────────────────────────────────────────────────────────────────

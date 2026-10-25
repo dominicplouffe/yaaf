@@ -12,6 +12,8 @@ stamps amendment disclosure — the CEO can never claim it wasn't told.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -622,7 +624,8 @@ def _speaker(session: Session, project_id: str, user_id: str | None) -> dict:
     return {"from_name": label} if label else {}
 
 
-def _unread_messages(session: Session, agent: Agent, include_recent: bool = False) -> list[dict]:
+def _unread_messages(session: Session, agent: Agent, include_recent: bool = False,
+                     advance: bool = True) -> list[dict]:
     """Unread per cursor — or, on retry attempts, the recent tail regardless of
     cursor: a failed prior attempt advanced the cursor without any model ever
     reading the words, and a chairman's message must never be silently eaten.
@@ -642,6 +645,10 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
     successive wakes instead of being silently truncated, and `more_unread`
     says how much is still queued — because an agent that cannot see a
     backlog will answer the part it was shown as if it were the whole.
+
+    `advance=False` shows the same messages and moves nothing: the chat lane
+    reads what is waiting, and the work lane, which acts on it, still finds it
+    unread.
     """
     out = []
     for channel_id in policy.agent_channel_ids(session, agent):
@@ -697,6 +704,8 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
                         )} if more else {}),
                 }
             )
+        if not advance:
+            continue
         if cursor is None:
             session.add(ChannelRead(agent_id=agent.id, channel_id=channel_id,
                                     last_read_at=watermark))
@@ -1345,21 +1354,104 @@ def _scoreboard_note(board: list[dict]) -> str:
     )
 
 
-def build_context_pack(session: Session, run: Run, agent: Agent, project: Project) -> dict:
-    cons = effective(session, project.id)
+#: The most of the CEO's waiting notices the chat lane is shown at once.
+OBSERVED_NOTICE_LIMIT = 20
 
-    # Notices: consumed on delivery, exactly once.
-    notices = list(
-        session.execute(
-            select(Notice)
-            .where(Notice.agent_id == agent.id, Notice.consumed_at.is_(None))
-            .order_by(Notice.created_at)
-        ).scalars()
-    )
+
+def _observed_notices(session: Session, agent: Agent) -> list[Notice]:
+    """What has happened that no work run has picked up yet — shown, not taken.
+
+    Not a day of history: a notice is an instruction to the run that acts on it
+    ("say it in the boardroom now"), and once one has, the result is in the
+    board, the situation and what the CEO last said. A live day of them was ten
+    thousand characters on every chat turn, telling the chat lane to raise
+    flags its work runs had already raised."""
+    newest = list(session.execute(
+        select(Notice)
+        .where(Notice.agent_id == agent.id, Notice.consumed_at.is_(None))
+        .order_by(Notice.created_at.desc()).limit(OBSERVED_NOTICE_LIMIT)
+    ).scalars())
+    return list(reversed(newest))
+
+
+#: What the chat lane is NOT shown of the pack, and why. Everything else it is.
+#: The chat session used to keep a hand-picked list, so every section added to
+#: the pack missed the CEO the chairman actually talks to — his own notes, his
+#: pending decisions, the project's goal, its scope — and nothing failed when it
+#: did. Now a new section reaches both lanes unless it is named here.
+CHAT_OMITS = {
+    "run_id": "the chat session is one long run; its id tells it nothing",
+    "trigger": "a chat turn's trigger is the chairman's message, which it is handed",
+    "attempt": "a chat turn is never a retry of a work run",
+    "task": "the chat lane claims no task: the work lane does the work",
+    "previous_attempts": "a retried task's history belongs to the run retrying it",
+    "attempts_note": "it explains previous_attempts, which the chat lane is not shown",
+}
+
+#: What the CEO last said, from any lane, in any room.
+YOU_SAID_HOURS = 24
+YOU_SAID_LIMIT = 8
+YOU_SAID_CHARS = 400
+
+
+def _you_said_lately(session: Session, agent: Agent, now) -> dict | None:
+    """The CEO's own recent lines, wherever and from whichever lane it said them.
+
+    Unread mail leaves out the agent's own posts, which is right for mail and
+    wrong for memory: every run of the CEO starts cold, so none knew what the
+    last one had told the team. Inside three minutes one told the outbound lead
+    to switch the postal address on and the next told him to switch it off.
+    """
+    newest = list(session.execute(
+        select(Message).where(Message.sender_agent_id == agent.id,
+                              Message.created_at >= now - timedelta(hours=YOU_SAID_HOURS))
+        .order_by(Message.created_at.desc()).limit(YOU_SAID_LIMIT)
+    ).scalars())
+    if not newest:
+        return None
+    kinds = {c.id: c.kind for c in session.execute(
+        select(Channel).where(Channel.id.in_({m.channel_id for m in newest}))).scalars()}
+    return {
+        "note": ("What you said most recently, from any of your runs or your chat "
+                 "session. It is the same you: do not contradict it without saying "
+                 "why, and do not repeat an order already given."),
+        "messages": [{"room": kinds.get(m.channel_id), "at": m.created_at.isoformat(),
+                      "body": _clip(m.body, YOU_SAID_CHARS, "messages_read has the rest")}
+                     for m in reversed(newest)],
+    }
+
+
+def build_context_pack(session: Session, run: Run, agent: Agent, project: Project) -> dict:
+    """The CEO's or an agent's picture of the project, for one run.
+
+    Building it used to consume what it showed — notices, unread mail,
+    suggestions, amendment disclosures — for whichever run of the agent asked
+    first. The CEO is two lanes, though: a resident chat session that asks
+    before every answer, and work runs that plan and act. The chat lane ate 60
+    of the CEO's notices in one month, six of them the chairman's decisions, and
+    the planner never saw one of them; the work lane ate everything else, and
+    the CEO he talks to never saw that. So the chat lane observes: it is shown
+    the same things and consumes nothing, and the lane that acts on them is the
+    one that marks them done.
+    """
+    cons = effective(session, project.id)
+    observing = run.kind == RunKind.CHAT_SESSION
     now = utcnow()
-    for notice in notices:
-        notice.consumed_at = now
-        notice.consumed_by_run_id = run.id
+
+    # Notices: consumed on delivery, exactly once — by a lane that acts.
+    if observing:
+        notices = _observed_notices(session, agent)
+    else:
+        notices = list(
+            session.execute(
+                select(Notice)
+                .where(Notice.agent_id == agent.id, Notice.consumed_at.is_(None))
+                .order_by(Notice.created_at)
+            ).scalars()
+        )
+        for notice in notices:
+            notice.consumed_at = now
+            notice.consumed_by_run_id = run.id
 
     pack: dict = {
         "run_id": run.id,
@@ -1370,7 +1462,8 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         "roster": _roster(session, project),
         "notices": [{"kind": n.kind, "body": n.body, "at": n.created_at.isoformat()}
                     for n in notices],
-        "unread": _unread_messages(session, agent, include_recent=run.attempt > 1),
+        "unread": _unread_messages(session, agent, include_recent=run.attempt > 1,
+                                   advance=not observing),
         "memory_hint": {
             "note": "Query memory, do not recite it: GET /agent/memory/search?q=...",
             # Occupancy, not just the cap. The cap alone is a number an agent
@@ -1412,6 +1505,9 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         notes = chairman_notes.for_context(session, project.id)
         if notes:
             pack["chairman_notes"] = notes
+        said = _you_said_lately(session, agent, now)
+        if said:
+            pack["you_said_lately"] = said
         pack["situation"] = _situation(session, project, cons)
         open_tasks = policy.open_top_level_tasks(session, project.id)
         pack["board"] = {
@@ -1698,7 +1794,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                 .order_by(Suggestion.created_at)
             ).scalars()
         )
-        for s in suggestions:
+        for s in suggestions if not observing else ():
             s.consumed_at = now
             s.consumed_by_run_id = run.id
         pack["suggestions"] = [
@@ -1725,7 +1821,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                 )
             ).scalars()
         )
-        for amendment in undisclosed:
+        for amendment in undisclosed if not observing else ():
             amendment.disclosed_at = now
         if undisclosed:
             pack["constitution_amendments"] = [
@@ -1771,4 +1867,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
     if claimed is not None and "task" not in pack:
         pack["task"] = _task_context(session, claimed)
 
+    if observing:
+        for key in CHAT_OMITS:
+            pack.pop(key, None)
     return pack

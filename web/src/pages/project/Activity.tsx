@@ -6,32 +6,13 @@ import { usePoll } from "../../hooks";
 import { Skeleton } from "../../ui";
 import { Seg } from "../../ui/kit";
 import type { ProjectCtx } from "../../projectCtx";
+import { ACTIVITY_VIEWS } from "../../nav";
 import Runs from "./Runs";
 import AgentInbox from "./AgentInbox";
 import Channels from "./Channels";
 import Memory from "./Memory";
 import Decisions from "./Decisions";
 import Evidence from "./Evidence";
-
-// Every way of asking "what happened?", on one page. The five record views
-// were a utility tab; they lead with the narrative now, because "what did I
-// miss?" is the question this page is opened with, and the five tables are
-// where that sentence's evidence lives.
-const VIEWS = [
-  ["record", "Everything", "every line, filterable by person and kind, each saying on whose authority it happened"],
-  ["summary", "What happened", "the briefing: what moved, what is worth your eye"],
-  ["runs", "Runs", "every model call, why it woke, what it cost"],
-  ["decisions", "Decisions", "everything you decided, and everything that decided itself"],
-  // Evidence is a record and belongs with the records. On the Work tab it was
-  // drawn as a queue with a verdict button on every row and a percentage of it
-  // done, which is a demand rather than an account.
-  ["evidence", "Proof", "every claim the agents made, and what the platform could check"],
-  // Before Messages: the inbox answers "who has not read what", which is the
-  // question the inbox banner raises and the channel log cannot answer.
-  ["inbox", "Agent inbox", "each agent's unread messages"],
-  ["messages", "Messages", "every channel you can read but not speak in"],
-  ["memory", "Memory", "what the project chose to remember"],
-] as const;
 
 type Window = "mark" | "24" | "168";
 
@@ -198,7 +179,7 @@ export default function Activity({ ctx }: { ctx: ProjectCtx }) {
   return (
     <>
       <div className="pills" style={{ marginTop: 4 }}>
-        {VIEWS.map(([path, label, means]) => (
+        {ACTIVITY_VIEWS.map(([path, label, means]) => (
           <NavLink
             key={path}
             to={`/projects/${projectId}/details/activity/${path}`}

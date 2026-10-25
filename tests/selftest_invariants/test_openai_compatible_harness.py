@@ -1,6 +1,7 @@
 """Invariant selftests: the loop on the OpenAI-compatible chat API (docs/RUNTIMES.md,
-M3) — DeepSeek, OpenRouter and a custom server through one client, held to the
-contract test_loop_harness.py holds the Messages API client to.
+M3; docs/PROVIDERS.md §3) — DeepSeek, OpenRouter and a custom server through
+the `openai_chat` wire, held to the contract test_loop_harness.py holds the
+Messages API client to.
 
 The model is a fake server speaking the chat-completions stream: `data:` lines
 of JSON deltas, usage on the last line, `[DONE]`. Synthetic, built from the
@@ -24,9 +25,10 @@ pytest.importorskip("claude_agent_sdk")
 #: A price an install might set for DeepSeek's chat model, per million tokens.
 PRICE = {"input": 0.28, "output": 0.42, "cache_read": 0.028, "cache_write_5m": 0.0,
          "cache_write_1h": 0.0, "web_search": 0.01, "as_of": "2026-10-12"}
-DEEPSEEK = {"name": "deepseek", "base_url": "https://api.deepseek.com/v1",
+DEEPSEEK = {"name": "deepseek", "protocol": "openai_chat", "base_url": "https://api.deepseek.com/v1",
             "key_env": "DEEPSEEK_API_KEY", "reports_cost": False, "search": False}
-OPENROUTER = {"name": "openrouter", "base_url": "https://openrouter.ai/api/v1",
+OPENROUTER = {"name": "openrouter", "protocol": "openai_chat",
+              "base_url": "https://openrouter.ai/api/v1",
               "key_env": "OPENROUTER_API_KEY", "reports_cost": True, "search": False}
 
 
@@ -98,7 +100,7 @@ def _staged(monkeypatch, tmp_path, perms: dict | None = None,
 
     loop = importlib.reload(loop_module)
     monkeypatch.setitem(sys.modules, "loop_harness", loop)
-    import yaaf.runner.openai_compatible_entry as api_module
+    import yaaf.runner.loop_entry as api_module
 
     api = importlib.reload(api_module)
     workspace = tmp_path / "workspace"
@@ -132,13 +134,7 @@ def _drive(r, script: list[dict]) -> tuple[int, dict]:
                            **json.loads(request.content)})
         return _respond(script[len(r.requests) - 1])
 
-    transport = httpx.MockTransport(handler)
-
-    class Wired(r.api.OpenAICompatibleClient):
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs, transport=transport)
-
-    r.mp.setattr(r.api, "OpenAICompatibleClient", Wired)
+    r.mp.setattr(r.api, "TRANSPORT", httpx.MockTransport(handler))
     code = asyncio.run(r.base.run_harness(r.api.make_driver))
     return code, json.loads((r.staging / "result-run_test.json").read_text())
 
@@ -216,7 +212,8 @@ def test_reasoning_is_billed_as_output_wherever_the_provider_counts_it(run, usag
 def test_a_dead_key_refused_as_a_bad_request_is_auth_by_the_providers_words(stage):
     """xAI refuses a wrong key with a 400. The words it uses come with its
     address, so the run is a dead credential and not a bad request."""
-    r = stage(spec={"name": "xai", "base_url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY",
+    r = stage(spec={"name": "xai", "protocol": "openai_chat", "base_url": "https://api.x.ai/v1",
+                    "key_env": "XAI_API_KEY",
                     "reports_cost": False, "search": False,
                     "failure_markers": ["incorrect api key provided"]}, model="xai/grok-x")
     code, result = _drive(r, [{"status": 400, "body": {
@@ -304,15 +301,24 @@ def test_a_tool_call_cut_off_at_the_length_limit_is_never_run(run):
     assert "cut off" in run.requests[1]["messages"][3]["content"]
 
 
-def test_reasoning_the_provider_streamed_is_not_sent_back(run):
-    """DeepSeek's reasoner streams `reasoning_content`, and refuses a request
-    that carries it back. The transcript replays what the model said, not what
-    it thought."""
+def test_reasoning_beside_a_tool_call_goes_back_with_it(run):
+    """DeepSeek's thinking mode (V4) and Kimi stream `reasoning_content`, and
+    refuse a tool loop that drops it: "the reasoning_content in the thinking
+    mode must be passed back to the API". This used to assert the opposite —
+    DeepSeek R1's rule, that a request carrying it is refused — which the
+    current API reversed for turns that call tools (and ignores elsewhere).
+    A turn that called nothing does not carry it: nothing needs it there."""
     chunks = _chunks("Answer.", calls=[{"id": "call_1", "name": "Glob",
                                         "input": {"pattern": "*"}}], finish="tool_calls")
     chunks.insert(1, {"choices": [{"index": 0, "delta": {"reasoning_content": "hmm"}}]})
     _drive(run, [{"sse": chunks}, {"sse": TEXT}])
-    assert "reasoning_content" not in json.dumps(run.requests[1]["messages"])
+    [called] = [m for m in run.requests[1]["messages"] if m.get("tool_calls")]
+    assert called["reasoning_content"] == "hmm"
+
+
+def test_reasoning_beside_a_plain_reply_is_not_replayed(run):
+    reply = run.loop.wire.chat_reply("Done.", [], "stop", run.loop.wire.Usage(), None, "hmm")
+    assert "reasoning_content" not in reply.turn.native
 
 
 def test_a_content_filter_ends_the_run(run):

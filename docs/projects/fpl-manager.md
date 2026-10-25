@@ -467,7 +467,7 @@ npx -y supergateway --stdio "python -m fpl_mcp" \
 > to set `transport: "sse"` — `DataSourceIn` has no such field and
 > `_merge_project_data_sources` never emits one. **An SSE gateway will not connect.**
 
-Then **Settings → Data sources — MCP servers**:
+Then **Settings → Data sources**:
 
 | Field | Value |
 |---|---|

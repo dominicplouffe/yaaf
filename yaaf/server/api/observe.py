@@ -686,7 +686,7 @@ def project_flags(project_id: str, session: Session = Depends(db)) -> dict:
 
 @router.get("/projects/{project_id}", dependencies=[authority.READ])
 def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
-    from yaaf.server.api.admin import provider_credentials_view
+    from yaaf.server.api.admin import fallback_view, provider_credentials_view
 
     project = _project(session, project_id)
     cons = effective(session, project.id)
@@ -804,6 +804,9 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         # Every credential the project pays with, by provider — the billing
         # one first. Never a value.
         "credentials": provider_credentials_view(session, project),
+        # Where class seats go while the billing credential's provider fails,
+        # and whether they are there now.
+        "fallback": fallback_view(session, project),
         # Drought-clock anchors: the UI counts toward the refusal, not just
         # reporting it after the fact.
         "created_at": (
@@ -854,6 +857,15 @@ def price_gaps(session: Session, models: list[str]) -> list[dict]:
     return gaps
 
 
+@router.get("/projects/{project_id}/setup", dependencies=[authority.READ])
+def project_setup(project_id: str, session: Session = Depends(db)) -> dict:
+    """The setup checklist (yaaf.server.checklist): each step, whether the
+    project already has it, and the Settings section that does it."""
+    from yaaf.server import checklist
+
+    return checklist.view(session, _project(session, project_id))
+
+
 @router.get("/projects/{project_id}/health", dependencies=[authority.READ])
 def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     """Every way this project's configuration can be silently wrong, checked
@@ -895,12 +907,45 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     from yaaf.runtimes.providers import PROVIDERS
 
     for provider_name, secret in project_credentials.held(session, project).items():
-        if secret.id == project.billing_secret_id:
+        # The fallback has its own line, below: it pays only while seats are
+        # moved onto it.
+        if secret.id in (project.billing_secret_id, project.fallback_secret_id):
             continue
         seller = PROVIDERS.get(provider_name)
         add(f"billing:{provider_name}", "ok",
             f"paying {seller.label if seller else provider_name} with '{secret.name}'",
             "settings")
+
+    # Failover: whether class seats are on the fallback right now, and
+    # whether the fallback could still take them — a lineup or a price that
+    # moved since it was set would otherwise be found mid-outage.
+    from yaaf.server.api.admin import fallback_view
+
+    fallback = fallback_view(session, project)
+    if fallback["credential_id"]:
+        from yaaf.core import model_policy as models_policy
+        from yaaf.runtimes.providers import provider as seller_of
+        from yaaf.runtimes.seats import seat_for as seat_of
+        from yaaf.server.api.admin import _bare_class, _project_agents
+        from yaaf.server.contextpack import role_version_for as pinned_role
+        from yaaf.server.seat_checks import seat_problem
+
+        label = seller_of(fallback["provider"]).label
+        moving = [a for a in _project_agents(session, project.id)
+                  if _bare_class(seat_of(a, pinned_role(session, a)))]
+        problem = seat_problem(session, project, moving, context=models_policy.context(
+            session, project, provider=fallback["provider"], fallback=True), fallback=True)
+        breaker = fallback["breaker"] or {}
+        if problem:
+            add("fallback", "warn", f"the fallback '{fallback['name']}' could no longer take "
+                f"the class seats on {label}: {problem}", "settings")
+        elif fallback["active"]:
+            add("fallback", "warn", f"the billing credential's provider is failing "
+                f"({breaker.get('last_error') or 'transient errors'}); class seats are "
+                f"running on '{fallback['name']}' ({label}) until it recovers", "settings")
+        else:
+            add("fallback", "ok", f"if the billing credential's provider fails, class seats "
+                f"move to '{fallback['name']}' ({label})", "settings")
 
     # Seats: every one on a harness that can serve its model, honour its
     # role's grants and pay with this credential. Every door that seats one
@@ -919,17 +964,39 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     # Prices: a seat on a harness yaaf prices itself is metered by the model
     # catalog, so its budget is only as right as the catalog. The bills the
     # self-reporting harnesses send for the same model are the check on it.
+    from yaaf.core import model_policy
     from yaaf.runtimes import catalog
     from yaaf.runtimes.harnesses import HARNESSES
     from yaaf.runtimes.seats import seat_for
     from yaaf.server.contextpack import role_version_for
 
+    context = model_policy.context(session, project)
     metered: dict[str, set[str]] = {}
     for agent in _project_agents(session, project.id):
-        seat = seat_for(agent, role_version_for(session, agent))
+        seat = seat_for(agent, role_version_for(session, agent), context=context)
         harness = HARNESSES.get(seat.harness or "")
         if harness is not None and harness.cost == "priced":
             metered.setdefault(seat.model, set()).add(harness.label)
+    # Models a provider no longer lists for the key: the class or pin a seat
+    # resolves to was retired, or this key was never given it. Named here
+    # before the seat's next run is refused for it (yaaf.core.model_upkeep).
+    from yaaf.core import model_upkeep
+
+    resolved: dict[str, list[str]] = {}
+    for agent in _project_agents(session, project.id):
+        seat = seat_for(agent, role_version_for(session, agent), context=context)
+        if seat.model:
+            resolved.setdefault(seat.model, []).append(agent.name)
+    paying = {name: secret.id for name, secret in project_credentials.held(session, project).items()}
+    for model, found in model_upkeep.not_served(session, sorted(resolved), paying).items():
+        names = resolved[model]
+        add(f"model-served:{model}", "warn",
+            f"{model} is not in the models {found['provider']} listed for its key on "
+            f"{found['at'][:10]} — {', '.join(names[:3])}"
+            f"{f' and {len(names) - 3} more' if len(names) > 3 else ''} would be refused "
+            "by the provider. Check the key's access, or move the class to a model it "
+            "lists (its card in Settings → Providers).",
+            "providers")
     for gap in price_gaps(session, sorted(metered)):
         price = catalog.price(gap["model"])
         over = gap["drift"] > 0
@@ -959,14 +1026,14 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         if url_secret is None:
             add(f"data-source:{name}", "fail",
                 f"data source '{name}': its URL credential is missing — re-save it",
-                "settings")
+                "data_sources")
             continue
         ungranted = [r for r in source.get("roles", [])
                      if r not in (url_secret.role_scopes or [])]
         if ungranted:
             add(f"data-source:{name}", "fail",
                 f"data source '{name}': credential not granted to role(s) "
-                f"{', '.join(ungranted)} — re-save it", "settings")
+                f"{', '.join(ungranted)} — re-save it", "data_sources")
             continue
         oauth_status = (source.get("oauth") or {}).get("status")
         if source.get("auth") == "oauth" and oauth_status != "connected":
@@ -978,19 +1045,19 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 oauth_status, "its OAuth connection was never made")
             verb = "Reconnect" if oauth_status == "needs_reauth" else "Connect"
             add(f"data-source:{name}", "fail",
-                f"data source '{name}': {what} — press {verb} in Settings", "settings")
+                f"data source '{name}': {what} — press {verb} in Settings", "data_sources")
             continue
         last = source.get("last_check") or {}
         if not last:
             add(f"data-source:{name}", "warn",
-                f"data source '{name}': never tested — run its check", "settings")
+                f"data source '{name}': never tested — run its check", "data_sources")
         elif last.get("ok"):
             add(f"data-source:{name}", "ok",
-                f"data source '{name}': {last.get('detail', 'reachable')}", "settings")
+                f"data source '{name}': {last.get('detail', 'reachable')}", "data_sources")
         else:
             add(f"data-source:{name}", "fail",
                 f"data source '{name}': last check failed — {last.get('detail', '')}",
-                "settings")
+                "data_sources")
 
     # Teams: no role-version drift. (Roles never own data sources — the whole
     # role-source failure class was removed with the concept.)
@@ -1001,10 +1068,11 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         role = session.get(Role, pinned.role_id) if pinned else None
         if pinned is None or role is None:
             continue
-        latest = session.execute(
-            select(RoleVersion).where(RoleVersion.role_id == role.id)
-            .order_by(RoleVersion.version.desc()).limit(1)
-        ).scalar_one()
+        from yaaf.core import role_versions
+
+        # Only a version that would change what the team runs: one that
+        # moves a model to the class that resolves to it here asks nothing.
+        latest = role_versions.offered(session, project, pinned, team.id)
         if latest.version > pinned.version:
             # Say what moved, not just that something did. A drift warning with
             # no content is a number nobody acts on: it reports that a newer
@@ -1597,11 +1665,26 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
     ).all())
     total = sum(float(v) for v in spent.values()) or 0.0
 
+    from yaaf.core import model_policy
+
+    context = model_policy.context(session, project)
+
     def working(agent) -> dict:
-        seat = seat_for(agent, role_version_for(session, agent))
+        version = role_version_for(session, agent)
+        seat = seat_for(agent, version, context=context)
         usd = float(spent.get(agent.id, 0.0))
         return {"model": catalog.label(seat.model), "model_id": seat.model,
-                "provider": seat.provider, "month_usd": round(usd, 2),
+                "provider": seat.provider, "effort": seat.effort, "harness": seat.harness,
+                # What this seat says for itself, each null where it follows
+                # its role, beside what the role says — so a screen can tell a
+                # choice from an inheritance, and say what clearing one returns to.
+                "overrides": {"model": agent.model_override,
+                              "effort": agent.effort_override,
+                              "harness": agent.harness_override},
+                "role_seat": {"model": version.model if version else None,
+                              "effort": version.effort if version else None,
+                              "harness": version.harness if version else None},
+                "month_usd": round(usd, 2),
                 "month_share": round(usd / total, 3) if total else 0.0}
 
     # The last roster change on each team, with who made it and why — so a
@@ -1646,10 +1729,12 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
         # answered by opening the role library and guessing. The slug alone
         # was not enough: it is not what the library shows, and it carries no
         # version.
-        latest = session.execute(
-            select(RoleVersion).where(RoleVersion.role_id == role.id)
-            .order_by(RoleVersion.version.desc()).limit(1)
-        ).scalar_one() if role else None
+        from yaaf.core import role_versions
+
+        # The newest version that would change what this team runs — not one
+        # that only renames its model to the class resolving to it here.
+        latest = role_versions.offered(session, project, role_version, team.id) \
+            if role and role_version else None
         teams.append(
             {
                 "id": team.id,

@@ -685,3 +685,49 @@ def test_a_rung_that_does_not_apply_says_why_in_its_own_words(report):
     assert read["na"] and "deliverable_review: none" in read["na_reason"], read
     text = rehearsal_report.render_text(report)
     assert "Explore" not in text, text
+
+
+def _install_pays_groq(lineup: bool) -> str:
+    """The caller's install: a Groq credential, priced Groq models, and — when
+    asked — the lineup that names Groq's model for each class."""
+    from yaaf.core import ids, model_policy
+    from yaaf.core.crypto import encrypt
+    from yaaf.core.db import db_session
+    from yaaf.core.models import ModelPrice, Secret
+
+    with db_session() as session:
+        secret = Secret(id=ids.new_id(ids.SECRET), project_id=None, name="Groq key",
+                        ciphertext=encrypt("gsk-drill-test"), llm_mode="api_key",
+                        provider="groq", kind="billing", role_scopes=[])
+        session.add(secret)
+        for cls, model in (("frontier", "groq/kimi-k2"), ("balanced", "groq/llama-4"),
+                           ("fast", "groq/llama-4-scout")):
+            session.add(ModelPrice(model=model, input=0.5, output=1.0))
+            if lineup:
+                model_policy.set_lineup(session, "groq", cls, model)
+        return secret.id
+
+
+CLASS_ROLES = [{**role, "model": "@balanced"} for role in ROLES]
+
+
+def test_a_draft_is_drilled_on_the_provider_it_will_pay_with():
+    """The drill's database holds no credentials, so it used to resolve a
+    draft's classes on the install's default provider — drilling a project
+    nobody was creating. It now carries the install's lineups and the
+    provider the draft's billing credential pays. Slow by design: two drills,
+    because what each reads is the caller's install."""
+    billing = _install_pays_groq(lineup=False)
+    stranded = rehearsal.rehearse({"project": {**MINIMAL, "slug": "on-groq-bare",
+                                               "billing_secret_id": billing},
+                                   "roles": CLASS_ROLES})
+    created = walk(stranded)["created"]
+    assert created["ok"] is False and "Groq has no Balanced model set" in created["detail"]
+
+
+def test_a_draft_on_a_provider_the_install_has_a_lineup_for_is_created_in_the_drill():
+    billing = _install_pays_groq(lineup=True)
+    drilled = rehearsal.rehearse({"project": {**MINIMAL, "slug": "on-groq",
+                                              "billing_secret_id": billing},
+                                  "roles": CLASS_ROLES})
+    assert walk(drilled)["created"]["ok"] is True, walk(drilled)["created"]

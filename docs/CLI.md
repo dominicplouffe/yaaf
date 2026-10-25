@@ -31,19 +31,30 @@ Every command that takes a project accepts **either a slug or an id**.
 | `yaaf seed-crews [DIR] [--only-missing]` | Load every `*.json` in the directory (default `crews/`) into the crew library — the pre-staffed teams the hiring desk offers. Crews are not versioned: one is read at hiring time and copied into the project's own teams, so re-seeding an edited crew can never reach a project that already started. Run it after `seed-roles`. |
 | `yaaf create-user EMAIL NAME [--admin]` | Invite somebody (instance admins only). Prints the one-time link that lets them choose a password — the box sends no mail, so hand it on. Idempotent by email. |
 | `yaaf create-project SPEC_FILE` | Create a project from a JSON spec (shape below), or from a setup file like those in `examples/` — roles it carries that your library lacks are added first, and its credential is matched by name. |
-| `yaaf set-secret NAME [--project P] [--scopes a,b] [--kind service]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. |
+| `yaaf set-secret NAME [--project P] [--scopes a,b] [--plain] [--kind service]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. Omit `--scopes` when rotating and the roles that have it keep it; `--scopes ''` grants nobody. `--plain` marks a setting that is not secret (a timezone, an account id) so the dashboard shows it as is; `--secret` masks it again. |
 | `yaaf set-secret NAME --from-file PATH [--filename NAME]` | Store a credential that **is a file** — a service-account key, a PEM, a kubeconfig. No prompt: a key file is not something anyone retypes. Granted roles receive its *path*, not its contents; `--filename` names it inside the sandbox and defaults to the file's own name. |
 | `yaaf llm-credentials [--include-hidden]` | List named LLM credentials and project assignments (no values). Each project says whether it is still live, and the credential says whether any of them are. |
-| `yaaf create-llm-credential NAME [--mode api_key\|subscription] [--provider P] [--base-url URL]` | Create a managed credential; value is prompted. `--provider` names who it pays (`anthropic` by default; `deepseek`, `openrouter`, `moonshot`, `qwen`, `mistral`, `xai`, `custom`, `openai` — whose `subscription` kind is the ChatGPT login `codex login` writes, pasted whole — and `google`, whose `subscription` kind is the `oauth_creds.json` the Gemini CLI writes), and a `custom` server takes its `--base-url`. |
+| `yaaf create-llm-credential NAME [--mode api_key\|subscription] [--provider P] [--base-url URL]` | Create a managed credential; value is prompted (a local Ollama or LM Studio server takes none — press enter). `--provider` names who it pays (`anthropic` by default; `yaaf providers` lists every one — `openai`, whose `subscription` kind is the ChatGPT login `codex login` writes, pasted whole; `google`, whose `subscription` kind is the `oauth_creds.json` the Gemini CLI writes; `vertex`, whose value is a service account key), and a provider whose address is the credential's own — a custom server, a local one, an Azure resource, a Bedrock region, a Vertex project — takes its `--base-url`. |
+| `yaaf providers` | Every provider this install can pay: its wire, the credential kinds it takes, and what `@frontier`, `@balanced` and `@fast` name on it. |
+| `yaaf models` | The install's lineups, its default provider and its per-provider ceilings ([PROVIDERS.md](PROVIDERS.md)). |
+| `yaaf set-lineup PROVIDER CLASS [MODEL]` | Name what a class (`frontier`, `balanced`, `fast`) is on a provider — omit the model to go back to the shipped one. Every class seat of every project that provider pays moves with it on its next run; the answer names any live seat it leaves unable to run. |
+| `yaaf set-default-provider PROVIDER` | Where a project that pays nobody yet resolves its classes, and the Founder's before it has a key. |
+| `yaaf set-provider-ceiling PROVIDER [N]` | At most N runs on a provider at once across every project — its rate limit, which the whole box shares. Omit N to lift it. |
+| `yaaf import-prices [--snapshot] [--apply] [--provider P] [--model M…] [--overwrite-own] [--include-shipped]` | Price models from the price feed, or the dated snapshot shipped with yaaf: a preview model by model (`add`, `update`, `same`, `own`, `shipped`, `missing`), written only with `--apply`, each row labelled with where it came from. Prices you typed and the catalog's checked ones are kept unless asked. |
+| `yaaf discover-models CREDENTIAL_ID` | What the provider serves for a credential, by the names a seat or a lineup uses — one free call to its own model list. |
+| `yaaf check-provider CREDENTIAL_ID [--model M ...] [--probes-only] [--yes]` | Can these models do yaaf's work? Probes (exact instructions, nested tool arguments, a tool result used, parallel calls, the effort dial, search) and five small agent tasks per model, graded mechanically; prints the estimate and asks first, then each step's result. Exits 1 when a model fails. |
+| `yaaf upkeep [--enable/--disable] [--run]` | Keep models and prices current: switch the daily pass (re-read each key's model list, refresh feed-sourced prices — never one typed by hand) on or off, or run it now. |
+| `yaaf smoke CREDENTIAL_ID [--model M]` | One real, trivial call on a credential through the wire a seat on it runs: the model that answered, whether it called a tool, the usage and what it cost at this install's price. Spends a few hundred tokens of the credential's own money — the live check RUNTIMES.md's "a live seat on …" lines ask for. |
+| `yaaf set-web-search BACKEND [--base-url URL] [--price USD]` | Name the search backend (`brave`, `tavily`, `exa`, `serper`, `perplexity`, `searxng`) every seat whose provider cannot search uses; the key is prompted. Each query is billed into the run at the price. |
 | `yaaf pay-provider PROJECT PROVIDER CREDENTIAL_ID` | Pay a second provider on a project, for seats on its models — metered in the project's unit, against its one cap ([RUNTIMES.md](RUNTIMES.md)). |
-| `yaaf set-model-price MODEL INPUT OUTPUT [--cache-read X]` | Price a model on this install, USD per million tokens — how a model yaaf ships no price for can be hired onto a harness that meters by price. |
+| `yaaf set-model-price MODEL INPUT OUTPUT [--cache-read X]` | Price a model on this install, USD per million tokens — how a model yaaf ships no price for can be hired onto a harness that meters by price. A price you type is yours: no import replaces it unless asked. |
 | `yaaf edit-llm-credential ID NAME [--rotate]` | Rename a credential; optionally replace its value for all assigned projects. |
 | `yaaf delete-llm-credential ID` | Delete an unused credential after confirmation. Assigned credentials cannot be deleted. |
 | `yaaf hide-llm-credentials ID…` | Take credentials off every menu — Settings, the project picker, the Founder's list, an MCP spec — without deleting them. Refused for any credential a live project can still spend on; each id is judged on its own and refusals come back with the reason. |
 | `yaaf unhide-llm-credentials ID…` | Put hidden credentials back on the menus. Refused if another credential has taken the name in the meantime — rename it first. |
 | `yaaf llm-credential-usage ID [--refresh]` | What Anthropic last reported was left on a subscription credential's plan (session and weekly windows, as `/usage` shows them). Every agent run on the credential reports its windows through the SDK, and reading them back costs nothing. `--refresh` asks Anthropic instead — the way to get a number for a credential no run is covering — floored at one call per subscription every 15s. The answer carries an `asked` block saying what the request did: `fresh`, `floored`, `throttled` (with the wait), `rejected` (the token was refused — replace the credential's value), `unreachable` or `unreadable`. A window that has reset since it was last reported shows the rollover rather than the number it had while it was open. API keys have no plan meter and say so. |
 | `yaaf settings` | Show the app-wide settings — whether the Founder's credential is installed and how the Slack connection is configured. Values are never printed. |
-| `yaaf set-platform-key [--mode api_key\|subscription] [--from-credential NAME]` | Set the key the **Founder** drafts on: a new one (value prompted), or one of your LLM credentials with `--from-credential`, so one key serves both. Never injected into a sandbox and never a project's billing key. |
+| `yaaf set-platform-key [--mode api_key\|subscription] [--provider P] [--base-url URL] [--model M] [--from-credential NAME]` | Set the key the **Founder** drafts on: a new one (value prompted), of any provider, or one of your LLM credentials with `--from-credential`, so one key serves both. The Founder runs on the provider's frontier model unless `--model` names another. Never injected into a sandbox and never a project's billing key. |
 | `yaaf set-slack [--bot-token] [--signing-secret] [--app-token] [--chairman U…] [--prefix P] [--visibility private\|public] [--auto-create/--no-auto-create]` | Configure the app-wide Slack connection every project inherits. Token flags prompt for the value. |
 | `yaaf slack-channels PROJECT` | Create the Slack rooms this project is missing and print their names. Idempotent — a mapped room is left alone, a name Slack already holds is adopted. |
 | `yaaf configure PROJECT [--runtime …] [--billing-secret-id …] [--billing-mode …]` | Update outward wiring only. **Never the constitution** — cadence, concurrency and every other limit is an amendment. |
@@ -99,13 +110,17 @@ Every command that takes a project accepts **either a slug or an id**.
   otherwise each seat runs on its own harness.
 - A team's `model_overrides`, `effort_overrides` and `harness_overrides` are
   per person, keyed by name; `ceo_model_override`, `ceo_effort_override` and
-  `ceo_harness_override` are the CEO's. A harness (`claude_agent_sdk`,
-  `claude_cli`, `anthropic_api`, `openai_compatible`, `codex_cli`, `gemini_cli`, `opencode` — see
-  [RUNTIMES.md](RUNTIMES.md)) is what drives the seat's model; absent, it is the role's, and the role's absent is
-  the model's provider default. A seat whose harness cannot serve its model,
-  take away a grant its role withholds, pay with the project's credential, or
-  price its model when it meters by price is refused at creation, with the
-  reason.
+  `ceo_harness_override` are the CEO's. A model override is a model or a class
+  (`@frontier`, `@balanced`, `@fast`, or `openai/@fast` for one provider's —
+  [PROVIDERS.md](PROVIDERS.md)); a class runs on the billing credential's
+  provider. A harness (`claude_agent_sdk`, `claude_cli`, `yaaf_loop`,
+  `codex_cli`, `gemini_cli`, `opencode` — see [RUNTIMES.md](RUNTIMES.md)) is
+  what drives the seat's model; absent, it is the role's, and the role's absent
+  is the default of the credential kind that pays the seat. A seat whose
+  harness cannot serve its model, take away a grant its role withholds, pay
+  with the project's credential, or price its model when it meters by price —
+  or whose class has no model on its provider — is refused at creation, with
+  the reason.
 - `credentials` pays each provider the billing credential does not, as
   `{"deepseek": "<credential id>"}` — one per provider, metered in the billing
   credential's unit. A seat on a provider the project does not pay is refused.
@@ -139,7 +154,7 @@ yaaf stop  my-slug --reason "shipped"
 |---|---|
 | `yaaf up --no-isolation [--email E] [--home DIR] [--port N]` | Start yaaf on this machine in one command — key, database, schema, server, runner, first admin, role library — and print the address. Refuses to pick the unsandboxed mode for you. See DEPLOYMENT.md. |
 | `yaaf projects [--json]` | Every project as one line: status, spend against the budget, the hard stop, and how many things wait on you. `--json` for the raw payload. |
-| `yaaf status [PROJECT] [--json]` | Is everything OK, in sentences: one paragraph across your projects, each project's status line (the same words Home, the Team page and Claude's `desk` say), then everything waiting on you, with ids. `--json` for the status lines alone. |
+| `yaaf status [PROJECT] [--json]` | Is everything OK, in sentences: one paragraph across your projects, each project's status line (the same words Home, the project's Inbox and Claude's `desk` say), then everything waiting on you, with ids. `--json` for the status lines alone. |
 | `yaaf rehearse SPEC_FILE [--days N] [--usd-per-run N] [--json]` | **A fire drill: run the spec as a project for nothing, before you fund it.** Needs no deployment and no key — `yaaf rehearse examples/01-your-first-hour.json` works on a fresh checkout. See [FEATURES §13](FEATURES.md). |
 | `yaaf briefing [PROJECT] [--hours N] [--seen]` | **What happened since you last read one.** Omit the project for every live project. Composed from the record at zero tokens, so it works on a paused project and a broke one. Reading never moves your mark; `--seen` does, and only to the edge of the window it just printed. |
 | `yaaf agenda PROJECT [--days 14]` | **What it is scheduled to do next**: the wall-clock wakes, the standing meeting, the cycle roll, the kill dates, the clocks that decide themselves, and the promised date with the platform's projection beside it. |

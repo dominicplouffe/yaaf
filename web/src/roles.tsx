@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { CrewSummary, OrgView, RoleSummary, get } from "./api";
 import { envVarName } from "./datasource";
+import { modelLabel, parseRef } from "./providers";
+import { GrantOption, TeamSwitches } from "./grants";
 import { clip, downloadCsv } from "./ui";
 
 /** Everything the chairman meets when hiring, in one place.
@@ -49,13 +51,18 @@ export function domainShort(id: string): string {
 
 /** What a hire costs in time and money, in the chairman's terms.
 
-    A practice manager does not need to know what Opus is; they need to know
-    this one thinks longer and costs about four times as much. The model and
-    effort stay one click away, in the detail pane, for anyone who wants them. */
+    A practice manager does not need to know what a frontier model is; they need
+    to know this one thinks longer and costs about four times as much. The model
+    and effort stay one click away, in the detail pane, for anyone who wants them.
+    A role names a class whatever the vendor; a role pinned to a model is read
+    by the family words vendors use for their largest and smallest. */
 export function depthOf(model: string | null, effort: string | null):
   { band: string; dollars: string; rank: number } {
-  const deep = (model ?? "").includes("opus");
-  const light = (model ?? "").includes("haiku");
+  const { cls } = parseRef(model);
+  const name = (model ?? "").toLowerCase();
+  const deep = cls === "frontier" || (cls === null && /opus|astra|fable|-pro\b|large/.test(name));
+  const light = cls === "fast"
+    || (cls === null && /haiku|flash|luna|mini|small|nano|lite/.test(name));
   const hard = effort === "xhigh" || effort === "max";
   if (deep) return { band: "Deepest", dollars: "$$$$", rank: 4 };
   if (light) return { band: "Light", dollars: "$", rank: 1 };
@@ -623,7 +630,8 @@ export function HirePanel({
                 {depthOf(detailRole.model, detailRole.effort).band}{" "}
                 <span className="chip">{depthOf(detailRole.model, detailRole.effort).dollars}</span>
                 <div className="help" style={{ marginTop: 3 }}>
-                  {detailRole.model ?? "default model"} · {detailRole.effort ?? "default"} effort
+                  {detailRole.model ? modelLabel(detailRole.model) : "default model"}
+                  {" · "}{detailRole.effort ?? "default"} effort
                 </div>
               </div>
               <div className="dl">Can do</div>
@@ -729,86 +737,33 @@ export function RoleGrants({
   secretName?: string;
   disabled?: boolean;
 }) {
-  const rows = grantRoles(org, askedByAgentId);
-  // A grant already on the secret for a role nobody here has. Hiding it would
-  // make a dead grant permanent and invisible; it is shown so it can be removed.
-  const strangers = selected.filter((slug) => !rows.some((r) => r.slug === slug));
-
-  const toggle = (slug: string, on: boolean) =>
-    onChange(on ? [...selected, slug] : selected.filter((s) => s !== slug));
-
   if (!org) return <p className="help">Loading the roster…</p>;
-  if (rows.length === 0) {
-    return (
-      <p className="help">
-        This project has no teams yet, so there is nobody to give a credential to.
-        Hire someone first — a credential granted to no one reaches no one.
-      </p>
-    );
-  }
-
-  const reached = rows.filter((r) => selected.includes(r.slug));
   return (
-    <div className="grants">
-      {rows.map((role) => (
-        <label key={role.slug} className={`grant${selected.includes(role.slug) ? " on" : ""}`}>
-          <input
-            type="checkbox"
-            checked={selected.includes(role.slug)}
-            disabled={disabled}
-            onChange={(e) => toggle(role.slug, e.target.checked)}
-          />
-          <span className="grant-body">
-            <span className="grant-head">
-              <strong>{role.teams.join(" + ")}</strong>
-              <code>{role.slug}</code>
-              {role.asked && <span className="chip accent">asked for this</span>}
-              {role.isCeo && <span className="chip">plans, does not build</span>}
-            </span>
-            <span className="help">
-              {role.people.join(", ") || "nobody in it yet"}
-              {role.teams.length > 1 && (
-                <> — both teams run <code>{role.slug}</code>, so granting it reaches all of them.</>
-              )}
-            </span>
-          </span>
-        </label>
-      ))}
-
-      {strangers.map((slug) => (
-        <label key={slug} className="grant stranger">
-          <input type="checkbox" checked disabled={disabled}
-                 onChange={() => toggle(slug, false)} />
-          <span className="grant-body">
-            <span className="grant-head">
-              <strong>{slug}</strong>
-              <span className="chip warn">reaches no one</span>
-            </span>
-            <span className="help">
-              Nobody on this project has this role, so this grant does nothing.
-              Untick it to clear it.
-            </span>
-          </span>
-        </label>
-      ))}
-
-      <p className="help grant-sum">
-        {reached.length === 0 ? (
-          strangers.length > 0 ? (
-            // It has a grant; the grant is to nobody. Saying "no roles" here
-            // would contradict the amber row directly above it.
-            <>Nobody — the only role granted is one this project does not have.</>
-          ) : (
-            <>Nobody yet — a credential with no roles is stored but never injected.</>
-          )
-        ) : (
-          <>
-            {secretName ? <code>{envVarName(secretName)}</code> : "It"} reaches{" "}
-            <strong>{reached.flatMap((r) => r.people).join(", ") || "nobody"}</strong>{" "}
-            on their next run. Nobody else sees it, and it never appears in chat.
-          </>
-        )}
-      </p>
-    </div>
+    <TeamSwitches
+      options={grantOptions(org, askedByAgentId)}
+      selected={selected}
+      onChange={onChange}
+      disabled={disabled}
+      what={secretName ? <code>${envVarName(secretName)}</code> : "it"}
+      emptyHint={<>This project has no teams yet, so there is nobody to give a credential to.
+        Hire someone first — a credential granted to no one reaches no one.</>}
+    />
   );
+}
+
+/** The roster as the shared picker draws it: a role per row, named by the
+    team(s) running it, with the people under it. */
+export function grantOptions(org: OrgView | null, askedByAgentId?: string | null): GrantOption[] {
+  return grantRoles(org, askedByAgentId).map((role) => ({
+    slug: role.slug,
+    name: role.teams.join(" + "),
+    people: role.people,
+    hue: role.teams[0],
+    tags: [
+      ...(role.asked ? [{ text: "asked for this", tone: "accent" as const }] : []),
+      ...(role.isCeo ? [{ text: "plans, does not build" }] : []),
+      // Sibling teams share a role, and so share a grant. Said, not hidden.
+      ...(role.teams.length > 1 ? [{ text: `one role, ${role.teams.length} teams` }] : []),
+    ],
+  }));
 }

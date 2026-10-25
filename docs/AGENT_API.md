@@ -21,7 +21,7 @@ the refusal text is part of the design, not an error string.
 | Endpoint | Returns |
 |---|---|
 | `GET /whoami` | Who this agent is: role, team, whether it leads. |
-| `GET /context` | The context pack: the constitution in prose, the roster, unread messages, memory usage, chairman state, and the current task. |
+| `GET /context` | The context pack: the constitution in prose, the roster, unread messages, memory usage, chairman state, and the current task. A work run consumes the notices, unread messages and suggestions it is shown; the chat session is shown them and consumes nothing, and is shown every section but those `contextpack.CHAT_OMITS` names. The CEO's pack carries `you_said_lately`: its own recent lines from any lane. |
 | `GET /board` | The task board this agent can see. |
 | `GET /channels` | The channels it may read and post in. |
 | `GET /activity` | Who spent the runs, and on what. |
@@ -204,7 +204,7 @@ that can author its own planning gate does not have one.
 | Endpoint | Body | Notes |
 |---|---|---|
 | `GET /messages` | — | Unread, per channel. |
-| `POST /messages` | `channel_id`, `body`, `thread_id?`, `override?` | Channel membership enforced; frozen threads refuse. `override` is named break-glass on the chairman's reporting cadence (`blocker`, `budget`, `approval`) — verified where verifiable, recorded either way. `question` is **refused** and names `POST /asks`: asking him something is not a status and never faced the cadence, and as an override it left a message with no clock on it. |
+| `POST /messages` | `channel_id`, `body`, `thread_id?`, `override?`, `in_reply_to?` | Channel membership enforced; frozen threads refuse. `in_reply_to` lists the chairman lines this message answers (the chat session sends the lines its turn was given); from the CEO, a reply to his note on a decision is put under that note in the Inbox — by what it was written to, never by where it fell in the room. `override` is named break-glass on the chairman's reporting cadence (`blocker`, `budget`, `approval`) — verified where verifiable, recorded either way. `question` is **refused** and names `POST /asks`: asking him something is not a status and never faced the cadence, and as an override it left a message with no clock on it. |
 | `POST /typing` | `channel_id`, `seconds` | Presence, not state. Expires by itself. |
 | `POST /directives` | `from_message_id`, `action?` / `changes?`, `reason` | Turn something the chairman said into something the platform does. Must cite a real boardroom message he actually wrote — or a current co-chair did (their messages carry `from_name`, e.g. "Sam (co-chair)") — within 24 hours. Two shapes: a **rule** directive files reporting-cadence policy; a **scope** directive executes a plan order (`accept`, `cut`, `reopen`, `restage`, `reestimate`, `reword`, `unsequence`) through the same machinery as his own buttons, echoed back threaded to his words. |
 
@@ -270,7 +270,7 @@ is responsible, because every task carries a start time the CEO chose).
 | `POST /capacity` | `rule`, `to`, `buys`, `costs`, `without` | **CEO only.** A case for MORE of a capacity dial — runs a day or an hour, concurrency, queue depth, the month's money. All three of buys/costs/without are required, because the difference between this and a remark in the boardroom is that this carries the numbers to decide on. Filing it does **not** move the dial and does **not** block: keep working at the cap you have and treat a yes as upside. His yes raises the dial at once (to his number if he changed it), through the ordinary amendment path, and you are told the number in force. Restricted to the rules that govern *how much work the project may do* — the mirror of `directive_file`, which is restricted to rules that limit what you ask of him. Authority, the quality bar, verdict policy and the audit rates are refused: arguing for a lower bar on yourself is not a capacity request. `max_concurrent_runs` is granted differently from the rest and says so — it protects a provider rate limit every project on the box shares. |
 | `POST /brief` | `goal`, `standing_orders`, `retired`?, `what_changed` | **CEO only.** Write the chairman's current direction back to him for his Confirm: the whole goal as it stands now, every standing order with its number, and what no longer applies, quoting what he said. Nothing changes until he confirms. Confirming replaces the goal and the standing orders every agent reads first on every run, restarts the chat session onto them, and tells you to rewrite the files, scripts and memories that still say the old thing. A newer draft replaces an unconfirmed one; the brief already in force is 409. `POST /approvals` refuses `kind=brief`. |
 | `POST /heads_up` | `title`, `body`, `standing_order` | **CEO only.** Tell the chairman something he *asked* to be told, for him to mark Noted — no Approve, no Deny, no expiry. `standing_order` quotes the order in the brief that asks for it (enough of it to name one order); without one it is refused, because then it is information and belongs in the deliverable or the daily brief. If he must decide, file an approval; if he must do something, an assist. |
-| `POST /notes/{id}/answer` | `reply`, `standing` | **CEO only.** Answer a note the chairman wrote on a decision. Every unanswered note is in the context pack's `chairman_notes` on every run until answered. `reply` is the one line he reads under his note. `standing=true` says it applies beyond that one item, and is refused unless a brief written after the note exists — fold it in with `POST /brief` first. |
+| `POST /notes/{id}/answer` | `reply`, `standing` | **CEO only.** Answer a note the chairman wrote on a decision. Every unanswered note is in the context pack's `chairman_notes` on every run until answered, with the `boardroom_message_id` of the line it also became in the boardroom. He gets one answer: if the CEO already answered him there (`you_answered_in_the_boardroom` — a chat reply that named his line in `in_reply_to`), those words are the reply under his note and `reply` adds nothing; otherwise `reply` is said in the boardroom as the CEO's line. From the chat session nothing is posted — its turn's reply is the answer. `reply` is the one line he reads under his note. `standing=true` says it applies beyond that one item, and is refused unless a brief written after the note exists — fold it in with `POST /brief` first. |
 | `POST /ledger/spend` | `usd`, `note`, `approval_id?` | Spends at or above the threshold **require a granted approval id**, or the booking is refused. Money already spent is always *recorded* — an overshoot books with an audit row and a note to the chairman rather than vanishing. |
 | `POST /purchases` | `usd`, `what`, `idempotency_key` | Clears the real-world spend envelope **before** money moves, and reserves the headroom so two overlapping purchases cannot spend it twice. |
 | `POST /purchases/{id}/finish` | `ok`, `receipt?` | Books the ledger row. Finishing twice never double-books. |
@@ -333,7 +333,7 @@ A role is a JSON file in [`roles/`](../roles):
   "name": "Software Engineer",
   "is_ceo_role": false,
   "description": "Builds and runs everything technical. Decides how, never what.",
-  "model": "claude-sonnet-5-5",
+  "model": "@balanced",
   "effort": "xhigh",
   "tool_permissions": {"files": true, "bash": true,
                        "data_processing": true, "web": true},
@@ -343,23 +343,30 @@ A role is a JSON file in [`roles/`](../roles):
 ```
 
 - `model` / `effort` — per role, so your writer isn't paying engineer prices.
-- `harness` (optional) — what drives the model in the sandbox: `claude_agent_sdk`,
-  `claude_cli`, `anthropic_api` — yaaf's own loop on the Messages API, API
-  keys only — `openai_compatible`, the same loop for DeepSeek, OpenRouter
-  and a custom server, `codex_cli`, OpenAI's Codex CLI, `gemini_cli`,
-  Google's Gemini CLI, or `opencode`, the
-  OpenCode CLI for any provider on the OpenAI-compatible chat API
-  ([RUNTIMES.md](RUNTIMES.md)). A `model` the catalog does
-  not list names its provider first: `openrouter/qwen/qwen3-coder`,
-  `custom/llama3.1:8b`. A role granting `web` cannot run on a provider that
-  does not search (nor on OpenCode, which searches for nobody); a role
-  withholding `files` cannot run on Codex, which hands
-  its models a file editor regardless; and an `effort` the model does not take
-  is refused with the list it does. Absent is the model's provider
-  default. It changes how a run is driven, never what the role may do; a
-  harness that cannot take away a grant this role withholds is refused here,
-  and so is a model `anthropic_api` has no price for, because it meters every
-  call by the price.
+  Write the model as a **class** — `@frontier`, `@balanced` or `@fast` — and
+  the role runs on whatever provider pays the project: Claude Sonnet on a
+  project an Anthropic key pays, GPT on one an OpenAI key pays, each provider's
+  model for the class from its lineup ([PROVIDERS.md](PROVIDERS.md)). Name a
+  model (`claude-opus-5-5`, `gpt-6.1-sol`) only when the role needs that one
+  model whatever pays — it then needs its provider paid too. A model the
+  catalog does not list names its provider first: `openrouter/qwen/qwen3-coder`,
+  `custom/llama3.1:8b`; `openai/@fast` is OpenAI's fast model whoever else
+  pays. `effort` is yaaf's ladder (`low` … `max`): a class seat runs at its
+  model's lowest rung at or above it, a pinned model is held to its own list.
+- `harness` (optional) — what drives the model in the sandbox:
+  `claude_agent_sdk`, `claude_cli`, `yaaf_loop` — yaaf's own loop on the
+  provider's own API, for any API key — `codex_cli`, OpenAI's Codex CLI,
+  `gemini_cli`, Google's Gemini CLI, or `opencode`, the OpenCode CLI for any
+  provider on the OpenAI-compatible chat API ([RUNTIMES.md](RUNTIMES.md)).
+  Absent is the default of whatever credential pays the seat: the Agent SDK
+  for Anthropic, yaaf's loop for every other API key, the provider's own CLI
+  for a login. A role granting `web` cannot run where nothing can search — no
+  search on the harness or the provider, and no web search backend on the
+  install (Settings → Web search); a role withholding `files` cannot run on
+  Codex, which hands its models a file editor regardless. It changes how a run
+  is driven, never what the role may do; a harness that cannot take away a
+  grant this role withholds is refused here, and so is a pinned model the
+  loop has no price for, because it meters every call by the price.
 - `tool_permissions` — `files`, `bash`, `data_processing`, `web`.
   `data_processing` grants the same shell
   `bash` does; it is separate so that a role which has one in order to aggregate

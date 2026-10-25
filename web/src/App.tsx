@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { MeProvider, useMe } from "./me";
 import { DeskProvider } from "./desk";
+import { PinsProvider } from "./shortcuts";
 import { ProjectProvider } from "./projectCtx";
 import { Shell } from "./shell";
 import Login from "./pages/Login";
@@ -74,25 +75,27 @@ function Gate() {
   // a signed-in reader asks it, so the poll never runs against the sign-in form.
   return (
     <DeskProvider>
-      <Routes>
-        <Route path="/home" element={<Shell><Home /></Shell>} />
-        <Route path="/inbox" element={<Shell><Inbox /></Shell>} />
-        {/* The Desk became the Inbox. Its address keeps working for the emails,
-            bookmarks and docs that name it. */}
-        <Route path="/desk" element={<Navigate to="/inbox" replace />} />
-        <Route path="/projects" element={<Shell><Projects /></Shell>} />
-        {/* One door, then the fork. Every "create a project" affordance points
-            at /projects/new, which is the question rather than one of its two
-            answers; each answer is linkable on its own for anyone who knows. */}
-        <Route path="/projects/new" element={<Shell><StartProject /></Shell>} />
-        <Route path="/projects/new/describe" element={<Shell><Founding /></Shell>} />
-        <Route path="/projects/new/form" element={<Shell><NewProject /></Shell>} />
-        <Route path="/projects/found" element={<Navigate to="/projects/new/describe" replace />} />
-        <Route path="/projects/:projectId/*" element={<ProjectRoute />} />
-        <Route path="/roles" element={<Shell><Roles /></Shell>} />
-        <Route path="/settings" element={<Shell><Settings /></Shell>} />
-        <Route path="*" element={<Navigate to="/home" replace />} />
-      </Routes>
+      <PinsProvider>
+        <Routes>
+          <Route path="/home" element={<Shell><Home /></Shell>} />
+          <Route path="/inbox" element={<Shell><Inbox /></Shell>} />
+          {/* The Desk became the Inbox. Its address keeps working for the emails,
+              bookmarks and docs that name it. */}
+          <Route path="/desk" element={<Navigate to="/inbox" replace />} />
+          <Route path="/projects" element={<Shell><Projects /></Shell>} />
+          {/* One door, then the fork. Every "create a project" affordance points
+              at /projects/new, which is the question rather than one of its two
+              answers; each answer is linkable on its own for anyone who knows. */}
+          <Route path="/projects/new" element={<Shell><StartProject /></Shell>} />
+          <Route path="/projects/new/describe" element={<Shell><Founding /></Shell>} />
+          <Route path="/projects/new/form" element={<Shell><NewProject /></Shell>} />
+          <Route path="/projects/found" element={<Navigate to="/projects/new/describe" replace />} />
+          <Route path="/projects/:projectId/*" element={<ProjectRoute />} />
+          <Route path="/roles" element={<Shell><Roles /></Shell>} />
+          <Route path="/settings" element={<Shell><Settings /></Shell>} />
+          <Route path="*" element={<Navigate to="/home" replace />} />
+        </Routes>
+      </PinsProvider>
     </DeskProvider>
   );
 }

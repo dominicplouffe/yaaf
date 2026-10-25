@@ -7,7 +7,7 @@
     "games"
   ],
   "description": "Studies the mobile games market — what is selling, what retains, what is actually fun — and turns that into concrete, prioritized suggestions for a specific game: improvements, new features, new modules, new sub-games.",
-  "model": "claude-sonnet-5-5",
+  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

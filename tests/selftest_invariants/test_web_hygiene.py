@@ -100,6 +100,47 @@ def test_no_chart_paints_with_a_hardcoded_colour():
     )
 
 
+#: A custom property being declared: `--ink: ...` in CSS, or `"--ink": ...` as
+#: a key in a React style object.
+CSS_VAR_DECL = re.compile(r"""(--[\w-]+)["'`]?\s*:""")
+CSS_VAR_USE = re.compile(r"var\(\s*(--[\w-]+)")
+
+
+def test_every_custom_property_read_is_one_somebody_declared():
+    """`var(--name)` on a name nothing declares is not an error anywhere: the
+    browser takes the fallback, or nothing, and the build and this suite stay
+    green.
+
+    The undo toast set its text to `var(--bg, #fff)`. There is no `--bg`, so
+    the text was always white — fine on the light theme's dark toast, and
+    white on white on the dark one. The same check found warnings painted
+    `var(--warn, var(--ink-2))`, which drew every warning in plain grey for
+    want of `--warning`. A fallback does not excuse the name; it is what hid
+    both.
+    """
+    sources = sorted(WEB_SRC.rglob("*.css")) + sorted(WEB_SRC.rglob("*.ts*"))
+    declared: set[str] = set()
+    for path in sources:
+        declared.update(CSS_VAR_DECL.findall(path.read_text()))
+
+    offenders: list[str] = []
+    for path in sources:
+        source = path.read_text()
+        for match in CSS_VAR_USE.finditer(source):
+            if match.group(1) not in declared:
+                line = source[: match.start()].count("\n") + 1
+                offenders.append(
+                    f"{path.relative_to(WEB_SRC.parents[1])}:{line} — {match.group(1)}"
+                )
+
+    assert not offenders, (
+        "these read a custom property that nothing declares, so the browser "
+        "silently falls back:\n  "
+        + "\n  ".join(offenders)
+        + "\nUse a token from the top of styles.css, or declare the new one there."
+    )
+
+
 def test_the_burn_up_is_drawn_for_deliver_projects_only():
     """A burn-up of work that recurs is a flat line — `velocity.standing_record`
     says so in its own docstring, and an Operate project already has the record
@@ -136,15 +177,24 @@ def test_nothing_that_only_wants_reading_sits_under_the_decision_heading():
     nothing the reader could do about it. The rule is mechanical because the
     argument for breaking it is always available and always wrong.
     """
-    source = (WEB_SRC / "pages" / "project" / "Overview.tsx").read_text()
-    start = source.index("const needs: React.ReactNode[] = []")
-    end = source.index("const news: React.ReactNode[] = []")
-    assert start < end, "the desk's two zones are no longer in the expected order"
-    decide_zone = source[start:end]
-    assert "rawFlags" not in decide_zone, (
-        "a flag is being pushed into the zone that needs a decision. A flag "
-        "does not block and does not expire — it belongs with the news, which "
-        "is the `news` array below it."
+    # The decide zone lives in one place now: the Inbox's Decide tab, which
+    # every project's home embeds. A project page that grew a decide list of
+    # its own again would be a second zone for this rule to miss.
+    overview = (WEB_SRC / "pages" / "project" / "Overview.tsx").read_text()
+    assert "const needs" not in overview, (
+        "the project home has a decision list of its own again; it embeds the "
+        "Inbox, whose Decide tab is the one zone this rule guards"
+    )
+    source = (WEB_SRC / "pages" / "Inbox.tsx").read_text()
+    decide = re.search(r"const needs = (.+);", source)
+    assert decide, "the Inbox's Decide list is no longer built where this test expects"
+    assert decide.group(1).strip() == "inProject(desk.mine)", (
+        "the Decide tab is built from something other than the desk's own "
+        "needs-you rows: " + decide.group(1)
+    )
+    assert re.search(r"const acks = inProject\(updates\.filter\(isAck\)\)", source), (
+        "flags no longer land on the Acknowledge tab. A flag does not block and "
+        "does not expire — it belongs with what you note, never with what you decide."
     )
 
 
@@ -204,3 +254,93 @@ def test_your_own_chat_bubble_is_readable_in_both_themes():
         assert ratio >= 4.5, (
             f"the bubble's name and time are {ratio:.2f}:1 on {tokens['--accent']}"
         )
+
+
+def test_every_text_ink_clears_4_5_on_every_neutral_ground():
+    """The header of `styles.css` says each text colour clears 4.5:1 against
+    its own ground. `--muted` was checked against the card and nothing else,
+    and in the light theme it sits on the sidebar (`--sunken`) and on every
+    segmented control and tab strip (`--surface-2`): 4.27:1 and 4.46:1, on
+    every screen, under the workspace and project headings and the signed-in
+    address. An audit of every page in both themes found it there; nothing in
+    the suite looked.
+
+    A ground includes what a pointer puts on it. Every hovered row, menu item
+    and the palette's selected entry lays `--hover-strong` over its ground, and
+    the second audit, of hover states and overlays, found `--muted` at 4.33:1
+    on a hovered sidebar row and 4.44:1 on the palette's selected shortcut.
+    """
+    css = (WEB_SRC / "styles.css").read_text()
+    themes = re.findall(r"\{([^{}]*--on-accent:[^{}]*)\}", css)
+    assert len(themes) == 3, "expected the dark, OS-light and chosen-light token sets"
+
+    def rgb(value: str) -> tuple[float, ...]:
+        return tuple(int(value.strip()[i : i + 2], 16) for i in (1, 3, 5))
+
+    def hovered(ground: tuple[float, ...], tint: str) -> tuple[float, ...]:
+        *wash, alpha = (float(c) for c in re.findall(r"[\d.]+", tint))
+        return tuple(alpha * w + (1 - alpha) * g for w, g in zip(wash, ground, strict=True))
+
+    for theme in themes:
+        tokens = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", theme))
+        grounds: dict[str, tuple[float, ...]] = {}
+        for name in ("--page", "--surface", "--surface-2", "--sunken"):
+            grounds[name] = rgb(tokens[name])
+            grounds[f"{name} under --hover-strong"] = hovered(
+                grounds[name], tokens["--hover-strong"]
+            )
+        inks = ("--ink", "--ink-2", "--muted", "--accent", "--good", "--warning", "--serious")
+        for ink in (*inks, "--critical"):
+            for name, ground in grounds.items():
+                ratio = _contrast(rgb(tokens[ink]), ground)
+                assert ratio >= 4.5, f"{ink} {tokens[ink]} is {ratio:.2f}:1 on {name}"
+
+
+def test_a_disabled_button_keeps_its_look_under_the_pointer():
+    """A disabled button has nothing to offer the pointer, so hovering it must
+    change nothing — least of all its legibility.
+
+    One global `button:disabled:hover` reset painted every disabled button
+    `--surface` and border-strong on hover, to undo the default hover. It also
+    undid the primary's `--accent` fill and left its `--on-accent` label on the
+    card: the chat's Send button, disabled until you type, went white on white
+    in the light theme and near-black on near-black in the dark one the moment
+    the pointer reached it. An empty square where the button had been.
+
+    The hovers now exclude disabled buttons themselves, inside `:where()` so
+    they weigh what they always did.
+    """
+    css = (WEB_SRC / "styles.css").read_text()
+    assert not re.search(r"(?m)^button:disabled:hover\b", css), (
+        "a global `button:disabled:hover` reset is back; it repaints every "
+        "variant's ground and strands the label colour that was chosen for it"
+    )
+    for variant in ("", ".primary", ".danger"):
+        rule = re.search(rf"(?m)^button{re.escape(variant)}(:[^{{\s]*)?:hover\s*\{{", css)
+        assert rule, f"no `button{variant}:hover` rule found where this test expects one"
+        assert ":not(:disabled)" in rule.group(0), (
+            f"`button{variant}` hovers on a disabled button too: {rule.group(0)}"
+        )
+
+
+def test_nothing_is_set_below_the_12px_floor():
+    """`styles.css` opens its type scale with "12px is the floor. Nothing in the
+    product is set smaller." Twenty-four rules were — sidebar headings and
+    pills at 11px, the team's "lead" tag at 10.5px, a project tag's initials at
+    9px — and one SVG label on the roadmap, because nothing held the sentence
+    to account.
+    """
+    offenders: list[str] = []
+    css = (WEB_SRC / "styles.css").read_text()
+    for match in re.finditer(r"font-size:\s*([\d.]+)px", css):
+        if float(match.group(1)) < 12:
+            offenders.append(f"styles.css:{css[: match.start()].count(chr(10)) + 1}")
+    for path in _tsx_files():
+        source = path.read_text()
+        for match in re.finditer(r"fontSize[=:]\s*\{?\s*[\"']?([\d.]+)", source):
+            if float(match.group(1)) < 12:
+                line = source[: match.start()].count("\n") + 1
+                offenders.append(f"{path.relative_to(WEB_SRC.parents[1])}:{line}")
+    assert not offenders, (
+        "these set text below the 12px floor (use var(--t-micro)):\n  " + "\n  ".join(offenders)
+    )

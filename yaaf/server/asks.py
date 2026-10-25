@@ -36,7 +36,7 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core.models import Ask, AskStatus, Message, utcnow
+from yaaf.core.models import Ask, AskStatus, ChairmanNote, Message, utcnow
 
 log = logging.getLogger("yaaf.asks")
 
@@ -96,6 +96,11 @@ def mark_answered(session: Session, project_id: str, boardroom_channel_id: str) 
     the sentence that state exists to force, and it is better than a default
     taken silently against an answer he had already given.
     """
+    # A note he wrote on a decision is his line in the boardroom too, but it
+    # was written on that decision: a reply to Theo's captcha is not an answer
+    # to the CEO's question about the postal address.
+    notes = select(ChairmanNote.message_id).where(ChairmanNote.project_id == project_id,
+                                                  ChairmanNote.message_id.is_not(None))
     moved = 0
     for ask in open_asks(session, project_id):
         reply = session.execute(
@@ -103,6 +108,7 @@ def mark_answered(session: Session, project_id: str, boardroom_channel_id: str) 
                 Message.channel_id == boardroom_channel_id,
                 Message.sender_user_id.is_not(None),
                 Message.created_at > ask.created_at,
+                Message.id.not_in(notes),
             ).order_by(Message.created_at).limit(1)
         ).scalars().first()
         if reply is None:

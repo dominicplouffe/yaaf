@@ -160,7 +160,9 @@ def test_the_platform_key_can_be_seen_rotated_tested_and_removed(client):
     after = client.get("/admin/settings", headers=ADMIN).json()["anthropic"]
     assert after["configured"] is True
     assert after["billing_mode"] == "api_key"
-    assert after["model"] == platform.DEFAULT_FOUNDER_MODEL
+    # A class until somebody names a model, resolved on what the key pays.
+    assert after["model_ref"] == platform.DEFAULT_FOUNDER_MODEL
+    assert after["model"] == "claude-opus-5-5"
     # Whether one is installed, never what it is.
     assert API_KEY not in json.dumps(after)
 

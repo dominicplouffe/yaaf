@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { NavigateFunction, useNavigate } from "react-router-dom";
-import { DeskProject } from "./api";
+import { NavigateFunction, useLocation, useNavigate } from "react-router-dom";
+import { DeskProject, get } from "./api";
 import { firstName, useProjectFrame } from "./projectCtx";
-import { PROJECT_DESTINATIONS } from "./nav";
+import { ACTIVITY_VIEWS, placeOf, PROJECT_DESTINATIONS, SETTINGS_SECTIONS } from "./nav";
+import { placeAt, recentPlaces, usePins } from "./shortcuts";
 import { Icon, IconName } from "./ui/Icon";
 import { applyTheme, Avatar } from "./ui/kit";
 import { SEAT_LABEL } from "./ui/team";
@@ -14,7 +15,12 @@ import { SEAT_LABEL } from "./ui/team";
     person by name, and does the handful of things worth doing from anywhere.
     Nothing here is a new capability — every entry is a door to a screen that
     already exists, so the palette can never become a second way to decide
-    something with fewer safeguards than the first. */
+    something with fewer safeguards than the first.
+
+    Inside a project it also reaches one level further than the sidebar does:
+    every Settings section and Activity view by name, the places you were in
+    last, the setup chores ("Add a secret"), and any deliverable by its title —
+    so a keyboard reader is two keys and a word from anywhere. */
 
 interface Command {
   group: string;
@@ -38,33 +44,88 @@ function useCommands({
 }): Command[] {
   const frame = useProjectFrame();
   const ctx = frame?.ctx;
+  const { pinsFor } = usePins();
+  const pins = useMemo(() => (currentProjectId ? pinsFor(currentProjectId) : []), [pinsFor, currentProjectId]);
+  const { pathname, search } = useLocation();
+  const here = currentProjectId ? placeAt(pathname, search, currentProjectId) : null;
   return useMemo(() => {
-    const out: Command[] = [
+    // One list per group, joined in the order a reader scans: where you were
+    // and what you pinned, then every place, then people and actions.
+    const recent: Command[] = [];
+    const pinned: Command[] = [];
+    const goTo: Command[] = [
       { group: "Go to", label: "Home", icon: "home", hint: "G H", run: () => navigate("/home") },
       { group: "Go to", label: "Inbox", icon: "inbox", hint: "G I", words: "desk approvals questions decisions",
         run: () => navigate("/inbox") },
       { group: "Go to", label: "All projects", icon: "grid", hint: "G P", run: () => navigate("/projects") },
     ];
+    const settings: Command[] = [];
+    const others: Command[] = [];
+    const people: Command[] = [];
+    const actions: Command[] = [];
     if (currentProjectId) {
       const base = `/projects/${currentProjectId}`;
       const ceo = ctx ? firstName(ctx.ceoName) : "your CEO";
+      // Where you were, newest first: the habits you have not pinned.
+      for (const rel of recentPlaces(currentProjectId)) {
+        const place = placeOf(rel);
+        if (!place || rel === here) continue;
+        recent.push({
+          group: "Recent", label: place.label === "Inbox" ? "This project’s inbox" : place.label,
+          icon: place.icon, words: rel.replace(/[/?=]/g, " "),
+          run: () => navigate(rel ? `${base}/${rel}` : base),
+        });
+      }
+      pins.forEach((pin, i) => pinned.push({
+        group: "Pinned", label: pin.label, icon: placeOf(pin.to.split("?open=")[0])?.icon ?? "pin",
+        hint: i < 5 ? `G ${i + 1}` : undefined, words: "pin pinned",
+        run: () => navigate(`${base}/${pin.to}`),
+      }));
       for (const p of PROJECT_DESTINATIONS) {
-        out.push({
+        goTo.push({
           group: "Go to",
           label: p.path === "chat" ? `Chat with ${ceo}` : p.label,
           icon: p.icon,
-          hint: p.key === "," ? undefined : `G ${p.key.toUpperCase()}`,
+          hint: `G ${p.key.toUpperCase()}`,
           words: p.words,
           run: () => navigate(p.path ? `${base}/${p.path}` : base),
         });
       }
+      for (const [view, label, means] of ACTIVITY_VIEWS) {
+        goTo.push({
+          group: "Go to", label: `Activity › ${label}`, icon: "history", words: `details record ${means}`,
+          run: () => navigate(`${base}/details/activity/${view}`),
+        });
+      }
+      for (const sec of SETTINGS_SECTIONS) {
+        settings.push({
+          group: "Project settings", label: sec.label, icon: sec.key === "secrets" ? "key"
+            : sec.key === "sources" ? "plug" : "gear", words: `settings ${sec.words}`,
+          run: () => navigate(`${base}/settings?s=${sec.key}`),
+        });
+      }
+      // The chores a new project is made of, by what you want done rather
+      // than where the form for it lives.
+      const chores: [string, string, string, IconName][] = [
+        ["Add a secret or variable", "secrets", "api key token credential env value", "key"],
+        ["Connect a data source", "sources", "mcp database api", "plug"],
+        ["Set the budget", "money", "spend limit monthly cap", "wallet"],
+        ["Change the model key", "money", "billing credential pay provider", "key"],
+        ["Invite someone to this project", "people", "co-chair observer member share", "users"],
+        ["Mirror into Slack", "integrations", "slack channel", "message"],
+        ["Edit the brief", "brief", "goal standing orders", "edit"],
+      ];
+      for (const [label, section, words, icon] of chores) {
+        actions.push({ group: "Actions", label, icon, words, run: () => navigate(`${base}/settings?s=${section}`) });
+      }
     }
-    out.push(
+    goTo.push(
       { group: "Go to", label: "Role library", icon: "users", words: "hire roles people", run: () => navigate("/roles") },
-      { group: "Go to", label: "Settings", icon: "gear", words: "credentials account slack", run: () => navigate("/settings") },
+      { group: "Go to", label: currentProjectId ? "App settings" : "Settings", icon: "gear",
+        words: "settings workspace providers models prices credentials account slack", run: () => navigate("/settings") },
     );
     for (const p of projects) {
-      out.push({
+      others.push({
         group: "Projects", label: p.name, avatar: { name: p.name, team: p.name },
         hint: p.status === "running" ? "Running" : p.status, words: `project ${p.goal}`,
         run: () => navigate(`/projects/${p.id}`),
@@ -72,18 +133,18 @@ function useCommands({
     }
     if (ctx) {
       for (const s of ctx.seats) {
-        out.push({
+        people.push({
           group: "People", label: `${s.name} — ${s.ceo ? "CEO" : s.team}`, avatar: { name: s.name, team: s.ceo ? "leadership" : s.team },
           hint: SEAT_LABEL[s.state], words: `${s.title} ${s.doing}`,
           run: () => ctx.openAgent(s.id),
         });
       }
-      out.push({
+      actions.push({
         group: "Actions", label: `Message ${firstName(ctx.ceoName)}…`, icon: "send", words: "ceo chat boardroom ask",
         run: () => navigate(`/projects/${ctx.projectId}/chat`),
       });
     }
-    out.push(
+    actions.push(
       { group: "Actions", label: "Start a new project", icon: "plus", words: "create", run: () => navigate("/projects/new") },
       { group: "Actions", label: "Use the light theme", icon: "sun", words: "theme", run: () => applyTheme("light") },
       { group: "Actions", label: "Use the dark theme", icon: "moon", words: "theme", run: () => applyTheme("dark") },
@@ -91,8 +152,33 @@ function useCommands({
       { group: "Actions", label: "Keyboard shortcuts", icon: "help", hint: "?", run: openCheatsheet },
       { group: "Actions", label: "Sign out", icon: "logout", run: signOut },
     );
-    return out;
-  }, [projects, currentProjectId, navigate, openCheatsheet, signOut, ctx]);
+    return [...recent, ...pinned, ...goTo, ...settings, ...others, ...people, ...actions];
+  }, [projects, currentProjectId, navigate, openCheatsheet, signOut, ctx, pins, here]);
+}
+
+interface FileHit { id: string; name: string; dir: string; state: string }
+
+/** Deliverables whose name matches what is typed, from the same index the
+    Deliverables page reads — so "AVGO" finds the note without knowing where
+    in the day folders it sits. Asked of the server once typing pauses. */
+function useFileSearch(projectId: string | null, query: string, navigate: NavigateFunction): Command[] {
+  const [hits, setHits] = useState<FileHit[]>([]);
+  const q = query.trim();
+  useEffect(() => {
+    if (!projectId || q.length < 2) { setHits([]); return; }
+    let live = true;
+    const timer = window.setTimeout(() => {
+      get<{ rows: FileHit[] }>(`/observe/projects/${projectId}/files/browse/rows?q=${encodeURIComponent(q)}&limit=6&lean=true`)
+        .then((r) => { if (live) setHits(r.rows); })
+        .catch(() => { if (live) setHits([]); });
+    }, 180);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [projectId, q]);
+  return hits.map((f) => ({
+    group: "Deliverables", label: f.name, icon: "file" as IconName,
+    hint: f.state === "published" ? "published" : f.dir || f.state,
+    run: () => navigate(`/projects/${projectId}/details/deliverables?open=${encodeURIComponent(f.id)}`),
+  }));
 }
 
 export function CommandPalette({
@@ -112,10 +198,14 @@ export function CommandPalette({
   const commands = useCommands({ projects, currentProjectId, navigate, openCheatsheet, signOut });
 
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const shown = commands.filter((c) => {
+  const files = useFileSearch(currentProjectId, query, navigate);
+  const matched = commands.filter((c) => {
     const hay = `${c.group} ${c.label} ${c.words ?? ""}`.toLowerCase();
     return words.every((w) => hay.includes(w));
   });
+  // Files sit with the places, before projects, people and actions.
+  const cut = matched.findIndex((c) => c.group === "Projects" || c.group === "People" || c.group === "Actions");
+  const shown = cut < 0 ? [...matched, ...files] : [...matched.slice(0, cut), ...files, ...matched.slice(cut)];
   const pick = Math.min(sel, Math.max(0, shown.length - 1));
 
   useEffect(() => {
@@ -157,7 +247,7 @@ export function CommandPalette({
           {shown.map((c, i) => {
             const head = c.group !== group ? (group = c.group) : null;
             return (
-              <div key={`${c.group}:${c.label}`}>
+              <div key={`${c.group}:${c.label}:${i}`}>
                 {head && <div className="cmdk-g">{head}</div>}
                 <button className={`cmdk-it${i === pick ? " on" : ""}`} data-i={i}
                   onMouseMove={() => setSel(i)} onClick={() => run(c)}>
@@ -185,7 +275,8 @@ const SHEET: [string, string][] = [
   ["G then H", "Home"],
   ["G then I", "Inbox"],
   ["G then P", "All projects"],
-  ["G then T", "This project’s team (its home)"],
+  ["G then O", "This project’s inbox (its home)"],
+  ["G then T", "This project’s team"],
   ["G then C", "Chat with the CEO"],
   ["G then R", "Results"],
   ["G then D", "Details"],
@@ -195,6 +286,8 @@ const SHEET: [string, string][] = [
   ["G then S", "Details › Spend"],
   ["G then V", "Details › Reviews"],
   ["G then A", "Details › Activity"],
+  ["G then ,", "This project’s settings"],
+  ["G then 1 – 5", "Your pinned places, in sidebar order"],
   ["J / K", "Next / previous item in the Inbox"],
   ["Esc", "Close a panel"],
   ["?", "This list"],
@@ -242,8 +335,10 @@ export function useShortcuts({
   navigate: NavigateFunction;
 }) {
   const go = useRef(false);
-  const state = useRef({ projectId, openPalette, openCheatsheet, navigate });
-  state.current = { projectId, openPalette, openCheatsheet, navigate };
+  const { pinsFor } = usePins();
+  const pins = projectId ? pinsFor(projectId) : [];
+  const state = useRef({ projectId, openPalette, openCheatsheet, navigate, pins });
+  state.current = { projectId, openPalette, openCheatsheet, navigate, pins };
 
   useEffect(() => {
     let timer: number | undefined;
@@ -265,6 +360,8 @@ export function useShortcuts({
         const k = e.key.toLowerCase();
         const top: Record<string, string> = { h: "/home", i: "/inbox", p: "/projects" };
         if (top[k]) { s.navigate(top[k]); return; }
+        const pin = /^[1-5]$/.test(k) ? s.pins[Number(k) - 1] : undefined;
+        if (pin && s.projectId) { s.navigate(`/projects/${s.projectId}/${pin.to}`); return; }
         const page = PROJECT_DESTINATIONS.find((p) => p.key === k);
         if (page && s.projectId) {
           s.navigate(page.path ? `/projects/${s.projectId}/${page.path}` : `/projects/${s.projectId}`);

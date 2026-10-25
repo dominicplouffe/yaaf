@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { get, SpendBucket, SpendReport } from "../../api";
 import { fmtUsd, usePoll } from "../../hooks";
 import { PlanMeter } from "../../llmCredentials";
+import { useProviders } from "../../providers";
 import type { ProjectCtx } from "../../projectCtx";
 import {
   budgetOf,
@@ -30,6 +31,8 @@ export function BudgetCard({ ctx }: { ctx: ProjectCtx }) {
   const { usdMode, unit, spent, cap, warnRatio, frac, hardStop, wall } = budgetOf(dash);
   const pace = paceDate(spent, cap);
   const unpaid = !dash.billing_secret_id && dash.integrations?.runtime !== "mock";
+  const billing = (dash.credentials ?? []).find((c) => c.billing);
+  const seller = useProviders().find((p) => p.name === billing?.provider);
   const state = unpaid ? { tone: "warn" as const, label: "Nothing pays for it" }
     : wall > 0 && spent >= wall ? { tone: "critical" as const, label: "Hard stop — paused" }
     : frac >= 1 ? { tone: "critical" as const, label: "Over budget" }
@@ -72,16 +75,24 @@ export function BudgetCard({ ctx }: { ctx: ProjectCtx }) {
         <li>
           <Icon name="shield" size={14} />{" "}
           {dash.billing_secret_name
-            ? <>Paid with <b>{dash.billing_secret_name}</b> ({usdMode ? "API key" : "Claude subscription"})</>
+            ? <>Paid with <b>{dash.billing_secret_name}</b> ({billing ? `${billing.label} ` : ""}{usdMode ? "API key" : "subscription"})</>
             : <span className="serious">No payment credential connected — real runs will fail</span>}
         </li>
-        {(dash.credentials ?? []).filter((c) => !c.billing).map((c) => (
+        {(dash.credentials ?? []).filter((c) => !c.billing && c.credential_id !== dash.fallback?.credential_id).map((c) => (
           <li key={c.credential_id}><Icon name="shield" size={14} /> {c.label}: {c.name}</li>
         ))}
+        {/* The fallback pays only while a failover is on, so it is said as the
+            fallback — not as one more provider this project pays. */}
+        {dash.fallback?.credential_id && (
+          <li><Icon name="shield" size={14} /> Fallback: <b>{dash.fallback.name}</b>
+            {dash.fallback.active ? <span className="serious"> — class seats are on it now, while the billing provider recovers</span>
+              : " — used only if the billing provider keeps failing"}</li>
+        )}
       </ul>
-      <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode} />
+      <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode}
+        meters={!!seller?.plan_meter} />
       {dash.can_steer !== false && (
-        <Link className="btnlink small" to={`/projects/${projectId}/details/settings?s=money`}>
+        <Link className="btnlink small" to={`/projects/${projectId}/settings?s=money`}>
           Change the budget…
         </Link>
       )}

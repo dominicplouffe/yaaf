@@ -25,7 +25,7 @@ from pathlib import Path
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, model_policy
 from yaaf.core.config import settings
 from yaaf.core.db import db_session
 from yaaf.core.models import (
@@ -48,9 +48,12 @@ from yaaf.runner.daemon import (
     _billing_env,
     _data_source_prompt,
     _merge_project_data_sources,
+    _mint_secret_id,
+    _mint_token,
     _pin_seat,
     _provider_spec,
     _role_secret_env,
+    _search_env,
     stash_context_doc,
 )
 from yaaf.runner.types import RunJob
@@ -121,8 +124,11 @@ CHAT SESSION: You are in a live boardroom conversation with the chairman.
   their prompt, and until he confirms, that is still the old one. Do it in
   the same turn, not later, and re-draft the whole brief every time, so it
   never grows a stack of corrections.
-- A note he wrote on a decision is answered with `note_answer`, and one
-  that holds from now on ("go ahead, every day") goes into the brief first.
+- A note he wrote on a decision arrives here as his line ("Re: “…” — …").
+  Answer it like anything he says: your reply is the one answer he gets, and
+  it goes under his note too. Close it with `note_answer` in the same turn,
+  saying whether it holds from now on; one that does ("go ahead, every day")
+  goes into the brief first.
 - When he sets a STANDING rule about how or how often he wants reporting,
   file it with `directive_file`, citing the message id shown in brackets
   beside his words. Do not merely remember it: you run as separate
@@ -242,7 +248,8 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
         # boots fresh, paid with the new one. A deliberate end, so KILLED and
         # outside the restart backstop; the new session answers the backlog.
         seat = seat_for(ceo, role_version_for(session, ceo),
-                        (project.integrations or {}).get("runtime"))
+                        (project.integrations or {}).get("runtime"),
+                        context=model_policy.context(session, project))
         if (live_run.trigger or {}).get("credential") != _credential_mark(
                 session, project, seat.provider):
             _end_session(session, project, live_run,
@@ -332,9 +339,13 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
 def converses(session: Session, project: Project, ceo: Agent) -> bool:
     """Whether the CEO's seat runs on a harness that can hold the boardroom
     conversation (R7) — the harness its work runs on, which is the one its
-    talk runs on too."""
+    talk runs on too — on a model it can name at all (R8: a lineup changed
+    since the doors last asked can leave a class with nothing behind it)."""
     seat = seat_for(ceo, role_version_for(session, ceo),
-                    (project.integrations or {}).get("runtime"))
+                    (project.integrations or {}).get("runtime"),
+                    context=model_policy.context(session, project))
+    if not seat.resolved:
+        return False
     found = HARNESSES.get(seat.harness)
     return found is not None and (found.conversation or found.family == "mock")
 
@@ -401,7 +412,8 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     # its provider's credential — like any run of that seat (docs/RUNTIMES.md,
     # M6). The harness's own entry holds the conversation; the SDK's entry
     # is the SDK's resident client.
-    seat = seat_for(ceo, role_version, (project.integrations or {}).get("runtime"))
+    seat = seat_for(ceo, role_version, (project.integrations or {}).get("runtime"),
+                    context=model_policy.context(session, project))
     run = Run(
         id=ids.new_id(ids.RUN),
         project_id=project.id,
@@ -448,7 +460,13 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     from yaaf.server.recognizers import credentials_prompt
 
     job.system_prompt += credentials_prompt(*announced_credentials(role_secrets))
-    job.billing_env = {**_billing_env(session, project, seat.provider), **role_secrets}
+    job.billing_env = {**_billing_env(session, project, seat.provider), **role_secrets,
+                       **_search_env(session, job)}
+    job.mint_secret_id = _mint_secret_id(session, project, seat.provider)
+    if (refused := _mint_token(job)) is not None:
+        # The session would only fail its first call; say why where it is read.
+        log.warning("chat session for %s cannot mint its model token: %s",
+                    project.slug, refused.summary)
 
     # Chat gets its own scratch at /workspace: a run's staging must never race
     # a resident session's. It also gets the project's working tree read-only

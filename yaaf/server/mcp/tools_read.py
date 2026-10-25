@@ -307,14 +307,16 @@ def _also_yours(session: Session, reachable: set[str]) -> list[dict]:
     scope="read",
     description=(
         "One project's cockpit. view: overview (status, spend, org, the deliverable), "
-        "health (the setup checklist), flags (obligations the platform opened), "
+        "health (is the configuration right, with a fix per finding), setup (what a new "
+        "project still needs — a key, sources, credentials — and what was skipped), "
+        "flags (obligations the platform opened), "
         "heads_ups (what the chairman asked to be told, to note), "
         "agenda (what is scheduled), briefing (what changed since you last looked — or "
         "over the window `hours` or `since` names, for 'what changed since yesterday?')."
     ),
     input_schema=_schema(
         view={"type": "string",
-              "enum": ["overview", "health", "flags", "heads_ups", "agenda", "briefing"]},
+              "enum": ["overview", "health", "setup", "flags", "heads_ups", "agenda", "briefing"]},
         days={"type": "integer", "description": "agenda only: horizon, default 14"},
         hours={"type": "number",
                "description": "briefing only: the last N hours instead of since you last looked"},
@@ -327,6 +329,8 @@ def project(principal: Principal, session: Session, arguments: dict) -> dict:
     view = arguments.get("view") or "overview"
     if view == "health":
         payload = _observe(observe.project_health, project_id=row.id, session=session)
+    elif view == "setup":
+        payload = _observe(observe.project_setup, project_id=row.id, session=session)
     elif view == "flags":
         payload = _observe(observe.project_flags, project_id=row.id, session=session)
     elif view == "heads_ups":

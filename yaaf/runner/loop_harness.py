@@ -39,6 +39,11 @@ from typing import Any, Protocol
 import httpx
 import sandbox_entry as base
 
+try:
+    import wire  # the sandbox: copied into the image beside this file
+except ModuleNotFoundError:  # the control plane, and the tests that drive this
+    from yaaf.runtimes import wire
+
 #: What `max_turns` gives the Claude harnesses: model calls, not tool calls.
 MAX_TURNS = 100
 #: A call's output ceiling before the governor narrows it. Long enough that a
@@ -59,43 +64,43 @@ FETCH_TIMEOUT_S = 30
 #: The model credentials a shell is never handed. Nothing an agent runs needs
 #: to pay for the model, and a key a shell can print is a key a transcript can
 #: carry anywhere (SECURITY.md).
-MODEL_CREDENTIAL_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN")
+MODEL_CREDENTIAL_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN",
+                        base.SEARCH_KEY_ENV)
+SEARCH_RESULTS_PER_QUERY = 8
+#: Where the loop makes room, as a share of the model's context window: old
+#: tool output goes first, and only if that is not enough is the history
+#: summarised. Claude Code compacts on its own; a provider's API does not, and
+#: a run that outgrows its window on a 128k model is a run that dies mid-task.
+COMPACT_AT = 0.8
+#: The tool results eliding leaves whole: the latest turns' — the ones the
+#: model is most likely acting on.
+KEEP_RECENT_OUTPUTS = 2
+#: What a summary call may carry of the history, as a share of the window; the
+#: oldest part goes first when the rest will not fit.
+SUMMARY_INPUT_SHARE = 0.5
+SUMMARY_MAX_TOKENS = 8_000
+#: Tokens per character, for what has not been measured yet: the tool output a
+#: call has not been sent with. Deliberately pessimistic — code and JSON run
+#: nearer three characters a token than four.
+CHARS_PER_TOKEN = 3
+COMPACT_PROMPT = (
+    "Your context window is nearly full, so this conversation is being compacted. "
+    "Below is the work so far. Write the summary you will continue from: the task and "
+    "its success criteria, decisions made and why, every file created or changed (exact "
+    "paths), commands and their outcomes that matter, what is done, what remains, and "
+    "the very next step. Keep exact identifiers, paths, numbers and error messages. Do "
+    "not call tools; reply with the summary only.\n\n")
 
 
 # ── the loop's own shapes: what every provider's client speaks ─────────────────
+#
+# The wire's (yaaf.runtimes.wire), so a client built on it hands its turns to
+# the loop as they are, and one built on a vendor SDK speaks the same.
 
-
-@dataclass(frozen=True)
-class ToolSpec:
-    name: str
-    description: str
-    input_schema: dict
-
-
-@dataclass(frozen=True)
-class ToolCall:
-    id: str
-    name: str
-    input: dict
-
-
-@dataclass(frozen=True)
-class ToolOutput:
-    call_id: str
-    text: str
-    is_error: bool = False
-
-
-@dataclass(frozen=True)
-class Turn:
-    """One message of the transcript. The loop reads `text` and `calls`; the
-    client that produced an assistant turn replays `native`, its own form of
-    it, verbatim."""
-    role: str  # "user" | "assistant"
-    text: str = ""
-    calls: tuple[ToolCall, ...] = ()
-    outputs: tuple[ToolOutput, ...] = ()
-    native: Any = None
+ToolSpec = wire.ToolSpec
+ToolCall = wire.ToolCall
+ToolOutput = wire.ToolOutput
+Turn = wire.Turn
 
 
 @dataclass(frozen=True)
@@ -129,6 +134,10 @@ class BudgetReached(RuntimeError):
 class Unpriced(RuntimeError):
     """A model this harness has no price for (R3). Refused at every door; this
     is the line behind them."""
+
+
+class ContextExhausted(RuntimeError):
+    """The history no longer fits the model's window even summarised."""
 
 
 class ModelRefused(RuntimeError):
@@ -353,6 +362,9 @@ async def b_web_fetch(args: dict) -> dict:
     return _text(_clip(f"HTTP {status} {url}\n\n{text}", TOOL_OUTPUT_CHARS), error=status >= 400)
 
 
+#: The platform search backend's transport — a test's stand-in, else httpx's.
+SEARCH_TRANSPORT: httpx.AsyncBaseTransport | None = None
+
 #: The file tools — what a `files` grant means — by name.
 FILE_TOOLS = ("Read", "Write", "Edit", "Glob", "Grep")
 
@@ -454,6 +466,16 @@ class LoopDriver:
         self.tools: dict[str, base.Tool] | None = None
         self.transcript: list[Turn] = []
         self.calls = 0
+        #: Bills a tool ran up between model calls — a search — yielded and
+        #: held to the cap like a call's own.
+        self.charges: list[base.AttemptResult] = []
+        #: The model's context window in tokens, where the lease knew it; 0
+        #: leaves only the provider's own refusal to compact on.
+        self.window = int(base.MODEL_FLAGS.get("context") or 0)
+        #: The transcript's size as the provider last measured it (the last
+        #: call's prompt and reply), and the characters added since.
+        self.measured = 0
+        self.unmeasured_chars = 0
 
     def budget(self, remaining_usd: float) -> None:
         self.max_usd = remaining_usd
@@ -463,6 +485,19 @@ class LoopDriver:
                                      input_schema=base.wire_schema(t))
                  for t in base.run_tools()]
         tools += [BUILTINS[name] for name in base._builtin_tools() if name in BUILTINS]
+        if "WebSearch" in base._builtin_tools() and not getattr(self.client, "native_search",
+                                                                 False):
+            # Search the provider's wire does not do as a server tool: the
+            # provider's own grounded call where it has one (Gemini), else the
+            # platform's backend. Neither is a grant the doors did not check
+            # (R2): a run reaches here searchless only by a door nobody built.
+            searcher = getattr(self.client, "search", None)
+            if searcher is not None or base.SEARCH:
+                tools.append(base.Tool(
+                    "WebSearch", "Search the web. Returns the top results — titles, addresses "
+                    "and snippets — to read further with WebFetch.",
+                    {"type": "object", "properties": {"query": {"type": "string"}},
+                     "required": ["query"]}, self._web_search))
         if self.skills:
             tools.append(base.Tool(
                 "Skill", "Load a skill's instructions by name.",
@@ -491,6 +526,23 @@ class LoopDriver:
                     self._source_tool(config, offered.name)))
         return {t.name: t for t in tools}, problems
 
+    async def _web_search(self, args: dict) -> dict:
+        query = str(args.get("query", "")).strip()
+        if not query:
+            return _text("query is empty", error=True)
+        searcher = getattr(self.client, "search", None)
+        if searcher is not None:
+            text, bill = await searcher(query)
+            self.charges.append(bill)
+            return _text(text)
+        try:
+            text, bill = await base.platform_search(query, SEARCH_RESULTS_PER_QUERY,
+                                                    transport=SEARCH_TRANSPORT)
+        except (wire.WireError, httpx.HTTPError) as exc:
+            return _text(f"search failed: {exc}", error=True)
+        self.charges.append(bill)
+        return _text(text)
+
     async def _skill(self, args: dict) -> dict:
         skill = self.skills.get(str(args.get("skill", "")))
         if skill is None:
@@ -512,7 +564,7 @@ class LoopDriver:
         """What a call cost: what the provider said it cost, where it says
         (OpenRouter); otherwise the call priced at the model's price."""
         cost = usage.cost_usd if usage.cost_usd is not None else base._priced(self.price, usage)
-        return dataclasses.replace(usage, cost_usd=cost, subtype=subtype)
+        return dataclasses.replace(usage, cost_usd=cost, subtype=usage.subtype or subtype)
 
     async def _run(self, call: ToolCall) -> ToolOutput:
         tool = (self.tools or {}).get(call.name)
@@ -523,6 +575,131 @@ class LoopDriver:
         except Exception as exc:
             return ToolOutput(call.id, f"{call.name} failed: {exc!r}"[:2000], True)
         return ToolOutput(call.id, text or "(no output)", is_error)
+
+    # ── room in the context window ────────────────────────────────────────────
+
+    def _size(self) -> int:
+        """The transcript in tokens: the provider's own count of it where one
+        call has been made, plus an estimate of what was added since. A
+        provider that states no usage (some local servers) is estimated whole."""
+        if self.measured:
+            return self.measured + self.unmeasured_chars // CHARS_PER_TOKEN
+        chars = sum(len(t.text) + sum(len(o.text) for o in t.outputs)
+                    + sum(len(json.dumps(c.input, default=str)) for c in t.calls)
+                    for t in self.transcript)
+        return chars // CHARS_PER_TOKEN
+
+    def _crowded(self) -> bool:
+        return bool(self.window) and self._size() > self.window * COMPACT_AT
+
+    def _elide(self) -> int:
+        """Old tool output replaced by a line saying what it was. The calls
+        and their pairing stay — every provider refuses a tool call left
+        without its result — so only the bulk goes. Returns characters freed."""
+        user_turns = [i for i, t in enumerate(self.transcript) if t.outputs]
+        names = {c.id: c.name for t in self.transcript for c in t.calls}
+        freed = 0
+        for index in user_turns[:-KEEP_RECENT_OUTPUTS or None]:
+            turn = self.transcript[index]
+            outputs = []
+            for output in turn.outputs:
+                if len(output.text) > 200 and not output.text.startswith("[elided"):
+                    note = (f"[elided to fit the context window: {len(output.text):,} characters "
+                            f"of {names.get(output.call_id, 'tool')} output — run it again if "
+                            "you need it]")
+                    freed += len(output.text) - len(note)
+                    output = dataclasses.replace(output, text=note)
+                outputs.append(output)
+            self.transcript[index] = dataclasses.replace(turn, outputs=tuple(outputs))
+        if freed and self.measured:
+            self.measured = max(0, self.measured - freed // CHARS_PER_TOKEN)
+        return freed
+
+    def _history(self) -> str:
+        """The transcript as plain text for a summary call: no tool blocks, so
+        no provider's pairing rules, and no thinking to replay."""
+        names = {c.id: c.name for t in self.transcript for c in t.calls}
+        lines = []
+        for turn in self.transcript:
+            if turn.role == "assistant":
+                if turn.text:
+                    lines.append(f"ASSISTANT: {turn.text}")
+                lines += [f"ASSISTANT called {c.name}({_clip(json.dumps(c.input, default=str), 1000)})"
+                          for c in turn.calls]
+            elif turn.outputs:
+                lines += [f"RESULT of {names.get(o.call_id, 'tool')}"
+                          f"{' (error)' if o.is_error else ''}: {_clip(o.text, 4000)}"
+                          for o in turn.outputs]
+            elif turn.text:
+                lines.append(f"USER: {turn.text}")
+        text = "\n\n".join(lines)
+        limit = int((self.window or 128_000) * SUMMARY_INPUT_SHARE * CHARS_PER_TOKEN)
+        if len(text) > limit:
+            text = "[the oldest part of the history was dropped to fit]\n\n" + text[-limit:]
+        return text
+
+    async def _summarise(self, room: float | None):
+        """The history replaced by the model's own summary of it, on the
+        original prompt. Billed as the call it is."""
+        max_tokens = SUMMARY_MAX_TOKENS
+        if room is not None and self.price is not None and self.price["output"] > 0:
+            max_tokens = max(1, min(max_tokens, int(room / self.price["output"] * 1_000_000)))
+        reply: Reply | None = None
+        stated: base.AttemptResult | None = None
+        try:
+            async with aclosing(self.client.stream(
+                    self.system, [Turn("user", text=COMPACT_PROMPT + self._history())], [],
+                    max_tokens)) as events:
+                async for event in events:
+                    if isinstance(event, Reply):
+                        reply = event
+                        continue
+                    stated = event
+                    # The main loop's mid-call cut, for the same reason.
+                    if (room is not None and self.price is not None
+                            and base._priced(self.price, event) >= room):
+                        break
+        except Exception:
+            if stated is not None:
+                yield self._bill(stated, "interrupted")
+            raise
+        self.calls += 1
+        if reply is None:
+            if stated is not None:
+                yield self._bill(stated, "budget_stop")
+            raise BudgetReached("per-run cap reached while compacting the history")
+        # Billed before it is judged: a summary that came back empty — its
+        # thinking ate the output — was still paid for.
+        yield self._bill(reply.usage, "compaction")
+        if not reply.turn.text.strip():
+            raise ContextExhausted("the model returned no summary to compact the history to")
+        first = next((t.text for t in self.transcript if t.role == "user" and t.text), "")
+        self.transcript = [Turn("user", text=(
+            f"{first}\n\n---\n[Context compacted: the conversation so far was summarised to fit "
+            f"the model's context window. Your summary of it:]\n\n{reply.turn.text.strip()}\n\n"
+            "Continue the work from here."))]
+        self.measured, self.unmeasured_chars = 0, 0
+
+    async def _make_room(self, room: float | None, *, refused: bool, summarised: bool):
+        """Elide first; summarise when eliding was not enough — or when the
+        provider refused the call as too long and eliding had nothing left."""
+        before = self._size()
+        freed = self._elide()
+        if freed and not refused and not self._crowded():
+            yield base.TraceLine({"type": "compacted", "how": "elided", "tokens_before": before,
+                                  "tokens_after": self._size()})
+            return
+        if freed and refused:
+            yield base.TraceLine({"type": "compacted", "how": "elided", "tokens_before": before,
+                                  "tokens_after": self._size(), "after_refusal": True})
+            return
+        if summarised:
+            raise ContextExhausted("the history does not fit the model's context window even "
+                                   "summarised — the task needs a model with a larger window")
+        async for bill in self._summarise(room):
+            yield bill
+        yield base.TraceLine({"type": "compacted", "how": "summarised", "tokens_before": before,
+                              "tokens_after": self._size()})
 
     async def attempt(self, prompt: str, resume: str | None = None):
         if self.price is None and not getattr(self.client, "reports_cost", False):
@@ -544,10 +721,15 @@ class LoopDriver:
             self.transcript = [Turn("user", text=prompt)]
         elif self.transcript[-1].role == "assistant" and not self.transcript[-1].calls:
             self.transcript.append(Turn("user", text=prompt))
+            self.unmeasured_chars += len(prompt)
             self.calls = 0
         yield base.Session(base.RUN_ID)
         specs = [ToolSpec(t.name, t.description, t.input_schema) for t in self.tools.values()]
         spent = 0.0
+        # Whether the provider refused the last call as too long, and whether
+        # the history has been summarised since the last call that fit: a
+        # second summary of a summary is a loop, not a fix.
+        overflowed = summarised = False
         while True:
             if self.calls >= MAX_TURNS:
                 yield base.TraceLine({"type": "max_turns", "calls": self.calls})
@@ -565,6 +747,15 @@ class LoopDriver:
             if room is not None and room <= 0:
                 raise BudgetReached(f"per-run cap reached: ${spent:.4f} spent of "
                                     f"${self.max_usd:g} left for this attempt")
+            if self._crowded() or overflowed:
+                async for item in self._make_room(room, refused=overflowed,
+                                                  summarised=summarised):
+                    if isinstance(item, base.AttemptResult):
+                        summarised = True
+                        spent += item.cost_usd or 0.0
+                    yield item
+                overflowed = False
+                continue
             max_tokens = MAX_OUTPUT_TOKENS
             if room is not None and self.price is not None and self.price["output"] > 0:
                 affordable = int(room / self.price["output"] * 1_000_000)
@@ -584,13 +775,18 @@ class LoopDriver:
                                 and base._priced(self.price, event) >= room):
                             cut = True
                             break
-            except Exception:
+            except Exception as exc:
                 # A call that dies after the provider stated its prompt is
                 # metered at that prompt. Whether a provider bills a call it
                 # failed is its business; the budget assumes it does.
                 if stated is not None:
                     yield self._bill(stated, "interrupted")
-                raise
+                if self.client.error_kind(exc) != "context":
+                    raise
+                # Too long for the window: make room and make the call again.
+                yield base.TraceLine({"type": "context_refused", "error": repr(exc)[:500]})
+                overflowed = True
+                continue
             self.calls += 1
             if cut:
                 bill = self._bill(stated, "budget_stop")
@@ -609,6 +805,18 @@ class LoopDriver:
                                f"{base.MODEL} has no price on this install to meter it by")
             spent += bill.cost_usd
             self.transcript.append(reply.turn)
+            # What the next call will be sent: this prompt, and the reply as it
+            # goes back — its text and calls, never the reasoning its output
+            # tokens also counted, which is not replayed (and counting it made
+            # a thinking model look full when it was not).
+            self.measured = bill.tokens_in + bill.cache_read + bill.cache_creation
+            self.unmeasured_chars = len(reply.turn.text) + sum(
+                len(c.name) + len(json.dumps(c.input, default=str)) for c in reply.turn.calls)
+            # A summary is spent only once the history fits again: a prompt
+            # whose fixed part alone fills the window would otherwise be
+            # summarised after every call, forever, making no progress.
+            if not self._crowded():
+                summarised = False
             yield base.TraceLine({"type": "AssistantMessage", "model": reply.model,
                                   "stop": reply.stop,
                                   "calls": [c.name for c in reply.turn.calls]})
@@ -637,11 +845,19 @@ class LoopDriver:
                                       "preview": output.text[:2000]})
                 outputs.append(output)
             self.transcript.append(Turn("user", outputs=tuple(outputs)))
+            self.unmeasured_chars += sum(len(o.text) for o in outputs)
+            while self.charges:
+                charge = self._bill(self.charges.pop(0), "web_search")
+                yield charge
+                spent += charge.cost_usd or 0.0
 
     def error_kind(self, exc: BaseException) -> str | None:
-        if isinstance(exc, (BudgetReached, Unpriced, ModelRefused)):
+        if isinstance(exc, (BudgetReached, Unpriced, ModelRefused, ContextExhausted)):
             return "fatal"
-        return self.client.error_kind(exc)
+        kind = self.client.error_kind(exc)
+        # Reaching the harness at all, a refusal for length was not fixed by
+        # making room: retrying it unchanged would be refused the same way.
+        return "fatal" if kind == "context" else kind
 
     def drain(self) -> list[dict]:
         return []

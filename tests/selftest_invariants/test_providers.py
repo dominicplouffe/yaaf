@@ -122,13 +122,16 @@ def test_a_provider_that_states_its_costs_needs_no_price(client):
 
 
 def test_an_install_price_wins_over_the_catalog_for_the_lease(client):
-    _price(client, catalog.DEFAULT_MODEL, input=1.0, output=3.0)
+    default = catalog.resolve(catalog.DEFAULT_MODEL, "anthropic")
+    _price(client, default, input=1.0, output=3.0)
     project = make_project(client, slug="repriced")
     with db_session() as session:
         dispatch_once(session)
     job = next(j for j in lease_and_prepare(limit=10) if j.project_id == project["id"])
     assert (job.price["input"], job.price["output"]) == (1.0, 3.0)
-    assert client.delete(f"{PRICES}/{catalog.DEFAULT_MODEL}", headers=ADMIN).status_code == 200
+    assert client.delete(f"{PRICES}/{default}", headers=ADMIN).status_code == 200
+    # A price is for a model; a class names no model until it is resolved.
+    assert _price(client, catalog.DEFAULT_MODEL).status_code == 422
 
 
 # ── R2: a grant the harness cannot honour ───────────────────────────────────────
@@ -166,7 +169,7 @@ def test_a_credential_names_the_provider_it_pays(client):
     ({"provider": "deepseek", "mode": "subscription"}, "DeepSeek takes"),
     ({"provider": "custom"}, "carries the server's address"),
     ({"provider": "custom", "base_url": "ollama:11434"}, "carries the server's address"),
-    ({"provider": "deepseek", "base_url": "http://elsewhere/v1"}, "only for a custom endpoint"),
+    ({"provider": "deepseek", "base_url": "http://elsewhere/v1"}, "a base URL is only for"),
     ({"provider": "deepseek", "value": "sk-ant-api03-not-deepseek"}, "Anthropic credential"),
 ])
 def test_a_credential_that_cannot_be_what_it_says_is_refused(client, fields, says):
@@ -301,15 +304,16 @@ def test_a_deepseek_seat_is_leased_onto_the_loop_with_its_own_key(client, critic
     ceo, critic_job = jobs[project["ceo_agent_id"]], jobs[agent_by_name(project, "Dee")]
     assert ceo.billing_env.get("ANTHROPIC_API_KEY") == "sk-ant-api03-claude-test"
     assert "DEEPSEEK_API_KEY" not in ceo.billing_env
-    assert (critic_job.provider, critic_job.harness) == ("deepseek", "openai_compatible")
+    assert (critic_job.provider, critic_job.harness) == ("deepseek", "yaaf_loop")
     assert critic_job.billing_env.get("DEEPSEEK_API_KEY") == "sk-deepseek-test-value"
     assert "ANTHROPIC_API_KEY" not in critic_job.billing_env
     assert critic_job.provider_spec == {
-        "name": "deepseek", "base_url": "https://api.deepseek.com/v1",
-        "key_env": "DEEPSEEK_API_KEY", "reports_cost": False, "search": False,
-        "failure_markers": ["authentication fails", "insufficient balance"]}
+        "name": "deepseek", "protocol": "openai_chat", "auth": "bearer",
+        "base_url": "https://api.deepseek.com/v1", "key_env": "DEEPSEEK_API_KEY",
+        "reports_cost": False, "search": False, "search_usd": 0.0, "mints_tokens": False,
+        "headers": {}, "failure_markers": ["authentication fails", "insufficient balance"]}
     assert critic_job.price["output"] == 0.42
-    assert get_backend(critic_job.harness).entrypoint == "openai_compatible_entry.py"
+    assert get_backend(critic_job.harness).entrypoint == "loop_entry.py"
 
 
 @pytest.mark.parametrize(("provider", "key_env", "address"), [
@@ -348,7 +352,7 @@ def test_a_long_tail_provider_is_a_row_and_nothing_else(client, provider, key_en
                              trigger={"type": "test"}))
     job = next(j for j in lease_and_prepare(limit=20)
                if j.agent_id == agent_by_name(project, "Dee"))
-    assert (job.provider, job.harness) == (provider, "openai_compatible")
+    assert (job.provider, job.harness) == (provider, "yaaf_loop")
     assert job.billing_env == {key_env: f"key-for-{provider}"}
     assert (job.provider_spec["base_url"], job.provider_spec["key_env"]) == (address, key_env)
     assert job.provider_spec["failure_markers"]
@@ -482,10 +486,17 @@ def test_a_role_that_withholds_files_cannot_run_on_codex(client):
     """Codex hands the models it knows best a file editor whatever the config
     says, so a role that leaves files off is refused rather than widened."""
     make_project(client, start=False)
-    refused = _role(client, "talker", model="gpt-6-sol", tool_permissions={"files": False})
+    refused = _role(client, "talker", model="gpt-6-sol", harness="codex_cli",
+                    tool_permissions={"files": False})
     assert refused.status_code == 422 and "cannot run without files" in refused.text
-    assert _role(client, "talker", model="gpt-6-sol",
+    assert _role(client, "talker", model="gpt-6-sol", harness="codex_cli",
                  tool_permissions={"files": True}).status_code == 200
+    # yaaf's own loop withholds every grant — the road an OpenAI key takes by
+    # default now (docs/PROVIDERS.md §3) — so the same role runs there once
+    # its model has a price to be metered by.
+    assert _price(client, "gpt-6-sol").status_code == 200
+    assert _role(client, "talker", model="gpt-6-sol", harness="yaaf_loop",
+                 tool_permissions={"files": False}).status_code == 200
 
 
 def test_an_openai_seat_needs_a_price_only_under_a_dollar_meter(client):

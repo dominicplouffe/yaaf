@@ -1,10 +1,9 @@
-// App-wide settings: the three things that are true above every project, and
-// your own account.
+// App-wide settings: what is true above every project, and your own account.
 //
-// Two of the three — the Founder's own model credential and the Slack connection —
-// are small, stateful and read once a quarter. The third, the LLM credentials
-// projects pay with, is a working list that on a real install runs to dozens
-// of rows. Stacking all three on one scroll meant the rarely-touched cards sat
+// Most of it — the Founder's own model credential, the model lineups, the web
+// search backend, the Slack connection — is small, stateful and read once a
+// quarter. The LLM credentials projects pay with are a working list that on a
+// real install runs to dozens of rows. Stacking all three on one scroll meant the rarely-touched cards sat
 // below a table that was itself the reason nobody scrolled: to change a Slack
 // channel prefix you first travelled past forty credentials.
 //
@@ -22,17 +21,27 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { del, get, post, put, UserRow } from "../api";
 import { PasswordCard, SessionsCard, TokensCard } from "../account";
-import { Credential, LlmCredentials, ModelPrices, useProviders } from "../llmCredentials";
+import { Credential, ModelPrices } from "../llmCredentials";
 import { useMe } from "../me";
 import { People } from "../people";
+import { ProvidersSection } from "../providerCards";
+import {
+  BaseUrlFields, DEFAULT_PROVIDER, KeyHelp, KeyInput, ModelSelect, ProviderInfo, useModels,
+  useProviders,
+} from "../providers";
+import { providerStatus, Readiness, READINESS } from "../readiness";
+import { ModelsSection } from "../settingsModels";
 import { SecretInput } from "../ui";
 
-interface AnthropicSettings {
+interface PlatformSettings {
   configured: boolean;
   billing_mode: string;
   /** Which provider the platform credential pays; the Founder runs on it. */
   provider: string;
+  /** The model the Founder runs on: its reference, resolved on that provider. */
   model: string;
+  /** As set — a class (`@frontier`) until somebody names a model. */
+  model_ref?: string;
   note: string;
   /** Its own key, or one of the LLM credentials, borrowed — named, never shown. */
   source?: { source: "own" | "llm_credential" | null; credential_id?: string; name?: string };
@@ -42,7 +51,7 @@ interface AnthropicSettings {
     key is enough to start. */
 function BorrowCard({
   settings, reload,
-}: { settings: AnthropicSettings; reload: () => void }) {
+}: { settings: PlatformSettings; reload: () => void }) {
   const [existing, setExisting] = useState<Credential[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
@@ -105,7 +114,9 @@ interface CredentialCounts {
 }
 
 interface AppSettings {
-  anthropic: AnthropicSettings;
+  platform?: PlatformSettings;
+  /** The same section, under the name it had when it could pay nobody else. */
+  anthropic: PlatformSettings;
   slack: SlackSettings;
   llm_credentials: CredentialCounts;
 }
@@ -116,29 +127,36 @@ function Flash({ note }: { note: { ok: boolean; text: string } | null }) {
   return <p className={note.ok ? "help" : "error"}>{note.text}</p>;
 }
 
+/** Kinds the Founder can be paid with. It runs in the control plane's own
+    process: on a provider's API with a key, or — for a login only the Claude
+    Code CLI can hold — on that CLI, which the server drives for it. */
+const founderKinds = (seller: ProviderInfo | undefined) =>
+  (seller?.kinds ?? []).filter((k) => k.mode === "api_key" || k.default_harness === "claude_agent_sdk");
+
+const PLATFORM = "/admin/settings/platform-credential";
+
 function ModelCard({
   settings, reload,
-}: { settings: AnthropicSettings; reload: () => void }) {
+}: { settings: PlatformSettings; reload: () => void }) {
   const [value, setValue] = useState("");
   const [mode, setMode] = useState(settings.billing_mode);
-  const [provider, setProvider] = useState(settings.provider || "anthropic");
+  const [provider, setProvider] = useState(settings.provider || DEFAULT_PROVIDER);
   const [baseUrl, setBaseUrl] = useState("");
-  const [model, setModel] = useState(settings.model);
+  const [model, setModel] = useState(settings.model_ref ?? settings.model);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
-  // Any provider the Founder can run on: Anthropic's CLI takes a key or a
-  // subscription; every other provider's chat API takes an API key.
-  const sellers = useProviders();
+  const sellers = useProviders().filter((p) => p.protocol);
+  const catalog = useModels();
   const seller = sellers.find((p) => p.name === provider);
-  const kinds = (seller?.kinds ?? []).filter(
-    (k) => provider === "anthropic" || k.mode === "api_key");
-  const anthropic = provider === "anthropic";
+  const kinds = founderKinds(seller);
+  const kind = kinds.find((k) => k.mode === mode) ?? kinds[0];
+  const saved = settings.model_ref ?? settings.model;
 
   useEffect(() => {
     setMode(settings.billing_mode);
-    setProvider(settings.provider || "anthropic");
-    setModel(settings.model);
-  }, [settings.billing_mode, settings.provider, settings.model]);
+    setProvider(settings.provider || DEFAULT_PROVIDER);
+    setModel(settings.model_ref ?? settings.model);
+  }, [settings.billing_mode, settings.provider, settings.model, settings.model_ref]);
 
   async function run(fn: () => Promise<string>) {
     setBusy(true);
@@ -153,6 +171,7 @@ function ModelCard({
     }
   }
 
+  const sellerLabel = sellers.find((p) => p.name === settings.provider)?.label ?? settings.provider;
   return (
     <div className="card">
       <p className="help" style={{ marginTop: 0 }}>
@@ -162,18 +181,14 @@ function ModelCard({
         {settings.configured && settings.source?.source === "llm_credential" ? (
           <>
             <span className="badge good">configured</span> drafting on the LLM credential{" "}
-            <strong>{settings.source.name}</strong>, running <code>{settings.model}</code>.
+            <strong>{settings.source.name}</strong> ({sellerLabel}), running{" "}
+            <code>{settings.model}</code>.
           </>
         ) : settings.configured ? (
           <>
-            <span className="badge good">configured</span>{" "}
-            {settings.provider && settings.provider !== "anthropic"
-              ? `${sellers.find((p) => p.name === settings.provider)?.label
-                  ?? settings.provider} API key`
-              : settings.billing_mode === "subscription"
-                ? "OAuth subscription token"
-                : "Anthropic API key"}{" "}
-            is installed, running <code>{settings.model}</code>. The value is never shown
+            <span className="badge good">configured</span> a {sellerLabel}{" "}
+            {settings.billing_mode === "subscription" ? "subscription" : "API key"} is
+            installed, running <code>{settings.model}</code>. The value is never shown
             again — rotate it by pasting a new one.
           </>
         ) : (
@@ -189,61 +204,47 @@ function ModelCard({
         <div>
           <label className="field">Provider</label>
           <select value={provider} disabled={busy}
-                  onChange={(e) => { setProvider(e.target.value); setMode("api_key"); }}>
-            {(sellers.length ? sellers : [{ name: "anthropic", label: "Anthropic" }])
-              .map((p) => <option key={p.name} value={p.name}>{p.label}</option>)}
+                  onChange={(e) => { setProvider(e.target.value); setMode("api_key"); setBaseUrl(""); }}>
+            {sellers.length === 0 && <option value={provider}>Loading providers…</option>}
+            {sellers.map((p) => <option key={p.name} value={p.name}>{p.label}</option>)}
           </select>
         </div>
-        <div>
+        {kinds.length > 1 && <div>
           <label className="field">Key type</label>
           <select value={mode} disabled={busy} onChange={(e) => setMode(e.target.value)}>
-            {kinds.length ? kinds.map((k) => (
-              <option key={k.mode} value={k.mode}>{k.bills.split(",")[0]}</option>
-            )) : <option value="api_key">API key</option>}
+            {kinds.map((k) => <option key={k.mode} value={k.mode}>{k.bills.split(",")[0]}</option>)}
           </select>
-        </div>
-        <div>
-          <label className="field">
-            {settings.configured ? "Replace the key — blank keeps the current one" : "The key"}
-          </label>
-          <SecretInput
-            value={value}
-            onChange={setValue}
-            placeholder={!anthropic ? "the key" : mode === "subscription" ? "sk-ant-oat…" : "sk-ant-api…"}
-            disabled={busy}
-          />
-        </div>
+        </div>}
       </div>
-      {seller?.credential_base_url && (
-        <div>
-          <label className="field">The server&apos;s base URL</label>
-          <input value={baseUrl} disabled={busy} placeholder="http://ollama:11434/v1"
-                 onChange={(e) => setBaseUrl(e.target.value)} />
-        </div>
-      )}
+      {seller?.credential_base_url && <BaseUrlFields provider={seller} value={baseUrl}
+        onChange={setBaseUrl} secret={value} disabled={busy} />}
+      <label className="field">
+        {settings.configured ? `Replace the ${(kind?.label ?? "key").toLowerCase()} — blank keeps the current one`
+          : kind?.label ?? "The key"}
+      </label>
+      <KeyInput kind={kind} value={value} onChange={setValue} disabled={busy}
+        placeholder={seller?.local ? "Leave blank — it takes no key" : undefined} />
+      <KeyHelp provider={seller} kind={kind} />
       <p className="help">
-        {!anthropic
-          ? "On any provider but Anthropic the Founder runs on its chat API, with this key and "
-            + "the model below — one of that provider's — which is saved with it."
-          : mode === "subscription"
-            ? "A subscription token comes from `claude setup-token` and starts sk-ant-oat."
-            : "An API key comes from the Anthropic console and starts sk-ant-api."}{" "}
-        Pasting one where the other belongs is refused here rather than failing on your
-        first message.
+        The Founder runs on this provider&apos;s own API — or, for a Claude subscription, on
+        the Claude Code CLI — with the model below. Unless you name one, that is the
+        provider&apos;s Frontier model. Pasting a key where another kind belongs is refused
+        here rather than failing on your first message.
       </p>
 
       <div className="actions">
         <button
           className="primary"
-          disabled={busy || value.trim().length < 8}
+          disabled={busy || (!seller?.local && value.trim().length < 8)
+            || (!!seller?.credential_base_url && !baseUrl.trim())}
           onClick={() =>
             run(async () => {
-              await put("/admin/settings/anthropic", {
+              await put(PLATFORM, {
                 value: value.trim(), mode, provider,
                 ...(baseUrl.trim() ? { base_url: baseUrl.trim() } : {}),
                 // The model travels with a key of another provider: the two are
                 // one decision, and the server refuses them apart.
-                ...(model.trim() !== settings.model || provider !== settings.provider
+                ...(model.trim() !== saved || provider !== settings.provider
                   ? { model: model.trim() } : {}),
               });
               setValue("");
@@ -259,8 +260,7 @@ function ModelCard({
               disabled={busy}
               onClick={() =>
                 run(async () => {
-                  const result = await post<{ ok: boolean; detail: string }>(
-                    "/admin/settings/anthropic/test");
+                  const result = await post<{ ok: boolean; detail: string }>(`${PLATFORM}/test`);
                   if (!result.ok) throw new Error(result.detail);
                   return result.detail;
                 })
@@ -275,7 +275,7 @@ function ModelCard({
                              + "No project is affected — they never used it."))
                   return;
                 run(async () => {
-                  await del("/admin/settings/anthropic");
+                  await del(PLATFORM);
                   return "Key removed.";
                 });
               }}
@@ -288,24 +288,23 @@ function ModelCard({
 
       <label className="field">Model the Founder runs on</label>
       <div className="actions">
-        <input
-          value={model}
-          disabled={busy}
-          onChange={(e) => setModel(e.target.value)}
-          style={{ maxWidth: 260 }}
-        />
+        <ModelSelect value={model} onChange={setModel} info={catalog} registry={sellers}
+          primary={provider} providersShown={[provider]} disabled={busy} />
         <button
-          disabled={busy || model.trim() === settings.model || model.trim().length < 3}
+          disabled={busy || model.trim() === saved || model.trim().length < 2}
           onClick={() =>
             run(async () => {
-              await put("/admin/settings/anthropic/model", { model: model.trim() });
-              return `The Founder now runs on ${model.trim()}.`;
+              const said = await put<{ model: string }>(`${PLATFORM}/model`, { model: model.trim() });
+              return `The Founder now runs on ${said.model ?? model.trim()}.`;
             })
           }
         >
           Save model
         </button>
       </div>
+      {settings.model_ref && settings.model_ref !== settings.model &&
+        <p className="help">{settings.model_ref} resolves to <code>{settings.model}</code> on{" "}
+          {sellerLabel}.</p>}
       <Flash note={note} />
     </div>
   );
@@ -516,12 +515,122 @@ function SlackCard({
   );
 }
 
-type SectionKey = "credentials" | "prices" | "founder" | "slack" | "people" | "account";
+// ── web search: the install's own backend ───────────────────────────────────────
+
+interface SearchBackend { name: string; label: string; base_url: string | null;
+  suggested_usd: number; key: boolean; console_url: string | null }
+interface SearchSettings {
+  configured: { backend: string; label: string; base_url: string; price_usd: number; has_key: boolean } | null;
+  backends: SearchBackend[];
+}
+
+function WebSearchSection({ reload: reloadRail }: { reload: () => void }) {
+  const [data, setData] = useState<SearchSettings | null>(null);
+  const [backend, setBackend] = useState("");
+  const [key, setKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [price, setPrice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [stranded, setStranded] = useState<string[]>([]);
+  const adopt = useCallback((d: SearchSettings) => {
+    setData(d);
+    const chosen = d.configured?.backend ?? d.backends[0]?.name ?? "";
+    setBackend(chosen);
+    setBaseUrl(d.configured?.base_url ?? "");
+    setPrice(String(d.configured?.price_usd ?? d.backends.find((b) => b.name === chosen)?.suggested_usd ?? ""));
+  }, []);
+  useEffect(() => {
+    get<SearchSettings>("/admin/settings/web-search").then(adopt)
+      .catch((e) => setNote({ ok: false, text: (e as Error).message }));
+  }, [adopt]);
+  async function run(fn: () => Promise<string>) {
+    setBusy(true); setNote(null);
+    try { setNote({ ok: true, text: await fn() }); reloadRail(); }
+    catch (e) { setNote({ ok: false, text: (e as Error).message }); } finally { setBusy(false); }
+  }
+  if (!data) return <div className="card muted">Loading…</div>;
+  const chosen = data.backends.find((b) => b.name === backend);
+  const current = data.configured;
+  const sameBackend = current?.backend === backend;
+  return <>
+    <h2 style={{ marginTop: 0 }}>Web search</h2>
+    <p className="help">A role granted the web is promised search. Claude, GPT and Gemini
+      search on their own APIs; most other providers — and the OpenCode CLI — do not, and a
+      web role on one of them is refused until this install has a search backend of its own.
+      Every query is billed into the run at the price below, under its cap, and the key never
+      reaches an agent&apos;s shell.</p>
+    <div className="card">
+      <p className="help" style={{ marginTop: 0 }}>{current
+        ? <><span className="badge good">configured</span> {current.label}, ${current.price_usd} a query.</>
+        : <><span className="badge warn">not set</span> web roles run only where the provider or the harness searches.</>}</p>
+      <div className="row">
+        <div><label className="field">Backend</label>
+          <select value={backend} disabled={busy} onChange={(e) => {
+            setBackend(e.target.value);
+            const next = data.backends.find((b) => b.name === e.target.value);
+            setPrice(String(next?.suggested_usd ?? "")); setBaseUrl(next?.base_url ?? "");
+          }}>
+            {data.backends.map((b) => <option key={b.name} value={b.name}>{b.label}</option>)}
+          </select></div>
+        <div><label className="field">Price per query (USD)</label>
+          <input type="number" min={0} step="any" value={price} disabled={busy}
+            onChange={(e) => setPrice(e.target.value)} /></div>
+      </div>
+      {chosen && !chosen.base_url && <label className="field">Address
+        <input value={baseUrl} disabled={busy} placeholder="http://searxng:8080"
+          onChange={(e) => setBaseUrl(e.target.value)} /></label>}
+      {chosen?.key && <>
+        <label className="field">{current?.has_key && sameBackend ? "Replace the key — blank keeps the current one" : "API key"}</label>
+        <SecretInput value={key} onChange={setKey} disabled={busy} />
+      </>}
+      <p className="help">{chosen?.suggested_usd !== undefined && `Suggested from ${chosen.label}'s entry rate: $${chosen.suggested_usd} a query — set what your plan actually charges. `}
+        {chosen?.console_url && <a href={chosen.console_url} target="_blank" rel="noreferrer">
+          Get a {chosen.label} key ↗</a>}</p>
+      <div className="actions">
+        <button className="primary" disabled={busy || !backend
+          || (!!chosen?.key && !key.trim() && !(sameBackend && current?.has_key))}
+          onClick={() => run(async () => {
+            adopt(await put<SearchSettings>("/admin/settings/web-search", {
+              backend, key: key.trim() || null, base_url: baseUrl.trim() || null,
+              price_usd: price === "" ? null : Number(price) }));
+            setKey("");
+            return "Saved. From the next run, web roles are honoured on every provider.";
+          })}>{current ? "Update" : "Save"}</button>
+        {current && <>
+          <button disabled={busy} onClick={() => run(async () => {
+            const said = await post<{ ok: boolean; detail: string }>("/admin/settings/web-search/test");
+            if (!said.ok) throw new Error(said.detail);
+            return said.detail;
+          })}>Test it</button>
+          <button disabled={busy} onClick={() => {
+            if (!confirm("Remove the search backend? Web roles on providers that cannot search "
+                         + "are refused at their next run.")) return;
+            run(async () => {
+              const said = await del<{ unrunnable: string[] }>("/admin/settings/web-search");
+              setStranded(said.unrunnable ?? []);
+              adopt(await get<SearchSettings>("/admin/settings/web-search"));
+              return "Removed.";
+            });
+          }}>Remove</button>
+        </>}
+      </div>
+      <Flash note={note} />
+      {stranded.length > 0 && <div className="notice-box" role="alert">
+        <b>These seats can no longer run:</b>
+        <ul>{stranded.map((line) => <li key={line}>{line}</li>)}</ul></div>}
+    </div>
+  </>;
+}
+
+type SectionKey = "providers" | "prices" | "models" | "search" | "founder" | "slack" | "people" | "account";
 
 const SECTIONS: ({ group: string; admin: boolean } | { key: SectionKey; label: string; admin: boolean })[] = [
   { group: "This box", admin: true },
-  { key: "credentials", label: "LLM credentials", admin: true },
+  { key: "providers", label: "Providers", admin: true },
+  { key: "models", label: "Models", admin: true },
   { key: "prices", label: "Model prices", admin: true },
+  { key: "search", label: "Web search", admin: true },
   { key: "founder", label: "Founder", admin: true },
   { key: "slack", label: "Slack", admin: true },
   { key: "people", label: "People", admin: true },
@@ -537,6 +646,7 @@ function railNote(
   s: AppSettings | null,
   users: UserRow[] | null,
   email: string,
+  readiness: Readiness | null,
 ): { text: string; tone: string } {
   if (key === "account") return { text: email, tone: "" };
   if (key === "people") {
@@ -547,18 +657,25 @@ function railNote(
       ? { text: `${waiting} not set up yet`, tone: "warn" }
       : { text: `${active.length} ${active.length === 1 ? "person" : "people"}`, tone: "good" };
   }
-  if (!s) return { text: "…", tone: "" };
-  if (key === "credentials") {
-    const { total, in_use, hidden, offerable } = s.llm_credentials;
-    if (total === 0) return { text: "none yet", tone: "warn" };
-    if (in_use === 0) return { text: `${offerable} offered · none in use`, tone: "warn" };
-    return { text: `${in_use} in use of ${offerable}${hidden ? ` · ${hidden} hidden` : ""}`,
-             tone: "good" };
+  if (key === "providers") {
+    if (!readiness) return { text: "…", tone: "" };
+    const rows = readiness.providers;
+    if (rows.length === 0) return { text: "none connected", tone: "warn" };
+    const blocked = rows.filter((p) => providerStatus(p).tone === "critical").length;
+    if (blocked) return { text: `${blocked} of ${rows.length} blocked`, tone: "warn" };
+    const attention = rows.filter((p) => providerStatus(p).tone === "warn").length;
+    return attention
+      ? { text: `${rows.length - attention} ready · ${attention} to look at`, tone: "good" }
+      : { text: `${rows.length} ready`, tone: "good" };
   }
+  if (!s) return { text: "…", tone: "" };
   if (key === "prices") return { text: "what models cost", tone: "" };
+  if (key === "models") return { text: "what each class runs on", tone: "" };
+  if (key === "search") return { text: "for providers that cannot", tone: "" };
   if (key === "founder") {
-    return s.anthropic.configured
-      ? { text: s.anthropic.model, tone: "good" }
+    const founder = s.platform ?? s.anthropic;
+    return founder.configured
+      ? { text: founder.model, tone: "good" }
       : { text: "no key set", tone: "warn" };
   }
   return s.slack.bot_token_configured
@@ -579,12 +696,18 @@ export default function Settings() {
   const keys = visible.flatMap((s) => ("key" in s ? [s.key] : []));
   // An admin still lands where they always did; everybody else has one place
   // to land, and it is their own account.
-  const asked = params.get("section") as SectionKey | null;
-  const section: SectionKey = asked && keys.includes(asked) ? asked : admin ? "credentials" : "account";
+  // "credentials" is what the section was called before it was Providers; old
+  // links, and the refusal texts that still say "Settings → LLM credentials",
+  // land on the same place.
+  const raw = params.get("section");
+  const asked = (raw === "credentials" ? "providers" : raw) as SectionKey | null;
+  const section: SectionKey = asked && keys.includes(asked) ? asked : admin ? "providers" : "account";
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
 
   const reload = useCallback(() => {
     if (!admin) return;
     get<AppSettings>("/admin/settings").then(setSettings).catch((e) => setError(e.message));
+    get<Readiness>(READINESS).then(setReadiness).catch(() => {});
   }, [admin]);
 
   const reloadUsers = useCallback(() => {
@@ -600,7 +723,7 @@ export default function Settings() {
   useEffect(reload, [reload]);
   useEffect(reloadUsers, [reloadUsers]);
 
-  const platform = section === "credentials" || section === "founder" || section === "slack";
+  const platform = section === "founder" || section === "slack";
 
   return (
     <>
@@ -629,7 +752,7 @@ export default function Settings() {
               // One heading over one entry is a label for nothing.
               return admin ? <div className="grp" key={item.group}>{item.group}</div> : null;
             }
-            const note = railNote(item.key, settings, users, me?.email ?? "");
+            const note = railNote(item.key, settings, users, me?.email ?? "", readiness);
             return (
               <button
                 key={item.key}
@@ -648,13 +771,15 @@ export default function Settings() {
             <div className="card muted">Loading…</div>
           ) : (
             <>
-              {section === "credentials" && <LlmCredentials onChanged={reload} />}
+              {section === "providers" && <ProvidersSection onChanged={reload} />}
               {section === "prices" && <ModelPrices />}
+              {section === "models" && <ModelsSection />}
+              {section === "search" && <WebSearchSection reload={reload} />}
               {section === "founder" && settings && (
                 <>
                   <h2 style={{ marginTop: 0 }}>The key the Founder drafts on</h2>
-                  <BorrowCard settings={settings.anthropic} reload={reload} />
-                  <ModelCard settings={settings.anthropic} reload={reload} />
+                  <BorrowCard settings={settings.platform ?? settings.anthropic} reload={reload} />
+                  <ModelCard settings={settings.platform ?? settings.anthropic} reload={reload} />
                 </>
               )}
               {section === "slack" && settings && (

@@ -33,6 +33,7 @@ from yaaf.core.models import (
     Agent,
     AgentKind,
     AgentStatus,
+    ChairmanNote,
     Channel,
     ChannelKind,
     ChannelRead,
@@ -482,6 +483,25 @@ def _utc(value):
     return value
 
 
+def _note_lines(session: Session, project_id: str) -> set[str]:
+    """His notes on decisions, as boardroom lines (see chairman_notes)."""
+    return set(session.execute(
+        select(ChairmanNote.message_id).where(ChairmanNote.project_id == project_id,
+                                              ChairmanNote.message_id.is_not(None))
+    ).scalars())
+
+
+def _wakes_at_once(message: Message, channel_kind: str | None, notes: set[str]) -> bool:
+    """The one urgency rule, for the dispatcher and the screen that explains it:
+    the chairman never waits out a batching window, and neither does anything
+    said in his room. His note on a decision is his line, but not a message he
+    is waiting on there — it wakes the CEO on the ordinary clock, and on a
+    delivered project only with something that would."""
+    if message.id in notes:
+        return False
+    return message.sender_user_id is not None or channel_kind == ChannelKind.BOARDROOM
+
+
 def unread_messages_for(
     session: Session, project: Project, agent: Agent
 ) -> list[tuple[Message, Channel | None]]:
@@ -538,11 +558,9 @@ def _unread_detail_for(
     unread = unread_messages_for(session, project, agent)
     oldest = None
     urgent = False
+    notes = _note_lines(session, project.id) if unread else set()
     for message, channel in unread:
-        # Same urgency rule as _wake_reasons: the chairman never waits out
-        # a batching window, and neither does anything said in his room.
-        if (message.sender_user_id is not None
-                or (channel is not None and channel.kind == ChannelKind.BOARDROOM)):
+        if _wakes_at_once(message, channel.kind if channel is not None else None, notes):
             urgent = True
         at = _utc(message.created_at)
         if oldest is None or at < oldest:
@@ -1596,6 +1614,7 @@ def _wake_reasons(
         ]
         actionable = 0
         channel_urgent = False
+        notes = _note_lines(session, project.id) if unread else set()
         for message in unread:
             root_id = message.thread_id or message.id
             if _breaker_trips(session, project, cons, message):
@@ -1606,8 +1625,7 @@ def _wake_reasons(
                 continue
             actionable += 1
             total += 1
-            if (message.sender_user_id is not None
-                    or channel_kinds.get(channel_id) == ChannelKind.BOARDROOM):
+            if _wakes_at_once(message, channel_kinds.get(channel_id), notes):
                 urgent = True
                 channel_urgent = True
             if oldest_at is None or message.created_at < oldest_at:

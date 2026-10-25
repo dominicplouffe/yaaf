@@ -12,6 +12,14 @@ it means the brief: an answer that calls the note standing is refused unless a
 brief written after the note exists, pending his confirm or confirmed. That is
 how "every day" stops being a sentence in a notice and becomes an order every
 agent reads first.
+
+A note is also his line in the boardroom. This table alone was a side door:
+the chat session never read it, and nothing read it once a work run had
+answered, so the CEO he was talking to told him it was still waiting on a reply
+he had sent two hours earlier — and then that it had "missed" it. The boardroom
+is the one record every CEO lane reads, from any run and after any restart, so
+whatever he writes on a decision is said there too, the way an answer to an ask
+already was.
 """
 
 from __future__ import annotations
@@ -20,24 +28,96 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
-from yaaf.core.models import Approval, ApprovalKind, ApprovalStatus, ChairmanNote, utcnow
+from yaaf.core.models import (
+    Approval,
+    ApprovalKind,
+    ApprovalStatus,
+    ChairmanNote,
+    Channel,
+    ChannelKind,
+    Message,
+    Project,
+    utcnow,
+)
 
 #: How many unanswered notes the CEO's pack carries. More than this is a backlog
 #: the oldest of which it should already have answered.
 PACK_LIMIT = 10
 
 
+#: Every chairman route that takes his words (a note, a reason), by endpoint
+#: name. In DOORS, what he types is recorded here and said in the boardroom.
+#: In KEPT_OFF, it is not, and the entry says why. The suite reads the routes
+#: and fails on one that is in neither — twenty of these once told the CEO
+#: through a notice the chat lane might eat and nobody kept past a day.
+DOORS = frozenset({
+    "decide_approval", "fulfill_need", "acknowledge_heads_up", "acknowledge_flag",
+    "stand_down_team", "recall_team", "pause_project", "extend_hypothesis",
+    "decide_overrun", "adjust_spend_window", "amend_constitution",
+    "audit_evidence", "audit_task", "decide_audit_sample",
+    "accept_requirement", "cut_requirement", "requirement_verdict",
+    "reopen_requirement", "restage_requirement", "reestimate_requirement",
+    "remove_requirement_edge", "add_requirement", "reword_requirement",
+    "pull_review_lever", "close_review",
+    "accept_commitment", "decline_commitment", "move_commitment",
+})
+KEPT_OFF = {
+    "boardroom_post": "it is the boardroom: what he types there is the record itself",
+    "stop_project": "the project is over, and no CEO will run again to answer it",
+    "extend_approval": "it moves a clock on his own desk; nothing changes for the CEO",
+}
+
+#: How much of what the note was written on heads its boardroom line.
+ABOUT_IN_CHAT = 140
+
+
 def record(session: Session, project_id: str, source_kind: str, source_id: str,
-           about: str, body: str | None) -> ChairmanNote | None:
-    """Hold his note for an answer. An empty note is no note."""
+           about: str, body: str | None, *, user_id: str) -> ChairmanNote | None:
+    """Hold his note for an answer, and say it in the boardroom as his.
+
+    An empty note is no note. `user_id` is whoever wrote it — required, so a
+    new door cannot record a note without saying who said it in the room."""
     text = (body or "").strip()
     if not text:
         return None
     row = ChairmanNote(id=ids.new_id(ids.CHAIRMAN_NOTE), project_id=project_id,
                        source_kind=source_kind, source_id=source_id,
                        about=about[:400], body=text)
+    message = _say_in_boardroom(session, project_id, user_id, about, text)
+    if message is not None:
+        row.message_id = message.id
     session.add(row)
     return row
+
+
+def chat_line(about: str, text: str) -> str:
+    """The same shape an answer to an ask takes from the Inbox: what it answers,
+    then what he said."""
+    head = about if len(about) <= ABOUT_IN_CHAT else about[:ABOUT_IN_CHAT - 1] + "…"
+    return f"Re: “{head}” — {text}"
+
+
+def _say_in_boardroom(session: Session, project_id: str, user_id: str,
+                      about: str, text: str) -> Message | None:
+    from yaaf.server import unread
+
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == project_id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalars().first()
+    if boardroom is None:
+        return None
+    message = Message(id=ids.new_id(ids.MESSAGE), project_id=project_id,
+                      channel_id=boardroom.id, sender_user_id=user_id,
+                      body=chat_line(about, text), created_at=utcnow())
+    # No wake of its own: the chat session polls the room every two seconds,
+    # and with no session live the dispatcher's next tick sees his line.
+    session.add(message)
+    project = session.get(Project, project_id)
+    if project is not None:
+        # Whoever speaks has read the room up to what they said.
+        unread.mark_boardroom_read(session, project, message.created_at)
+    return message
 
 
 def unanswered(session: Session, project_id: str) -> list[ChairmanNote]:
@@ -52,8 +132,47 @@ class NoteError(ValueError):
     """An answer that cannot be taken, in words the CEO can act on."""
 
 
+#: How much of the CEO's boardroom answer is kept as the line under his note.
+REPLY_CHARS = 1_000
+
+
+def _clip_reply(body: str) -> str:
+    body = body.strip()
+    return body if len(body) <= REPLY_CHARS else body[:REPLY_CHARS - 1] + "…"
+
+
+def link_answer(session: Session, project_id: str, reply: Message,
+                answers: list[str]) -> int:
+    """Put the CEO's boardroom reply under each of his notes it was written to.
+
+    `answers` is what the poster says it is replying to: the chat session sends
+    the ids of the chairman lines its turn was given, so the link is the one
+    the reply was composed for, never a guess from the order of the room. A
+    note already answered keeps its answer. Returns how many it closed."""
+    if not answers:
+        return 0
+    linked = 0
+    for note in session.execute(
+        select(ChairmanNote).where(ChairmanNote.project_id == project_id,
+                                   ChairmanNote.message_id.in_(answers),
+                                   ChairmanNote.reply_message_id.is_(None))
+    ).scalars():
+        note.reply_message_id = reply.id
+        note.reply = _clip_reply(reply.body)
+        linked += 1
+    return linked
+
+
 def answer(session: Session, project_id: str, note_id: str, reply: str,
-           standing: bool) -> ChairmanNote:
+           standing: bool, *, agent_id: str, say_it: bool) -> tuple[ChairmanNote, bool]:
+    """Close his note, saying whether it applies beyond the one item.
+
+    One answer per note: if the CEO already answered him in the boardroom,
+    that is the reply under his note and `reply` adds nothing. If not, `reply`
+    is said in the boardroom now, as the CEO's line — unless `say_it` is False:
+    the chat session's turn ends by posting its own reply, naming his line, and
+    that reply is then put under his note (link_answer). Returns the note and
+    whether it was already answered there."""
     note = session.get(ChairmanNote, note_id)
     if note is None or note.project_id != project_id:
         raise NoteError(f"{note_id!r} is not one of the chairman's notes on this project.")
@@ -66,10 +185,33 @@ def answer(session: Session, project_id: str, note_id: str, reply: str,
             "brief_propose with it folded into the standing orders (the whole brief, "
             "his words and their numbers), then answer this note again. If it was "
             "about that one item only, answer with standing=false.")
-    note.reply = reply.strip()
+    already = note.reply_message_id is not None
+    if not already:
+        said = _say_reply(session, note, agent_id, reply.strip()) if say_it else None
+        note.reply_message_id = said.id if said is not None else None
+        note.reply = reply.strip()
     note.standing = standing
     note.answered_at = utcnow()
-    return note
+    return note, already
+
+
+def _say_reply(session: Session, note: ChairmanNote, agent_id: str,
+               reply: str) -> Message | None:
+    """The CEO's answer as its line in the boardroom. Always allowed: his note
+    is the last thing said, and a reply to him is never a status."""
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == note.project_id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalars().first()
+    if boardroom is None:
+        return None
+    head = (note.about if len(note.about) <= ABOUT_IN_CHAT
+            else note.about[:ABOUT_IN_CHAT - 1] + "…")
+    message = Message(id=ids.new_id(ids.MESSAGE), project_id=note.project_id,
+                      channel_id=boardroom.id, sender_agent_id=agent_id,
+                      body=f"On “{head}”: {reply}", created_at=utcnow())
+    session.add(message)
+    return message
 
 
 def _brief_since(session: Session, project_id: str, note: ChairmanNote) -> bool:
@@ -79,6 +221,14 @@ def _brief_since(session: Session, project_id: str, note: ChairmanNote) -> bool:
             Approval.status.in_([ApprovalStatus.PENDING, ApprovalStatus.APPROVED]),
             Approval.created_at >= note.created_at)
     ).first() is not None
+
+
+def _for_context(session: Session, n: ChairmanNote) -> dict:
+    # Read-only: the chat lane builds this too, and consumes nothing.
+    heard = n.reply if n.reply_message_id else None
+    return {"id": n.id, "on": n.about, "he_wrote": n.body, "at": n.created_at.isoformat(),
+            **({"boardroom_message_id": n.message_id} if n.message_id else {}),
+            **({"you_answered_in_the_boardroom": heard} if heard else {})}
 
 
 def replies_for(session: Session, source_kind: str, ids_: list[str]) -> dict[str, dict]:
@@ -109,7 +259,10 @@ def for_context(session: Session, project_id: str) -> dict | None:
             "you answer it with note_answer — one line he reads under his note. Decide "
             "first whether it applies to that one item (standing=false) or from now on "
             "(standing=true). From now on means the brief: fold it in with "
-            "brief_propose, then answer. Do not file it as a memory."),
-        "notes": [{"id": n.id, "on": n.about, "he_wrote": n.body,
-                   "at": n.created_at.isoformat()} for n in notes],
+            "brief_propose, then answer. Do not file it as a memory. Each is also his "
+            "line in the boardroom. He gets ONE answer: where you already answered "
+            "him there (you_answered_in_the_boardroom), those are the words under his "
+            "note and note_answer only records standing; otherwise note_answer says "
+            "your reply in the boardroom for you — do not also post it."),
+        "notes": [_for_context(session, n) for n in notes],
     }

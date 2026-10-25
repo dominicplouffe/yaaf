@@ -194,7 +194,7 @@ dates are its cycles' (§4).
   "completed" work and evidence to check yourself, and records your verdict —
   because AI reviewers approve nearly everything, and you don't.
 - **CEO-judgment metric.** The platform tracks how much of what the CEO called
-  progress actually survived verification, and shows it on the Team page.
+  progress actually survived verification, and shows it on the project's Inbox.
 
 ## 7. Money that can't run away
 
@@ -375,7 +375,7 @@ absence, what the CEO decided on its own authority, what you decided, and what
 that leaves waiting on you. It reads in the app under **Inbox → Updates** and
 **Activity → What happened**, from `yaaf briefing`, over MCP, and — with
 `brief_daily_at` set — in your email every morning. It is deliberately not a
-panel on the Team page or the Inbox's Needs-you tab: both of those are the
+panel on the project's Inbox or the Inbox's Needs-you tab: both of those are the
 present tense, and a narrative sitting on top of them restated their own counts
 back at them. It has a tab of its own beside them instead.
 
@@ -425,7 +425,7 @@ costs you the interrupt and never the news: everything in that class is a
 section. Both what was sent and what was held are on the record.
 
 **The agenda — what it is going to do next.** A fourteen-day strip on each
-project's Team page (and `yaaf agenda`): the wall-clock wakes, the standing
+project's Inbox (and `yaaf agenda`): the wall-clock wakes, the standing
 review, the cycle roll, bet kill dates, approval and spot-check expiries, the
 budget reset, and the promised delivery date with the platform's own projection
 beside it. Recurring wakes are drawn as *rhythms* — one fact with a cadence and
@@ -514,6 +514,23 @@ evidence at all about your *project*.
   the rest (`{slug}-leadership`, one room per team) when you want them, so a new
   project does not cost your workspace six channels nobody has spoken in. The
   bot token still never enters a sandbox, shared or not.
+- **One record, every lane.** Anything you write to the project on a decision
+  — a note on an approval, an assist, a credential you fill in, a heads-up or a
+  flag; your reason for cutting, adding, rewording or re-staging scope; a note
+  on an audit, a review, a commitment, an overrun or a measurement window; why
+  you paused, stood down a team or extended a bet — is also your line in the
+  boardroom (`Re: “…” — what you wrote`), the same way an answer to one of the
+  CEO's questions is. The CEO you chat with answers it there, whichever of its
+  runs is awake and however recently its chat session restarted, because the
+  boardroom is the record every one of them reads. You get **one answer**: the
+  CEO's reply in the chat is also what shows under your note in the Inbox. A
+  note on a decision never counts as an answer to the CEO's own open
+  questions, and a decision with no note says nothing. Every route that takes
+  your words is named in one list (`chairman_notes.DOORS`), and the suite
+  fails on a new one that is not. The chat session is
+  shown everything a work run of the CEO is shown — bar a short list the
+  platform names with a reason — consumes none of it, and every lane sees what
+  the CEO itself last said, so one run does not undo the last one's order.
 - **Directives.** A rule you state in chat becomes a rule the platform holds:
   the CEO files it as a directive citing your actual message, and the platform
   enforces it from the next call. Scope is limited to your reporting
@@ -540,19 +557,33 @@ evidence at all about your *project*.
   browser receives the folder headers and only the rows it is showing. A
   stale index is served at once and refreshed behind the request, with its
   age in the footer, so a slow disk never stalls the tab.
+- **One click from anywhere.** Deliverables comes pinned under the project in
+  the sidebar, and **Pin to sidebar** on the file reader puts a single file
+  there too; ⌘K finds any deliverable by its name.
 - **The listing says what it dropped.** Past the per-project cap (50,000
   working files) the newest are kept, not the alphabetically first, and the
   screen says how many are not shown.
 
 ## 16. Setup that can't silently fail
 
-- **Health checklist** on each project's Team page names anything misconfigured
+- **A setup checklist that ticks itself.** A new project's Inbox lists what it
+  still needs — model key, brief, data sources, the credentials its agents
+  asked for, integrations, people — each one click from the exact Settings
+  section, each ticked off by the project's own state rather than by anyone
+  pressing a box. The model key cannot be skipped; the rest can. While any step
+  is left, one sidebar row opens the next one; when none is, both go away.
+- **Health checklist** on each project's Inbox names anything misconfigured
   — dead billing, a credential that isn't a URL, an untested data source, a
   team running an outdated role version — in plain language, with a fix link. A
   healthy project shows nothing at all.
-- **Data sources prove themselves.** An MCP server is a one-form add (name,
-  URL, roles, Save): the URL is validated at the door, you can run a live check
-  against it, and the granted roles' sandboxes mount it as real tools.
+- **Data sources prove themselves.** An MCP server is a one-form add that asks
+  for the address first and checks it before anything is stored, including how
+  it wants you to sign in. Every source then shows one state in words with the
+  button that fixes it, and the granted roles' sandboxes mount it as real tools.
+- **Secrets & variables on one line each.** Plain settings show as they are;
+  secrets show their last four characters; an access map shows every grant,
+  variables and data sources alike, against every team, and saves ticks as one
+  batch. Rotating a key keeps who has it.
 - **Project export** downloads the whole project as one JSON file — goal,
   teams and their schedules, constitution, config, data sources, and every
   project service credential *value* (Slack tokens and webhook signing keys

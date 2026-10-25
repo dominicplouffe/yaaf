@@ -92,14 +92,17 @@ is settled — none of them may be skipped:
   `billing_secret_id` stays unset until he answers — it is the one field in
   the draft that spends somebody's money. With none, the ledger says the
   project can be created but cannot start until an administrator adds a
-  credential in Settings. Every seat's model must be a provider the draft
-  pays: a credential pays one provider (list_credentials says which), and the
-  roles run on the model their role names. So a DeepSeek key over Claude roles
-  needs the seats moved — `ceo_model_override`, and each team's
-  `model_overrides` keyed by name, on one of that provider's models — or that
-  provider paid too, named in the draft's `credentials` as {provider: id}
-  under the same rule: one per provider, or ask. `propose_bundle` refuses a
-  seat nothing pays.
+  credential in Settings. A credential pays one provider (list_credentials
+  says which), and that provider becomes the project's: a role naming a class
+  — `@frontier`, `@balanced`, `@fast` — runs on that provider's model for the
+  class, which list_credentials shows beside each credential. So a role
+  library written once runs on Claude, GPT, Gemini or DeepSeek alike, and you
+  move no seat to change provider. A role pinned to a particular model runs on
+  that model whatever pays: it needs its provider paid too, named in the
+  draft's `credentials` as {provider: id} under the same rule — one per
+  provider, or ask — or the seat moved with `ceo_model_override` or a team's
+  `model_overrides` keyed by name. `propose_bundle` refuses a seat nothing
+  pays, and one whose class has no model on its provider.
 
 When the frontier is empty, call `ask` with `done: true`, no questions and
 the whole ledger, then `propose_bundle` with the final draft. The page shows

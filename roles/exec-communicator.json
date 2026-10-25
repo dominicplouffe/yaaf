@@ -7,7 +7,7 @@
     "data"
   ],
   "description": "Turns the data desk's findings, caveats and provenance into a short HTML slide deck an executive finishes and acts on. Four chart shapes, number tiles that mean something, every figure traceable to its file.",
-  "model": "claude-sonnet-5-5",
+  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

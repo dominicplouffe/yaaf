@@ -91,12 +91,23 @@ RUNTIMES_TABLES = ("project_llm_credentials", "model_prices")
 # 0046: people (docs/AUTH.md).
 PEOPLE_TABLES = ("user_sessions", "user_tokens", "user_setup_links", "login_failures")
 PEOPLE_COLUMNS = (("users", "deactivated_at"),)
+# 0055: provider-neutral by construction — where a price came from and the
+# model's window, the provider check, failover.
+PROVIDERS_TABLES = ("provider_checks", "credential_breakers")
+PROVIDERS_COLUMNS = (
+    ("model_prices", "source"),
+    ("model_prices", "context_window"),
+    ("projects", "fallback_secret_id"),
+)
+# 0056: a person's sidebar pins, and a project's setup checklist.
+SHORTCUTS_COLUMNS = (("users", "pins"), ("projects", "setup"))
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
                   + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES + RUNTIMES_TABLES
-                  + PEOPLE_TABLES)
+                  + PEOPLE_TABLES + PROVIDERS_TABLES)
 REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
-                   + STAGE_10_COLUMNS + RUNTIMES_COLUMNS + PEOPLE_COLUMNS
+                   + STAGE_10_COLUMNS + RUNTIMES_COLUMNS + PEOPLE_COLUMNS + PROVIDERS_COLUMNS
+                   + SHORTCUTS_COLUMNS
                    + (("secrets", "llm_mode"),))
 
 
@@ -231,3 +242,56 @@ def test_the_guarded_helpers_make_the_chain_rerunnable(scratch_db):
 
     live, models = _live_schema(engine), _model_schema()
     assert set(models) <= set(live), "the chain destroyed tables the baseline had built"
+
+
+def test_0055_keeps_an_api_key_seat_on_the_cli_it_ran_on(client, monkeypatch):
+    """An OpenAI or Google API key now defaults to yaaf's own loop; on main it
+    drove the Codex or Gemini CLI. A running project's seats must not change
+    engine under it on deploy, so 0055 pins the CLI each such seat ran on —
+    team members included, whose role version is their team's — and leaves
+    every other seat, and every seat that named a harness, alone."""
+    import importlib.util
+
+    from tests.conftest import ADMIN, ROLE_MIN
+    from yaaf.core.db import db_session, engine
+    from yaaf.core.models import Agent
+
+    for slug, model in (("chief", "gpt-5.5"), ("writer", "gpt-5.5"), ("claude", "claude-sonnet-5-5")):
+        assert client.post("/admin/roles", headers=ADMIN, json={
+            "slug": slug, "name": slug.title(), **ROLE_MIN, "model": model,
+            "is_ceo_role": slug != "writer"}).status_code == 200
+    client.put("/admin/settings/model-prices/gpt-5.5", headers=ADMIN,
+               json={"input": 1.25, "output": 10})
+    client.post("/admin/users", headers=ADMIN, json={"email": "chair@example.com",
+                                                     "display_name": "Chair"})
+
+    def credential(name, provider, value):
+        return client.post("/admin/settings/llm-credentials", headers=ADMIN, json={
+            "name": name, "mode": "api_key", "provider": provider, "value": value}).json()["id"]
+
+    def project(slug, ceo, billing, teams):
+        created = client.post("/admin/projects", headers=ADMIN, json={
+            "slug": slug, "name": slug, "goal": "Prove the framework works.",
+            "chairman_email": "chair@example.com", "ceo_role_slug": ceo, "ceo_name": "CEO",
+            "billing_secret_id": billing, "teams": teams})
+        assert created.status_code == 200, created.text
+        return created.json()["id"]
+
+    on_openai = project("on-openai", "chief", credential("OpenAI", "openai", "sk-proj-mig"),
+                        [{"role_slug": "writer", "name": "W", "employees": ["Ola"]}])
+    on_claude = project("on-claude", "claude",
+                        credential("Claude", "anthropic", "sk-ant-api03-" + "m" * 40),
+                        [{"role_slug": "claude", "name": "C", "employees": ["Cy"]}])
+    spec = importlib.util.spec_from_file_location(
+        "m0055", REPO / "migrations" / "versions" / "0055_provider_neutral.py")
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    with engine().begin() as connection:
+        monkeypatch.setattr(migration.op, "get_bind", lambda: connection, raising=False)
+        migration._keep_former_defaults()
+    with db_session() as session:
+        overrides = {(a.project_id, a.name): a.harness_override
+                     for a in session.query(Agent).filter(
+                         Agent.project_id.in_((on_openai, on_claude)))}
+    assert overrides == {(on_openai, "CEO"): "codex_cli", (on_openai, "Ola"): "codex_cli",
+                         (on_claude, "CEO"): None, (on_claude, "Cy"): None}

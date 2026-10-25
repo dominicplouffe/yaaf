@@ -135,6 +135,38 @@ def whoami(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) 
     }
 
 
+@router.post("/model-token")
+def model_token(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -> dict:
+    """A fresh model token for a run whose provider is paid with a key file
+    the control plane mints from (Vertex; yaaf.core.model_tokens). The run
+    asks before its own expires; the key file itself never leaves here. Only
+    for the provider the run was leased on, and only while it runs — a
+    finished run's token is refused at the door like every other call."""
+    from fastapi import HTTPException
+
+    from yaaf.core import model_tokens, project_credentials
+    from yaaf.core.crypto import decrypt
+    from yaaf.runtimes.providers import PROVIDERS
+
+    seller = PROVIDERS.get(ctx.run.provider or "")
+    if seller is None or not seller.mints_tokens:
+        raise HTTPException(status_code=409, detail="this run's model credential is a key, "
+                                                    "not one that mints tokens")
+    # The fallback counts as held here whether or not a failover is still on:
+    # a run leased onto it during an outage keeps running after the billing
+    # provider recovers, and its next token must not read as a dead key.
+    secret = project_credentials.credential_for(session, ctx.project, seller.name,
+                                                fallback=True)
+    if secret is None:
+        raise HTTPException(status_code=409, detail=f"this project no longer pays {seller.label}")
+    try:
+        token, expires = model_tokens.mint(seller.name, decrypt(secret.ciphertext))
+    except model_tokens.MintError as exc:
+        raise HTTPException(status_code=502 if exc.kind == "transient" else 409,
+                            detail=str(exc)) from exc
+    return {"token": token, "expires_at": int(expires)}
+
+
 @router.get("/context")
 def context_pack(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -> dict:
     from yaaf.server.contextpack import build_context_pack
@@ -874,6 +906,10 @@ class MessagePost(BaseModel):
     # Break-glass on the chairman's reporting cadence, named rather than
     # implied. Verified where verifiable, recorded either way.
     override: str | None = None
+    # The chairman lines this message answers, by id. The chat session sends
+    # the lines its turn was given, so a reply to his note on a decision is put
+    # under that note — by what it was written to, not where it fell in the room.
+    in_reply_to: list[str] = Field(default_factory=list, max_length=50)
 
 
 @router.post("/messages")
@@ -896,6 +932,10 @@ def post_message(
         body=body.body,
     )
     session.add(message)
+    if body.in_reply_to and ctx.agent.kind == AgentKind.CEO:
+        from yaaf.server import chairman_notes
+
+        chairman_notes.link_answer(session, ctx.project.id, message, body.in_reply_to)
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {"id": message.id, "at": message.created_at.isoformat() if message.created_at else None}
 
@@ -3296,15 +3336,24 @@ def note_answer(
     if ctx.agent.kind != AgentKind.CEO:
         raise Refusal("The chairman's notes are the CEO's to answer.", status_code=403)
     try:
-        note = chairman_notes.answer(session, ctx.project.id, note_id, body.reply,
-                                     body.standing)
+        note, already = chairman_notes.answer(session, ctx.project.id, note_id, body.reply,
+                                              body.standing, agent_id=ctx.agent.id,
+                                              say_it=ctx.run.kind != RunKind.CHAT_SESSION)
     except chairman_notes.NoteError as exc:
         raise Refusal(str(exc), status_code=422) from exc
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=ctx.project.id, actor=f"agent:{ctx.agent.id}",
         action="chairman_note.answer", entity="chairman_note", entity_id=note.id,
-        detail={"standing": body.standing}))
-    return {"id": note.id, "note": "Answered. He reads your reply under his note."}
+        detail={"standing": body.standing, "answered_in_boardroom": already}))
+    if already:
+        return {"id": note.id, "note": (
+            "Closed. You had already answered him in the boardroom, so those words are "
+            f"the reply under his note: “{note.reply[:200]}”. Nothing more was posted.")}
+    if ctx.run.kind == RunKind.CHAT_SESSION:
+        return {"id": note.id, "note": (
+            "Closed. Your reply to him this turn is the answer: it goes under his note "
+            "too. Do not repeat it.")}
+    return {"id": note.id, "note": "Answered. Said in the boardroom, and under his note."}
 
 
 @router.post("/needs")

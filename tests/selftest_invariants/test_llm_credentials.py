@@ -225,7 +225,7 @@ def test_hiding_is_refused_while_a_live_project_can_still_spend(client):
     drawer = client.get(f"{URL}?include_hidden=true", headers=ADMIN).json()[0]
     assert drawer["in_use"] is False
     assert drawer["projects"] == [{"id": project["id"], "name": "Acme", "status": "stopped",
-                                  "live": False}]
+                                  "live": False, "as": "pays"}]
     assert client.delete(f"{URL}/{key['id']}", headers=ADMIN).status_code == 409
 
 

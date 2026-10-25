@@ -225,7 +225,7 @@ wait_for_schema() {
 # because roles/ is deliberately not baked into the image — inside the
 # container that glob matches nothing and exits 0.
 sync_role_library() {
-  local port="$1" library slug refile seeded=0 present=0 refiled=0 added=""
+  local port="$1" library slug refile class said seeded=0 present=0 refiled=0 adopted=0 kept=0 added=""
   library=$(curl -fsS -H "Authorization: Bearer ${YAAF_DEPLOY_TOKEN}" \
     "http://127.0.0.1:${port}/admin/roles") \
     || return 1
@@ -254,6 +254,23 @@ print(json.dumps({"name": d["name"], "category": d.get("category"),
                   "domains": d.get("domains", [])}))' "$f")" >/dev/null \
           && refiled=$((refiled + 1)) || true
       fi
+      # The library moved from Claude models to model classes. A role this
+      # install already has follows, as a new version, only where it still
+      # names the model its class means on Anthropic — one somebody moved by
+      # hand is theirs (409). Teams stay pinned; on Anthropic nothing changes.
+      class=$(sed -n 's/.*"model"[[:space:]]*:[[:space:]]*"\(@[a-z]*\)".*/\1/p' "$f" | head -1)
+      if [ -n "$class" ]; then
+        said=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+          "http://127.0.0.1:${port}/admin/roles/${slug}/adopt-class" \
+          -H "Authorization: Bearer ${YAAF_DEPLOY_TOKEN}" \
+          -H "Content-Type: application/json" \
+          --data "{\"model\": \"${class}\"}") || said=000
+        case "$said" in
+          200) adopted=$((adopted + 1)) ;;
+          409) kept=$((kept + 1)) ;;
+          *) warn "could not move role ${slug} onto ${class} (HTTP ${said})" ;;
+        esac
+      fi
       continue
     fi
     curl -fsS -X POST "http://127.0.0.1:${port}/admin/roles" \
@@ -265,6 +282,9 @@ print(json.dumps({"name": d["name"], "category": d.get("category"),
   done
   if [ "$refiled" -gt 0 ]; then
     ok "$refiled role(s) refiled into the hiring categories (no new versions)"
+  fi
+  if [ "$adopted" -gt 0 ] || [ "$kept" -gt 0 ]; then
+    ok "roles on model classes: $adopted checked or moved; $kept left on a model set by hand"
   fi
   if [ "$seeded" -eq 0 ]; then
     ok "$present role(s) already loaded, none missing — nothing re-seeded"

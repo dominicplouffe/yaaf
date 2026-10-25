@@ -126,6 +126,10 @@ def janitor_all() -> None:
             verify_pending_evidence(session)
     except Exception:
         log.exception("evidence verification failed")
+    # The install's models and prices, re-read once a day where it opted in.
+    from yaaf.core import model_upkeep
+
+    model_upkeep.tick()
 
 
 def janitor_once(session: Session) -> None:
@@ -504,7 +508,7 @@ def void_operate_commitments(session: Session, project: Project) -> None:
                 "a single delivery date for it meant nothing — and it should never have "
                 "been accepted. The platform has withdrawn it. The project is judged "
                 "cycle by cycle instead: each turn's results, and what carried over, "
-                "are on its Team page. Nothing about the work itself changed.",
+                "are on its Inbox. Nothing about the work itself changed.",
                 attention=Attention.FYI,
             )
 
