@@ -857,6 +857,15 @@ def price_gaps(session: Session, models: list[str]) -> list[dict]:
     return gaps
 
 
+@router.get("/projects/{project_id}/setup", dependencies=[authority.READ])
+def project_setup(project_id: str, session: Session = Depends(db)) -> dict:
+    """The setup checklist (yaaf.server.checklist): each step, whether the
+    project already has it, and the Settings section that does it."""
+    from yaaf.server import checklist
+
+    return checklist.view(session, _project(session, project_id))
+
+
 @router.get("/projects/{project_id}/health", dependencies=[authority.READ])
 def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     """Every way this project's configuration can be silently wrong, checked

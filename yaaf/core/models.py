@@ -588,6 +588,12 @@ class User(Base):
     #: A timestamp rather than a delete, for the reason McpClient.revoked_at
     #: gives: the record names this person forever, so the row has to survive.
     deactivated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    #: The places this person pinned under a project in the sidebar, in their
+    #: order: [{"to", "label", "project_id"}]. NULL is someone who never
+    #: changed them, and reads as the default (yaaf.server.api.me.DEFAULT_PINS)
+    #: — so a default changed later reaches everyone who kept it, and an empty
+    #: list stays the deliberate "nothing pinned" it was.
+    pins: Mapped[list | None] = mapped_column(JSONVariant)
 
 
 class UserSession(Base):
@@ -750,6 +756,12 @@ class Project(Base):
     # When he last confirmed the brief. Null on a project still running on the
     # goal it was founded with.
     brief_confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # The setup checklist's own state: {"skipped": [step, ...], "closed_at",
+    # "closed_by"}. Only what a person decided is stored — whether a step is
+    # done is read from the project itself every time (yaaf.server.checklist),
+    # so the list can never claim a key is connected after it was removed.
+    # NULL is a project whose setup nobody has touched yet.
+    setup: Mapped[dict | None] = mapped_column(JSONVariant)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

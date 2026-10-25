@@ -1132,7 +1132,7 @@ export default function NewProject() {
             "form tests an address and holds the Connect button — then start the project.",
         );
         if (created.webhooks) setDone(created.id);
-        else navigate(`/projects/${created.id}/details/settings?s=sources`);
+        else navigate(`/projects/${created.id}/settings?s=sources`);
         return;
       }
       // The chairman already explained all of this to the Founder and argued
@@ -1190,7 +1190,7 @@ export default function NewProject() {
               Open the project
             </button>
             {!canStartNow && (
-              <button onClick={() => navigate(`/projects/${done}/details/settings?s=money`)}>
+              <button onClick={() => navigate(`/projects/${done}/settings?s=money`)}>
                 Add a key to start
               </button>
             )}

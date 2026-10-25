@@ -511,7 +511,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
         <Link to={`/projects/${p.id}`}>Overview →</Link>
         <Link to={`/projects/${p.id}/chat`}>Chat →</Link>
         <Link to={`/projects/${p.id}/details/tasks`}>Tasks →</Link>
-        <Link to={`/projects/${p.id}/details/settings`}>Settings →</Link>
+        <Link to={`/projects/${p.id}/settings`}>Settings →</Link>
       </div>
     </div>
   );

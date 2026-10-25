@@ -143,12 +143,12 @@ function UsedBy({ row }: { row: Credential }) {
   const done = row.projects.filter((p) => !p.live);
   return <>
     {live.map((p, i) => <span key={p.id}>{i > 0 && ", "}
-      <Link to={`/projects/${p.id}/details/settings`}>{p.name}</Link></span>)}
+      <Link to={`/projects/${p.id}/settings`}>{p.name}</Link></span>)}
     {live.length > 0 && done.length > 0 && <br />}
     {done.length > 0 && <span className="muted">
       {live.length > 0 ? "also " : ""}
       {done.slice(0, 3).map((p, i) => <span key={p.id}>{i > 0 && ", "}
-        <Link className="muted" to={`/projects/${p.id}/details/settings`}>{p.name}</Link> ({p.status})</span>)}
+        <Link className="muted" to={`/projects/${p.id}/settings`}>{p.name}</Link> ({p.status})</span>)}
       {done.length > 3 && `, +${done.length - 3} more`}
     </span>}
   </>;

@@ -99,12 +99,15 @@ PROVIDERS_COLUMNS = (
     ("model_prices", "context_window"),
     ("projects", "fallback_secret_id"),
 )
+# 0056: a person's sidebar pins, and a project's setup checklist.
+SHORTCUTS_COLUMNS = (("users", "pins"), ("projects", "setup"))
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
                   + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES + RUNTIMES_TABLES
                   + PEOPLE_TABLES + PROVIDERS_TABLES)
 REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
                    + STAGE_10_COLUMNS + RUNTIMES_COLUMNS + PEOPLE_COLUMNS + PROVIDERS_COLUMNS
+                   + SHORTCUTS_COLUMNS
                    + (("secrets", "llm_mode"),))
 
 

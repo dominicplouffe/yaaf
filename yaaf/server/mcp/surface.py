@@ -99,6 +99,12 @@ WITHHELD = {
         "with its put-away state beside it. A model clearing warnings off the "
         "chairman's card on his behalf is the one use this verb has that he did "
         "not ask for.",
+    "POST /admin/projects/{project_id}/setup":
+        "skipping a setup step or closing the checklist puts a reminder away for "
+        "everyone on the project, and its only effect is on what people see. A "
+        "model can read the list through `project` view=setup and do any step "
+        "itself through `configure` and `credential`; doing a step ticks it off, "
+        "which is the only way a model should make one go away.",
     "POST /admin/projects/{project_id}/tempo/keep":
         "keeping the pace is the chairman declining advice about how often his "
         "own money is spent, for everyone on the project at once. A model "

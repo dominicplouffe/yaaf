@@ -250,6 +250,42 @@ kbd {
 .sb-switch-t .warn { color: var(--warning); }
 .sb-switch .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
 .sb-switch .dot.run { background: var(--good); }
+/* The project card and its gear: Settings hangs off the project it configures. */
+.sb-switch-row { display: flex; align-items: stretch; gap: 4px; margin-bottom: 4px; }
+.sb-switch-row .sb-switch { margin-bottom: 0; width: auto; flex: 1; min-width: 0; gap: 7px; padding: 8px 6px 8px 8px; }
+.sb-switch-row .sb-switch > svg { width: 12px; height: 12px; flex: none; }
+.sb-switch-row .sb-switch-t > span { white-space: nowrap; overflow: hidden; }
+.sb-gear {
+  flex: none; display: grid; place-items: center; width: 30px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface); color: var(--muted);
+}
+.sb-gear:hover { color: var(--ink); border-color: var(--border-strong); text-decoration: none; }
+.sb-gear.on { color: var(--accent); background: var(--surface-2); border-color: var(--border-strong); }
+/* Pins and the setup row sit under the five pages, past a hairline and with no
+   heading: a heading would be a row of its own, and the icons already say
+   which page each one is. */
+.sb-rule { height: 1px; background: var(--border); margin: 5px 10px; flex: none; }
+.sb-setup { color: var(--warning); }
+.sb-setup > svg { color: var(--warning); }
+.sb-setup:hover { color: var(--warning); }
+.sb-pin { padding: 0; gap: 0; position: relative; }
+.sb-pin-a { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; min-height: 32px;
+  padding: 5px 10px; color: inherit; border-radius: var(--radius-sm); }
+.sb-pin-a:hover { text-decoration: none; color: var(--ink); }
+.sb-pin-a > svg { color: var(--accent); flex: none; }
+.sb-unpin { display: grid; place-items: center; width: 26px; height: 26px; min-height: 26px; margin-right: 4px;
+  padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); opacity: 0; }
+.sb-pin:hover .sb-unpin, .sb-unpin:focus-visible { opacity: 1; }
+.sb-unpin:hover { background: var(--hover-strong); color: var(--ink); border: 0; }
+@media (hover: none) { .sb-unpin { opacity: 1; } }
+.pin-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 4px 10px;
+  font-size: var(--t-small); font-weight: 500; color: var(--ink-2); }
+.pin-btn.on { color: var(--accent); border-color: rgba(var(--accent-rgb), 0.5); background: rgba(var(--accent-rgb), 0.1); }
+.pin-offer { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: var(--s4);
+  padding: 8px 12px; border: 1px dashed rgba(var(--accent-rgb), 0.6); border-radius: var(--radius);
+  color: var(--ink-2); font-size: var(--t-small); }
+.pin-offer > svg { color: var(--accent); }
+.pin-offer > span { flex: 1; min-width: 12em; }
 .sb-live { display: inline-flex; align-items: center; gap: 5px; letter-spacing: 0; font-variant-numeric: tabular-nums; }
 .sb-live i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 .sb-live.on { color: var(--accent); }
@@ -3194,6 +3230,25 @@ label.check-line.strong { font-weight: 600; font-size: 14px; margin-top: 0; }
 
 /* Home: the checklist that disappears once it is done. */
 .setup-card { margin-bottom: var(--s4); }
+.setup-bar { height: 5px; border-radius: 3px; background: var(--sunken); overflow: hidden; margin-top: 8px; }
+.setup-bar i { display: block; height: 100%; background: var(--good); transition: width var(--fast) var(--ease); }
+.setup-step.skipped .mark { border-style: dashed; border-color: var(--border-strong); background: none; color: var(--muted); }
+.setup-step.skipped .st-t { color: var(--muted); }
+.setup-step .st-go { display: inline-flex; gap: 6px; align-items: center; }
+.setup-req { color: var(--warning); font-weight: 500; font-size: 12.5px; }
+/* Every setup step across the top of Settings while there is one left, so the
+   next step is one click from the last. */
+.setup-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: var(--s4);
+  padding: 8px 10px; border-radius: var(--radius); background: rgba(var(--warning-rgb), 0.1);
+  border: 1px solid rgba(var(--warning-rgb), 0.25); }
+.setup-strip-t { font-size: var(--t-small); font-weight: 600; color: var(--warning); margin-right: 4px; }
+.setup-chip { display: inline-flex; align-items: center; min-height: 28px; padding: 2px 11px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); font-size: var(--t-small); font-weight: 500; }
+.setup-chip:hover { text-decoration: none; border-color: var(--border-strong); color: var(--ink); }
+.setup-chip.done { color: var(--good); background: rgba(var(--good-rgb), 0.1); border-color: transparent; }
+.setup-chip.skipped { color: var(--muted); border-style: dashed; }
+.setup-chip.on { border-color: var(--accent); color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent); }
+.setup-skip { margin-left: auto; }
 .setup-steps { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; }
 .setup-step { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 10px 0; border-top: 1px solid var(--grid); }
 .setup-step:first-child { border-top: 0; }

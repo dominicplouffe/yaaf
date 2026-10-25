@@ -289,7 +289,7 @@ export default function Secrets({
                     <span><GrantChips options={options} selected={s.role_scopes} /></span>
                     <span className="vupd">{fmtDay(s.updated_at)}</span>
                     <Link className="btnlink small" title="Edit where it lives"
-                          to={`/projects/${projectId}/details/settings?s=${owner === "Slack" ? "integrations" : "sources"}`}>
+                          to={`/projects/${projectId}/settings?s=${owner === "Slack" ? "integrations" : "sources"}`}>
                       <Icon name="arrow" size={14} />
                     </Link>
                   </div>
@@ -301,7 +301,7 @@ export default function Secrets({
       )}
       <p className="help" style={{ marginTop: 10 }}>
         <Icon name="lock" size={12} /> The credential that pays for model calls is under{" "}
-        <Link to={`/projects/${projectId}/details/settings?s=money`}>Money</Link>.
+        <Link to={`/projects/${projectId}/settings?s=money`}>Money</Link>.
       </p>
 
       {drawn?.kind === "edit" && (() => {

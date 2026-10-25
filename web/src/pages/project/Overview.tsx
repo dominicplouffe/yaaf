@@ -33,6 +33,7 @@ import { Icon } from "../../ui/Icon";
 import { chairmanDecides, deliveryVerdict, cycleOverdue, flagPlain, fmtDate, fmtRoll, fullyAutonomous } from "../../ui/project";
 import { statusBadge } from "../Projects";
 import { InboxView } from "../Inbox";
+import { ProjectSetup } from "../../projectSetup";
 
 /** A project's home is its Inbox: what it needs from you and what you
     should know, in about five seconds.
@@ -535,9 +536,9 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
 /** Where a health check says the fix lives — a check that names a place the
     reader cannot click is read once and then skipped. */
 const WHERE_TO: Record<string, [string, string, boolean?]> = {
-  settings: ["/details/settings", "fix in Settings"],
-  money: ["/details/settings?s=money", "fix in Settings → Money"],
-  data_sources: ["/details/settings?s=sources", "open Data sources"],
+  settings: ["/settings", "fix in Settings"],
+  money: ["/settings?s=money", "fix in Settings → Money"],
+  data_sources: ["/settings?s=sources", "open Data sources"],
   plan: ["/details/roadmap", "open the Roadmap"],
   boardroom: ["/chat", "open the chat"],
   team: ["/team", "see the team"],
@@ -558,7 +559,7 @@ const whereOf = (check: { key: string; where?: string | null }) =>
 
 /** Where each problem verdict is fixed: page under the project, and the link. */
 const FIX_AT: Record<string, [string, string]> = {
-  blocked: ["/details/settings?s=money", "Add a key"],
+  blocked: ["/settings?s=money", "Add a key"],
   failing: ["/details/activity/runs", "See the runs"],
   late: ["/details/roadmap", "Cut scope or move the date"],
   at_risk: ["/details/roadmap", "See the plan"],
@@ -749,7 +750,7 @@ export default function Overview({
               // "Running" while its first run died: the platform allows it (a
               // keyless project is "not configured yet"), so the button says it.
               unpaid ? (
-                <Link to={`${base}/details/settings?s=money`} className="btnlink primary"
+                <Link to={`${base}/settings?s=money`} className="btnlink primary"
                   title="Agents cannot run without a billing credential">
                   <Icon name="play" size={15} />Add a key to start
                 </Link>
@@ -772,9 +773,11 @@ export default function Overview({
 
       <ModeStrip dash={dash} reload={ctx.reload} />
       <LateBanner ctx={ctx} />
-      <FailoverBanner dash={dash} settingsLink={`${base}/details/settings?s=money`} />
+      <FailoverBanner dash={dash} settingsLink={`${base}/settings?s=money`} />
 
       <TeamFoot ctx={ctx} published={shelf?.matched ?? null} />
+
+      <ProjectSetup ctx={ctx} />
 
       {/* The project's home is what it needs from you: this project's rows
           of the one Inbox, with their buttons, and what you should know. The
