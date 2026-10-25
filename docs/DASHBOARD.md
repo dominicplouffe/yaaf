@@ -555,8 +555,13 @@ and their page opens, with an address you can send:
 - **Next** — the other work in their hands, each with what it is for.
 - **This week** — finished, runs, cost, and runs today.
 - **What they have made** — their published results and how each was checked.
-- **How they work** — role and version, model and provider, this month's cost,
-  whether they talk to you (only the CEO does), wakes this hour.
+- **How they work** — role and version, model, provider and effort, this
+  month's cost, whether they talk to you (only the CEO does), wakes this hour.
+  **Change…** beside the model puts this one person on another model, effort
+  or harness than their role's — the rest of the team stays on the role, and
+  each choice can be set back to *the role's*. It is refused, with the reason,
+  if the seat could not run (a provider the project does not pay, an effort the
+  model does not take), and takes effect from their next run.
 - **Recent runs** — each with **What they did**, and **Every run they have
   done** opens Activity › Runs filtered to them.
 

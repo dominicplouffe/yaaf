@@ -383,7 +383,7 @@ All of them read manifests and the catalog; none names a harness.
 
 | # | Rule | Where it fires |
 |---|---|---|
-| R1 | **A credential the seat's harness cannot accept is refused** — a subscription token on `anthropic_api`, a ChatGPT login on a Gemini seat. | creation, add-team, hire, repin, credential change, recall; lease backstop; health (built in M1) |
+| R1 | **A credential the seat's harness cannot accept is refused** — a subscription token on `anthropic_api`, a ChatGPT login on a Gemini seat. | creation, add-team, hire, repin, a seat changed (`PATCH /admin/agents/{id}/seat`), credential change, recall; lease backstop; health (built in M1) |
 | R2 | **A harness that cannot withhold a tool the role does not grant is refused for that role** — and, from M3, one that cannot *honour* a grant: a role granting `web` needs something that searches — the harness, the provider's wire, or (from M7) the install's web search backend (open question 6). Codex always offers its own file edits; a role without `files` cannot be hired onto it. Widening a role's tools silently because the transport is clumsy is exactly what the role version exists to prevent; halving them silently is its mirror. | the role version itself, and every door R1 is at (built in M1; the web half in M3; the platform backend in M7) |
 | R3 | **A model with no price is refused on a harness that prices its runs, under a dollar meter.** A run nobody can price is a run the budget cannot stop. A harness that reports its own bill (both CLI harnesses) is not metered by the catalog and takes any model; a provider that states each call's cost (OpenRouter) needs no price; a credential metered in tokens is stopped in tokens. The price is the install's (Settings → Model prices) over the shipped catalog. | the role version, and every door R1 is at; lease backstop; the loop itself refuses to make a call it cannot price (built in M2; install prices in M3) |
 | R4 | **One project, one meter.** All of a project's credentials meter in USD or all in tokens. Two units cannot share one cap, and inventing an exchange rate between them is inventing a number. (Open question 1.) | project creation, a provider's credential attached, the billing credential changed (built in M3) |
@@ -606,7 +606,9 @@ scaffolding*:
       `SandboxBackend`, one entry script per harness
 - [x] `RoleVersion.harness`, `Agent.harness_override` (migration `0042`); the
       role editor's picker, fed by `GET /admin/harnesses`; overrides through
-      project create, add-team, export, clone and the New Project form
+      project create, add-team, export, clone and the New Project form — and,
+      after creation, one seat at a time from its person's page
+      (`PATCH /admin/agents/{id}/seat`, MCP `project_configure` `set_seat`)
 - [x] `yaaf_tools.py` — the catalog over stdio MCP, serving the SDK harness's
       own server object
 - [x] `CliDriver`; `claude_cli` on it — flags read off the SDK's own argv

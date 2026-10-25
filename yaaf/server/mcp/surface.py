@@ -67,6 +67,7 @@ REACHED = {
     "PATCH /admin/projects/{project_id}": "project_configure",
     "POST /admin/projects/{project_id}/teams": "project_configure (add_team)",
     "POST /admin/teams/{team_id}/repin": "project_configure (repin)",
+    "PATCH /admin/agents/{agent_id}/seat": "project_configure (set_seat)",
     "PUT /admin/projects/{project_id}/credentials/{provider_name}":
         "project_configure (pay_provider) — by credential name, never a value",
     "DELETE /admin/projects/{project_id}/credentials/{provider_name}":

@@ -418,7 +418,7 @@ drafting a bundle and being graded on it.
 
 | Tool | Does | Backing | Confirm? | Status |
 |---|---|---|---|---|
-| `project_configure` | Settings, teams, repin a team's role version; pay a second provider, or stop. | `PATCH /admin/projects/{id}`, `POST /admin/projects/{id}/teams`, `/admin/teams/{id}/repin`, `PUT`/`DELETE /admin/projects/{id}/credentials/{provider}` | yes | **done** (M5) |
+| `project_configure` | Settings, teams, repin a team's role version, put one agent on another model, effort or harness (`set_seat`); pay a second provider, or stop. | `PATCH /admin/projects/{id}`, `POST /admin/projects/{id}/teams`, `/admin/teams/{id}/repin`, `PATCH /admin/agents/{id}/seat`, `PUT`/`DELETE /admin/projects/{id}/credentials/{provider}` | yes | **done** (M5) |
 | `data_source` | `verb`: `add` \| `check` \| `oauth_start` \| `remove`. | `POST /admin/projects/{id}/mcp_servers` `/check` `/oauth/start`, `DELETE …/{name}` | yes on `add`/`remove` | **done** (M5) |
 | `credential` | Create or scope a secret **by reference only** — the value is never read back, and a value passed in is written and forgotten. `filename` makes it a *file* credential, so granted roles get a path; text only here, binary goes through the dashboard. | `POST /admin/secrets`, `GET /admin/secrets` (names only) | yes | **done** (M5) |
 | `amend` | Propose or cancel a constitution amendment; read the schema. | `POST /admin/projects/{id}/amendments`, `/admin/amendments/{id}/cancel`, `GET /admin/constitution/schema` | yes | **done** (M5) |
