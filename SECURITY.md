@@ -54,7 +54,7 @@ Four things, and it is worth being exact because a fifth used to be on this list
 ## What does **not** contain an agent run
 
 **The network.** There is no egress proxy and no per-role domain allowlist. One
-existed; it was removed deliberately (`docs/PLAN.md`) because a blocked request
+existed; it was removed deliberately, because a blocked request
 surfaced as an unlogged proxy 403 three layers from the agent that made it, and
 invisible failures cost more than they bought. That is a real trade and this is
 the honest statement of what it costs:
@@ -89,9 +89,9 @@ design — which is the whole thesis of the project applied to itself.
 
 Stated here rather than waiting for someone to find them:
 
-- **No outside security review has happened.** `docs/PLAN.md` names the moment
-  it will: the first claude.ai connection against a public deployment is also
-  the first time the security model is tested by someone who did not write it.
+- **No outside security review has happened.** The first claude.ai connection
+  against a public deployment will also be the first time the security model is
+  tested by someone who did not write it.
 - **`sandbox_mode="subprocess"` has no isolation.** It exists for laptops and
   CI without Docker. A task's success test can be a command string an *agent*
   wrote, and in this mode it would run on the runner host — so the platform now

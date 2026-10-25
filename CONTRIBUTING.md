@@ -123,9 +123,8 @@ via GitHub (profile email or a private security advisory on this repo).
 
 ## Where to start
 
-Read [docs/PLAN.md](docs/PLAN.md) first — the thesis, the kill conditions, an
-honest ledger of what exists, and what is deliberately not built.
-[docs/FEATURES.md](docs/FEATURES.md) is the map of the surface;
+Read [docs/FEATURES.md](docs/FEATURES.md) first — the map of the surface.
+[docs/GOVERNANCE.md](docs/GOVERNANCE.md) is every rule and its default;
 [docs/AGENT_API.md](docs/AGENT_API.md) is what an agent actually sees.
 
 Good first contributions: more invariant attacks, more chaos, more golden-eval

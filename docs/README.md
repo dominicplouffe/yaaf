@@ -34,6 +34,5 @@ Start here if you're new; skim the table if you're not.
 
 | Doc | What it covers |
 |---|---|
-| [PLAN.md](PLAN.md) | The thesis, the kill conditions, what is built, and what is deliberately not. |
 | [projects/](projects/) | Full worked project definitions from real use, longer than an example. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | How to work on yaaf itself. |

@@ -1,4 +1,4 @@
-"""CI gate: the golden-transcript evals (PLAN §"Agent runtime").
+"""CI gate: the golden-transcript evals.
 
 Role prompts and templates are editable in the UI; this file is what makes
 that safe. Each scripted scenario re-runs against the real app with the

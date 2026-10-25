@@ -54,9 +54,8 @@ first commit is 14 August 2026 — and it was built fast and in the open with
 Claude Code, which co-authored nearly every commit. What that bought is a
 policy engine and over 2,300 offline tests attacking it. What it has not bought is a project anyone but me has run for a
 month, or a security review by someone who did not write the thing. Both are
-true at once — [PLAN.md](docs/PLAN.md) says which claims are load-bearing and
-what would falsify them, and [SECURITY.md](SECURITY.md) says what contains an
-agent and what does not.
+true at once — [SECURITY.md](SECURITY.md) says what contains an agent and what
+does not.
 
 <img src="docs/screenshots/team.png" alt="A project's Team page: the chairman at the top, the CEO beneath, and each team — a newly hired Risk team drawn dashed with the CEO's reason — with what every person is doing, the model they run on, and what they have cost">
 
@@ -356,7 +355,6 @@ it, the governance layer underneath stands on its own.
 | [CLI](docs/CLI.md) | Every `yaaf` command |
 | [Agent API](docs/AGENT_API.md) | What agents can do; writing a role |
 | [Security](SECURITY.md) | Trust boundaries, what contains an agent, and the sharp edges |
-| [Plan](docs/PLAN.md) | Where this is going, and what would kill it |
 
 Actively developed, pre-1.0. Apache-2.0 ([LICENSE](LICENSE)). Contributions:
 [CONTRIBUTING.md](CONTRIBUTING.md).

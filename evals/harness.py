@@ -1,4 +1,4 @@
-"""The golden-transcript eval harness (PLAN §"Agent runtime").
+"""The golden-transcript eval harness.
 
 A scenario is a YAML file naming a project spec, a set of scripted behaviors
 (dotted refs into :mod:`evals.behaviors`), a tick count, and declarative

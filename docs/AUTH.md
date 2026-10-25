@@ -19,9 +19,9 @@ retired.
 
 ## What this is not
 
-- **Not multi-tenant orgs.** [PLAN.md](PLAN.md) keeps "Multi-tenant orgs and
-  k8s" under *Deliberately not built*, and this does not reopen it. One box,
-  several people, each project with its own chair. A project already plays the
+- **Not multi-tenant orgs.** One box with Docker Compose is the target, and
+  this does not change it. One box, several people, each project with its own
+  chair. A project already plays the
   part an org plays elsewhere — its own CEO, roster, budget and constitution —
   so membership is per project and nothing sits above it.
 - **Not an implicit local mode.** There is no "on loopback, everyone is the

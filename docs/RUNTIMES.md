@@ -18,9 +18,9 @@ then Codex, Gemini, OpenCode and whatever comes after them. Update the
 checkboxes as milestones land; if a decision here turns out wrong, change the
 doc in the same PR that changes the code.
 
-Adopting it meant rewriting one line of [PLAN.md](PLAN.md) — *"Multi-provider
+Adopting it reversed a line of the old project plan — *"Multi-provider
 models. The runner interface leaves room; nothing more."* — in the PR that
-landed M3, and it has been: what stays unbuilt is the model router.
+landed M3: what stays unbuilt is the model router.
 
 ---
 
@@ -28,9 +28,8 @@ landed M3, and it has been: what stays unbuilt is the model router.
 
 Two reasons, both already in this repo's own words.
 
-**The salvage path is a governance harness, and a harness that governs one
-vendor's agents is a narrow one.** [PLAN.md](PLAN.md) names yaaf-as-governance
-as what survives if the org layer does not. Every rule that makes that
+**The governance harness stands on its own, and a harness that governs one
+vendor's agents is a narrow one.** Every rule that makes that
 harness worth having — platform-run tests, verified evidence, the commitment,
 the brakes, the money — lives behind `/agent/*` and has never known which
 model was on the other side of the token. The two exceptions are metering and
@@ -553,7 +552,7 @@ touches, and whether a new provider edits it:
 | Context pack, data-source paragraph | tool names through `Harness.tool_ref` (built in M5: the Gemini CLI and OpenCode name MCP tools their own way) | no |
 | Sandbox image | one pinned install line and one `COPY` per harness | **yes — one file** |
 | Goldens | unchanged: they run `mock` | no |
-| Docs | INTEGRATIONS (billing), AGENT_API (writing a role), DEPLOYMENT (image), SECURITY (each harness's own approvals off), GOVERNANCE (`max_usd_per_run` is the governor), PLAN (the multi-provider line) | once |
+| Docs | INTEGRATIONS (billing), AGENT_API (writing a role), DEPLOYMENT (image), SECURITY (each harness's own approvals off), GOVERNANCE (`max_usd_per_run` is the governor) | once |
 
 ---
 
@@ -588,9 +587,8 @@ touches, and whether a new provider edits it:
 **Done when:** the goldens are byte-identical, the full suite is green on both
 databases, and a deploy shows no difference anywhere a chairman can look.
 
-Two items the first draft put here moved to M1, on the rule
-[PLAN.md](PLAN.md) applies to virtual cards — *a seam nothing uses is
-scaffolding*:
+Two items the first draft put here moved to M1, on the rule that *a seam
+nothing uses is scaffolding*:
 
 - **The run loop and the `Driver` protocol.** An interface with one
   implementation is a guess about the second. M1 brings the second, and the
@@ -741,7 +739,6 @@ prices — and nothing more.
 - [x] Open question 6 (web search) decided: refuse — R2's other half
 - [x] The receipt, the spend report and `yaaf spend-report` say which
       provider spent what
-- [x] PLAN.md's multi-provider line rewritten
 - [ ] **One seat of a live project on DeepSeek beside a Claude seat.** Needs a
       deployment and a DeepSeek key; nothing here can tick it
 

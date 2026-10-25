@@ -1,6 +1,6 @@
 # Golden-transcript evals
 
-The replay harness promised in PLAN §"Agent runtime": *scripted scenarios →
+The replay harness: *scripted scenarios →
 recorded transcripts → regression-judged on rule adherence and planning
 quality*. This is what makes editing role prompts and templates in the UI
 safe: any change that alters how the scripted org moves through the real API

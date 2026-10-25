@@ -4,8 +4,8 @@ The golden diff plus declarative expectations catch *mechanical* regressions
 in scripted scenarios: a changed refusal, a lost wake, an extra call. What
 they cannot grade is planning *quality* on real-model transcripts — did the
 CEO pick a falsifiable bet, decompose sensibly, kill what deserved killing?
-PLAN §"Agent runtime" reserves that for a judge model replaying recorded
-transcripts against a rubric.
+That is reserved for a judge model replaying recorded transcripts against a
+rubric.
 
 This module pins down the seam so the harness and CI shape don't have to
 change when the judge lands: a judge consumes a (scenario name, transcript)

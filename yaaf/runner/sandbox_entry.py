@@ -2425,8 +2425,8 @@ class SdkDriver:
             # interactive. Containment is the fresh container, the role-scoped
             # credential set, the metered budget and the audited API — NOT the
             # network. There is no egress proxy; the per-role allowlist was
-            # removed deliberately (docs/PLAN.md) and SECURITY.md states what
-            # follows from that.
+            # removed deliberately, and SECURITY.md states why and what follows
+            # from that.
             permission_mode="bypassPermissions",
             cwd="/workspace",
             setting_sources=[],
