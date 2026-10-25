@@ -1117,12 +1117,13 @@ async def t_heads_up(args):
 
 @tool(
     "note_answer",
-    "CEO only. Answer a note the chairman wrote on a decision (your context's "
-    "chairman_notes lists every unanswered one, every run, until you do). `reply` is "
-    "one line he reads under his note: what you did with it. `standing` says whether "
-    "it applies beyond that one item. A standing note belongs in the brief: call "
-    "brief_propose with it folded in FIRST, or the answer is refused. Never answer one "
-    "by saving a memory.",
+    "CEO only. Close a note the chairman wrote on a decision (your context's "
+    "chairman_notes lists every unanswered one, every run, until you do). He gets one "
+    "answer: if you already answered him in the boardroom, those words are it and "
+    "`reply` adds nothing; if not, `reply` is said there for you — what you did with "
+    "it, in a line — so do not post it too. `standing` says whether it applies beyond "
+    "that one item. A standing note belongs in the brief: call brief_propose with it "
+    "folded in FIRST, or the answer is refused. Never answer one by saving a memory.",
     {"note_id": str, "reply": str, "standing": bool},
 )
 async def t_note_answer(args):

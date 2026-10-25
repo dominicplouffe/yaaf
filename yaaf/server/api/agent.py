@@ -3328,15 +3328,24 @@ def note_answer(
     if ctx.agent.kind != AgentKind.CEO:
         raise Refusal("The chairman's notes are the CEO's to answer.", status_code=403)
     try:
-        note = chairman_notes.answer(session, ctx.project.id, note_id, body.reply,
-                                     body.standing)
+        note, already = chairman_notes.answer(session, ctx.project.id, note_id, body.reply,
+                                              body.standing, agent_id=ctx.agent.id,
+                                              say_it=ctx.run.kind != RunKind.CHAT_SESSION)
     except chairman_notes.NoteError as exc:
         raise Refusal(str(exc), status_code=422) from exc
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=ctx.project.id, actor=f"agent:{ctx.agent.id}",
         action="chairman_note.answer", entity="chairman_note", entity_id=note.id,
-        detail={"standing": body.standing}))
-    return {"id": note.id, "note": "Answered. He reads your reply under his note."}
+        detail={"standing": body.standing, "answered_in_boardroom": already}))
+    if already:
+        return {"id": note.id, "note": (
+            "Closed. You had already answered him in the boardroom, so those words are "
+            f"the reply under his note: “{note.reply[:200]}”. Nothing more was posted.")}
+    if ctx.run.kind == RunKind.CHAT_SESSION:
+        return {"id": note.id, "note": (
+            "Closed. Your reply to him this turn is the answer: it goes under his note "
+            "too. Do not repeat it.")}
+    return {"id": note.id, "note": "Answered. Said in the boardroom, and under his note."}
 
 
 @router.post("/needs")

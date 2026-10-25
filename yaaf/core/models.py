@@ -2132,6 +2132,9 @@ class ChairmanNote(Base):
     # The boardroom line his note became. Every CEO lane reads the boardroom;
     # only some read this table, and none read it once it is answered.
     message_id: Mapped[str | None] = mapped_column(String(40))
+    # The CEO's answer to it in the boardroom: its first line there after his.
+    # One answer, said where he reads, and the same words under his note.
+    reply_message_id: Mapped[str | None] = mapped_column(String(40))
 
 
 class Ask(Base):

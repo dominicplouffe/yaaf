@@ -33,6 +33,7 @@ from yaaf.core.models import (
     Agent,
     AgentKind,
     AgentStatus,
+    ChairmanNote,
     Channel,
     ChannelKind,
     ChannelRead,
@@ -482,13 +483,25 @@ def _utc(value):
     return value
 
 
+def _note_lines(session: Session, project_id: str) -> set[str]:
+    """His notes on decisions, as boardroom lines. Each is said there so every
+    lane of the CEO reads it — the chat session answers it in seconds — but it
+    buys no work run of its own: it always rode the decision's notice to the
+    next one, and still does. A run woken just to say "noted" is what the
+    brakes exist to stop."""
+    return set(session.execute(
+        select(ChairmanNote.message_id).where(ChairmanNote.project_id == project_id,
+                                              ChairmanNote.message_id.is_not(None))
+    ).scalars())
+
+
 def unread_messages_for(
     session: Session, project: Project, agent: Agent
 ) -> list[tuple[Message, Channel | None]]:
     """The messages this agent would wake to read, each with its channel.
 
     Mirrors the filter in _wake_reasons (not self-authored, not a sender-less
-    platform line, not under a frozen root, boardroom skipped for a CEO whose
+    platform line, not his note on a decision, not under a frozen root, boardroom skipped for a CEO whose
     chat session is live) minus the pair-breaker, which is a trip detector
     rather than a filter and cannot run from a read path. The project inbox
     lists exactly these, and the banner counts exactly these, so the two cannot
@@ -502,6 +515,7 @@ def unread_messages_for(
                                       Channel.kind == ChannelKind.BOARDROOM)
             ).scalars()
         }
+    note_lines = _note_lines(session, project.id)
     unread: list[tuple[Message, Channel | None]] = []
     for channel_id in policy.agent_channel_ids(session, agent):
         if channel_id in skip:
@@ -521,6 +535,8 @@ def unread_messages_for(
             # wakes anyone. Counting it here put "1 unread" on a CEO the
             # dispatcher would never wake for it — a number with no wake behind it.
             if message.sender_agent_id is None and message.sender_user_id is None:
+                continue
+            if message.id in note_lines:
                 continue
             root = session.get(Message, message.thread_id or message.id)
             if root is not None and root.frozen_at is not None:
@@ -1575,6 +1591,7 @@ def _wake_reasons(
     urgent = False
     oldest_at = None
     total = 0
+    note_lines = _note_lines(session, project.id)
     for channel_id in policy.agent_channel_ids(session, agent):
         if channel_id in skip_channels:
             continue
@@ -1593,6 +1610,7 @@ def _wake_reasons(
             # to Slack and never wake an agent, or every need the CEO filed
             # would urgently buy a run to read its own announcement.
             and not (m.sender_agent_id is None and m.sender_user_id is None)
+            and m.id not in note_lines
         ]
         actionable = 0
         channel_urgent = False

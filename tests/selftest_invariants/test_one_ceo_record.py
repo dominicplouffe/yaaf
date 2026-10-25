@@ -237,7 +237,7 @@ def test_the_chat_lane_sees_everything_a_work_run_does_but_what_is_named(client)
     assert not set(chat) & set(CHAT_OMITS)
     assert all(len(why) > 20 for why in CHAT_OMITS.values()), "every omission says why"
     # The very sections the hand-picked list left out.
-    assert LINK in chat["chairman_notes"]["notes"][0]["he_wrote"]
+    assert any(LINK in n["he_wrote"] for n in chat["chairman_notes"]["notes"])
     assert chat["project"]["goal"] and "memory_hint" in chat
 
 
@@ -282,3 +282,208 @@ def test_a_fresh_chat_session_does_not_mistake_the_platform_for_itself(monkeypat
     assert text.splitlines() == ["Platform: 🤝 ASSIST NEEDED (Theo)",
                                  "Chairman: Here is the link", "You (CEO): Thanks"]
 
+
+
+# ── 4. one answer per note ───────────────────────────────────────────────────────
+
+
+def _noted(client, project: dict) -> str:
+    client.post(f"/admin/approvals/{_assist(client, project)}/decide", headers=ADMIN,
+                json={"approve": True, "note": f"Can you see this? {LINK}"})
+    with db_session() as session:
+        return session.query(ChairmanNote).one().id
+
+
+def _ceo_lines(project: dict) -> list[str]:
+    return [m.body for m in _boardroom(project)
+            if m.sender_agent_id == project["ceo_agent_id"]]
+
+
+def _say(client, token: str, project: dict, body: str) -> None:
+    posted = client.post("/agent/messages", headers=bearer(token), json={
+        "channel_id": channel_of(client, project["id"], "boardroom"), "body": body})
+    assert posted.status_code == 200, posted.text
+
+
+def _janitor(project: dict) -> None:
+    with db_session() as session:
+        janitor.janitor_once(session)
+
+
+def _held(client, project: dict) -> dict:
+    rows = client.get(f"/observe/projects/{project['id']}/approvals", headers=ADMIN).json()
+    return next(r["held_note"] for r in rows if r.get("held_note"))
+
+
+def test_the_chat_reply_is_the_answer_under_his_note(client):
+    """He reads one answer, in the chat, and the Inbox shows those same words —
+    a work run closing the note later posts nothing more."""
+    project = make_project(client)
+    note_id = _noted(client, project)
+    _say(client, _chat(project), project, "Yes, it plays without a login. Using it now.")
+    _janitor(project)
+    assert _held(client, project)["reply"] == "Yes, it plays without a login. Using it now."
+
+    work = live_token(project["id"], project["ceo_agent_id"])[1]
+    closed = client.post(f"/agent/notes/{note_id}/answer", headers=bearer(work),
+                         json={"reply": "Saw the demo.", "standing": False})
+    assert closed.status_code == 200, closed.text
+    assert "already answered him" in closed.json()["note"]
+    assert _ceo_lines(project) == ["Yes, it plays without a login. Using it now."]
+    assert _held(client, project)["reply"] == "Yes, it plays without a login. Using it now."
+
+
+def test_a_note_closed_before_anyone_answered_him_is_answered_in_the_boardroom(client):
+    project = make_project(client)
+    note_id = _noted(client, project)
+    work = live_token(project["id"], project["ceo_agent_id"])[1]
+    closed = client.post(f"/agent/notes/{note_id}/answer", headers=bearer(work),
+                         json={"reply": "Seen: it plays, and the team uses it.",
+                               "standing": False})
+    assert closed.status_code == 200, closed.text
+    lines = _ceo_lines(project)
+    assert len(lines) == 1 and lines[0].endswith("Seen: it plays, and the team uses it.")
+    assert lines[0].startswith("On “Approved: Assist:")
+    _janitor(project)
+    assert _held(client, project)["reply"] == "Seen: it plays, and the team uses it."
+
+
+def test_the_chat_session_closing_a_note_mid_turn_does_not_answer_twice(client):
+    """Its turn ends by posting its reply, so a note_answer inside the turn
+    finds nothing said yet. Posting then would be the second answer."""
+    project = make_project(client)
+    note_id = _noted(client, project)
+    chat = _chat(project)
+    closed = client.post(f"/agent/notes/{note_id}/answer", headers=bearer(chat),
+                         json={"reply": "Got the link.", "standing": False})
+    assert closed.status_code == 200, closed.text
+    assert _ceo_lines(project) == []
+    _say(client, chat, project, "Got it, thank you: the demo plays and the team has it.")
+    _janitor(project)
+    assert _ceo_lines(project) == ["Got it, thank you: the demo plays and the team has it."]
+    assert _held(client, project)["reply"] == ("Got it, thank you: the demo plays and the "
+                                               "team has it.")
+
+
+def test_the_pack_says_he_was_already_answered(client):
+    project = make_project(client)
+    _noted(client, project)
+    _say(client, _chat(project), project, "Yes, it plays.")
+    notes = client.get("/agent/context", headers=bearer(_chat(project))).json()[
+        "chairman_notes"]["notes"]
+    assert notes[0]["you_answered_in_the_boardroom"] == "Yes, it plays."
+
+
+# ── 5. every door that takes his words ───────────────────────────────────────────
+
+#: A field that carries what he typed, on any chairman route.
+WORDS = {"note", "reason", "body", "why", "text", "comment", "message"}
+SAYS = ("_his_words(", "chairman_notes.record(", "_apply_decision(", "_amend(")
+
+
+def _doors() -> dict[str, str]:
+    import inspect
+    import typing
+
+    from fastapi.routing import APIRoute
+
+    from yaaf.server.api import admin
+
+    found = {}
+    for route in admin.router.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for hint in typing.get_type_hints(route.endpoint).values():
+            for model in typing.get_args(hint) or (hint,):
+                if WORDS & set(getattr(model, "model_fields", {}) or {}):
+                    found[route.endpoint.__name__] = inspect.getsource(route.endpoint)
+    return found
+
+
+def test_every_door_that_takes_his_words_is_named():
+    from yaaf.server.chairman_notes import DOORS, KEPT_OFF
+
+    doors = _doors()
+    unnamed = set(doors) - DOORS - set(KEPT_OFF)
+    assert not unnamed, (f"{sorted(unnamed)} take his words and are in neither "
+                         "chairman_notes.DOORS nor KEPT_OFF: say where they go")
+    assert not (DOORS | set(KEPT_OFF)) - set(doors), "a named door no longer exists"
+    for name in DOORS:
+        assert any(s in doors[name] for s in SAYS), f"{name} is a door that says nothing"
+    for name, why in KEPT_OFF.items():
+        assert not any(s in doors[name] for s in SAYS) and len(why) > 20, name
+
+
+def _said(project: dict, words: str) -> int:
+    return sum(1 for m in _boardroom(project) if m.sender_user_id and words in m.body)
+
+
+def test_cutting_scope_says_his_reason_once_even_through_a_review(client):
+    from tests.selftest_invariants.test_requirements import (
+        ceo_token,
+        deliver_project,
+        propose,
+    )
+
+    project = deliver_project(client)
+    rid = propose(client, ceo_token(project))["requirement_id"]
+    client.post(f"/admin/requirements/{rid}/accept", headers=ADMIN, json={})
+    cut = client.post(f"/admin/requirements/{rid}/cut", headers=ADMIN,
+                      json={"reason": "Drop it: the free users are a distraction."})
+    assert cut.status_code == 200, cut.text
+    assert _said(project, "the free users are a distraction") == 1
+    with db_session() as session:
+        note = session.query(ChairmanNote).filter_by(source_kind="requirement").one()
+        assert note.about.startswith("Cut R-")
+
+
+def test_a_platform_written_reason_is_not_put_in_his_mouth(client):
+    """Approving a capacity request amends the constitution with a reason the
+    platform wrote. Only his own note is his line."""
+    from tests.selftest_invariants.test_asking_for_more import ask
+    from tests.selftest_invariants.test_requirements import ceo_token, deliver_project
+
+    project = deliver_project(client, constitution={"runs_per_project_per_day": 18})
+    asked = ask(client, ceo_token(project))
+    assert asked.status_code == 200, asked.text
+    approval_id = asked.json()["approval_id"]
+    decided = client.post(f"/admin/approvals/{approval_id}/decide", headers=ADMIN,
+                          json={"approve": True, "note": "Fine, but report the result."})
+    assert decided.status_code == 200, decided.text
+    said = [m.body for m in _boardroom(project) if m.sender_user_id]
+    assert len(said) == 1 and "report the result" in said[0], said
+    amended = client.post(f"/admin/projects/{project['id']}/amendments", headers=ADMIN,
+                          json={"reason": "Slower: we are burning the month.",
+                                "changes": {"runs_per_project_per_day": 20}})
+    assert amended.status_code == 200, amended.text
+    assert _said(project, "we are burning the month") == 1
+
+
+def test_a_reason_on_a_paused_project_waits_for_the_ceo(client):
+    project = make_project(client)
+    client.post(f"/admin/projects/{project['id']}/pause", headers=ADMIN,
+                json={"reason": "Stop: the ads spent $300 with no signups."})
+    assert _said(project, "no signups") == 1
+    client.post(f"/admin/projects/{project['id']}/pause", headers=ADMIN, json={})
+    assert sum(1 for m in _boardroom(project) if m.sender_user_id) == 1, "no words, no line"
+
+
+def test_a_note_buys_no_work_run_of_its_own(client):
+    """With no chat session live, his plain message wakes the CEO at once — but
+    a note on a decision rides that decision's notice, as it always did, and is
+    not counted on any screen as a wake that will not come."""
+    from yaaf.server import dispatcher
+
+    project = make_project(client)
+    client.post(f"/admin/approvals/{_assist(client, project)}/decide", headers=ADMIN,
+                json={"approve": True, "note": f"done: {LINK}"})
+    with db_session() as session:
+        ceo = session.get(Agent, project["ceo_agent_id"])
+        row = session.get(Project, project["id"])
+        assert dispatcher._unread_for(session, row, ceo) == 0
+    client.post(f"/admin/projects/{project['id']}/boardroom", headers=ADMIN,
+                json={"body": "Are you there?"})
+    with db_session() as session:
+        ceo = session.get(Agent, project["ceo_agent_id"])
+        row = session.get(Project, project["id"])
+        assert dispatcher._unread_for(session, row, ceo) == 1

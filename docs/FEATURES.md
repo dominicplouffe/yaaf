@@ -514,14 +514,20 @@ evidence at all about your *project*.
   the rest (`{slug}-leadership`, one room per team) when you want them, so a new
   project does not cost your workspace six channels nobody has spoken in. The
   bot token still never enters a sandbox, shared or not.
-- **One record, every lane.** Anything you write on a decision in your Inbox —
-  a note on an approval, an assist, a credential you fill in, a heads-up or a
-  flag — is also your line in the boardroom (`Re: “…” — what you wrote`), the
-  same way an answer to one of the CEO's questions is. The CEO you chat with
-  answers it there, whichever of its runs is awake and however recently its
-  chat session restarted, because the boardroom is the record every one of
-  them reads. A note on a decision never counts as an answer to the CEO's own
-  open questions, and a decision with no note says nothing. The chat session is
+- **One record, every lane.** Anything you write to the project on a decision
+  — a note on an approval, an assist, a credential you fill in, a heads-up or a
+  flag; your reason for cutting, adding, rewording or re-staging scope; a note
+  on an audit, a review, a commitment, an overrun or a measurement window; why
+  you paused, stood down a team or extended a bet — is also your line in the
+  boardroom (`Re: “…” — what you wrote`), the same way an answer to one of the
+  CEO's questions is. The CEO you chat with answers it there, whichever of its
+  runs is awake and however recently its chat session restarted, because the
+  boardroom is the record every one of them reads. You get **one answer**: the
+  CEO's reply in the chat is also what shows under your note in the Inbox. A
+  note on a decision never counts as an answer to the CEO's own open
+  questions, and a decision with no note says nothing. Every route that takes
+  your words is named in one list (`chairman_notes.DOORS`), and the suite
+  fails on a new one that is not. The chat session is
   shown everything a work run of the CEO is shown — bar a short list the
   platform names with a reason — consumes none of it, and every lane sees what
   the CEO itself last said, so one run does not undo the last one's order.

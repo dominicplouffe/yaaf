@@ -2969,6 +2969,7 @@ def stand_down_team(team_id: str, body: TeamStandDown,
     staffing.check_stand_down(session, project, team, by_chairman=True)
     outcome = staffing.stand_down(session, project, team, body.reason,
                                   actor=acting.stamp())
+    _his_words(session, project, "team", team.id, f"Stood down {team.name}", body.reason)
     staffing.notify_ceo(
         session, project,
         f"The chairman stood down {team.name}: {body.reason[:400]} Plan around a "
@@ -2990,6 +2991,7 @@ def recall_team(team_id: str, body: TeamStandDown,
     project = _get_project(session, team.project_id)
     outcome = staffing.recall(session, project, team, body.reason,
                               actor=acting.stamp())
+    _his_words(session, project, "team", team.id, f"Recalled {team.name}", body.reason)
     staffing.notify_ceo(
         session, project,
         f"The chairman recalled {team.name}: {body.reason[:400]} That seat is "
@@ -3429,6 +3431,9 @@ def pause_project(
     project = _get_project(session, project_id)
     project.status = ProjectStatus.PAUSED
     project.status_reason = body.reason or "paused by chairman"
+    # Nothing runs to read it now; the CEO answers it on resume, which is when
+    # "why did he stop us" is the first thing it needs.
+    _his_words(session, project, "project", project.id, "Paused the project", body.reason)
     revoked = _revoke_running(session, project.id)
     _audit(session, project.id, "project.pause", "project", project.id,
            {"revoked_runs": revoked})
@@ -4102,9 +4107,9 @@ def _decide_capacity(session: Session, approval: Approval, project: Project,
         # he makes on purpose, never the side effect of approving a raise.
         moved = f"“{dial}” is already {current:g}, so nothing changed."
     else:
-        amend_constitution(project.id, AmendmentIn(
+        _amend(project.id, AmendmentIn(
             reason=f"Approved the CEO's capacity request: {approval.title}"[:500],
-            changes={rule: to}), session)
+            changes={rule: to}), session, his_words=False)
         moved = f"“{dial}” is now {to:g} (was {current:g}), in force now."
     edited = body.to is not None and float(body.to) != float(ask["to"])
     _apply_decision(session, approval, project, True, body.note,
@@ -4261,6 +4266,10 @@ def extend_hypothesis(
     row.status = HypothesisStatus.ACTIVE
     row.extended_once = True
     row.extension_reason = body.reason
+    # Stored and shown to nobody, until now: the CEO is the one running the bet.
+    _his_words(session, _get_project(session, row.project_id), "hypothesis", row.id,
+               f"Extended the bet to {body.new_kill_date:%Y-%m-%d}: {row.statement[:200]}",
+               body.reason)
     # Unblock tasks the expiry froze.
     for task in session.execute(
         select(Task).where(Task.hypothesis_id == row.id, Task.status == "blocked")
@@ -4386,6 +4395,8 @@ def decide_overrun(
     overrun.chairman_note = body.note.strip()
     overrun.decided_at = utcnow()
     overrun.decided_by_user_id = _decider(project)
+    _his_words(session, project, "overrun", overrun.id,
+               f"Ruled {body.outcome} on the {overrun.period:%B} overrun", body.note)
 
     raised = None
     if body.new_budget is not None:
@@ -4398,7 +4409,7 @@ def decide_overrun(
             reason=f"After the {overrun.period:%B} overrun: {body.note.strip()[:300]}",
             changes={key: body.new_budget},
         )
-        raised = amend_constitution(project.id, amendment, session)
+        raised = _amend(project.id, amendment, session, his_words=False)
 
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=project.id, actor="chairman",
@@ -4554,6 +4565,8 @@ def adjust_spend_window(
                "checkpoint_hours": window.checkpoint_hours},
     }
     window.adjustments = [*(window.adjustments or []), entry]
+    _his_words(session, project, "spend_window", window.id,
+               "Adjusted the measurement window", body.reason)
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=project.id, actor="chairman",
         action="spend_window.adjusted", entity="spend_window", entity_id=window.id,
@@ -4653,6 +4666,14 @@ def _apply_craft_lift(session: Session, project_id: str, cons: ConstitutionDoc) 
 def amend_constitution(
     project_id: str, body: AmendmentIn, session: Session = Depends(db)
 ) -> dict:
+    return _amend(project_id, body, session, his_words=True)
+
+
+def _amend(project_id: str, body: AmendmentIn, session: Session, *,
+           his_words: bool) -> dict:
+    """`his_words=False` for an amendment the platform writes the reason of —
+    approving a capacity request, ruling on an overrun — where his own note is
+    recorded on that decision instead, so it is said once."""
     project = _get_project(session, project_id)
     # A rule may not be amended into a state the roster cannot keep. Creation
     # refuses this; amendment is the other door onto the same rule, and a rule
@@ -4670,6 +4691,9 @@ def amend_constitution(
         raise HTTPException(status_code=422, detail=f"invalid amendment: {exc}") from exc
     if not amendments:
         raise HTTPException(status_code=422, detail="the amendment changes nothing")
+    if his_words:
+        _his_words(session, project, "amendment", amendments[0].id,
+                   f"Changed {', '.join(sorted(body.changes))}", body.reason)
     applied_now = amendments  # nothing waits; the split existed for the cooling-off
     for amendment in amendments:
         _audit(session, project.id, "constitution.amend", "amendment", amendment.id,
@@ -4809,6 +4833,18 @@ def _notice_ceo(session: Session, project_id: str, kind: str, body: str) -> None
         )
 
 
+def _his_words(session: Session, project: Project, kind: str, source_id: str,
+               about: str, text: str | None) -> None:
+    """What he typed on this door: said in the boardroom as his, and held until
+    the CEO answers it. A notice alone was read by whichever lane got there
+    first and was gone after a day; the boardroom is the record every lane of
+    the CEO reads. `chairman_notes.DOORS` names every route that calls this."""
+    from yaaf.server import chairman_notes
+
+    chairman_notes.record(session, project.id, kind, source_id, about, text,
+                          user_id=_decider(project))
+
+
 @router.post("/evidence/{evidence_id}/audit", dependencies=[authority.STEER])
 def audit_evidence(
     evidence_id: str, body: EvidenceAudit, session: Session = Depends(db)
@@ -4818,6 +4854,9 @@ def audit_evidence(
         raise HTTPException(status_code=404, detail="unknown evidence")
     row.verification = VerificationStatus.VERIFIED if body.ok else VerificationStatus.FAILED
     row.verifier_notes = ((row.verifier_notes or "") + f"\n[chairman audit] {body.note}").strip()
+    _his_words(session, _get_project(session, row.project_id), "evidence", row.id,
+               f"{'Passed' if body.ok else 'Failed'} the evidence: {row.description[:200]}",
+               body.note)
     _audit(session, row.project_id, "evidence.audit", "evidence", row.id, {"ok": body.ok})
     if not body.ok:
         _notice_ceo(
@@ -4846,6 +4885,9 @@ def audit_task(task_id: str, body: TaskAudit, session: Session = Depends(db)) ->
         raise HTTPException(status_code=409, detail="only completed tasks can be audited")
     row.audit_status = "passed" if body.ok else "failed"
     row.audit_note = body.note or None
+    _his_words(session, _get_project(session, row.project_id), "task", row.id,
+               f"{'Passed' if body.ok else 'Failed'} the completion of {row.title[:200]}",
+               body.note)
     _audit(session, row.project_id, "task.audit", "task", row.id, {"ok": body.ok})
     if not body.ok:
         _notice_ceo(
@@ -4882,10 +4924,9 @@ def acknowledge_heads_up(heads_up_id: str, body: HeadsUpAck,
         raise HTTPException(status_code=409, detail="already noted")
     if row.acknowledged_at is None:
         heads.acknowledge(session, row)
-    project = _get_project(session, row.project_id)
     held = chairman_notes.record(session, row.project_id, "heads_up", row.id,
                                  f"Noted: {row.title}", body.note,
-                                 user_id=_decider(project))
+                                 user_id=_decider(_get_project(session, row.project_id)))
     if held is not None:
         # Only a note is worth a wake. A bare "seen" rides the next run.
         _notice_ceo(session, row.project_id, NoticeKind.HEADS_UP_NOTED,
@@ -4973,6 +5014,9 @@ def decide_audit_sample(
     row.status = AuditSampleStatus.PASSED if body.ok else AuditSampleStatus.FAILED
     row.decided_at = utcnow()
     row.note = body.note or None
+    _his_words(session, _get_project(session, row.project_id), "audit_sample", row.id,
+               f"{'Passed' if body.ok else 'Failed'} the sampled close of "
+               f"{task.title[:200] if task is not None else 'a task'}", body.note)
     if task is not None:
         task.audit_status = "passed" if body.ok else "failed"
         task.audit_note = body.note or None
@@ -5299,9 +5343,12 @@ def accept_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_accept(session, project, row,
-                            acting.stamp(),
-                            body.stage, body.note, _decider(project))
+        out = apply_accept(session, project, row,
+                           acting.stamp(),
+                           body.stage, body.note, _decider(project))
+        _his_words(session, project, "requirement", row.id,
+                   f"Accepted {row.key}: {row.statement[:200]}", body.note)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5322,8 +5369,11 @@ def cut_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_cut(session, project, row,
-                         acting.stamp(), body.reason)
+        out = apply_cut(session, project, row,
+                        acting.stamp(), body.reason)
+        _his_words(session, project, "requirement", row.id,
+                   f"Cut {row.key}: {row.statement[:200]}", body.reason)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5361,8 +5411,12 @@ def requirement_verdict(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_verdict(session, project, row,
-                             acting.stamp(), body.ok, body.note)
+        out = apply_verdict(session, project, row,
+                            acting.stamp(), body.ok, body.note)
+        _his_words(session, project, "requirement", row.id,
+                   f"{'Met' if body.ok else 'Not met'}: {row.key}: {row.statement[:200]}",
+                   body.note)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5394,8 +5448,11 @@ def reopen_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_reopen(session, project, row,
-                            acting.stamp(), body.reason)
+        out = apply_reopen(session, project, row,
+                           acting.stamp(), body.reason)
+        _his_words(session, project, "requirement", row.id,
+                   f"Reopened {row.key}: {row.statement[:200]}", body.reason)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5416,9 +5473,12 @@ def restage_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_restage(session, project, row,
-                             acting.stamp(),
-                             body.stage, body.reason)
+        out = apply_restage(session, project, row,
+                            acting.stamp(),
+                            body.stage, body.reason)
+        _his_words(session, project, "requirement", row.id,
+                   f"Moved {row.key} to stage {body.stage}", body.reason)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5441,9 +5501,12 @@ def reestimate_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_reestimate(session, project, row,
-                                acting.stamp(),
-                                body.est_runs, body.reason)
+        out = apply_reestimate(session, project, row,
+                               acting.stamp(),
+                               body.est_runs, body.reason)
+        _his_words(session, project, "requirement", row.id,
+                   f"Re-estimated {row.key} at {body.est_runs} runs", body.reason)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5465,9 +5528,14 @@ def remove_requirement_edge(body: EdgeRemove, session: Session = Depends(db)) ->
     try:
         if project is None:
             raise policy.Refusal("no such dependency edge", status_code=404)
-        return apply_edge_remove(session, project, acting.stamp(),
-                                 body.from_requirement_id, body.to_requirement_id,
-                                 body.reason)
+        out = apply_edge_remove(session, project, acting.stamp(),
+                                body.from_requirement_id, body.to_requirement_id,
+                                body.reason)
+        target = session.get(Requirement, body.to_requirement_id)
+        _his_words(session, project, "requirement", source.id,
+                   f"Let {source.key} start without waiting on "
+                   f"{target.key if target is not None else 'its dependency'}", body.reason)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5527,6 +5595,8 @@ def add_requirement(
     _audit(session, project.id, "requirement.add", "requirement", requirement.id,
            {"key": requirement.key, "stage": requirement.stage,
             "est_runs": requirement.est_runs})
+    _his_words(session, project, "requirement", requirement.id,
+               f"Added {requirement.key}: {requirement.statement[:200]}", body.note)
     _notice_ceo(
         session, project.id, NoticeKind.GOAL_CHANGED,
         f"The chairman ADDED {requirement.key} to scope himself: "
@@ -5556,9 +5626,12 @@ def reword_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        return apply_reword(session, project, row,
-                            acting.stamp(),
-                            body.statement, body.reason)
+        out = apply_reword(session, project, row,
+                           acting.stamp(),
+                           body.statement, body.reason)
+        _his_words(session, project, "requirement", row.id,
+                   f"Reworded {row.key}: {row.statement[:200]}", body.reason)
+        return out
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -5646,6 +5719,9 @@ def pull_review_lever(
         detail = f"raised the monthly cap to {body.amount:,.0f}"
     else:  # accept_slip
         detail = "accepted the slip"
+        # The other levers are said by the route each one runs through.
+        _his_words(session, project, "review", review.id,
+                   f"Accepted the slip at review #{review.number}", body.reason)
         _notice_ceo(
             session, project.id, NoticeKind.GOAL_CHANGED,
             f"At review #{review.number} the chairman ACCEPTED THE SLIP: "
@@ -5682,6 +5758,8 @@ def close_review(
     project = _get_project(session, review.project_id)
     decisions = finish_review(session, project, review, by_user_id=_decider(project),
                               note=body.note)
+    _his_words(session, project, "review", review.id,
+               f"Closed review #{review.number}", body.note)
     _audit(session, project.id, "review.close", "review", review.id,
            {"number": review.number, "decisions": len(decisions)})
     return {"id": review.id, "number": review.number, "status": review.status,
@@ -5799,6 +5877,8 @@ def accept_commitment(
     row.accepted_by_user_id = _decider(project)
     row.accepted_at = utcnow()
     _freeze_commitment_basis(session, project, row, cons)
+    _his_words(session, project, "commitment", row.id,
+               f"Accepted the commitment for {row.deliver_by:%Y-%m-%d}", body.note)
     _audit(session, project.id, "commitment.accept", "commitment", row.id,
            {"deliver_by": row.deliver_by.isoformat(),
             "constitution_version": row.constitution_version,
@@ -5841,6 +5921,8 @@ def decline_commitment(
     project = _get_project(session, row.project_id)
     _audit(session, project.id, "commitment.decline", "commitment", row.id,
            {"reason": body.reason, "deliver_by": row.deliver_by.isoformat()})
+    _his_words(session, project, "commitment", row.id,
+               f"Declined the commitment for {row.deliver_by:%Y-%m-%d}", body.reason)
     _notice_ceo(
         session, project.id, NoticeKind.GOAL_CHANGED,
         f"The chairman DECLINED the proposed commitment ({row.deliver_by:%Y-%m-%d}). "
@@ -5878,6 +5960,8 @@ def move_commitment(
         deliver_by = deliver_by.replace(tzinfo=UTC)
     old = row.deliver_by
     row.deliver_by = deliver_by
+    _his_words(session, project, "commitment", row.id,
+               f"Moved the date from {old:%Y-%m-%d} to {deliver_by:%Y-%m-%d}", body.reason)
     _audit(session, project.id, "commitment.move", "commitment", row.id,
            {"from": old.isoformat(), "to": deliver_by.isoformat(),
             "reason": body.reason})
