@@ -159,9 +159,11 @@ def _situation_block() -> str:
     the chairman as fact. This is the fix: a work run gets a context pack on
     every wake, and now so does every turn of the conversation.
 
-    Undelivered notices ride along and are marked delivered by the same call,
-    so "your run was reaped" and "budget exhausted" finally reach the one agent
-    the chairman actually talks to.
+    The server decides what this lane is shown (contextpack.CHAT_OMITS names
+    the few sections it is not) and builds it without consuming anything:
+    notices, unread mail and suggestions stay for the work lane that acts on
+    them. So everything here is shown as it arrives — a list kept on this side
+    is how the chairman's own Inbox notes never reached the CEO he talks to.
     """
     result = base._call("GET", "/agent/context")
     if result["status"] != 200:
@@ -170,25 +172,16 @@ def _situation_block() -> str:
         return ("[The platform did not return the current state this turn "
                 f"({result['status']}). Read the board with your tools before making "
                 "any claim about what is or is not happening.]\n\n")
-    pack = result["body"]
-    # `unread` and `suggestions` are on this list because building the pack
-    # CONSUMES them — the cursor advances and the suggestion is marked read
-    # whether or not the caller shows them. Leaving them off meant every
-    # chairman message silently ate the CEO's leadership mail, and the CEO
-    # answered "nothing is running" holding a `pending` count it could no
-    # longer explain. Consume exactly what you will show.
-    keep = {k: pack[k] for k in
-            ("situation", "board", "plan", "chairman", "notices", "unread",
-             "suggestions", "constitution_amendments", "roster", "cycles",
-             "review", "commitment", "velocity", "scope")
-            if pack.get(k)}
+    keep = {k: v for k, v in result["body"].items() if v}
     return (
         "CURRENT STATE (fetched just now — this is the platform's own reading, not a "
         "summary. `situation.why` is the exact sentence the chairman can see on his "
         "screen; if he asks why nothing is happening, that is the answer — but he may "
         "not have that screen open, and it is in the platform's words, so tell him in "
         "yours. Every key below is the platform's vocabulary, not his. Do not "
-        "reason about the project's state from what you can see in a directory):\n"
+        "reason about the project's state from what you can see in a directory. "
+        "Notices, unread mail and suggestions are shown to you and left in place: "
+        "your work runs see them too, so nothing here is lost if you only read it):\n"
         f"{json.dumps(keep, indent=2, default=str)}\n\n"
     )
 
@@ -196,8 +189,15 @@ def _situation_block() -> str:
 def _transcript_block(messages: list[dict]) -> str:
     lines = []
     for m in messages[-HISTORY_BOOTSTRAP:]:
-        # A co-chair's line carries their name; the chairman's carries none.
-        who = (m.get("from_name") or "Chairman") if m.get("from_user") else "You (CEO)"
+        # A co-chair's line carries their name; the chairman's carries none. A
+        # line with no sender is the platform's: "You (CEO)" on it once handed a
+        # fresh session "Answer it in your Inbox" as words of its own.
+        if m.get("from_user"):
+            who = m.get("from_name") or "Chairman"
+        elif m.get("from_agent"):
+            who = "You (CEO)"
+        else:
+            who = "Platform"
         body = str(m.get("body", ""))
         if len(body) > CHAT_HISTORY_MSG_CHARS:
             body = body[:CHAT_HISTORY_MSG_CHARS] + " …[truncated; messages_read has the rest]"

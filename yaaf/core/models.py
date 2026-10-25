@@ -2129,6 +2129,9 @@ class ChairmanNote(Base):
     reply: Mapped[str | None] = mapped_column(Text)
     # True: it applies beyond this one item, and the brief now carries it.
     standing: Mapped[bool | None] = mapped_column(Boolean)
+    # The boardroom line his note became. Every CEO lane reads the boardroom;
+    # only some read this table, and none read it once it is answered.
+    message_id: Mapped[str | None] = mapped_column(String(40))
 
 
 class Ask(Base):

@@ -3962,7 +3962,7 @@ def _apply_decision(session: Session, approval: Approval, project: Project,
     held = chairman_notes.record(
         session, approval.project_id, "approval", approval.id,
         f"{'Approved' if approve else 'Declined'}: {approval.title}",
-        note if his_words is None else his_words)
+        note if his_words is None else his_words, user_id=approval.decided_by_user_id)
     if held is not None:
         notice_body += (f" Answer his note with note_answer(note_id='{held.id}'): one line "
                         "he reads under it, and whether it applies from now on.")
@@ -4882,8 +4882,10 @@ def acknowledge_heads_up(heads_up_id: str, body: HeadsUpAck,
         raise HTTPException(status_code=409, detail="already noted")
     if row.acknowledged_at is None:
         heads.acknowledge(session, row)
+    project = _get_project(session, row.project_id)
     held = chairman_notes.record(session, row.project_id, "heads_up", row.id,
-                                 f"Noted: {row.title}", body.note)
+                                 f"Noted: {row.title}", body.note,
+                                 user_id=_decider(project))
     if held is not None:
         # Only a note is worth a wake. A bare "seen" rides the next run.
         _notice_ceo(session, row.project_id, NoticeKind.HEADS_UP_NOTED,
@@ -4930,7 +4932,8 @@ def acknowledge_flag(flag_id: str, body: FlagAck, session: Session = Depends(db)
     _audit(session, flag.project_id, "flag.ack", "flag", flag.id,
            {"kind": flag.kind, "status": flag.status})
     held = chairman_notes.record(session, flag.project_id, "flag", flag.id,
-                                 f"Noted: {flag.summary[:300]}", body.note)
+                                 f"Noted: {flag.summary[:300]}", body.note,
+                                 user_id=_decider(project))
     _notice_ceo(
         session, flag.project_id, NoticeKind.FLAG_ACKNOWLEDGED,
         f"The chairman answered the {flag.kind.replace('_', ' ')} flag you raised"

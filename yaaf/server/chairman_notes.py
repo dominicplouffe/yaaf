@@ -12,6 +12,14 @@ it means the brief: an answer that calls the note standing is refused unless a
 brief written after the note exists, pending his confirm or confirmed. That is
 how "every day" stops being a sentence in a notice and becomes an order every
 agent reads first.
+
+A note is also his line in the boardroom. This table alone was a side door:
+the chat session never read it, and nothing read it once a work run had
+answered, so the CEO he was talking to told him it was still waiting on a reply
+he had sent two hours earlier — and then that it had "missed" it. The boardroom
+is the one record every CEO lane reads, from any run and after any restart, so
+whatever he writes on a decision is said there too, the way an answer to an ask
+already was.
 """
 
 from __future__ import annotations
@@ -20,24 +28,74 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
-from yaaf.core.models import Approval, ApprovalKind, ApprovalStatus, ChairmanNote, utcnow
+from yaaf.core.models import (
+    Approval,
+    ApprovalKind,
+    ApprovalStatus,
+    ChairmanNote,
+    Channel,
+    ChannelKind,
+    Message,
+    Project,
+    utcnow,
+)
 
 #: How many unanswered notes the CEO's pack carries. More than this is a backlog
 #: the oldest of which it should already have answered.
 PACK_LIMIT = 10
 
 
+#: How much of what the note was written on heads its boardroom line.
+ABOUT_IN_CHAT = 140
+
+
 def record(session: Session, project_id: str, source_kind: str, source_id: str,
-           about: str, body: str | None) -> ChairmanNote | None:
-    """Hold his note for an answer. An empty note is no note."""
+           about: str, body: str | None, *, user_id: str) -> ChairmanNote | None:
+    """Hold his note for an answer, and say it in the boardroom as his.
+
+    An empty note is no note. `user_id` is whoever wrote it — required, so a
+    new door cannot record a note without saying who said it in the room."""
     text = (body or "").strip()
     if not text:
         return None
     row = ChairmanNote(id=ids.new_id(ids.CHAIRMAN_NOTE), project_id=project_id,
                        source_kind=source_kind, source_id=source_id,
                        about=about[:400], body=text)
+    message = _say_in_boardroom(session, project_id, user_id, about, text)
+    if message is not None:
+        row.message_id = message.id
     session.add(row)
     return row
+
+
+def chat_line(about: str, text: str) -> str:
+    """The same shape an answer to an ask takes from the Inbox: what it answers,
+    then what he said."""
+    head = about if len(about) <= ABOUT_IN_CHAT else about[:ABOUT_IN_CHAT - 1] + "…"
+    return f"Re: “{head}” — {text}"
+
+
+def _say_in_boardroom(session: Session, project_id: str, user_id: str,
+                      about: str, text: str) -> Message | None:
+    from yaaf.server import unread
+
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == project_id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalars().first()
+    if boardroom is None:
+        return None
+    message = Message(id=ids.new_id(ids.MESSAGE), project_id=project_id,
+                      channel_id=boardroom.id, sender_user_id=user_id,
+                      body=chat_line(about, text), created_at=utcnow())
+    # No wake of its own: the chat session polls the room every two seconds,
+    # and with no session live the dispatcher's next tick sees his line.
+    session.add(message)
+    project = session.get(Project, project_id)
+    if project is not None:
+        # Whoever speaks has read the room up to what they said.
+        unread.mark_boardroom_read(session, project, message.created_at)
+    return message
 
 
 def unanswered(session: Session, project_id: str) -> list[ChairmanNote]:
@@ -109,7 +167,12 @@ def for_context(session: Session, project_id: str) -> dict | None:
             "you answer it with note_answer — one line he reads under his note. Decide "
             "first whether it applies to that one item (standing=false) or from now on "
             "(standing=true). From now on means the brief: fold it in with "
-            "brief_propose, then answer. Do not file it as a memory."),
+            "brief_propose, then answer. Do not file it as a memory. Each is also his "
+            "line in the boardroom (boardroom_message_id), so whoever answers him "
+            "there has it in front of them: a reply in the boardroom is what he "
+            "reads now, and note_answer is still what closes it here."),
         "notes": [{"id": n.id, "on": n.about, "he_wrote": n.body,
-                   "at": n.created_at.isoformat()} for n in notes],
+                   "at": n.created_at.isoformat(),
+                   **({"boardroom_message_id": n.message_id} if n.message_id else {})}
+                  for n in notes],
     }

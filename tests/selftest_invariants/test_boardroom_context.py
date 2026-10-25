@@ -313,7 +313,13 @@ def test_the_length_rule_is_a_number_and_stops_at_the_deliverable(client):
 def test_notices_finally_reach_the_agent_the_chairman_talks_to(client):
     """Notices are consumed inside the context pack, and the chat lane never
     built one — so "your run was reaped" and "budget exhausted" could never
-    reach the CEO in the boardroom, whatever he asked it."""
+    reach the CEO in the boardroom, whatever he asked it.
+
+    This used to end "delivered exactly once, same as a work run". That half
+    was the next bug: the chat lane asks before every answer, so it consumed
+    whatever arrived between two of his messages — six of his own decisions in
+    one month — and the work lane that plans from them never saw one. The chat
+    lane now observes and the work lane consumes; see test_one_ceo_record."""
     project = make_project(client)
     _drain()
     with db_session() as session:
@@ -326,9 +332,12 @@ def test_notices_finally_reach_the_agent_the_chairman_talks_to(client):
     pack = client.get("/agent/context", headers=bearer(ceo)).json()
     assert [n["body"] for n in pack["notices"]] == ["80% of the monthly budget is spent."]
 
-    # Delivered exactly once, same as a work run.
+    # Shown again on the next turn, and still there for the work run after.
     again = client.get("/agent/context", headers=bearer(ceo)).json()
-    assert again["notices"] == []
+    assert [n["body"] for n in again["notices"]] == ["80% of the monthly budget is spent."]
+    _, work = live_token(project["id"], project["ceo_agent_id"])
+    planned = client.get("/agent/context", headers=bearer(work)).json()
+    assert [n["body"] for n in planned["notices"]] == ["80% of the monthly budget is spent."]
 
 
 def test_a_days_long_chat_session_is_capped_on_rate_not_lifetime(client):
