@@ -219,6 +219,10 @@ def test_the_work_lane_still_gets_what_the_chat_lane_was_shown(client):
     assert any(c["channel_kind"] == "leadership" for c in work["unread"])
     with db_session() as session:
         assert session.query(Suggestion).filter(Suggestion.consumed_at.is_(None)).count() == 0
+    # Once a run has acted on it, it is in the state, not repeated every turn: a
+    # notice is an order to the run that acts ("raise it now"), not history.
+    after = client.get("/agent/context", headers=bearer(chat)).json()
+    assert "approval_decided" not in [n["kind"] for n in after["notices"]]
 
 
 # ── 3. one picture for every lane ────────────────────────────────────────────────

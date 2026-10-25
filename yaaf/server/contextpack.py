@@ -1354,17 +1354,21 @@ def _scoreboard_note(board: list[dict]) -> str:
     )
 
 
-#: What the chat lane is shown of the CEO's notices: the recent ones, consumed
-#: or not, because it consumes none of them.
-OBSERVED_NOTICE_HOURS = 24
+#: The most of the CEO's waiting notices the chat lane is shown at once.
 OBSERVED_NOTICE_LIMIT = 20
 
 
-def _observed_notices(session: Session, agent: Agent, now) -> list[Notice]:
+def _observed_notices(session: Session, agent: Agent) -> list[Notice]:
+    """What has happened that no work run has picked up yet — shown, not taken.
+
+    Not a day of history: a notice is an instruction to the run that acts on it
+    ("say it in the boardroom now"), and once one has, the result is in the
+    board, the situation and what the CEO last said. A live day of them was ten
+    thousand characters on every chat turn, telling the chat lane to raise
+    flags its work runs had already raised."""
     newest = list(session.execute(
         select(Notice)
-        .where(Notice.agent_id == agent.id,
-               Notice.created_at >= now - timedelta(hours=OBSERVED_NOTICE_HOURS))
+        .where(Notice.agent_id == agent.id, Notice.consumed_at.is_(None))
         .order_by(Notice.created_at.desc()).limit(OBSERVED_NOTICE_LIMIT)
     ).scalars())
     return list(reversed(newest))
@@ -1436,7 +1440,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
 
     # Notices: consumed on delivery, exactly once — by a lane that acts.
     if observing:
-        notices = _observed_notices(session, agent, now)
+        notices = _observed_notices(session, agent)
     else:
         notices = list(
             session.execute(
