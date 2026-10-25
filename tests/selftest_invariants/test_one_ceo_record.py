@@ -303,15 +303,16 @@ def _ceo_lines(project: dict) -> list[str]:
             if m.sender_agent_id == project["ceo_agent_id"]]
 
 
-def _say(client, token: str, project: dict, body: str) -> None:
+def _say(client, token: str, project: dict, body: str, answers: list[str] = ()) -> None:
     posted = client.post("/agent/messages", headers=bearer(token), json={
-        "channel_id": channel_of(client, project["id"], "boardroom"), "body": body})
+        "channel_id": channel_of(client, project["id"], "boardroom"), "body": body,
+        "in_reply_to": list(answers)})
     assert posted.status_code == 200, posted.text
 
 
-def _janitor(project: dict) -> None:
+def _his_line(note_id: str) -> str:
     with db_session() as session:
-        janitor.janitor_once(session)
+        return session.get(ChairmanNote, note_id).message_id
 
 
 def _held(client, project: dict) -> dict:
@@ -324,8 +325,8 @@ def test_the_chat_reply_is_the_answer_under_his_note(client):
     a work run closing the note later posts nothing more."""
     project = make_project(client)
     note_id = _noted(client, project)
-    _say(client, _chat(project), project, "Yes, it plays without a login. Using it now.")
-    _janitor(project)
+    _say(client, _chat(project), project, "Yes, it plays without a login. Using it now.",
+         [_his_line(note_id)])
     assert _held(client, project)["reply"] == "Yes, it plays without a login. Using it now."
 
     work = live_token(project["id"], project["ceo_agent_id"])[1]
@@ -348,7 +349,6 @@ def test_a_note_closed_before_anyone_answered_him_is_answered_in_the_boardroom(c
     lines = _ceo_lines(project)
     assert len(lines) == 1 and lines[0].endswith("Seen: it plays, and the team uses it.")
     assert lines[0].startswith("On “Approved: Assist:")
-    _janitor(project)
     assert _held(client, project)["reply"] == "Seen: it plays, and the team uses it."
 
 
@@ -362,8 +362,8 @@ def test_the_chat_session_closing_a_note_mid_turn_does_not_answer_twice(client):
                          json={"reply": "Got the link.", "standing": False})
     assert closed.status_code == 200, closed.text
     assert _ceo_lines(project) == []
-    _say(client, chat, project, "Got it, thank you: the demo plays and the team has it.")
-    _janitor(project)
+    _say(client, chat, project, "Got it, thank you: the demo plays and the team has it.",
+         [_his_line(note_id)])
     assert _ceo_lines(project) == ["Got it, thank you: the demo plays and the team has it."]
     assert _held(client, project)["reply"] == ("Got it, thank you: the demo plays and the "
                                                "team has it.")
@@ -371,11 +371,68 @@ def test_the_chat_session_closing_a_note_mid_turn_does_not_answer_twice(client):
 
 def test_the_pack_says_he_was_already_answered(client):
     project = make_project(client)
-    _noted(client, project)
-    _say(client, _chat(project), project, "Yes, it plays.")
+    note_id = _noted(client, project)
+    _say(client, _chat(project), project, "Yes, it plays.", [_his_line(note_id)])
     notes = client.get("/agent/context", headers=bearer(_chat(project))).json()[
         "chairman_notes"]["notes"]
     assert notes[0]["you_answered_in_the_boardroom"] == "Yes, it plays."
+
+
+def test_what_the_ceo_said_about_something_else_is_not_put_under_his_note(client):
+    """The answer used to be read off the room: the CEO's first line after his.
+    A status posted a second later, about anything, became the reply under his
+    note — and the note closed on words that were never about it."""
+    project = make_project(client)
+    note_id = _noted(client, project)
+    chat = _chat(project)
+    _say(client, chat, project, "Morning: the ads are paused until Monday.")
+    notes = client.get("/agent/context", headers=bearer(chat)).json()["chairman_notes"]
+    assert "you_answered_in_the_boardroom" not in notes["notes"][0]
+    _say(client, chat, project, "Yes, the demo plays.", [_his_line(note_id)])
+    assert _held(client, project)["reply"] == "Yes, the demo plays."
+
+
+def test_the_chat_reply_names_every_line_its_turn_was_given(monkeypatch):
+    """The other half of the link: the chat session says which of his lines it
+    is answering. Without it, nothing is ever put under his note from the chat."""
+    import asyncio
+
+    from tests.selftest_invariants.test_chat_lane import _chat_entry
+
+    chat_entry = _chat_entry(monkeypatch)
+    posted: list[tuple] = []
+    reads = iter([(200, [{"id": "msg_old", "from_user": "u", "body": "old"},
+                         {"id": "msg_note", "from_user": "u", "body": "Re: “x” — done"},
+                         {"id": "msg_hi", "from_user": "u", "body": "and hi"}])])
+
+    class Stop(Exception):
+        pass
+
+    def read(*_a, **_k):
+        try:
+            return next(reads)
+        except StopIteration:
+            raise Stop from None
+
+    class Conversation:
+        async def turn(self, channel_id, prompt):
+            return "Got both."
+
+        def spent(self):
+            return False
+
+    monkeypatch.setattr(chat_entry, "_read_messages", read)
+    monkeypatch.setattr(chat_entry, "_set_typing", lambda *a: None)
+    monkeypatch.setattr(chat_entry, "_situation_block", lambda: "")
+    monkeypatch.setattr(chat_entry, "_post_reply",
+                        lambda *a: posted.append(a) or True)
+    state = {"backlog": [], "last_seen": "msg_old", "history": [], "attempts": {},
+             "turns_ok": 0}
+    try:
+        asyncio.run(chat_entry._serve(Conversation(), "chan", state))
+    except Stop:
+        pass
+    assert posted == [("chan", "Got both.", ["msg_note", "msg_hi"])]
 
 
 # ── 5. every door that takes his words ───────────────────────────────────────────
@@ -472,22 +529,45 @@ def test_a_reason_on_a_paused_project_waits_for_the_ceo(client):
     assert sum(1 for m in _boardroom(project) if m.sender_user_id) == 1, "no words, no line"
 
 
-def test_a_note_buys_no_work_run_of_its_own(client):
-    """With no chat session live, his plain message wakes the CEO at once — but
-    a note on a decision rides that decision's notice, as it always did, and is
-    not counted on any screen as a wake that will not come."""
+def test_with_no_chat_session_his_note_wakes_the_ceo_on_the_ordinary_clock(client):
+    """His note is his line, so it reaches the CEO the way his words do. It was
+    once kept from waking anyone at all, and a note on a decision that left no
+    waking notice of its own then sat until something else woke the CEO. It is
+    not urgent, though: it is not a question he is waiting on in the room, so
+    it coalesces like any notice — arriving with its decision, one run reads
+    both — and a reason on an amendment never buys a run of its own at once.
+    While a chat session is live, the room is the chat lane's to answer."""
+    from datetime import timedelta
+
+    from yaaf.core.constitution import effective
     from yaaf.server import dispatcher
 
     project = make_project(client)
     client.post(f"/admin/approvals/{_assist(client, project)}/decide", headers=ADMIN,
                 json={"approve": True, "note": f"done: {LINK}"})
+
+    def wakes() -> list[dict]:
+        with db_session() as session:
+            row = session.get(Project, project["id"])
+            for n in session.query(Notice).filter_by(agent_id=project["ceo_agent_id"]):
+                n.consumed_at = n.consumed_at or utcnow()
+            return [r for r in dispatcher._wake_reasons(
+                session, row, effective(session, row.id),
+                session.get(Agent, project["ceo_agent_id"])) if r["kind"] == "messages"]
+
     with db_session() as session:
-        ceo = session.get(Agent, project["ceo_agent_id"])
         row = session.get(Project, project["id"])
-        assert dispatcher._unread_for(session, row, ceo) == 0
-    client.post(f"/admin/projects/{project['id']}/boardroom", headers=ADMIN,
-                json={"body": "Are you there?"})
+        assert dispatcher._unread_for(session, row,
+                                      session.get(Agent, project["ceo_agent_id"])) == 1
+    assert wakes() == [], "not urgent: it waits for the coalescing window"
     with db_session() as session:
-        ceo = session.get(Agent, project["ceo_agent_id"])
+        line = session.query(ChairmanNote).one().message_id
+        message = session.get(Message, line)
+        message.created_at = message.created_at - timedelta(minutes=10)
+    assert [r["urgent"] for r in wakes()] == [False], "and then it wakes the CEO"
+
+    _chat(project)
+    with db_session() as session:
         row = session.get(Project, project["id"])
-        assert dispatcher._unread_for(session, row, ceo) == 1
+        assert dispatcher._unread_for(session, row,
+                                      session.get(Agent, project["ceo_agent_id"])) == 0

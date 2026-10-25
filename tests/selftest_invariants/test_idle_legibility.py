@@ -26,6 +26,7 @@ from tests.conftest import (
     ADMIN,
     agent_by_name,
     bearer,
+    ceo_read_the_boardroom,
     channel_of,
     live_token,
     make_project,
@@ -276,6 +277,8 @@ def test_a_requirement_the_chairman_sent_back_is_not_a_quiet_board(client):
             notice.consumed_at = utcnow()
         for run in session.query(Run).filter(Run.status == RunStatus.RUNNING):
             run.status = RunStatus.DONE
+    # His reason for sending it back is also his line in the boardroom: read.
+    ceo_read_the_boardroom(project["id"])
     _drain()
 
     state = _activity(project)

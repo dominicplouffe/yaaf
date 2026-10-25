@@ -82,7 +82,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import asks as ask_lib
-from yaaf.server import briefing, chairman_notes, metrics, policy, staffing
+from yaaf.server import briefing, metrics, policy, staffing
 from yaaf.server.notify import (
     Attention,
     boardroom_line,
@@ -177,7 +177,6 @@ def _janitor_project(session: Session, project: Project) -> None:
     nag_approvals(session, project, cons)
     expire_approvals(session, project, cons)
     answer_asks(session, project)
-    chairman_notes.link_replies(session, project.id)
     nag_asks(session, project, cons)
     expire_asks(session, project)
     enforce_budget(session, project, cons)

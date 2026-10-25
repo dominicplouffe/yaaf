@@ -369,6 +369,25 @@ def channel_of(client: TestClient, project_id: str, kind: str, team_id: str | No
     raise KeyError(kind)
 
 
+def ceo_read_the_boardroom(project_id: str) -> None:
+    """The CEO has read everything said in the boardroom up to now, as a woken
+    run's context pack leaves its cursor."""
+    from yaaf.core.models import AgentKind, Channel, ChannelKind, ChannelRead
+
+    with db_session() as session:
+        ceo = session.execute(sa_select(Agent.id).where(
+            Agent.project_id == project_id, Agent.kind == AgentKind.CEO)).scalar_one()
+        room = session.execute(sa_select(Channel.id).where(
+            Channel.project_id == project_id,
+            Channel.kind == ChannelKind.BOARDROOM)).scalar_one()
+        cursor = session.execute(sa_select(ChannelRead).where(
+            ChannelRead.agent_id == ceo, ChannelRead.channel_id == room)).scalar_one_or_none()
+        if cursor is None:
+            session.add(ChannelRead(agent_id=ceo, channel_id=room, last_read_at=utcnow()))
+        else:
+            cursor.last_read_at = utcnow()
+
+
 def backdate_project(project_id: str, hours: float) -> None:
     """Make a project look older, so drought grace periods can be escaped."""
     from datetime import timedelta
