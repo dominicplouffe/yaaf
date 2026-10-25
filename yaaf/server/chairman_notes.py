@@ -136,42 +136,27 @@ class NoteError(ValueError):
 REPLY_CHARS = 1_000
 
 
-def boardroom_reply(session: Session, note: ChairmanNote) -> Message | None:
-    """The CEO's answer to his note: its first line in the boardroom after his.
-
-    Read mechanically, the way an ask's answer is. The chat session answers
-    his line in seconds, as it answers anything he says, and that reply is the
-    one he reads — so it is the answer, not a second one composed for a box."""
-    if note.message_id is None:
-        return None
-    said = session.get(Message, note.message_id)
-    if said is None:
-        return None
-    return session.execute(
-        select(Message).where(Message.channel_id == said.channel_id,
-                              Message.sender_agent_id.is_not(None),
-                              Message.created_at > said.created_at)
-        .order_by(Message.created_at).limit(1)
-    ).scalars().first()
-
-
 def _clip_reply(body: str) -> str:
     body = body.strip()
     return body if len(body) <= REPLY_CHARS else body[:REPLY_CHARS - 1] + "…"
 
 
-def link_replies(session: Session, project_id: str) -> int:
-    """Put the CEO's boardroom answer under each note it answered, so his Inbox
-    shows the words he already read in the chat. The janitor runs this."""
+def link_answer(session: Session, project_id: str, reply: Message,
+                answers: list[str]) -> int:
+    """Put the CEO's boardroom reply under each of his notes it was written to.
+
+    `answers` is what the poster says it is replying to: the chat session sends
+    the ids of the chairman lines its turn was given, so the link is the one
+    the reply was composed for, never a guess from the order of the room. A
+    note already answered keeps its answer. Returns how many it closed."""
+    if not answers:
+        return 0
     linked = 0
     for note in session.execute(
         select(ChairmanNote).where(ChairmanNote.project_id == project_id,
-                                   ChairmanNote.message_id.is_not(None),
+                                   ChairmanNote.message_id.in_(answers),
                                    ChairmanNote.reply_message_id.is_(None))
     ).scalars():
-        reply = boardroom_reply(session, note)
-        if reply is None:
-            continue
         note.reply_message_id = reply.id
         note.reply = _clip_reply(reply.body)
         linked += 1
@@ -185,8 +170,8 @@ def answer(session: Session, project_id: str, note_id: str, reply: str,
     One answer per note: if the CEO already answered him in the boardroom,
     that is the reply under his note and `reply` adds nothing. If not, `reply`
     is said in the boardroom now, as the CEO's line — unless `say_it` is False:
-    the chat session's turn ends by posting its own reply, which is then the
-    answer, and the janitor puts it under his note. Returns the note and
+    the chat session's turn ends by posting its own reply, naming his line, and
+    that reply is then put under his note (link_answer). Returns the note and
     whether it was already answered there."""
     note = session.get(ChairmanNote, note_id)
     if note is None or note.project_id != project_id:
@@ -201,10 +186,6 @@ def answer(session: Session, project_id: str, note_id: str, reply: str,
             "his words and their numbers), then answer this note again. If it was "
             "about that one item only, answer with standing=false.")
     already = note.reply_message_id is not None
-    if not already:
-        heard = boardroom_reply(session, note)
-        if heard is not None:
-            note.reply_message_id, note.reply, already = heard.id, _clip_reply(heard.body), True
     if not already:
         said = _say_reply(session, note, agent_id, reply.strip()) if say_it else None
         note.reply_message_id = said.id if said is not None else None
@@ -245,8 +226,6 @@ def _brief_since(session: Session, project_id: str, note: ChairmanNote) -> bool:
 def _for_context(session: Session, n: ChairmanNote) -> dict:
     # Read-only: the chat lane builds this too, and consumes nothing.
     heard = n.reply if n.reply_message_id else None
-    if heard is None and (found := boardroom_reply(session, n)) is not None:
-        heard = _clip_reply(found.body)
     return {"id": n.id, "on": n.about, "he_wrote": n.body, "at": n.created_at.isoformat(),
             **({"boardroom_message_id": n.message_id} if n.message_id else {}),
             **({"you_answered_in_the_boardroom": heard} if heard else {})}

@@ -906,6 +906,10 @@ class MessagePost(BaseModel):
     # Break-glass on the chairman's reporting cadence, named rather than
     # implied. Verified where verifiable, recorded either way.
     override: str | None = None
+    # The chairman lines this message answers, by id. The chat session sends
+    # the lines its turn was given, so a reply to his note on a decision is put
+    # under that note — by what it was written to, not where it fell in the room.
+    in_reply_to: list[str] = Field(default_factory=list, max_length=50)
 
 
 @router.post("/messages")
@@ -928,6 +932,10 @@ def post_message(
         body=body.body,
     )
     session.add(message)
+    if body.in_reply_to and ctx.agent.kind == AgentKind.CEO:
+        from yaaf.server import chairman_notes
+
+        chairman_notes.link_answer(session, ctx.project.id, message, body.in_reply_to)
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {"id": message.id, "at": message.created_at.isoformat() if message.created_at else None}
 

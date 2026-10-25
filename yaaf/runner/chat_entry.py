@@ -123,9 +123,14 @@ def _set_typing(channel_id: str, seconds: float) -> None:
     base._call("POST", "/agent/typing", {"channel_id": channel_id, "seconds": seconds})
 
 
-def _post_reply(channel_id: str, text: str) -> bool:
+def _post_reply(channel_id: str, text: str, answers: list[str] | None = None) -> bool:
     body = text.strip()[:MAX_REPLY_CHARS] or "(no reply)"
-    result = base._call("POST", "/agent/messages", {"channel_id": channel_id, "body": body})
+    payload = {"channel_id": channel_id, "body": body}
+    if answers:
+        # The lines this turn was given: a note of his among them is answered
+        # by this reply, and the platform puts it under that note.
+        payload["in_reply_to"] = answers
+    result = base._call("POST", "/agent/messages", payload)
     return result["status"] == 200
 
 
@@ -503,7 +508,7 @@ async def _serve(conversation, channel_id: str, state: dict) -> int | None:
 
         _set_typing(channel_id, 0)
         state["turns_ok"] += 1
-        if reply and not _post_reply(channel_id, reply):
+        if reply and not _post_reply(channel_id, reply, [m["id"] for m in fresh]):
             # Composed and undeliverable — a revoked token, a refused post. The
             # reply itself is lost, but the chairman is not left guessing: the
             # supervisor sees the session end and says so in the boardroom
