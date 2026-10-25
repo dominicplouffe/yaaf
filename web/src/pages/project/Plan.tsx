@@ -892,7 +892,7 @@ function Graph({ reqs, critical }: { reqs: PlanRequirement[]; critical: string[]
                   {"  "}{clip(requirementName(r), 15)}
                 </tspan>
               </text>
-              <text x={p.x + 12} y={p.y + 35} fontSize={11} fill={
+              <text x={p.x + 12} y={p.y + 35} fontSize={12} fill={
                 r.status === "met" ? "var(--good)"
                 : r.status === "cut" ? "var(--critical)"
                 : r.failure_load > 0 ? "var(--serious)"
