@@ -1,27 +1,44 @@
-# yaaf — stop prompting, start delegating
+# yaaf — build a company, hire a CEO, let the team work
 
-**Tell Claude what you want done, in one paragraph. Get back a crew that plans
-it, works it for weeks, and proves it's finished.**
+**yaaf is the harness for teams of harnesses.** Claude Code, Codex, Gemini CLI
+and OpenCode each drive one agent. yaaf gives every one of them a job on an org
+chart, a CEO to answer to, a budget and a deadline — and runs the company under
+rules no agent can talk its way around. **You're the chairman.**
 
-Say this in the Claude window you already have open:
+Open source (Apache-2.0), on your own machine. No account, no hosted tier, no
+telemetry: your agents pay your model provider directly, at their prices.
+Website: **[yaaf.dplouffe.ca](https://yaaf.dplouffe.ca/)**.
+
+| Yesterday: one agent, one chat, and you | Today: a company that answers to you |
+|---|---|
+| You type, it answers, you check. You are the loop. | A CEO picks, prices and assigns the next piece of work while you sleep. |
+| It says "done". You find out it isn't. | Only the platform marks work done. It runs the test itself. |
+| Two agents argue in circles all night, at full price. | Every run is metered live. At the wall, the company pauses itself. |
+| Nobody can tell you when it will be finished. | The date comes from measured pace. If it slips, new scope freezes. |
+| Every morning starts from an empty chat. | Each morning, a letter: what happened, and what waits on you. |
+
+## Founding day: from one paragraph to a staffed company
+
+Say this in the dashboard, or in the Claude window you already have open:
 
 > *Here's last quarter's ad export. I want a desk that watches this account and
 > tells me what to change every Monday — and it must never touch anything.*
 
-In one sitting, Claude:
+In one sitting:
 
-1. **Drafts the crew.** Goal, teams, who's on each, budget, deadline — hiring
-   from a library of 38 job descriptions and 17 pre-built crews rather than
-   inventing people.
-2. **Gets argued with.** The platform grades the draft against the ten things
+1. **Describe it.** The Founder in the dashboard, or Claude through the
+   connector, drafts the goal, the teams, who's on each, the budget and the
+   date — asking until nothing is assumed, and hiring from a library of 38
+   job descriptions and 17 ready-made teams rather than inventing people.
+2. **Get argued with.** The platform grades the draft against the ten things
    a goal has to contain to work — a finish line, who the work has to be right
    for, the standard it is judged against, what explicitly *doesn't* count,
-   what you'll refuse to do. Free, and before anything exists.
-3. **Runs a dress rehearsal.** The whole project simulated on scripted agents
-   for $0: where it would stall, what it would cost, how often it would stop and
-   wait for you.
-4. **Hires it for real.** A CEO, four desks, a budget, a delivery date and a
-   Slack channel each.
+   what you'll refuse to do. Before anything exists, and it costs nothing.
+3. **Rehearse it for $0.** The whole company runs on scripted agents first:
+   where it would stall, what it would cost, how often it would stop and wait
+   for you.
+4. **Hire it.** A CEO, its teams, a budget, a delivery date and a Slack channel
+   each. Then it works for weeks.
 
 Next month it is still working. It emails you what happened while you were out.
 And you steer it from the same chat you started in — *why did the date slip*,
@@ -35,7 +52,7 @@ from a Claude window this week, and every write in its audit trail is signed
 **And the part you would find anyway:** this repository is two months old — its
 first commit is 14 August 2026 — and it was built fast and in the open with
 Claude Code, which co-authored nearly every commit. What that bought is a
-policy engine and 1,813 offline tests attacking it. What it has not bought is a project anyone but me has run for a
+policy engine and over 2,300 offline tests attacking it. What it has not bought is a project anyone but me has run for a
 month, or a security review by someone who did not write the thing. Both are
 true at once — [PLAN.md](docs/PLAN.md) says which claims are load-bearing and
 what would falsify them, and [SECURITY.md](SECURITY.md) says what contains an
@@ -45,7 +62,9 @@ agent and what does not.
 
 Three things to know before anything else:
 
-- **Open source, Apache-2.0.** You run it, on your machine or your server. [LICENSE](LICENSE)
+- **Not a service. Software you own.** Apache-2.0: read every line, fork it,
+  change anything. You run it on your machine or your server; there is nothing
+  to sign up for and nothing to upgrade to. [LICENSE](LICENSE)
 - **Any model, per person.** Anthropic, OpenAI, Google, Azure OpenAI, AWS
   Bedrock, Vertex AI, Mistral, xAI, DeepSeek, Groq, Together, Fireworks,
   Cerebras, Cohere, NVIDIA, Hugging Face, Z.ai, Qwen, Moonshot, OpenRouter, a
@@ -64,6 +83,25 @@ chairman** — the human the project answers to, with co-chairs if you want them
 Yet Another Agent Framework? No:
 this is the org chart, the boardroom and the accounting department around the
 agents you already have.
+
+---
+
+## The harness, one level up
+
+A harness drives one agent. yaaf harnesses the whole team.
+
+| Layer | What it drives |
+|---|---|
+| **The model** | The weights: Claude, GPT, Gemini, DeepSeek, Mistral, Kimi, a local model. |
+| **The agent harness** | One model's loop, tools and context: the Claude Agent SDK, Claude Code, Codex CLI, Gemini CLI, OpenCode, or yaaf's own loop on the provider's API. Every person on the org chart runs in one, and a team can mix them. |
+| **yaaf, the team harness** | The company: who's hired, what's next, what it costs, when it's due, and whether it's really done. |
+
+> *A harness is transport. It decides how a model is driven, never what the
+> model may do.* — [RUNTIMES.md](docs/RUNTIMES.md)
+
+What a model *may* do is decided in one place, yaaf's server, the same for every
+harness — and a harness that can't report what it spent while it's spending it
+isn't let in. yaaf doesn't replace Claude Code or Codex; it hires them.
 
 ---
 
@@ -139,6 +177,10 @@ the receipt.
 **Use a skill when** you're watching, it finishes in one sitting, nothing
 irreversible happens, and nobody asks in six weeks how you know.
 
+Claude Code, Codex and the other agent harnesses are the same story one level
+down: each drives one agent well, and you are still its manager. yaaf runs them
+as seats on a team.
+
 **Reach for yaaf when** it has to run unattended for weeks, "done" can't be
 self-graded, money has to stop by itself, you'll have to reconstruct it later
 for a client or an auditor — or you want agents to disagree, because one agent
@@ -199,7 +241,7 @@ held. Break one and it doesn't get a stern reminder — it gets a 403.
   refusal — plus random samples of "completed" work dealt to you to spot-check,
   because AI reviewers approve nearly everything and you don't.
 
-Each of those is a test, not a paragraph. The suite is 1,813 of them, and its
+Each of those is a test, not a paragraph. The suite is over 2,300 of them, and its
 invariant attacks drive the real app over HTTP the way an agent would: forged
 tokens, wrong roles, rephrased requests.
 They are free, offline, and they test **the rules, not the models** — model
@@ -219,9 +261,11 @@ platform still verifies what it can and caps every dollar.
 
 ---
 
-## Try it before you pay for it
+## Rehearse a company for $0
 
 ```bash
+git clone https://github.com/dominicplouffe/yaaf && cd yaaf
+pip install -e .
 yaaf rehearse examples/01-your-first-hour.json
 ```
 
