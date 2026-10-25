@@ -7,7 +7,7 @@
     "markets"
   ],
   "description": "Turns the desk's research into a recommended book: what to hold, at what weight, why, and what would change it. Recommends only — the chairman executes.",
-  "model": "claude-sonnet-5-5",
+  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

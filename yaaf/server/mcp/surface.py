@@ -25,6 +25,7 @@ REACHED = {
                           "are stripped",
     "GET /admin/harnesses": "catalog (harnesses)",
     "GET /admin/providers": "catalog (providers)",
+    "GET /admin/models": "catalog (models)",
     # steer
     "POST /admin/projects/{project_id}/boardroom": "boardroom_say",
     "POST /admin/approvals/{approval_id}/decide": "approval_decide",
@@ -70,6 +71,8 @@ REACHED = {
         "project_configure (pay_provider) — by credential name, never a value",
     "DELETE /admin/projects/{project_id}/credentials/{provider_name}":
         "project_configure (stop_paying_provider)",
+    "PUT /admin/projects/{project_id}/fallback-credential":
+        "project_configure (set_fallback) — by credential name, never a value",
     "POST /admin/teams/{team_id}/stand_down": "lifecycle (stand_down)",
     "POST /admin/teams/{team_id}/recall": "lifecycle (recall)",
     "POST /admin/projects/{project_id}/mcp_servers": "data_source (add)",
@@ -196,6 +199,9 @@ WITHHELD = {
         "over the account it was issued for.",
     "POST /admin/roles": "the role library is product-wide; a project client edits no part of it.",
     "PATCH /admin/roles/{slug}": "editing the shared role library changes every project pinned to it.",
+    "POST /admin/roles/{slug}/adopt-class":
+        "moving a library role onto a model class is the update script's step, above "
+        "every project.",
     "GET /admin/roles/{slug}": "`catalog` serves what a drafting client needs of it.",
     "POST /admin/crews": "the crew library is shared the same way the role library is.",
     "GET /admin/projects/{project_id}/accounts":
@@ -266,6 +272,60 @@ WITHHELD = {
     "GET /admin/projects/{project_id}/credentials":
         "the same list rides the project's dashboard (`credentials`), which `project` "
         "already returns — a second read path would be a second definition of it.",
+    "GET /admin/settings/models":
+        "the install's lineups and ceilings are above every project a client is scoped "
+        "to; `catalog (models)` says what each class resolves to, which is what a drafter "
+        "needs.",
+    "PUT /admin/settings/models/lineup":
+        "a lineup moves every class seat on every project of that provider at once — "
+        "an administrator's decision, made on the Models screen.",
+    "PUT /admin/settings/models/default-provider":
+        "where every unpaid project's classes resolve is install-wide; not a drafter's.",
+    "PUT /admin/settings/models/ceiling":
+        "concurrency per provider is the install's rate-limit budget, shared by every "
+        "project on it.",
+    "GET /admin/settings/providers/readiness":
+        "how ready the install's providers are is an administrator's setup screen, "
+        "above every project; a drafter reads `catalog (models)`.",
+    "PUT /admin/settings/models/upkeep":
+        "whether the install reaches out daily to every provider and the price feed is "
+        "an administrator's decision.",
+    "POST /admin/settings/models/upkeep/run":
+        "it re-reads every key's model list and may move prices every project is "
+        "metered by.",
+    "GET /admin/settings/llm-credentials/{credential_id}/models":
+        "it spends a call on the credential's own key to list a provider's models; the "
+        "lineup it helps set is an administrator's.",
+    "POST /admin/settings/llm-credentials/{credential_id}/smoke":
+        "it spends the credential's own money on a real call; an administrator's check.",
+    "POST /admin/settings/llm-credentials/{credential_id}/check":
+        "it spends the credential's own money on tens of real calls; an administrator's "
+        "check.",
+    "GET /admin/settings/llm-credentials/{credential_id}/checks":
+        "a credential's check results are about the install's keys, which a project "
+        "client never sees.",
+    "GET /admin/settings/provider-checks":
+        "which models an install has checked is evidence for its lineups — an "
+        "administrator's screen, above every project.",
+    "GET /admin/settings/web-search":
+        "which search backend the install pays for is above every project.",
+    "PUT /admin/settings/web-search":
+        "it installs a paid key every project's searches bill to — an administrator's.",
+    "POST /admin/settings/web-search/test":
+        "it spends a query on the install's key.",
+    "DELETE /admin/settings/web-search":
+        "removing it refuses every searching seat on providers without search of their "
+        "own; an administrator's decision.",
+    "POST /admin/settings/model-prices/import":
+        "importing prices sets the meter every project on the install is stopped by — "
+        "an administrator reviews the preview and applies it.",
+    "GET /admin/settings/price-feed":
+        "where the install reads prices from is install-wide.",
+    "PUT /admin/settings/price-feed":
+        "repointing the price feed changes what every future import trusts.",
+    "PUT /admin/settings/model-context/{model}":
+        "a model's window decides when every seat on it compacts its history — an "
+        "administrator's setting, beside the prices.",
     "GET /admin/settings/model-prices":
         "the install's price table is above every project a client is scoped to; a "
         "seat refused for want of a price says so in the refusal.",
@@ -274,6 +334,12 @@ WITHHELD = {
         "that could set one could price its own runs at zero and spend without limit.",
     "DELETE /admin/settings/model-prices/{model}":
         "same reason as setting one: the meter is the administrator's.",
+    "PUT /admin/settings/platform-credential": "a platform credential value, inbound.",
+    "POST /admin/settings/platform-credential/test": "reaches the platform credential.",
+    "DELETE /admin/settings/platform-credential":
+        "removes the install's platform credential — an administrator's decision.",
+    "PUT /admin/settings/platform-credential/model":
+        "product-wide configuration, not a project's.",
     "PUT /admin/settings/anthropic": "a platform credential value, inbound.",
     "POST /admin/settings/anthropic/test": "reaches the platform credential.",
     "DELETE /admin/settings/anthropic":

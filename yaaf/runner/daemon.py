@@ -23,7 +23,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids, prices
+from yaaf.core import ids, model_policy, prices
 from yaaf.core.config import settings
 from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
@@ -50,7 +50,14 @@ from yaaf.core.tokens import mint
 from yaaf.runner.backends import get_backend
 from yaaf.runner.types import RunJob, RunResult
 from yaaf.runtimes import catalog
-from yaaf.runtimes.providers import DEFAULT_PROVIDER, PROVIDERS, credential_env, failure_markers
+from yaaf.runtimes.harnesses import HARNESSES
+from yaaf.runtimes.providers import (
+    DEFAULT_PROVIDER,
+    PROVIDERS,
+    credential_env,
+    failure_markers,
+)
+from yaaf.runtimes.providers import spec as provider_spec
 from yaaf.runtimes.seats import effective_harness, seat_for
 from yaaf.server import policy
 from yaaf.server.contextpack import build_context_pack, build_system_prompt, role_version_for
@@ -80,22 +87,35 @@ def main() -> None:  # pragma: no cover - process entrypoint
 # ── leasing ─────────────────────────────────────────────────────────────────────
 
 
+#: How far past `limit` the lease looks for runs it may start, when a provider
+#: ceiling might leave the oldest rows waiting: far enough that one saturated
+#: provider at the head of the queue cannot stall every other provider's runs.
+CEILING_LOOKAHEAD = 5
+
+
 def lease_and_prepare(limit: int = 1) -> list[RunJob]:
     """Claim up to `limit` queue rows and assemble everything their execution
-    needs, in one transaction per row."""
+    needs, in one transaction per row. A row whose seat runs on a provider at
+    the install's ceiling for it (Settings → Models) stays queued for a later
+    tick — `max_concurrent_runs` caps a project, this caps a provider every
+    project on the box shares (docs/PROVIDERS.md §8)."""
     jobs: list[RunJob] = []
     with db_session() as session:
         now = utcnow()
+        ceilings = model_policy.ceilings(session)
+        running = _running_by_provider(session) if ceilings else {}
         rows = list(
             session.execute(
                 select(RunQueue)
                 .where((RunQueue.not_before.is_(None)) | (RunQueue.not_before <= now))
                 .order_by(RunQueue.created_at)
-                .limit(limit)
+                .limit(limit * CEILING_LOOKAHEAD if ceilings else limit)
                 .with_for_update(skip_locked=True)
             ).scalars()
         )
         for queued in rows:
+            if len(jobs) >= limit:
+                break
             project = session.get(Project, queued.project_id)
             if project is None or project.status != ProjectStatus.RUNNING:
                 # Paused/stopped mid-queue. Dropping the row is correct and not
@@ -111,14 +131,50 @@ def lease_and_prepare(limit: int = 1) -> list[RunJob]:
                          project.status if project else "missing")
                 session.delete(queued)
                 continue
-            job = _materialize(session, queued, project)
+            seat = _queued_seat(session, queued, project) if ceilings else None
+            provider = seat.provider if seat is not None and seat.harness != "mock" else None
+            if provider in ceilings and running.get(provider, 0) >= ceilings[provider]:
+                continue
+            # The seat resolved for the ceiling is the seat the run is pinned
+            # to: resolving it twice is a context's worth of reads per row,
+            # under the rows' locks.
+            job = _materialize(session, queued, project, seat=seat)
             if job is not None:
                 jobs.append(job)
+                if provider:
+                    running[provider] = running.get(provider, 0) + 1
             session.delete(queued)
     return jobs
 
 
-def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob | None:
+def _running_by_provider(session: Session) -> dict[str, int]:
+    """Runs in flight on each provider. The resident chat is not counted: it
+    holds a session open for hours and spends only when the chairman speaks."""
+    from sqlalchemy import func
+
+    rows = session.execute(
+        select(Run.provider, func.count(Run.id))
+        .where(Run.status == RunStatus.RUNNING, Run.kind != RunKind.CHAT_SESSION,
+               Run.provider.is_not(None))
+        .group_by(Run.provider)).all()
+    return {provider: count for provider, count in rows}
+
+
+def _queued_seat(session: Session, queued: RunQueue, project: Project):
+    """The seat a queued run will execute on, or None for a run that calls no
+    model (a check)."""
+    if queued.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK) or not queued.agent_id:
+        return None
+    agent = session.get(Agent, queued.agent_id)
+    if agent is None:
+        return None
+    return seat_for(agent, role_version_for(session, agent),
+                    runtime=(project.integrations or {}).get("runtime"),
+                    context=model_policy.context(session, project))
+
+
+def _materialize(session: Session, queued: RunQueue, project: Project,
+                 seat=None) -> RunJob | None:
     cons = effective(session, project.id)
     run = Run(
         id=queued.id,
@@ -201,14 +257,17 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
         run.summary = f"seat cannot run: {problem}"
         run.finished_at = utcnow()
         return None
-    _pin_seat(session, run, job, seat_for(agent, role_version,
-                                          runtime=(project.integrations or {}).get("runtime")))
+    _pin_seat(session, run, job, seat or seat_for(
+        agent, role_version, runtime=(project.integrations or {}).get("runtime"),
+        context=model_policy.context(session, project)))
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     job.agent_kind = agent.kind
     source_specs = _merge_project_data_sources(session, project, role_version, job)
     role_secrets = _role_secret_env(session, project, role_version)
-    job.billing_env = {**_billing_env(session, project, job.provider), **role_secrets}
+    job.billing_env = {**_billing_env(session, project, job.provider), **role_secrets,
+                       **_search_env(session, job)}
     job.provider_spec = _provider_spec(session, project, job.provider)
+    job.mint_secret_id = _mint_secret_id(session, project, job.provider)
     # Credentials are capabilities: each variable arrives with what it is and
     # how to use it, where the recognizer library knows (docs/AUTONOMY.md).
     from yaaf.core.naming import announced_credentials
@@ -234,15 +293,65 @@ def _pin_seat(session: Session, run: Run, job: RunJob, seat) -> None:
     time, not finalize: reaped and killed runs stay attributed to the model,
     provider and harness that actually ran — and priced at what the install
     priced it at when it ran, not at whatever the price is by finalize."""
-    job.model, job.effort = seat.model, seat.effort
+    # The harness is handed the rung the seat runs at (R6); the run keeps the
+    # effort it was hired at, so reports read in yaaf's words.
+    job.model, job.effort = seat.model, seat.rung or seat.effort
     job.provider, job.harness = seat.provider, seat.harness
+    seller = PROVIDERS.get(seat.provider)
     price = prices.price(session, seat.model)
-    job.price = price.as_dict() if price else None
+    if price is not None:
+        job.price = {**price.as_dict(), "web_search": seller.search_usd if seller and
+                     seller.search_usd else price.as_dict()["web_search"]}
+    else:
+        job.price = None
     row = catalog.model(seat.model)
-    if row is not None:
-        job.model_flags = {"effort": row.effort, "web_tools": row.web_tools}
+    job.model_flags = {"effort": _dial(seat, row, seller),
+                       "web_tools": row.web_tools if row is not None else "basic",
+                       "efforts": list(row.efforts) if row is not None and row.efforts else None,
+                       # What yaaf's own loop compacts against (loop_harness).
+                       "context": prices.context_window(session, seat.model)}
     run.model, run.effort = seat.model, seat.effort
     run.provider, run.harness = seat.provider, seat.harness
+
+
+def _dial(seat, row, seller) -> bool:
+    """Whether a harness that builds its own requests sends an effort at all:
+    only where the model takes one. A model with a single rung (Gemini 2.5)
+    has no dial to turn; one the catalog does not list takes yaaf's names only
+    on Anthropic's wire, whose names they are."""
+    if seat.rung is None:
+        return False
+    if row is None:
+        return bool(seller and seller.protocol == "anthropic")
+    if row.efforts is not None:
+        return len(row.efforts) > 1
+    return row.effort
+
+
+def _search_env(session: Session, job: RunJob) -> dict:
+    """The platform's search backend, for a run promised `web` on a harness
+    that searches through yaaf rather than on its own (docs/PROVIDERS.md §6).
+    A harness with its own search, or a role without the grant, never holds
+    the key."""
+    from yaaf.core import web_search
+
+    found = HARNESSES.get(job.harness)
+    seller = PROVIDERS.get(job.provider)
+    if not (job.tool_permissions or {}).get("web") or found is None:
+        return {}
+    if found.search == "platform" or (found.search == "loop" and not (seller and seller.search)):
+        return web_search.run_env(session)
+    return {}
+
+
+def _mint_secret_id(session: Session, project: Project, provider: str) -> str | None:
+    from yaaf.core import project_credentials
+
+    seller = PROVIDERS.get(provider)
+    if seller is None or not seller.mints_tokens:
+        return None
+    secret = project_credentials.credential_for(session, project, provider)
+    return secret.id if secret is not None else None
 
 
 def _data_source_prompt(specs: list[dict], harness: str | None = None) -> str:
@@ -507,15 +616,20 @@ def _billing_env(session: Session, project: Project, provider: str = DEFAULT_PRO
                     "have; refusing to inject it", secret.id, secret.provider)
         return {}
     mode = project.billing_mode if secret.id == project.billing_secret_id else secret.llm_mode
+    if PROVIDERS[secret.provider].mints_tokens:
+        # The key file never enters a sandbox: a token minted from it does,
+        # just before the container starts (execute_job).
+        return {}
     return credential_env(secret.provider, mode, decrypt(secret.ciphertext))
 
 
 def _provider_spec(session: Session, project: Project, provider: str) -> dict:
     """What a harness that calls the provider's API itself needs to know about
-    it, for a sandbox that cannot import the registry: where it is, which
-    variable holds the key, whether it states its costs and searches, the
-    words its refusals use for a dead key. The
-    address is the credential's where the provider's is (a custom server)."""
+    it, for a sandbox that cannot import the registry: its wire, where it is,
+    how its key is presented and under which variable, whether it states its
+    costs and searches, the words its refusals use for a dead key. The address
+    is the credential's where the provider's is (a custom server, an Azure
+    resource, a Bedrock region)."""
     from yaaf.core import project_credentials
 
     seller = PROVIDERS.get(provider)
@@ -524,11 +638,7 @@ def _provider_spec(session: Session, project: Project, provider: str) -> dict:
     secret = project_credentials.credential_for(session, project, provider)
     mode = (project.billing_mode if secret is not None and secret.id == project.billing_secret_id
             else secret.llm_mode if secret is not None else None)
-    base_url = (secret.base_url if seller.credential_base_url and secret is not None
-                else seller.base_url)
-    return {"name": seller.name, "base_url": base_url, "key_env": seller.kind(mode).env_var,
-            "reports_cost": seller.reports_cost, "search": seller.search,
-            "failure_markers": list(seller.failure_markers)}
+    return provider_spec(seller, mode, secret.base_url if secret is not None else None)
 
 
 # ── execution ───────────────────────────────────────────────────────────────────
@@ -549,6 +659,8 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
         # requirement then fails a test that never ran, forever.
         if job.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK):
             result = _run_check_command(job)
+        elif (refused := _mint_token(job)) is not None:
+            result = refused
         else:
             backend = backend or _backend_for(job)
             # The revoked event reaches the sandbox layer so a kill switch,
@@ -561,6 +673,36 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
         stop_heartbeat.set()
     finalize(job, result, was_revoked=revoked.is_set())
     return result
+
+
+#: Where a run with a minted model token is told when its token expires; it
+#: asks the agent API for another before then (POST /agent/model-token).
+TOKEN_EXPIRY_ENV = "YAAF_MODEL_TOKEN_EXPIRES"
+
+
+def _mint_token(job: RunJob) -> RunResult | None:
+    """Put a freshly minted token where a key-file credential's variable is,
+    just before the container starts — outside the lease transaction, because
+    it is a network call. A refusal ends the run as an `auth` failure, which
+    is what it is; a Google outage as a transient one."""
+    if not job.mint_secret_id or job.harness == "mock":
+        return None
+    from yaaf.core import model_tokens
+    from yaaf.core.crypto import decrypt
+
+    with db_session() as session:
+        secret = session.get(Secret, job.mint_secret_id)
+        key_file = decrypt(secret.ciphertext) if secret is not None else None
+    if key_file is None:
+        return RunResult(ok=False, summary="the credential that mints this run's model "
+                                           "token no longer exists", error_kind="auth")
+    try:
+        token, expires = model_tokens.mint(job.provider, key_file)
+    except model_tokens.MintError as exc:
+        return RunResult(ok=False, summary=str(exc), error_kind=exc.kind)
+    job.billing_env = {**job.billing_env, job.provider_spec.get("key_env") or "": token,
+                       TOKEN_EXPIRY_ENV: str(int(expires))}
+    return None
 
 
 def _backend_for(job: RunJob):
@@ -632,14 +774,25 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         if run.kind not in NON_WORK_RUN_KINDS and not run.produced:
             run.metered = False
 
+        # Every model run is evidence about its credential's provider: enough
+        # transient failures in a row open the breaker, and the projects it
+        # bills move their class seats to their fallback (yaaf.core.breakers).
+        if project is not None and job.provider and job.harness and job.harness != "mock" \
+                and job.kind in MODEL_RUN_KINDS and run.status in (RunStatus.DONE,
+                                                                   RunStatus.FAILED):
+            _record_breaker(session, project, job, run)
+
         # The run was told what is left on the plan behind its own credential.
         # Filing it here is the whole meter: no request to Anthropic, and it
         # refreshes exactly as often as the credential is actually used.
-        if result.plan and project is not None and project.billing_secret_id:
-            from yaaf.core import plan_usage
+        if result.plan and project is not None:
+            from yaaf.core import plan_usage, project_credentials
             from yaaf.core.crypto import decrypt
 
-            billing = session.get(Secret, project.billing_secret_id)
+            # The credential that paid this run's provider — which, on a
+            # project paying two, is not always the billing one.
+            billing = project_credentials.credential_for(
+                session, project, job.provider or DEFAULT_PROVIDER)
             if billing is not None:
                 try:
                     plan_usage.record(session, decrypt(billing.ciphertext), result.plan)
@@ -676,7 +829,71 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
             _retry_failed_run(session, run)
 
 
-CREDENTIAL_FAILURE_MARKERS = failure_markers()
+def _record_breaker(session: Session, project: Project, job: RunJob, run: Run) -> None:
+    from yaaf.core import breakers, project_credentials
+    from yaaf.core.models import AuditLog
+
+    secret = project_credentials.credential_for(session, project, job.provider)
+    if secret is None:
+        return
+    # In a savepoint, and never raised: a breaker that cannot be written is a
+    # missed signal; a finalize that rolls back is a run left RUNNING with its
+    # bill unbooked.
+    try:
+        with session.begin_nested():
+            moved = breakers.record(session, secret.id, ok=run.status == RunStatus.DONE,
+                                    kind=run.error_kind, detail=run.summary or "")
+    except Exception:
+        log.exception("could not record run %s against its credential's breaker", run.id)
+        return
+    if moved is None:
+        return
+    seller = PROVIDERS.get(job.provider)
+    label = seller.label if seller else job.provider
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=None, actor="runner",
+        action=f"billing.breaker_{moved}", entity="secret", entity_id=secret.id,
+        detail={"provider": job.provider, "run_id": run.id,
+                "error": (run.summary or "")[:300]}))
+    _announce_failover(session, secret, label, moved)
+
+
+def _label(provider_name: str | None) -> str:
+    seller = PROVIDERS.get(provider_name or DEFAULT_PROVIDER)
+    return seller.label if seller else str(provider_name)
+
+
+def _announce_failover(session: Session, secret, label: str, moved: str) -> None:
+    """Tell each chairman whose project the move touched — after the fact:
+    the move itself already happened, by state."""
+    from yaaf.server.notify import Attention, chairman_notify, project_link
+
+    for project in session.scalars(select(Project).where(
+            Project.billing_secret_id == secret.id,
+            Project.status.in_((ProjectStatus.RUNNING, ProjectStatus.PAUSED)))):
+        fallback = session.get(Secret, project.fallback_secret_id) \
+            if project.fallback_secret_id else None
+        if moved == "opened":
+            body = (f"{label} is failing for '{secret.name}' — the last runs on it failed "
+                    "transiently in a row. "
+                    + (f"Class seats now run on '{fallback.name}' ({_label(fallback.provider)}) "
+                       "until it recovers; seats pinned to a model wait."
+                       if fallback is not None else
+                       "This project has no fallback credential, so its seats wait for it "
+                       "to recover — set one under Settings → Billing."))
+        else:
+            if fallback is None:
+                continue
+            body = f"{label} is answering again for '{secret.name}': class seats are back on it."
+        chairman_notify(session, project,
+                        f"{label} {'failing' if moved == 'opened' else 'recovered'}",
+                        "\n\n".join(filter(None, (body, project_link(project.id,
+                                                                     "settings")))),
+                        # Opened with nothing to move to, the project is stalled
+                        # until a person acts; a move that already happened is
+                        # a record.
+                        attention=(Attention.ALARM if moved == "opened" and fallback is None
+                                   else Attention.FYI))
 
 
 def _looks_like_credential_failure(run: Run) -> bool:
@@ -687,7 +904,7 @@ def _looks_like_credential_failure(run: Run) -> bool:
     if getattr(run, "error_kind", None) == "auth":
         return True
     lowered = (run.summary or "").lower()
-    return any(marker in lowered for marker in CREDENTIAL_FAILURE_MARKERS)
+    return any(marker in lowered for marker in failure_markers(getattr(run, "provider", None)))
 
 
 def _flag_credential_failure(session: Session, project: Project, run: Run) -> None:

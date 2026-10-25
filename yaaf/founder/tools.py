@@ -120,38 +120,49 @@ def search_crews(session: Session, *, query: str | None = None) -> dict:
 
 
 def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
-    """What a project can pay Claude with: names and modes, never values.
+    """What a project can pay its model calls with: names, providers and modes,
+    never values — and, for each, what the roles' model classes would run on
+    if it paid.
 
     A draft that names no credential is created unable to start, and a draft
     that names the wrong one spends the wrong person's money. Either is worse
     than a question, which is why this is the one thing the Founder is told to
-    ask about rather than fill in.
+    ask about rather than fill in. Any credential can be the billing one: the
+    provider it pays becomes the project's primary provider, and every role
+    that names a class (@frontier, @balanced, @fast) resolves on it.
     """
-    from yaaf.core import llm_credentials
-    from yaaf.runtimes.providers import DEFAULT_PROVIDER
+    from yaaf.core import llm_credentials, model_policy, prices
+    from yaaf.runtimes import catalog
+    from yaaf.runtimes.providers import provider as seller
 
     rows = llm_credentials.choices(session, with_plan=with_plan)
-    # The billing credential pays the provider the seats run on by default;
-    # the count that decides "ask or not" is of those. Another provider's
-    # credentials are for seats on its models, and ride in `credentials`.
-    claude = [r for r in rows if (r.get("provider") or DEFAULT_PROVIDER) == DEFAULT_PROVIDER]
-    if not claude:
+    own = model_policy.lineups(session)
+    for row in rows:
+        lineup = catalog.lineup_of(row.get("provider") or "", own)
+        row["provider_label"] = seller(row.get("provider")).label
+        row["classes"] = {cls: {"model": lineup.get(cls),
+                                "priced": bool(lineup.get(cls))
+                                and prices.covered(session, lineup[cls])}
+                          for cls in reversed(catalog.CLASSES)}
+    if not rows:
         note = ("None yet. The project can still be drafted and created; it cannot start "
                 "until an administrator adds a credential in Settings and assigns it. "
                 "Say so in your cover note.")
-    elif len(claude) == 1:
+    elif len(rows) == 1:
         note = (f"Exactly one: put its id in the draft's billing_secret_id and say in your "
-                f"cover note that the project pays with {claude[0]['name']!r}.")
+                f"cover note that the project pays with {rows[0]['name']!r} "
+                f"({rows[0]['provider_label']}).")
     else:
         note = ("More than one. Ask the chairman which should pay — this is a question "
                 "worth one of your three — and leave billing_secret_id unset until they "
                 "answer. Never guess: it is the one field in the draft that spends "
                 "somebody's money.")
-    if len(claude) < len(rows):
-        note += (" Each credential names the provider it pays. A seat on another "
-                 "provider's model (deepseek-chat, openrouter/…, custom/…) needs that "
-                 "provider paid too: put {provider: id} in the draft's `credentials`, "
-                 "under the same rule — one per provider, or ask.")
+    note += (" The billing credential's provider is the project's: every role naming a "
+             "class runs on that provider's model for it (`classes`, per credential). A "
+             "class with no model, or one with no price where the credential bills in "
+             "dollars, cannot run — say so rather than draft it. A seat pinned to another "
+             "provider's model needs that provider paid too: put {provider: id} in the "
+             "draft's `credentials`, under the same rule — one per provider, or ask.")
     return {"credentials": rows, "note": note}
 
 
@@ -645,12 +656,16 @@ def seat_payment_problems(project: dict, session: Session, billing_provider: str
     refuses the same project; caught here, the Founder fixes the draft rather
     than handing the chairman one that cannot be built (a DeepSeek key over a
     roster of Claude roles was exactly that)."""
+    from yaaf.core import model_policy
     from yaaf.runtimes import catalog
+    from yaaf.runtimes.seats import unmodelled
     from yaaf.server.seat_checks import unpaid
 
     if (project.get("integrations") or {}).get("runtime") == "mock":
         return []
-    paid = sorted({billing_provider or "anthropic", *(project.get("credentials") or {})})
+    primary = billing_provider or model_policy.default_provider(session)
+    context = model_policy.context(session, provider=primary)
+    paid = sorted({primary, *(project.get("credentials") or {})})
     seats = [("the CEO", project.get("ceo_model_override")
               or _role_model(session, project.get("ceo_role_slug")))]
     for team in project.get("teams") or []:
@@ -658,10 +673,19 @@ def seat_payment_problems(project: dict, session: Session, billing_provider: str
         for person in team.get("employees") or []:
             seats.append((f"{person} ({team.get('name')})",
                           overrides.get(person) or _role_model(session, team.get("role_slug"))))
-    return [unpaid(who, model, paid) + " — in a draft: ceo_model_override, or a team's "
-            "model_overrides keyed by name, or a `credentials` entry for it"
-            for who, model in seats
-            if model and catalog.provider_of(model) not in paid]
+    problems = []
+    for who, ref in seats:
+        if not ref:
+            continue
+        named, cls = catalog.parse(ref)
+        model = context.resolve(ref)
+        if model is None:
+            problems.append(f"{who}: {unmodelled(catalog.class_ref(cls or '', named or primary))}")
+        elif catalog.provider_of(model) not in paid:
+            problems.append(unpaid(who, model, paid) + " — in a draft: ceo_model_override, or a "
+                            "team's model_overrides keyed by name, or a `credentials` entry "
+                            "for it")
+    return problems
 
 
 def _role_model(session: Session, slug: str | None) -> str | None:
@@ -701,6 +725,17 @@ def _provider_credential_problems(project: dict, session: Session) -> list[str]:
         project["credentials"] = resolved
     else:
         project.pop("credentials", None)
+    # The fallback likewise, by name or by id.
+    fallback = project.pop("fallback_credential_name", None)
+    if fallback or project.get("fallback_secret_id"):
+        row = (llm_credentials.resolve(session, name=fallback) if fallback
+               else llm_credentials.resolve(session, credential_id=project["fallback_secret_id"]))
+        if row is None:
+            problems.append(f"fallback names no LLM credential {fallback or project.get('fallback_secret_id')!r}; "
+                            f"{llm_credentials.menu(session)}. Call list_credentials.")
+            project.pop("fallback_secret_id", None)
+        else:
+            project["fallback_secret_id"] = row.id
     return problems
 
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CrewSummary, OrgView, RoleSummary, get } from "./api";
 import { envVarName } from "./datasource";
+import { modelLabel, parseRef } from "./providers";
 import { GrantOption, TeamSwitches } from "./grants";
 import { clip, downloadCsv } from "./ui";
 
@@ -50,13 +51,18 @@ export function domainShort(id: string): string {
 
 /** What a hire costs in time and money, in the chairman's terms.
 
-    A practice manager does not need to know what Opus is; they need to know
-    this one thinks longer and costs about four times as much. The model and
-    effort stay one click away, in the detail pane, for anyone who wants them. */
+    A practice manager does not need to know what a frontier model is; they need
+    to know this one thinks longer and costs about four times as much. The model
+    and effort stay one click away, in the detail pane, for anyone who wants them.
+    A role names a class whatever the vendor; a role pinned to a model is read
+    by the family words vendors use for their largest and smallest. */
 export function depthOf(model: string | null, effort: string | null):
   { band: string; dollars: string; rank: number } {
-  const deep = (model ?? "").includes("opus");
-  const light = (model ?? "").includes("haiku");
+  const { cls } = parseRef(model);
+  const name = (model ?? "").toLowerCase();
+  const deep = cls === "frontier" || (cls === null && /opus|astra|fable|-pro\b|large/.test(name));
+  const light = cls === "fast"
+    || (cls === null && /haiku|flash|luna|mini|small|nano|lite/.test(name));
   const hard = effort === "xhigh" || effort === "max";
   if (deep) return { band: "Deepest", dollars: "$$$$", rank: 4 };
   if (light) return { band: "Light", dollars: "$", rank: 1 };
@@ -624,7 +630,8 @@ export function HirePanel({
                 {depthOf(detailRole.model, detailRole.effort).band}{" "}
                 <span className="chip">{depthOf(detailRole.model, detailRole.effort).dollars}</span>
                 <div className="help" style={{ marginTop: 3 }}>
-                  {detailRole.model ?? "default model"} · {detailRole.effort ?? "default"} effort
+                  {detailRole.model ? modelLabel(detailRole.model) : "default model"}
+                  {" · "}{detailRole.effort ?? "default"} effort
                 </div>
               </div>
               <div className="dl">Can do</div>

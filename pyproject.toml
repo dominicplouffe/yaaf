@@ -66,6 +66,9 @@ include = ["yaaf*"]
 # goal grader, so it has to be in the wheel — not just in the checkout.
 [tool.setuptools.package-data]
 "yaaf.founder" = ["*.md"]
+# The dated price snapshot an install with no route to the price feed imports
+# (yaaf.core.price_feed).
+"yaaf.runtimes" = ["*.json"]
 
 [tool.ruff]
 line-length = 100

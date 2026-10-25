@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import credential_files, ids, platform, prices
+from yaaf.core import credential_files, ids, model_policy, platform, prices, web_search
 from yaaf.core.constitution import (
     GROUP_THEMES,
     THEME_ORDER,
@@ -91,8 +91,9 @@ from yaaf.core.naming import env_var_name, is_reserved
 from yaaf.founder import doctrine
 from yaaf.runtimes import catalog
 from yaaf.runtimes import providers as runtime_providers
-from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL
-from yaaf.runtimes.seats import choosable
+from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS
+from yaaf.runtimes.harnesses import canonical as canonical_harness
+from yaaf.runtimes.seats import choosable, class_role_refusal
 from yaaf.runtimes.seats import refusal as seat_refusal
 from yaaf.server import acting, authority, briefing, policy, unread
 from yaaf.server.api.agent import WAKE_CHANNEL
@@ -439,11 +440,10 @@ ROLE_CATEGORIES = (
 )
 ROLE_DOMAINS = ("general", "markets", "data", "games", "education")
 
-#: How hard the model thinks, as the Agent SDK names it. A closed set, so a
-#: typo is worth a 422 here rather than a container that starts, spends the
-#: claim, and dies inside the sandbox where the chairman sees only "the run
-#: failed".
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
+#: How hard the model thinks, in yaaf's words whatever the vendor
+#: (yaaf.runtimes.catalog.EFFORTS). A closed set, so a typo is worth a 422
+#: here rather than a container that starts, spends the claim, and dies inside
+#: the sandbox where the chairman sees only "the run failed".
 _EFFORT_PATTERN = f"^({'|'.join(EFFORTS)})$"
 
 
@@ -492,10 +492,21 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
                    f"pick from {', '.join(ROLE_DOMAINS)}",
         )
     # A role whose grants its harness cannot honour, or whose model it cannot
-    # serve, is refused here — at the version, before any project pins it.
-    problem = seat_refusal(body.harness, body.model, body.tool_permissions,
-                           priced=prices.covered(session, body.model), effort=body.effort,
-                           converses=body.is_ceo_role)
+    # serve, is refused here — at the version, before any project pins it. A
+    # role naming a class is bound to no model yet: only what holds wherever
+    # it lands is checked here, and the rest at every seat door.
+    bad_ref = catalog.valid_ref(body.model)
+    if bad_ref:
+        raise HTTPException(status_code=422, detail=f"role '{body.slug}': {bad_ref}")
+    body.harness = canonical_harness(body.harness)
+    if catalog.is_class(body.model):
+        problem = class_role_refusal(body.harness, body.tool_permissions, body.effort,
+                                     converses=body.is_ceo_role)
+    else:
+        problem = seat_refusal(body.harness, body.model, body.tool_permissions,
+                               priced=prices.covered(session, body.model), effort=body.effort,
+                               converses=body.is_ceo_role,
+                               platform_search=web_search.configured(session))
     if problem:
         raise HTTPException(status_code=422, detail=f"role '{body.slug}': {problem}")
     role = session.execute(select(Role).where(Role.slug == body.slug)).scalar_one_or_none()
@@ -535,6 +546,53 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
     )
     session.add(row)
     return {"role_id": role.id, "role_version_id": row.id, "version": version}
+
+
+class AdoptClassIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The class the library's file now names: @frontier, @balanced or @fast.
+    model: str
+
+
+@router.post("/roles/{slug}/adopt-class", dependencies=[authority.INSTANCE_ADMIN])
+def adopt_class(slug: str, body: AdoptClassIn, session: Session = Depends(db)) -> dict:
+    """Move a library role onto the model class its shipped file now names —
+    the step an update runs for roles an install already has, which a re-seed
+    leaves alone so as not to overwrite an administrator's edits.
+
+    A new version identical to the newest but for its model, and only where
+    the newest still names the Claude model that class resolves to on
+    Anthropic — the model the file named before. A role an administrator moved
+    to another model is theirs, and is left as it is (409). Teams stay pinned;
+    on a project paying Anthropic nothing is even offered (yaaf.core.
+    role_versions), because nothing a team runs would change."""
+    from yaaf.core import role_versions
+
+    provider, cls = catalog.parse(body.model)
+    if cls not in catalog.CLASSES or provider is not None:
+        raise HTTPException(status_code=422, detail=(
+            f"'{body.model}' is not one of {', '.join(catalog.class_ref(c) for c in catalog.CLASSES)}"))
+    role = session.scalar(select(Role).where(Role.slug == slug))
+    latest = role_versions.newest(session, role.id) if role else None
+    if role is None or latest is None:
+        raise HTTPException(status_code=404, detail="unknown role")
+    if latest.model == body.model:
+        return {"slug": slug, "changed": False, "version": latest.version}
+    was = catalog.lineup_of(runtime_providers.DEFAULT_PROVIDER, {}).get(cls)
+    if latest.model != was:
+        raise HTTPException(status_code=409, detail=(
+            f"'{slug}' names {latest.model}, not {was} — it was moved by hand, so it is left "
+            "as it is"))
+    row = RoleVersion(
+        id=ids.new_id(ids.ROLE_VERSION), role_id=role.id, version=latest.version + 1,
+        description=latest.description, system_prompt=latest.system_prompt,
+        model=body.model, effort=latest.effort, harness=latest.harness,
+        tool_permissions=latest.tool_permissions, secret_scopes=latest.secret_scopes)
+    session.add(row)
+    _audit(session, None, "role.adopt_class", "role", role.id,
+           {"from": latest.model, "to": body.model, "version": row.version})
+    return {"slug": slug, "changed": True, "version": row.version}
 
 
 @router.get("/roles/{slug}", dependencies=[authority.SIGNED_IN])
@@ -626,14 +684,19 @@ def list_roles(session: Session = Depends(db)) -> list[dict]:
         latest = versions[0] if versions else None
         # Blast radius: every team pinned to any version of this role. Editing
         # a role is only scary when you can't see who runs it.
+        from yaaf.core import role_versions
+
         usage = [
             {
-                "project_name": project_name,
+                "project_name": project.name,
                 "team_name": team_name,
-                "pinned_version": pinned,
+                "pinned_version": pinned.version,
+                # Behind only where adopting would change what the team runs.
+                "behind": role_versions.offered(session, project, pinned, team_id).version
+                > pinned.version,
             }
-            for team_name, project_name, pinned in session.execute(
-                select(Team.name, Project.name, RoleVersion.version)
+            for team_name, team_id, project, pinned in session.execute(
+                select(Team.name, Team.id, Project, RoleVersion)
                 .join(RoleVersion, RoleVersion.id == Team.role_version_id)
                 .join(Project, Project.id == Team.project_id)
                 .where(RoleVersion.role_id == role.id)
@@ -826,6 +889,9 @@ class ProjectCreate(BaseModel):
     # the billing credential's unit (R4); a seat on a provider with none is
     # refused (R5) — docs/RUNTIMES.md, M3.
     credentials: dict[str, str] = Field(default_factory=dict)
+    # The credential class seats move to while the billing one's provider is
+    # failing (yaaf.core.breakers) — held to the fallback door's rules.
+    fallback_secret_id: str | None = None
     teams: list[TeamSpec] = Field(default_factory=list)
     # Solo mode (the M2 single-agent arm): the CEO is placed as the sole member
     # — hence derived lead — of the only team, so one brain plans AND executes
@@ -908,6 +974,13 @@ def attach_provider_credential(session: Session, project: Project, provider_name
             f"one project, one meter: this project's budget is kept in "
             f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'}, and "
             f"'{secret.name}' is a {bills(secret)} — pick one metered the same way"))
+    fallback = session.get(Secret, project.fallback_secret_id) \
+        if project.fallback_secret_id else None
+    if fallback is not None and fallback.id != secret.id and \
+            (fallback.provider or runtime_providers.DEFAULT_PROVIDER) == provider_name:
+        raise HTTPException(status_code=422, detail=(
+            f"this project's fallback '{fallback.name}' is its {seller.label} credential — "
+            "pay with that one, or change the fallback first: one provider, one credential"))
     row = session.scalar(select(ProjectLlmCredential).where(
         ProjectLlmCredential.project_id == project.id,
         ProjectLlmCredential.provider == provider_name))
@@ -929,6 +1002,17 @@ def _settle_provider_credentials(session: Session, project: Project) -> None:
     from yaaf.core.llm_credentials import bills
 
     billing = session.get(Secret, project.billing_secret_id) if project.billing_secret_id else None
+    fallback = session.get(Secret, project.fallback_secret_id) \
+        if project.fallback_secret_id else None
+    if fallback is not None and (fallback.llm_mode or "api_key") != project.billing_mode:
+        # The same rule the fallback door holds, held again when the money
+        # moves: a fallback in dollars on a budget kept in tokens would spend
+        # what no cap can stop.
+        raise HTTPException(status_code=422, detail=(
+            f"one project, one meter: the fallback '{fallback.name}' is a {bills(fallback)}, "
+            f"and this would keep the budget in "
+            f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'} — remove or "
+            "change the fallback first"))
     for row in session.scalars(select(ProjectLlmCredential).where(
             ProjectLlmCredential.project_id == project.id)).all():
         if billing is not None and row.provider == (billing.provider
@@ -958,7 +1042,9 @@ def provider_credentials_view(session: Session, project: Project) -> list[dict]:
         out.append({"provider": provider_name,
                     "label": seller.label if seller else provider_name,
                     "credential_id": secret.id, "name": secret.name, "bills": bills(secret),
-                    "billing": secret.id == project.billing_secret_id})
+                    "billing": secret.id == project.billing_secret_id,
+                    # Held only while a failover has moved seats onto it.
+                    "fallback": secret.id == project.fallback_secret_id})
     return sorted(out, key=lambda c: (not c["billing"], c["label"]))
 
 
@@ -1004,16 +1090,142 @@ def remove_project_credential(project_id: str, provider_name: str,
     return provider_credentials_view(session, project)
 
 
+class FallbackIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The credential class seats move to while the billing credential's
+    #: provider is failing; null removes it.
+    credential_id: str | None = None
+
+
+def _bare_class(seat) -> bool:
+    """A seat failover moves: one on a class with no provider named. A pinned
+    model, or `openai/@fast`, was put on its provider on purpose."""
+    provider, cls = catalog.parse(seat.ref)
+    return cls is not None and provider is None
+
+
+@router.put("/projects/{project_id}/fallback-credential", dependencies=[authority.STEER])
+def set_fallback_credential(project_id: str, body: FallbackIn,
+                            session: Session = Depends(db)) -> dict:
+    """Name the credential this project's class seats move to while its billing
+    credential's provider is failing (yaaf.core.breakers). Refused unless every
+    class seat could run there — resolved, paid, priced, able to do what its
+    role grants — because a fallback found wanting during an outage is no
+    fallback."""
+    project = _get_project(session, project_id)
+    if not body.credential_id:
+        project.fallback_secret_id = None
+        _audit(session, project.id, "billing.fallback_removed", "project", project.id, {})
+        return fallback_view(session, project)
+    apply_fallback(session, project, body.credential_id)
+    return fallback_view(session, project)
+
+
+def apply_fallback(session: Session, project: Project, credential_id: str) -> None:
+    """Name `credential_id` the project's fallback, or refuse with why: the
+    door's rules, shared with project creation and every importer."""
+    from yaaf.core import project_credentials
+    from yaaf.core.llm_credentials import assigned_credential, bills
+    from yaaf.runtimes.seats import seat_for
+    from yaaf.server.contextpack import role_version_for
+    from yaaf.server.seat_checks import seat_problem
+
+    if not project.billing_secret_id:
+        raise HTTPException(status_code=422, detail=(
+            "attach a billing credential first — a fallback is what the class seats move "
+            "to when it fails"))
+    secret = assigned_credential(session, credential_id)
+    billing = session.get(Secret, project.billing_secret_id)
+    billing_provider = (billing.provider if billing else None) or runtime_providers.DEFAULT_PROVIDER
+    provider_name = secret.provider or runtime_providers.DEFAULT_PROVIDER
+    if provider_name == billing_provider:
+        raise HTTPException(status_code=422, detail=(
+            f"'{secret.name}' pays {runtime_providers.provider(provider_name).label}, the "
+            "provider the billing credential already pays — a fallback on the same provider "
+            "fails with it. Pick another provider's credential"))
+    if (secret.llm_mode or "api_key") != project.billing_mode:
+        raise HTTPException(status_code=422, detail=(
+            f"one project, one meter: this project's budget is kept in "
+            f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'}, and "
+            f"'{secret.name}' is a {bills(secret)} — pick one metered the same way"))
+    paying = project_credentials.held(session, project, fallback=False).get(provider_name)
+    if paying is not None and paying.id != secret.id:
+        raise HTTPException(status_code=422, detail=(
+            f"this project already pays {runtime_providers.provider(provider_name).label} "
+            f"with '{paying.name}' — name that one as the fallback, or stop paying with it "
+            "first: one provider, one credential"))
+    project.fallback_secret_id = secret.id
+    session.flush()
+    context = model_policy.context(session, project, provider=provider_name, fallback=True)
+    moving = [agent for agent in _project_agents(session, project.id)
+              if _bare_class(seat_for(agent, role_version_for(session, agent)))]
+    problem = seat_problem(session, project, moving, context=context, fallback=True)
+    if problem:
+        raise HTTPException(status_code=422, detail=(
+            f"'{secret.name}' cannot be this project's fallback: on "
+            f"{runtime_providers.provider(provider_name).label}, {problem}"))
+    _audit(session, project.id, "billing.fallback", "project", project.id,
+           {"credential_id": secret.id, "provider": provider_name,
+            "moves": [a.name for a in moving]})
+
+
+def fallback_view(session: Session, project: Project) -> dict:
+    """The fallback, whether it is in use right now, and what the billing
+    credential's breaker says — for the project's Settings and its header."""
+    from yaaf.core import breakers
+
+    fallback = session.get(Secret, project.fallback_secret_id) \
+        if project.fallback_secret_id else None
+    active = model_policy.failover(session, project)
+    return {"credential_id": fallback.id if fallback else None,
+            "name": fallback.name if fallback else None,
+            "provider": (fallback.provider or runtime_providers.DEFAULT_PROVIDER)
+            if fallback else None,
+            "active": active is not None,
+            "breaker": breakers.state(session, project.billing_secret_id)}
+
+
 @router.get("/providers", dependencies=[authority.SIGNED_IN])
 def list_providers() -> list[dict]:
-    """Who sells the tokens, from the registry: the credential kinds each
-    takes, whether its credential carries an address, whether it searches and
-    states its costs — what the credential form and a drafter need to know."""
-    return [{"name": p.name, "label": p.label, "default_harness": p.default_harness,
-             "kinds": [{"mode": k.mode, "meter": k.meter, "bills": k.bills} for k in p.kinds],
-             "credential_base_url": p.credential_base_url, "search": p.search,
-             "reports_cost": p.reports_cost}
-            for p in runtime_providers.PROVIDERS.values()]
+    """Who sells the tokens, from the registry: everything the credential form
+    needs to ask for a key (its kinds, where to get one, the address it
+    carries), and what a drafter needs to choose (the wire, the lineup, whether
+    it searches and states its costs)."""
+    return [provider_view(p) for p in runtime_providers.PROVIDERS.values()]
+
+
+def provider_view(p) -> dict:
+    return {"name": p.name, "label": p.label, "protocol": p.protocol,
+            "default_harness": p.default_harness(),
+            "kinds": [{"mode": k.mode, "meter": k.meter, "bills": k.bills, "label": k.label,
+                       "placeholder": k.placeholder, "help": k.help,
+                       "multiline": k.multiline, "default_harness": k.default_harness}
+                      for k in p.kinds],
+            "credential_base_url": p.credential_base_url,
+            "base_url_template": p.base_url_template, "console_url": p.console_url,
+            "lineup": dict(p.lineup or {}), "search": p.search,
+            "reports_cost": p.reports_cost, "plan_meter": p.plan_meter, "local": p.local}
+
+
+@router.get("/models", dependencies=[authority.SIGNED_IN])
+def list_models(session: Session = Depends(db)) -> dict:
+    """Everything a model picker offers: the classes a role can name, each
+    provider's lineup as this install resolves it, and every catalog model
+    with whether this install can meter it — read by the role editor, the
+    seat pickers, the New Project form and the Founder."""
+    own = model_policy.lineups(session)
+    return {
+        "default_provider": model_policy.default_provider(session),
+        "classes": [{"name": c, "ref": catalog.class_ref(c), "label": catalog.CLASS_LABELS[c],
+                     "blurb": catalog.CLASS_BLURBS[c]} for c in reversed(catalog.CLASSES)],
+        "lineups": {p: catalog.lineup_of(p, own) for p in runtime_providers.PROVIDERS},
+        "models": [{"id": m.id, "provider": m.provider, "label": catalog.label(m.id),
+                    "tier": m.tier, "efforts": list(m.efforts) if m.efforts else None,
+                    "priced": prices.covered(session, m.id)}
+                   for m in catalog.MODELS],
+        "efforts": list(EFFORTS),
+    }
 
 
 @router.get("/harnesses", dependencies=[authority.SIGNED_IN])
@@ -1053,6 +1265,13 @@ def _check_team_people(spec: TeamSpec) -> None:
             status_code=422,
             detail=f"team '{spec.name}' schedule '{bad_time}' is not HH:MM",
         )
+    bad_model = next((problem for problem in map(catalog.valid_ref,
+                                                 spec.model_overrides.values()) if problem), None)
+    if bad_model is not None:
+        raise HTTPException(status_code=422, detail=f"team '{spec.name}': {bad_model}")
+    # A harness's old name is still understood, and never stored again.
+    spec.harness_overrides = {name: canonical_harness(h) or h
+                              for name, h in spec.harness_overrides.items()}
     bad_effort = next((v for v in spec.effort_overrides.values()
                        if v not in EFFORTS), None)
     if bad_effort is not None:
@@ -1170,12 +1389,27 @@ def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamS
     _refuse_without_review_seat(session, {spec.role_slug for spec in teams})
 
 #: What "this matters" buys a producing seat in effort. Only ever upward: a
-#: role already at or above it keeps what it has. The model half is the seat's
-#: own provider's `craft_model`, ranked by the catalog's tiers — weakest to
-#: strongest, where a model this install has never heard of ranks 0, so it is
-#: lifted rather than left: an unknown string is not evidence of strength.
+#: role already at or above it keeps what it has. The model half is the
+#: frontier class of the seat's own provider (`_craft_model`), ranked by the
+#: catalog's tiers — weakest to strongest, where a model this install has never
+#: heard of ranks 0, so it is lifted rather than left: an unknown string is not
+#: evidence of strength.
 CRAFT_EFFORT = "xhigh"
 _EFFORT_RANK = {name: i for i, name in enumerate(EFFORTS)}
+
+
+def _craft_model(session: Session, ref: str) -> str | None:
+    """What a producing seat on `ref` is lifted to, within its own provider —
+    or None to leave it. A class lifts to the frontier class of the same
+    provider, so the seat still follows the project's provider; a pinned model
+    lifts to its provider's frontier model, unless it already ranks at or
+    above it (the library may have put it on something stronger)."""
+    named, cls = catalog.parse(ref)
+    if cls is not None:
+        return None if cls == "frontier" else catalog.class_ref("frontier", named)
+    provider = catalog.provider_of(ref)
+    craft = catalog.lineup_of(provider, model_policy.lineups(session)).get("frontier")
+    return None if craft is None or catalog.tier(ref) >= catalog.tier(craft) else craft
 
 
 def _craft_lift(
@@ -1200,9 +1434,7 @@ def _craft_lift(
     role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
     if role is None or role.category not in CRAFT_CATEGORIES:
         return None, None
-    craft_model = runtime_providers.provider(catalog.provider_of(version.model)).craft_model
-    model = (None if craft_model is None
-             or catalog.tier(version.model) >= catalog.tier(craft_model) else craft_model)
+    model = _craft_model(session, version.model)
     at_least = _EFFORT_RANK.get(CRAFT_EFFORT, 0)
     effort = (None if _EFFORT_RANK.get(version.effort, 0) >= at_least else CRAFT_EFFORT)
     return model, effort
@@ -1251,6 +1483,9 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         raise HTTPException(status_code=422, detail="every team needs at least one employee")
     for spec in body.teams:
         _check_team_people(spec)
+    if body.ceo_model_override and (bad := catalog.valid_ref(body.ceo_model_override)):
+        raise HTTPException(status_code=422, detail=f"the CEO's model: {bad}")
+    body.ceo_harness_override = canonical_harness(body.ceo_harness_override)
     # The constitution freezes at creation. Overrides are validated against the
     # schema; a spec with no opinion about the authority dial — or about how
     # often the project should think — is given one here, so the form, the
@@ -1403,6 +1638,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     for provider_name, credential_id in body.credentials.items():
         attach_provider_credential(session, project, provider_name, credential_id)
     refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+    if body.fallback_secret_id:
+        apply_fallback(session, project, body.fallback_secret_id)
 
     # The boardroom on day one, when the chairman has already told us the
     # workspace. The ask behind app-wide Slack settings is "I made a project —
@@ -1630,7 +1867,11 @@ def export_project(project_id: str, include_values: bool = False,
             # travels: an import resolves the names against what exists there.
             "credential_names": {c["provider"]: c["name"]
                                  for c in provider_credentials_view(session, project)
-                                 if not c["billing"]},
+                                 if not c["billing"] and not c["fallback"]},
+            # The fallback, by name, for the same reason.
+            "fallback_credential_name": (fallback.name if (fallback := session.get(
+                Secret, project.fallback_secret_id)) else None)
+            if project.fallback_secret_id else None,
             "ceo_role_slug": ceo_role_slug,
             "ceo_name": ceo.name,
             "ceo_daily_at": ceo.daily_at,
@@ -1809,6 +2050,10 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
             session.add(ProjectLlmCredential(id=ids.new_id(ids.PROJECT_CREDENTIAL),
                                              project_id=project.id, provider=row.provider,
                                              secret_id=row.secret_id))
+    # And its fallback, under the same rule.
+    if source.fallback_secret_id and project.billing_secret_id \
+            and resolve(session, credential_id=source.fallback_secret_id) is not None:
+        project.fallback_secret_id = source.fallback_secret_id
 
     source_ceo = session.execute(
         select(Agent).where(Agent.project_id == source.id, Agent.kind == AgentKind.CEO)
@@ -2907,6 +3152,14 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
             detail = _billing_shape_error(body.billing_mode, decrypt(secret.ciphertext))
             raise HTTPException(status_code=422,
                                 detail=detail or "billing mode must match the selected credential")
+        fallback = session.get(Secret, project.fallback_secret_id) \
+            if project.fallback_secret_id else None
+        if fallback is not None and (fallback.provider or runtime_providers.DEFAULT_PROVIDER) \
+                == (secret.provider or runtime_providers.DEFAULT_PROVIDER):
+            raise HTTPException(status_code=422, detail=(
+                f"this project's fallback '{fallback.name}' pays the same provider as "
+                f"'{secret.name}' — a fallback on the provider it backs up fails with it. "
+                "Remove or change the fallback first"))
         project.billing_secret_id = secret.id
         project.billing_mode = secret.llm_mode
         changed["billing_secret_id"] = secret.id
@@ -3025,46 +3278,60 @@ def billing_check(project_id: str, provider: str | None = None,
                 else secret.llm_mode or "api_key")
     plaintext = decrypt(secret.ciphertext)
     shape_error = _billing_shape_error(mode, plaintext, secret.provider)
+    seller = runtime_providers.provider(secret.provider)
     if shape_error:
         result = {"ok": False, "detail": shape_error}
     elif mode == "api_key":
-        result = _live_check(secret, plaintext)
+        result = live_check(secret, plaintext)
     else:
+        # A login authenticates through its own CLI, which runs only inside a
+        # sandbox: the shape is all that can be checked from here.
         result = {"ok": True,
-                  "detail": "token has the right shape (sk-ant-oat…); full validation "
-                            "happens on the first run — expired tokens surface there"}
+                  "detail": f"{seller.kind(mode).label} has the right shape; full validation "
+                            "happens on the first run — an expired login surfaces there"}
     _audit(session, project.id, "billing.check", "project", project.id,
            {"ok": result["ok"], "provider": secret.provider})
     return result
 
 
-def _live_check(secret: Secret, plaintext: str) -> dict:
-    """One free call that only a live key answers: the provider's models list.
-    Anthropic's by its own header; every OpenAI-compatible provider's by
-    bearer, at its address — the credential's own, for a custom server."""
+def live_check(secret: Secret, plaintext: str, *, transport=None) -> dict:
+    """One free call that only a live key answers: the provider's own model
+    list, through the wire a run uses (yaaf.runtimes.wire) — the same
+    address, the same header. A key file is minted into a token first; a
+    local server is asked the same question, keyless."""
+
     import httpx
 
+    from yaaf.core import model_tokens
+    from yaaf.runtimes import wire
+
     seller = runtime_providers.provider(secret.provider)
-    if seller.name == runtime_providers.DEFAULT_PROVIDER:
-        url, headers = ("https://api.anthropic.com/v1/models",
-                        {"x-api-key": plaintext, "anthropic-version": "2023-06-01"})
-    else:
-        base = (secret.base_url if seller.credential_base_url else seller.base_url) or ""
-        if not base:
-            return {"ok": False, "detail": f"no address to check a {seller.label} key against"}
-        url, headers = f"{base.rstrip('/')}/models", {"Authorization": f"Bearer {plaintext}"}
+    if seller.protocol is None:
+        return {"ok": True, "detail": f"{seller.label} is reached only through its CLI; "
+                                      "the first run is the check"}
+    found = runtime_providers.spec(seller, secret.llm_mode or "api_key", secret.base_url)
+    if not found["base_url"]:
+        return {"ok": False, "detail": f"no address to check a {seller.label} key against"}
+    key = plaintext
+    if seller.mints_tokens:
+        try:
+            key, _ = model_tokens.mint(seller.name, plaintext)
+        except model_tokens.MintError as exc:
+            return {"ok": False, "detail": str(exc)}
     try:
-        response = httpx.get(url, headers=headers, timeout=15)
+        models = wire.run_sync(wire.list_models(wire.Endpoint.from_spec(found, key),
+                                              transport=transport))
     except httpx.HTTPError as exc:
         return {"ok": False, "detail": f"could not reach the API: {exc.__class__.__name__}"}
-    if response.status_code == 200:
-        return {"ok": True, "detail": "API key verified against the live API."}
-    if response.status_code in (401, 403):
-        return {"ok": False,
-                "detail": f"the API rejected this key (revoked or mistyped) — paste a fresh "
-                          f"one from {seller.label}"}
-    return {"ok": False, "detail": f"unexpected API response ({response.status_code}); "
-                                   "try again shortly"}
+    except wire.WireError as exc:
+        if exc.kind == "auth":
+            return {"ok": False,
+                    "detail": f"the API rejected this key (revoked or mistyped) — paste a "
+                              f"fresh one from {seller.label}"}
+        return {"ok": False, "detail": f"unexpected API response ({exc.status}); "
+                                       "try again shortly"}
+    return {"ok": True, "detail": "API key verified against the live API.",
+            "models": len(models)}
 
 
 @router.post("/projects/{project_id}/regrade-goal", dependencies=[authority.STEER])
@@ -3083,7 +3350,7 @@ async def regrade_goal(project_id: str, session: Session = Depends(db)) -> dict:
     the drift it is fixing. What the chairman gets is the same grade the Founder
     would have had to satisfy today, on the goal he is actually running.
     """
-    from yaaf.core.platform import NoPlatformCredential, founder_env
+    from yaaf.core.platform import NoPlatformCredential, founder_env, founder_model
     from yaaf.founder.grade import LOAD_BEARING, grade_goal
 
     project = _get_project(session, project_id)
@@ -3094,7 +3361,9 @@ async def regrade_goal(project_id: str, session: Session = Depends(db)) -> dict:
         # missing platform credential is a thing the chairman fixes in Settings,
         # not a bug.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    grade = await grade_goal(project.goal, env=env)
+    # On the Founder's model, which is what the credential pays: grading on a
+    # default would send a Claude model to whatever provider the key is for.
+    grade = await grade_goal(project.goal, env=env, model=founder_model(session))
     return {
         "project_id": project.id,
         "graded_at": utcnow().isoformat(),

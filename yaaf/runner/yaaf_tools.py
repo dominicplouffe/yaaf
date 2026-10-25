@@ -17,7 +17,10 @@ It also serves yaaf's own file tools (``loop_harness.BUILTINS`` — Read, Write,
 Edit, Glob, Grep) to a CLI that has none apart from its shell, when the run
 asks for them (``YAAF_SERVE_FILE_TOOLS``): a role granted files but not a shell
 is honoured that way on the Codex CLI, rather than by handing it a shell it was
-not hired with.
+not hired with. And it serves the install's own search (``web_search``) to a
+CLI with no search of its own when the run was promised `web` and handed the
+backend (``YAAF_SEARCH``; docs/PROVIDERS.md §6) — each query charged to the
+run's search ledger, which the driver bills as it goes.
 
 Nothing here may write to stdout: stdout is the protocol.
 """
@@ -32,13 +35,33 @@ from mcp.server.stdio import stdio_server
 
 
 def served() -> list:
-    """The tools this server offers: the run's, then the file tools if asked."""
+    """The tools this server offers: the run's, then the file tools if asked,
+    then the install's search where the run was promised it."""
     tools = base.run_tools()
     if os.environ.get("YAAF_SERVE_FILE_TOOLS"):
         import loop_harness
 
         tools += [loop_harness.BUILTINS[name] for name in loop_harness.FILE_TOOLS]
+    if base.SEARCH and base.PERMS.get("web"):
+        tools.append(base.Tool(
+            "web_search", "Search the web. Returns the top results — titles, addresses and "
+            "snippets — to read further with your fetch tool.",
+            {"type": "object", "properties": {"query": {"type": "string"}},
+             "required": ["query"]}, web_search))
     return tools
+
+
+async def web_search(args: dict) -> dict:
+    query = str(args.get("query", "")).strip()
+    if not query:
+        return {"content": [{"type": "text", "text": "query is empty"}], "is_error": True}
+    try:
+        text, bill = await base.platform_search(query)
+    except Exception as exc:  # noqa: BLE001 — a failed search is the model's to read
+        return {"content": [{"type": "text", "text": f"search failed: {exc}"}],
+                "is_error": True}
+    base.SearchLedger.charge(bill)
+    return {"content": [{"type": "text", "text": text}]}
 
 
 async def main() -> int:

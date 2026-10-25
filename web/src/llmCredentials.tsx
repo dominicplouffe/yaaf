@@ -1,4 +1,4 @@
-// What projects pay Claude with, and the screen that keeps that list honest.
+// What projects pay their model calls with, and the screen that keeps that list honest.
 //
 // The list used to be a flat table of every managed credential, ordered by
 // name, with one fact per row: which projects were assigned. That was fine
@@ -17,8 +17,13 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { del, get, patch, post, put } from "./api";
-import { ConfirmModal, fmtAgo, fmtSoon, SecretInput } from "./ui";
+import { del, get, post, put } from "./api";
+import { CredentialForm, SavedCredential } from "./credentialForm";
+import { DEFAULT_PROVIDER, useProviders } from "./providers";
+import { ConfirmModal, fmtAgo, fmtSoon } from "./ui";
+
+export type { ProviderInfo } from "./providers";
+export { providers, useProviders } from "./providers";
 
 export interface CredentialProject {
   id: string;
@@ -26,6 +31,8 @@ export interface CredentialProject {
   status: string;
   /** Can this project still spend? A stopped or completed one cannot. */
   live: boolean;
+  /** Whether it pays the project, or stands by as its fallback. */
+  as?: "pays" | "fallback";
 }
 
 export interface Credential {
@@ -51,37 +58,12 @@ export interface Credential {
 
 const endpoint = "/admin/settings/llm-credentials";
 
-/** A provider as the registry describes it (GET /admin/providers). */
-export interface ProviderInfo {
-  name: string;
-  label: string;
-  kinds: { mode: string; meter: string; bills: string }[];
-  credential_base_url: boolean;
-  search: boolean;
-  reports_cost: boolean;
-}
-
-let providerCache: Promise<ProviderInfo[]> | null = null;
-/** The provider registry, fetched once per page load: it changes with a release,
-    not with anything a person does on a screen. */
-export function providers(): Promise<ProviderInfo[]> {
-  providerCache ??= get<ProviderInfo[]>("/admin/providers").catch(() => {
-    providerCache = null;
-    return [] as ProviderInfo[];
-  });
-  return providerCache;
-}
-
-export function useProviders(): ProviderInfo[] {
-  const [rows, setRows] = useState<ProviderInfo[]>([]);
-  useEffect(() => { providers().then(setRows); }, []);
-  return rows;
-}
-
+// How a credential bills is the server's sentence, in its provider's words
+// (llm_credentials.bills); a row from a server too old to send one says only
+// what it is.
 const modeLabel = (row: Credential) => row.bills
-  ?? (row.mode === "subscription" ? "Claude subscription · tokens" : "Anthropic API · USD");
-const modeName = (row: Credential) => row.bills?.split(",")[0]
-  ?? (row.mode === "subscription" ? "Claude subscription" : "Anthropic API key");
+  ?? `${row.provider ?? DEFAULT_PROVIDER} ${row.mode === "subscription" ? "subscription" : "API key"}`;
+const modeName = (row: Credential) => modeLabel(row).split(",")[0];
 const modeMeter = (mode: string) => mode === "subscription" ? "metered in tokens" : "billed in USD";
 
 /** The credential a bundle names, if this install has it. By id first (a
@@ -106,12 +88,12 @@ export function CredentialPicker({ value, onChange, disabled = false, provider, 
   const [error, setError] = useState("");
   const reload = () => { setError(""); get<Credential[]>(endpoint).then(setRows).catch(e => setError(e.message)); };
   useEffect(reload, []);
-  const rows = all && provider ? all.filter(r => (r.provider ?? "anthropic") === provider) : all;
+  const rows = all && provider ? all.filter(r => (r.provider ?? DEFAULT_PROVIDER) === provider) : all;
   return <div>
     <label className="field">{label}
       <select value={value} disabled={disabled || rows === null} onChange={e => {
         const row = rows?.find(r => r.id === e.target.value);
-        onChange(row?.id ?? "", row?.mode ?? "api_key", row?.provider ?? "anthropic");
+        onChange(row?.id ?? "", row?.mode ?? "api_key", row?.provider ?? DEFAULT_PROVIDER);
       }}>
         <option value="">{rows === null ? "Loading credentials…" : "Select a credential"}</option>
         {rows?.map(row => <option key={row.id} value={row.id}>{row.name} — {modeLabel(row)}</option>)}
@@ -187,16 +169,20 @@ function bulkSentence(result: BulkResult, verb: "Hid" | "Restored"): string {
   return `${head} ${result.refused.length} refused: ${named}${rest}.`;
 }
 
-export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
+export function LlmCredentials({ onChanged, onAdd, title = "LLM credentials", nonce = 0 }: {
+  onChanged?: () => void;
+  /** Adding goes through the provider-first connect flow where there is one. */
+  onAdd?: () => void;
+  title?: string;
+  /** Moved by the page around it when it changed a credential itself. */
+  nonce?: number;
+} = {}) {
   const [rows, setRows] = useState<Credential[] | null>(null);
   const [editing, setEditing] = useState<Credential | "new" | null>(null);
-  const [name, setName] = useState("");
-  const [mode, setMode] = useState("api_key");
-  const [provider, setProvider] = useState("anthropic");
-  const [baseUrl, setBaseUrl] = useState("");
   const registry = useProviders();
-  const seller = registry.find(p => p.name === provider);
-  const [value, setValue] = useState("");
+  // What "Models" and "Smoke test" last said about a row, drawn under it.
+  const [probes, setProbes] = useState<Record<string, Probe | null>>({});
+  const [probing, setProbing] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   // The filter lives in the URL: "the nine I hid" is a thing worth linking to,
   // and a bulk action that reloads the list must not silently drop you back
@@ -226,22 +212,13 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
   // around arriving one step later than before.
   const [recheck, setRecheck] = useState<Record<string, number>>({});
   const [hiding, setHiding] = useState<Credential[] | null>(null);
-  // Whether the Founder still has no key. While it has none, a new credential
-  // offers to be the one it drafts on — ticked, because the alternative was
-  // pasting this same key again under a second name on the next screen.
-  const [founderKeyless, setFounderKeyless] = useState(false);
-  const [alsoDraft, setAlsoDraft] = useState(true);
-  useEffect(() => {
-    get<{ credential_configured: boolean }>("/admin/founder/status")
-      .then((st) => setFounderKeyless(!st.credential_configured)).catch(() => {});
-  }, []);
 
   // One fetch, hidden included: the counts on the filters are only honest if
   // the screen can see everything it is counting.
   const reload = useCallback(async () => {
     setRows(await get<Credential[]>(`${endpoint}?include_hidden=true`));
   }, []);
-  useEffect(() => { reload().catch(e => setError(e.message)); }, [reload]);
+  useEffect(() => { reload().catch(e => setError(e.message)); }, [reload, nonce]);
 
   const counts = useMemo(() => {
     const out: Record<Bucket, number> = { in_use: 0, idle: 0, unused: 0, hidden: 0 };
@@ -276,10 +253,7 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
   const hideable = (rows ?? []).filter((r) => !r.hidden_at && !r.in_use);
 
   function edit(row: Credential | "new") {
-    setEditing(row); setName(row === "new" ? "" : row.name);
-    setMode(row === "new" ? "api_key" : row.mode); setValue(""); setError(""); setMessage("");
-    setProvider(row === "new" ? "anthropic" : row.provider ?? "anthropic");
-    setBaseUrl(row === "new" ? "" : row.base_url ?? "");
+    setEditing(row); setError(""); setMessage("");
   }
 
   async function act<T>(fn: () => Promise<T>, done: (result: T) => string) {
@@ -299,31 +273,33 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
     }
   }
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    const rotated = editing !== "new" && editing !== null
-      && editing.mode === "subscription" && !!value.trim() ? editing.id : null;
-    await act(
-      async () => {
-        if (editing === "new") {
-          const created = await post<{ id: string }>(endpoint, {
-            name: name.trim(), mode, value: value.trim(), provider,
-            ...(seller?.credential_base_url ? { base_url: baseUrl.trim() } : {}) });
-          if (founderKeyless && alsoDraft && created?.id) {
-            // A refusal here (a provider the Founder cannot run on) must not
-            // read as the credential failing to save — it saved.
-            await put("/admin/founder/credential/llm", { credential_id: created.id })
-              .then(() => setFounderKeyless(false))
-              .catch((e) => setError(`Saved, but the Founder cannot draft on it: ${(e as Error).message}`));
-          }
-        }
-        else if (editing) await patch(`${endpoint}/${editing.id}`,
-          { name: name.trim(), ...(value.trim() ? { value: value.trim() } : {}),
-            ...(seller?.credential_base_url && baseUrl.trim() ? { base_url: baseUrl.trim() } : {}) });
-        setEditing(null); setValue("");
-      },
-      () => "Credential saved. New runs use the updated credential.");
-    if (rotated) setRecheck((prev) => ({ ...prev, [rotated]: Date.now() }));
+  async function saved(said: SavedCredential) {
+    setEditing(null);
+    if (said.warning) setError(said.warning);
+    setMessage("Credential saved. New runs use the updated credential.");
+    await reload().catch(() => {});
+    onChanged?.();
+    if (said.rotated) setRecheck((prev) => ({ ...prev, [said.id]: Date.now() }));
+  }
+
+  /** Ask the provider what this key can call, or make one real call on it. */
+  async function probe(row: Credential, what: "models" | "smoke") {
+    setProbing(`${row.id}:${what}`);
+    try {
+      if (what === "models") {
+        const found = await get<{ models: { id: string; listed: boolean }[] }>(
+          `${endpoint}/${row.id}/models`);
+        const listed = found.models.filter((m) => m.listed).length;
+        setProbes((prev) => ({ ...prev, [row.id]: { ok: true,
+          text: `✓ ${found.models.length} models answer to this key${listed ? ` (${listed} in the catalog)` : ""}`,
+          models: found.models.map((m) => m.id) } }));
+      } else {
+        const said = await post<SmokeResult>(`${endpoint}/${row.id}/smoke`, {});
+        setProbes((prev) => ({ ...prev, [row.id]: smokeLine(said) }));
+      }
+    } catch (e) {
+      setProbes((prev) => ({ ...prev, [row.id]: { ok: false, text: `✕ ${(e as Error).message}` } }));
+    } finally { setProbing(null); }
   }
 
   async function move(targets: Credential[], undo: boolean) {
@@ -338,74 +314,23 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
   return <section className="card llm-credentials" aria-label="LLM credentials">
     <div className="llm-header">
       <div>
-        <h2>LLM credentials</h2>
-        <p className="help">What projects pay their models with — Anthropic, and any other
-          provider a seat runs on. Values are encrypted at rest and
+        <h2>{title}</h2>
+        <p className="help">What projects pay their model calls with — one per provider a
+          project&apos;s seats run on. Values are encrypted at rest and
           never shown back — rotate one rather than reading it. A credential a project ever
           named cannot be deleted; <b>hide</b> it instead and it leaves every menu without
           leaving the record.</p>
       </div>
-      <button type="button" className="primary" disabled={busy || editing !== null}
-              onClick={() => edit("new")}>Add credential</button>
+      <button type="button" className={onAdd ? "" : "primary"} disabled={busy || editing !== null}
+              onClick={() => onAdd ? onAdd() : edit("new")}>Add credential</button>
     </div>
 
     {error && <p className="error" role="alert">{error}</p>}
     {message && <p className="notice-box" role="status">{message}</p>}
 
-    {editing && <form onSubmit={save} className="card cred-form">
-      <h3>{editing === "new" ? "Add credential" : `Edit “${editing.name}”`}</h3>
-      <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
-        <label className="field">Name<input autoFocus required maxLength={120} value={name}
-          onChange={e => setName(e.target.value)} placeholder="e.g. Production — engineering" /></label>
-        <label className="field">Provider<select value={provider} disabled={editing !== "new"}
-          onChange={e => { setProvider(e.target.value); setMode("api_key"); setBaseUrl(""); }}>
-          {(registry.length ? registry : [{ name: "anthropic", label: "Anthropic" } as ProviderInfo])
-            .map(p => <option key={p.name} value={p.name}>{p.label}</option>)}
-        </select></label>
-        <label className="field">Type<select value={mode} disabled={editing !== "new"}
-          onChange={e => setMode(e.target.value)}>
-          {(seller?.kinds ?? [{ mode: "api_key", meter: "usd", bills: "Anthropic API key" },
-                              { mode: "subscription", meter: "tokens", bills: "Claude subscription token" }])
-            .map(k => <option key={k.mode} value={k.mode}>{k.bills.split(",")[0]}</option>)}
-        </select></label>
-        {seller?.credential_base_url && <label className="field">Base URL
-          <input required value={baseUrl} onChange={e => setBaseUrl(e.target.value)}
-            placeholder="http://ollama:11434/v1" />
-          <span className="help">The server&apos;s OpenAI-compatible address. Price its
-            models under Settings → Model prices — zero is a price.</span></label>}
-        {editing !== "new" && <p className="help">The type is fixed: it decides how every
-          project on this credential is metered, and changing it under them would rewrite
-          what their budgets mean.</p>}
-        <label className="field" htmlFor="llm-credential-value">
-          {editing === "new" ? "Credential value" : "Replace credential value (optional)"}</label>
-        <SecretInput id="llm-credential-value" value={value} onChange={setValue}
-          placeholder={editing === "new" ? "Paste credential" : "Leave blank to keep current value"} />
-        <p className="help">{provider === "openai" && mode === "subscription"
-          ? "Run codex login on your own machine, then paste the whole ~/.codex/auth.json it wrote. A login refreshed inside a run is not written back: when it stops working, sign in again and paste the new file."
-          : provider === "google" && mode === "subscription"
-          ? "Sign in to the Gemini CLI with your Google account on your own machine, then paste the whole ~/.gemini/oauth_creds.json it wrote. A login refreshed inside a run is not written back: when it stops working, sign in again and paste the new file."
-          : provider !== "anthropic"
-          ? `Use a key from your ${seller?.label ?? provider} account. A server that needs none still takes a placeholder of eight characters or more.`
-          : mode === "subscription"
-          ? "Use the token generated by claude setup-token — it starts sk-ant-oat."
-          : "Use an API key from your Anthropic account — it starts sk-ant-api."}</p>
-        {editing !== "new" && editing.projects.filter(p => p.live).length > 0 &&
-          <p className="notice-box">Replacing this value changes what{" "}
-            {editing.projects.filter(p => p.live).map(p => p.name).join(", ")} pays with on
-            the next run.</p>}
-        {editing === "new" && founderKeyless &&
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <input type="checkbox" style={{ width: "auto" }} checked={alsoDraft}
-              onChange={(e) => setAlsoDraft(e.target.checked)} />
-            Also use it to draft projects — the Founder has no key yet
-          </label>}
-        <div className="actions">
-          <button className="primary" disabled={!name.trim() || (editing === "new" && value.trim().length < 8)}>
-            {busy ? "Saving…" : "Save credential"}</button>
-          <button type="button" onClick={() => { setEditing(null); setValue(""); }}>Cancel</button>
-        </div>
-      </fieldset>
-    </form>}
+    {editing && <CredentialForm key={editing === "new" ? "new" : editing.id}
+      editing={editing === "new" ? null : editing} onSaved={saved}
+      onCancel={() => setEditing(null)} />}
 
     {removing && <ConfirmModal title={`Delete “${removing.name}”?`} confirmLabel="Delete credential"
       danger busy={busy} onCancel={() => setRemoving(null)}
@@ -523,6 +448,7 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
               <td data-label="Used by"><UsedBy row={row} /></td>
               <td data-label="Plan usage">
                 <PlanMeterCompact credentialId={row.id} mode={row.mode} auto={!!row.in_use}
+                  meters={!!registry.find((p) => p.name === (row.provider ?? DEFAULT_PROVIDER))?.plan_meter}
                   onRotate={() => edit(row)} checkNonce={recheck[row.id]}
                   onResult={(r) => noteResult(row.id, r)} /></td>
               <td className="llm-actions">
@@ -538,6 +464,17 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
                         ? "A live project pays with this — reassign or stop it first"
                         : `Hide ${row.name}`}
                       onClick={() => setHiding([row])} aria-label={`Hide ${row.name}`}>Hide</button>}
+                {registry.find((p) => p.name === (row.provider ?? DEFAULT_PROVIDER))?.protocol
+                  && <>
+                    <button className="small" disabled={busy || probing !== null}
+                      title="Ask the provider which models answer to this key — free"
+                      onClick={() => probe(row, "models")}>
+                      {probing === `${row.id}:models` ? "Asking…" : "Models"}</button>
+                    {row.mode === "api_key" && <button className="small" disabled={busy || probing !== null}
+                      title="One real, trivial call on this key — it spends a few hundred tokens"
+                      onClick={() => probe(row, "smoke")}>
+                      {probing === `${row.id}:smoke` ? "Calling…" : "Smoke test"}</button>}
+                  </>}
                 {row.projects.length === 0 && <button className="small danger" disabled={busy}
                   onClick={() => { setRemoving(row); setError(""); }}
                   aria-label={`Delete ${row.name}`}>Delete</button>}
@@ -552,6 +489,10 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
                   <PlanResultLine result={said} onRotate={() => edit(row)} />
                 </td>
               </tr>}
+              {probes[row.id] && <tr className="plan-result">
+                <td colSpan={6}><ProbeLine probe={probes[row.id]!}
+                  onDismiss={() => setProbes((prev) => ({ ...prev, [row.id]: null }))} /></td>
+              </tr>}
             </Fragment>;
           })}
         </tbody>
@@ -562,6 +503,43 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
           : "Nothing in this state."}</p>}
     </>}
   </section>;
+}
+
+// ── asking a provider about a key ───────────────────────────────────────────────
+//
+// Two questions an administrator asks of a credential before a project depends
+// on it: which models will it pay for (free — the provider's own list), and
+// does a real call on it actually work end to end (a few hundred tokens of its
+// own money — the smoke test). Both answers are sentences under the row.
+
+export interface Probe { ok: boolean; text: string; models?: string[] }
+export interface SmokeResult {
+  ok: boolean | null; detail: string; model?: string; served?: string | null;
+  latency_ms?: number; called_tool?: boolean;
+  usage?: { input: number; output: number; cache_read: number };
+  priced_usd?: number | null; kind?: string;
+}
+
+export function smokeLine(said: SmokeResult): Probe {
+  if (said.ok === null) return { ok: true, text: said.detail };
+  if (!said.ok) return { ok: false, text: `✕ ${said.detail}` };
+  const cost = said.priced_usd != null ? ` · cost $${said.priced_usd.toFixed(6)}` : "";
+  const tool = said.called_tool ? "called the tool" : "answered without calling the tool";
+  return { ok: true, text: `✓ ${said.detail} in ${said.latency_ms} ms — ${tool}`
+    + ` · ${said.usage?.input ?? 0} in / ${said.usage?.output ?? 0} out${cost}` };
+}
+
+export function ProbeLine({ probe, onDismiss }: { probe: Probe; onDismiss: () => void }) {
+  return <span className={`plan-result-line ${probe.ok ? "ok" : "bad"}`}
+               role={probe.ok ? "status" : "alert"}>
+    {probe.text}{" "}
+    {probe.models && probe.models.length > 0 && <details style={{ display: "inline-block" }}>
+      <summary className="linkish">show them</summary>
+      <div className="help mono" style={{ maxHeight: 180, overflow: "auto" }}>
+        {probe.models.join(", ")}</div>
+    </details>}{" "}
+    <button type="button" className="linkish" onClick={onDismiss}>dismiss</button>
+  </span>;
 }
 
 // ── the plan meter behind a subscription credential ─────────────────────────────
@@ -975,10 +953,16 @@ function CheckNow({ busy, slow, onClick, className = "small" }: {
 
 /** Full meter: one bar per window, a verdict on top, provenance underneath.
     Draws nothing for an API-key credential — there is no plan to draw. */
-export function PlanMeter({ credentialId, mode, title = "Claude subscription plan", onRotate }: {
-  credentialId: string | null; mode: string | null; title?: string; onRotate?: () => void;
+export function PlanMeter({ credentialId, mode, title = "Subscription plan", meters = true,
+                           onRotate }: {
+  credentialId: string | null; mode: string | null; title?: string;
+  /** Whether the credential's provider reports a plan meter at all
+      (ProviderInfo.plan_meter). Only Anthropic's subscription does today. */
+  meters?: boolean;
+  onRotate?: () => void;
 }) {
-  const { data, error, busy, slow, result, refresh, active } = usePlanUsage(credentialId, mode);
+  const { data, error, busy, slow, result, refresh, active } =
+    usePlanUsage(meters ? credentialId : null, mode);
   if (!active) return null;
   // The one control on this page that reaches Anthropic. The server floors it
   // at one call per subscription every fifteen seconds and honours any
@@ -1064,13 +1048,15 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
     nothing has run on is precisely a row with nothing filed — and then ask for
     a second press to do the thing the first one was for. */
 export function PlanMeterCompact({ credentialId, mode, auto = true, onRotate, onResult,
-                                   checkNonce }: {
+                                   checkNonce, meters = true }: {
   credentialId: string; mode: string; auto?: boolean; checkNonce?: number;
+  /** Whether the credential's provider reports a plan meter at all. */
+  meters?: boolean;
   onRotate?: () => void; onResult?: (r: PlanResult | null) => void;
 }) {
   const [armed, setArmed] = useState(auto);
   const { data, error, busy, slow, result, refresh, active } =
-    usePlanUsage(armed ? credentialId : null, mode);
+    usePlanUsage(armed && meters ? credentialId : null, mode);
 
   // A press on a row that has not armed has to do both things, and arming is a
   // state change — `refresh` captured before it still sees an inactive hook and
@@ -1101,6 +1087,9 @@ export function PlanMeterCompact({ credentialId, mode, auto = true, onRotate, on
 
   if (mode !== "subscription") {
     return <span className="muted" title="API keys are metered per call, in dollars; there is no plan window to fill.">— metered per call</span>;
+  }
+  if (!meters) {
+    return <span className="muted" title="This provider reports no plan windows; runs are metered in tokens against the project's cap.">— no plan meter</span>;
   }
   // `pending` counts as busy: the press has been made and has not answered yet,
   // and a button that goes back to "Check now" in between invites a second one.
@@ -1173,35 +1162,87 @@ export function PlanMeterCompact({ credentialId, mode, auto = true, onRotate, on
 
 interface PriceRow { input: number; output: number; cache_read: number; cache_write_5m: number; as_of: string }
 interface ModelPriceRow { model: string; provider: string; listed: boolean;
-  shipped: PriceRow | null; own: PriceRow | null }
+  shipped: PriceRow | null; own: PriceRow | null;
+  /** Where the install's own price came from: null when an administrator
+      typed it, the feed and its date when it was imported. */
+  source?: string | null;
+  /** Input window in tokens: the install's own figure, else the shipped one. */
+  context_window?: number | null }
 
 const PRICES = "/admin/settings/model-prices";
 const perM = (n: number) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
+/** 131072 → "131k", 1000000 → "1M": the size a person compares, not counts. */
+export const fmtWindow = (n: number | null | undefined) => n == null ? "—"
+  : n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(2)}M` : `${Math.round(n / 1000)}k`;
+
+const EMPTY_DRAFT = { model: "", input: "", output: "", cache_read: "", context_window: "" };
 
 export function ModelPrices() {
   const [rows, setRows] = useState<ModelPriceRow[] | null>(null);
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const [draft, setDraft] = useState({ model: "", input: "", output: "", cache_read: "" });
+  const [draft, setDraft] = useState(EMPTY_DRAFT);
+  const [filter, setFilter] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
+  // A fix elsewhere ("set a price") lands here with the model named, the form
+  // filled, and the cursor in the first empty box.
+  const [params] = useSearchParams();
+  const asked = params.get("model");
   const reload = useCallback(() => {
     get<ModelPriceRow[]>(PRICES).then(setRows).catch((e) => setError(e.message));
   }, []);
   useEffect(reload, [reload]);
 
+  const fill = useCallback((row: ModelPriceRow | { model: string }) => {
+    const r = row as ModelPriceRow;
+    const base = r.own ?? r.shipped;
+    setDraft({ model: row.model, input: base ? String(base.input) : "",
+      output: base ? String(base.output) : "", cache_read: base?.cache_read ? String(base.cache_read) : "",
+      context_window: r.context_window ? String(r.context_window) : "" });
+    setTimeout(() => {
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      (formRef.current?.querySelector("input[name=input]") as HTMLInputElement | null)?.focus();
+    }, 50);
+  }, []);
+  useEffect(() => {
+    if (!asked || !rows) return;
+    fill(rows.find((r) => r.model === asked) ?? { model: asked });
+  }, [asked, rows === null]);
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setNote("");
     try {
-      await put(`${PRICES}/${draft.model.trim()}`, {
-        input: Number(draft.input), output: Number(draft.output),
-        cache_read: Number(draft.cache_read || 0) });
-      setDraft({ model: "", input: "", output: "", cache_read: "" });
+      const model = draft.model.trim();
+      const row = rows?.find((r) => r.model === model);
+      const base = row?.own ?? row?.shipped ?? null;
+      // A price left as it was is not re-saved: a shipped price stays the
+      // shipped one when only its window was corrected.
+      const priceChanged = !base || Number(draft.input) !== base.input
+        || Number(draft.output) !== base.output
+        || Number(draft.cache_read || 0) !== (base.cache_read || 0);
+      const windowChanged = (draft.context_window.trim() ? Number(draft.context_window) : null)
+        !== (row?.context_window ?? null);
+      if (priceChanged) {
+        await put(`${PRICES}/${model}`, {
+          input: Number(draft.input), output: Number(draft.output),
+          cache_read: Number(draft.cache_read || 0) });
+      }
+      if (windowChanged) {
+        await put(`/admin/settings/model-context/${model}`, {
+          context_window: draft.context_window.trim() ? Number(draft.context_window) : null });
+      }
+      setDraft(EMPTY_DRAFT);
+      setNote(priceChanged ? `Saved ${model}. Seats on it can be metered from their next run.`
+        : windowChanged ? `Saved ${model}'s context window; its price is unchanged.`
+          : `Nothing changed for ${model}.`);
       reload();
     } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }
 
   async function clear(model: string) {
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setNote("");
     try { await del(`${PRICES}/${model}`); reload(); }
     catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }
@@ -1209,51 +1250,199 @@ export function ModelPrices() {
   const price = (p: PriceRow | null) => p
     ? `${perM(p.input)} in · ${perM(p.output)} out${p.cache_read ? ` · ${perM(p.cache_read)} cached` : ""}`
     : "—";
+  const term = filter.trim().toLowerCase();
+  const shown = (rows ?? []).filter((r) => !term || r.model.toLowerCase().includes(term)
+    || r.provider.toLowerCase().includes(term));
+  const windowValue = Number(draft.context_window);
+  const windowBad = draft.context_window.trim() !== "" && (!Number.isInteger(windowValue) || windowValue < 1000);
 
   return <section className="card" aria-label="Model prices">
     <h2 style={{ marginTop: 0 }}>Model prices</h2>
     <p className="help">USD per million tokens. A seat on a harness that meters its own runs
-      — yaaf&apos;s loop on the Anthropic API or an OpenAI-compatible one — needs its model
-      priced here or in the shipped list, or it is refused. Your price wins over the shipped
-      one. Name a model the list does not know with its provider first:{" "}
-      <code>openrouter/qwen/qwen3-coder</code>, <code>custom/llama3.1:8b</code>.
-      OpenRouter states each call&apos;s cost, so its models need no price at all.</p>
+      — yaaf&apos;s loop on any provider&apos;s API, or a CLI yaaf prices — needs its model
+      priced here or in the shipped list, or it is refused. yaaf ships only the prices it
+      could check against the vendor&apos;s own list; import the rest from the price feed
+      below, or type them. Your price wins over the shipped one. Name a model the list does
+      not know with its provider first: <code>openrouter/qwen/qwen3-coder</code>,{" "}
+      <code>groq/llama-4-maverick</code>. OpenRouter states each call&apos;s cost, so its
+      models need no price at all; a local server&apos;s price is usually zero.</p>
+    <p className="help"><b>Context window</b> is how many tokens the model reads at once. yaaf&apos;s
+      own loop compacts a seat&apos;s history before it would overflow; without a figure it
+      waits for the provider to refuse a call for length, which costs that call.</p>
     {error && <p className="error" role="alert">{error}</p>}
-    <table className="table">
-      <thead><tr><th>Model</th><th>Provider</th><th>Shipped</th><th>This install</th><th /></tr></thead>
+    {note && <p className="notice-box" role="status">{note}</p>}
+    <ImportPrices onApplied={reload} />
+    <div className="cred-filters">
+      <input type="search" value={filter} aria-label="Filter models" placeholder="Filter by model or provider"
+        onChange={(e) => setFilter(e.target.value)} />
+    </div>
+    <div className="table-scroll"><table className="table prices-table">
+      <thead><tr><th>Model</th><th>Provider</th><th>Shipped</th><th>This install</th>
+        <th className="num">Context window</th><th /></tr></thead>
       <tbody>
-        {(rows ?? []).map((row) => <tr key={row.model}>
+        {shown.map((row) => <tr key={row.model}>
           <td><code>{row.model}</code></td>
           <td>{row.provider}</td>
           <td>{price(row.shipped)}{row.shipped && <div className="help">as of {row.shipped.as_of}</div>}</td>
-          <td>{price(row.own)}</td>
-          <td>{row.own && <button type="button" className="small" disabled={busy}
-            onClick={() => clear(row.model)}>Use shipped</button>}
-            {!row.own && <button type="button" className="small" disabled={busy}
-              onClick={() => setDraft({ model: row.model, input: String(row.shipped?.input ?? ""),
-                output: String(row.shipped?.output ?? ""),
-                cache_read: String(row.shipped?.cache_read ?? "") })}>Set price</button>}</td>
+          <td>{price(row.own)}{row.own && <div className="help">
+            {row.source ? `from ${row.source}` : "set by hand"}</div>}</td>
+          <td className="num">{row.context_window ? `${fmtWindow(row.context_window)} tokens` : "—"}</td>
+          <td className="prices-acts">
+            <button type="button" className="small" disabled={busy} onClick={() => fill(row)}>
+              {row.own ? "Edit" : "Set price"}</button>
+            {row.own && <button type="button" className="small" disabled={busy}
+              onClick={() => clear(row.model)}>{row.shipped ? "Use shipped" : "Remove"}</button>}</td>
         </tr>)}
+        {rows && shown.length === 0 && <tr><td colSpan={6} className="help">
+          No model matches. Price it below by name.</td></tr>}
       </tbody>
-    </table>
-    <form onSubmit={save} className="cred-form">
-      <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
+    </table></div>
+    <form ref={formRef} onSubmit={save} className="cred-form price-form">
+      <h3>{draft.model && rows?.some((r) => r.model === draft.model && r.own) ? `Edit ${draft.model}` : "Set a price"}</h3>
+      <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
         <label className="field">Model<input required value={draft.model} maxLength={128}
           onChange={(e) => setDraft({ ...draft, model: e.target.value })}
           placeholder="deepseek-chat" /></label>
-        <label className="field">Input $/M<input required type="number" min={0} step="any"
-          value={draft.input} onChange={(e) => setDraft({ ...draft, input: e.target.value })} /></label>
-        <label className="field">Output $/M<input required type="number" min={0} step="any"
-          value={draft.output} onChange={(e) => setDraft({ ...draft, output: e.target.value })} /></label>
-        <label className="field">Cached input $/M<input type="number" min={0} step="any"
-          value={draft.cache_read}
-          onChange={(e) => setDraft({ ...draft, cache_read: e.target.value })} /></label>
+        <div className="price-fields">
+          <label className="field">Input $/M<input name="input" required type="number" min={0} step="any"
+            value={draft.input} onChange={(e) => setDraft({ ...draft, input: e.target.value })} /></label>
+          <label className="field">Output $/M<input required type="number" min={0} step="any"
+            value={draft.output} onChange={(e) => setDraft({ ...draft, output: e.target.value })} /></label>
+          <label className="field">Cached input $/M<input type="number" min={0} step="any"
+            value={draft.cache_read}
+            onChange={(e) => setDraft({ ...draft, cache_read: e.target.value })} /></label>
+          <label className="field">Context window (tokens)
+            <input type="number" min={1000} step={1} value={draft.context_window}
+              placeholder="optional — e.g. 128000" aria-invalid={windowBad || undefined}
+              onChange={(e) => setDraft({ ...draft, context_window: e.target.value })} /></label>
+        </div>
+        {windowBad && <p className="help warn">A context window is a whole number of tokens, 1,000 or more.</p>}
+        <p className="help">A changed price becomes the install&apos;s own, typed by hand. A
+          changed context window alone leaves the price as it was. Clear the window box to go
+          back to the imported or shipped figure.</p>
         <div className="actions"><button className="primary"
-          disabled={!draft.model.trim() || draft.input === "" || draft.output === ""}>
-          Save price</button></div>
+          disabled={!draft.model.trim() || draft.input === "" || draft.output === "" || windowBad}>
+          Save price</button>
+          {draft.model && <button type="button" onClick={() => setDraft(EMPTY_DRAFT)}>Clear</button>}</div>
       </fieldset>
     </form>
   </section>;
+}
+
+// ── importing prices ────────────────────────────────────────────────────────────
+//
+// A preview first, always: the import is the install deciding what every
+// project's budget will trust, so it shows each model's proposed price and
+// what it would do with it before anything is written. Hand-set prices and the
+// catalog's checked ones are kept unless the administrator says otherwise.
+
+interface ImportRow {
+  model: string; provider: string;
+  action: "add" | "update" | "same" | "own" | "shipped" | "missing";
+  proposed: { input: number; output: number; cache_read: number; cache_write: number } | null;
+  current: { input: number; output: number; source: string | null } | null;
+  source: string;
+}
+interface ImportAnswer { source: string; rows: ImportRow[]; applied: string[] }
+interface FeedInfo { url: string; default_url: string; snapshot_as_of: string; snapshot_models: number }
+
+const ACTION_WORDS: Record<ImportRow["action"], string> = {
+  add: "adds", update: "replaces", same: "unchanged", own: "keeps your price",
+  shipped: "keeps the checked price", missing: "not in the feed",
+};
+
+function ImportPrices({ onApplied }: { onApplied: () => void }) {
+  const [feed, setFeed] = useState<FeedInfo | null>(null);
+  const [source, setSource] = useState<"feed" | "snapshot">("feed");
+  const [provider, setProvider] = useState("");
+  const [overwriteOwn, setOverwriteOwn] = useState(false);
+  const [includeShipped, setIncludeShipped] = useState(false);
+  const [answer, setAnswer] = useState<ImportAnswer | null>(null);
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const registry = useProviders();
+  useEffect(() => {
+    get<FeedInfo>("/admin/settings/price-feed").then((f) => { setFeed(f); setUrl(f.url); })
+      .catch(() => {});
+  }, []);
+
+  async function run(apply: boolean) {
+    setBusy(true); setError(""); setNote("");
+    try {
+      const said = await post<ImportAnswer>(`${PRICES}/import`, {
+        source, apply, overwrite_own: overwriteOwn, include_shipped: includeShipped,
+        ...(provider ? { provider } : {}) });
+      setAnswer(said);
+      if (apply) {
+        setNote(`Wrote ${said.applied.length} price${said.applied.length === 1 ? "" : "s"} from ${said.source}.`);
+        onApplied();
+      }
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+
+  async function saveUrl() {
+    setBusy(true); setError("");
+    try { setFeed(await put<FeedInfo>("/admin/settings/price-feed", { url: url.trim() })); }
+    catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+
+  const changes = (answer?.rows ?? []).filter((r) => r.action === "add" || r.action === "update");
+  return <details className="card" style={{ marginBottom: 12 }}>
+    <summary><strong>Import prices</strong> — from the price feed, or the snapshot shipped
+      with this release</summary>
+    <p className="help">The feed is the community-maintained LiteLLM price list
+      {feed && <> (snapshot dated {feed.snapshot_as_of}, {feed.snapshot_models} models)</>}.
+      Every imported price says where it came from, and the health checklist still compares
+      each model&apos;s real bills against it.</p>
+    {error && <p className="error" role="alert">{error}</p>}
+    {note && <p className="notice-box" role="status">{note}</p>}
+    <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
+      <div className="row" style={{ flexWrap: "wrap", gap: 12 }}>
+        <label className="field">Read from<select value={source}
+          onChange={(e) => { setSource(e.target.value as "feed" | "snapshot"); setAnswer(null); }}>
+          <option value="feed">the live feed</option>
+          <option value="snapshot">the shipped snapshot (no network)</option>
+        </select></label>
+        <label className="field">Which models<select value={provider}
+          onChange={(e) => { setProvider(e.target.value); setAnswer(null); }}>
+          <option value="">every model this install could run</option>
+          {registry.filter((p) => p.protocol).map((p) =>
+            <option key={p.name} value={p.name}>every {p.label} chat model in the feed</option>)}
+        </select></label>
+      </div>
+      <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <input type="checkbox" style={{ width: "auto" }} checked={overwriteOwn}
+          onChange={(e) => { setOverwriteOwn(e.target.checked); setAnswer(null); }} />
+        Replace prices typed by hand</label>
+      <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <input type="checkbox" style={{ width: "auto" }} checked={includeShipped}
+          onChange={(e) => { setIncludeShipped(e.target.checked); setAnswer(null); }} />
+        Replace the shipped, vendor-checked prices too</label>
+      <div className="actions">
+        <button type="button" onClick={() => run(false)}>{busy ? "Reading…" : "Preview"}</button>
+        <button type="button" className="primary" disabled={!answer || changes.length === 0}
+          onClick={() => run(true)}>Apply {changes.length || ""}</button>
+      </div>
+    </fieldset>
+    {answer && <table className="table">
+      <thead><tr><th>Model</th><th>Proposed</th><th>Now</th><th>Import</th></tr></thead>
+      <tbody>{answer.rows.map((r) => <tr key={r.model}>
+        <td><code>{r.model}</code></td>
+        <td>{r.proposed ? `${perM(r.proposed.input)} in · ${perM(r.proposed.output)} out` : "—"}</td>
+        <td>{r.current ? `${perM(r.current.input)} in · ${perM(r.current.output)} out` : "—"}</td>
+        <td><span className={`chip${r.action === "add" || r.action === "update" ? " accent" : ""}`}>
+          {ACTION_WORDS[r.action]}</span></td>
+      </tr>)}</tbody>
+    </table>}
+    <label className="field">Feed address<input value={url} disabled={busy}
+      onChange={(e) => setUrl(e.target.value)} placeholder={feed?.default_url} /></label>
+    <div className="actions"><button type="button" className="small" disabled={busy || url === feed?.url}
+      onClick={saveUrl}>Save address</button>
+      <span className="help">Point it at your own mirror of the same file; blank goes back to
+        the default.</span></div>
+  </details>;
 }
 
 // ── a project's other providers ─────────────────────────────────────────────────
@@ -1265,8 +1454,12 @@ export function ModelPrices() {
 interface HeldCredential { provider: string; label: string; credential_id: string;
   name: string; bills: string; billing: boolean }
 
-export function ProviderCredentials({ projectId, disabled = false }: {
+export function ProviderCredentials({ projectId, disabled = false, fallbackId = null }: {
   projectId: string; disabled?: boolean;
+  /** The project's fallback. While a failover is active the server counts it
+      among what pays, but it pays only for as long as that lasts — it is shown
+      as the fallback, never here with a "Stop paying" that would not stop it. */
+  fallbackId?: string | null;
 }) {
   const registry = useProviders();
   const [held, setHeld] = useState<HeldCredential[] | null>(null);
@@ -1287,13 +1480,14 @@ export function ProviderCredentials({ projectId, disabled = false }: {
   }
 
   const unpaid = registry.filter((p) => !(held ?? []).some((h) => h.provider === p.name));
-  const others = (held ?? []).filter((h) => !h.billing);
+  const others = (held ?? []).filter((h) => !h.billing && h.credential_id !== fallbackId);
 
   return <div aria-label="Other providers">
     <h3>Other providers</h3>
-    <p className="help">A seat on another provider&apos;s model — DeepSeek, a model through
-      OpenRouter, your own server — pays with that provider&apos;s credential. Each is
-      metered in the same unit as the billing credential, against the same cap.</p>
+    <p className="help">A seat pinned to another provider&apos;s model — or to a class of
+      another provider, like <code>openai/@fast</code> — pays with that provider&apos;s
+      credential. Each is metered in the same unit as the billing credential, against the
+      same cap.</p>
     {error && <p className="error" role="alert">{error}</p>}
     {others.length === 0 ? <p className="muted">No other provider is paid on this project.</p>
       : <ul>{others.map((h) => <li key={h.provider}>

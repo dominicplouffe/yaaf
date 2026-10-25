@@ -77,12 +77,15 @@ you like, run the fire drill for nothing, and create it.
 It needs one thing first: a key for the Founder, set once under Settings →
 Founder. The quickest is **one you already added** as an LLM credential —
 one click, and rotating that credential rotates this too; adding your first
-LLM credential offers it, ticked. Or give the Founder a key of its own,
-Anthropic's or any other provider's with one of its models. Either way it pays
-for drafting only, and no project's agents ever see it. Every project you create still pays its own way,
-and the Founder knows it: it reads the list of LLM credentials, names the one
-that pays in its draft when there is only one, and asks you which when there
-are several. That is an instruction to the model, not a rule the server can
+LLM credential offers it, ticked. Or give the Founder a key of its own, from
+any provider — it runs on that provider's frontier model unless you name
+another. Either way it pays for drafting only, and no project's agents ever see
+it. Every project you create still pays its own way, and the Founder knows it:
+it reads the list of LLM credentials — each with what the roles' model classes
+would run on if it paid — names the one that pays in its draft when there is
+only one, and asks you which when there are several. Whichever pays, the role
+library is the same: roles name a class of model, and the project's provider
+supplies it ([PROVIDERS.md](PROVIDERS.md)). That is an instruction to the model, not a rule the server can
 enforce, so the draft panel says which credential it chose — look before you
 click Review.
 
@@ -161,7 +164,7 @@ on approvals and boardroom messages, and if the server has SMTP configured
 alerts get mailed. Remembered for your next project.
 
 **Billing.** Pick which **LLM credential** pays — one an administrator
-created under Settings → LLM credentials: an **Anthropic API key** (budget in
+created under Settings → Providers: an **Anthropic API key** (budget in
 dollars, the normal choice) or a **Claude subscription token** (budget in
 tokens). The credential decides the budget's unit; nothing is pasted here and
 no value ever enters a sandbox. Leave it unselected and the project can be
@@ -297,7 +300,7 @@ needs a credential — without one the project is created stopped.)
 Open your new project → **Settings** → "How agents pay for Claude". Pick a
 credential from the list, click **Save assignment**, then **Test connection**
 — if the key is bad, you find out now, not at 9am tomorrow. No credentials in
-the list? An administrator adds one under Settings → LLM credentials; a
+the list? An administrator adds one under Settings → Providers; a
 subscription credential also shows there what Anthropic says is left on its
 plan.
 

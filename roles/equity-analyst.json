@@ -7,7 +7,7 @@
     "markets"
   ],
   "description": "Fundamental analysis of a company or sector: filings, financials, unit economics, guidance and the numbers a story has to survive. Sourced or it does not ship.",
-  "model": "claude-sonnet-5-5",
+  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

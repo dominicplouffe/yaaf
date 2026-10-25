@@ -7,7 +7,7 @@
     "markets"
   ],
   "description": "Watches the tape: filings, earnings, guidance, central-bank and macro releases. Separates what happened from what was already priced, and kills rumours rather than repeating them.",
-  "model": "claude-sonnet-5-5",
+  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

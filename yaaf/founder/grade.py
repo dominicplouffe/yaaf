@@ -170,13 +170,15 @@ def _parse(text: str) -> dict:
         return json.loads(text[start:end + 1])
 
 
-async def grade_goal(goal: str, *, env: dict[str, str],
-                     model: str = "claude-opus-5-5") -> GoalGrade:
+async def grade_goal(goal: str, *, env: dict[str, str], model: str) -> GoalGrade:
     """Grade goal prose against the ten elements of the goal grammar.
 
     Runs on the credential the caller hands it, which is the same environment
     every agent in this product runs under — an API key or a subscription
-    token, resolved once in `yaaf.core.platform.founder_env`.
+    token, resolved once in `yaaf.core.platform.founder_env` — and on the
+    model the caller names, which is the Founder's (`platform.founder_model`):
+    no default, because a default model is a default provider, and the
+    credential may pay another.
     """
     from yaaf.founder.session import run_once
 

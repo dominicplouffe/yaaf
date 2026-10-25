@@ -391,7 +391,8 @@ def test_a_gemini_seat_runs_on_the_gemini_cli_and_its_efforts_are_held(client):
                json={"input": 1.25, "output": 10})
     client.put("/admin/settings/model-prices/gemini-3.1-pro-preview", headers=ADMIN,
                json={"input": 2, "output": 12})
-    role = {"slug": "analyst", "name": "Analyst", **ROLE_MIN, "tool_permissions": {"files": True}}
+    role = {"slug": "analyst", "name": "Analyst", **ROLE_MIN, "tool_permissions": {"files": True},
+            "harness": "gemini_cli"}
     medium = client.post("/admin/roles", headers=ADMIN, json={
         **role, "model": "gemini-3.1-pro-preview", "effort": "medium"})
     assert medium.status_code == 422 and "Gemini CLI has no effort 'medium'" in medium.text
@@ -402,7 +403,10 @@ def test_a_gemini_seat_runs_on_the_gemini_cli_and_its_efforts_are_held(client):
         **role, "model": "gemini-3.1-pro-preview", "effort": "low"}).status_code == 200
     from yaaf.runtimes.providers import provider
 
-    assert provider("google").default_harness == "gemini_cli"
+    # A Google login pays only the Gemini CLI; a Gemini API key runs on yaaf's
+    # loop over the native API by default (docs/PROVIDERS.md §3).
+    assert provider("google").default_harness("subscription") == "gemini_cli"
+    assert provider("google").default_harness("api_key") == "yaaf_loop"
 
 
 @pytest.mark.parametrize(("mode", "value", "says"), [

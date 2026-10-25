@@ -17,7 +17,7 @@ enter a sandbox at all.
 ## Billing — how agents pay for Claude
 
 Two screens. An administrator creates **LLM credentials** once, under the
-sidebar's **Settings → LLM credentials**; each project is then **assigned**
+sidebar's **Settings → Providers**; each project is then **assigned**
 one, under its own **Settings → Money**. Required; nothing runs without it.
 
 Two kinds of credential, and the kind decides the project's billing mode and
@@ -31,22 +31,43 @@ budget unit — there is no separate switch:
 A credential names the **provider** it pays — Anthropic by default; OpenAI
 (an API key, or a ChatGPT plan as the `auth.json` that `codex login` writes),
 Google (a Gemini API key, or a Google account login as the
-`oauth_creds.json` the Gemini CLI writes),
-DeepSeek, OpenRouter, Moonshot (Kimi), Qwen (Alibaba Model Studio), Mistral,
-xAI (Grok), or a custom OpenAI-compatible server (its address goes with the
-credential — which is also how a key for Moonshot's or Alibaba's China region
-is used). A project's billing credential pays whichever provider it is for;
-a project with a seat on a second provider's model pays that provider too,
-under its **Settings → Money → Other providers**, with a credential metered in
-the same unit — one project, one meter, one cap. A seat on a provider the
-project does not pay is refused when it is created, not when it first runs. A
-credential pays one provider, and seats run on their roles' models: a
-DeepSeek key over Claude roles is refused for that reason. **New Project →
-Run every seat on** moves every seat onto one of the paid providers' models
-in one step (price it first under Settings → Model prices), or pay the
-roles' provider too.
-Models yaaf ships no price for are priced under **Settings → Model prices**
-(zero is a price, for your own server); see [RUNTIMES.md](RUNTIMES.md).
+`oauth_creds.json` the Gemini CLI writes), Google Vertex AI (a service account
+key — it never enters a sandbox; the platform mints hour-long tokens from it),
+Azure OpenAI (a key and the resource's address), AWS Bedrock (a Bedrock API
+key and its region), DeepSeek, Mistral, xAI (Grok), OpenRouter, Groq, Together
+AI, Fireworks AI, Cerebras, Cohere, NVIDIA NIM, Hugging Face, Z.ai, Moonshot
+(Kimi), Qwen (Alibaba Model Studio), a local Ollama or LM Studio server (no
+key — its address on the sandbox network), or a custom OpenAI-compatible
+server (its address goes with the credential — which is also how a key for
+Moonshot's or Alibaba's China region is used). Each credential's form says
+where its key comes from, and **Check** asks the provider itself whether it
+answers to it.
+
+**The billing credential's provider is the project's.** Roles name a model
+*class* — `@frontier`, `@balanced`, `@fast` — and every class seat runs on the
+billing provider's model for it ([PROVIDERS.md](PROVIDERS.md)), so the shipped
+role library runs on an OpenAI key, a Gemini key or a DeepSeek key with no
+seat moved by hand. Settings → Models shows and sets what each class is on
+each provider; a provider yaaf ships no lineup for (Groq, Together and the
+rest of the long tail, whose model lists move monthly) has one picked from its
+own live model list there. A project with a seat pinned to a second provider's
+model pays that provider too, under its **Settings → Money → Other
+providers**, with a credential metered in the same unit — one project, one
+meter, one cap. A seat on a provider the project does not pay, or a class its
+provider has no model for, is refused when it is created, not when it first
+runs.
+
+Models yaaf ships no checked price for are priced under **Settings → Model
+prices** — typed in (zero is a price, for your own server), or **imported**
+from the price feed or its dated snapshot: a preview first, each imported row
+labelled with where it came from, and nothing you typed replaced. See
+[PROVIDERS.md](PROVIDERS.md) §5.
+
+**Web search on every provider.** Claude, GPT and Gemini search on their own
+APIs. For every other provider — and OpenCode — a role granted `web` needs the
+install's web search backend (**Settings → Web search**: Brave, Tavily, Exa,
+Serper, Perplexity or a self-hosted SearXNG, with its key and its price per
+query). Each query is billed into the run at that price, under the run's cap.
 
 A value of the wrong shape for its kind is **refused while you're still
 looking at the screen** — otherwise every future run fails with a baffling
@@ -111,8 +132,9 @@ agents** — there is no inheritance and no fallback. A project with no
 credential assigned cannot run, and that is the intended answer. It can be
 any provider's: an Anthropic key or subscription runs the Founder and the
 goal grader on the Claude Code CLI; an API key of any other provider runs
-them on its chat API, with a model of that provider's set beside it — a
-ChatGPT login cannot, since it pays only the Codex CLI.
+them on its own API — Gemini natively, Bedrock, Azure and Vertex included —
+on that provider's frontier model unless you name another. A ChatGPT login or
+a Google login cannot, since each pays only its own CLI.
 
 ## Credentials and variables
 

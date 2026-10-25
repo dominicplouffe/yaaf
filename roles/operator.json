@@ -7,7 +7,7 @@
     "general"
   ],
   "description": "The person who has to make the change in the real system on Monday morning. Turns a proposed plan into a literal dry run — every object, field and value resolved — and refuses anything that cannot be executed as written.",
-  "model": "claude-opus-5-5",
+  "model": "@frontier",
   "effort": "xhigh",
   "tool_permissions": {
     "files": true,

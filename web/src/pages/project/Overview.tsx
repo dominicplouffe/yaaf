@@ -9,6 +9,7 @@ import {
   MessageRow,
   post,
 } from "../../api";
+import { FailoverBanner } from "../../fallback";
 import Agenda from "../../agenda";
 import { itemsFor, needsYou, useDesk, WARN_VERDICTS } from "../../desk";
 import { fmtWhen, usePoll } from "../../hooks";
@@ -511,10 +512,10 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
             <button className="small" onClick={() => switchTempo(check)}>
               Switch to “{check.action.to_label}”
             </button>
-          ) : isOpen(check) && WHERE_TO[check.where ?? ""] ? (
-            <Link to={WHERE_TO[check.where!][2]
-              ? WHERE_TO[check.where!][0]
-              : `/projects/${projectId}${WHERE_TO[check.where!][0]}`}>{WHERE_TO[check.where!][1]} →</Link>
+          ) : isOpen(check) && WHERE_TO[whereOf(check)] ? (
+            <Link to={WHERE_TO[whereOf(check)][2]
+              ? WHERE_TO[whereOf(check)][0]
+              : `/projects/${projectId}${WHERE_TO[whereOf(check)][0]}`}>{WHERE_TO[whereOf(check)][1]} →</Link>
           ) : null}
           {check.action?.kind === "tempo" && !check.acked_at ? (
             <button className="small" onClick={() => keepTempo()}>
@@ -535,6 +536,7 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
     reader cannot click is read once and then skipped. */
 const WHERE_TO: Record<string, [string, string, boolean?]> = {
   settings: ["/details/settings", "fix in Settings"],
+  money: ["/details/settings?s=money", "fix in Settings → Money"],
   data_sources: ["/details/settings?s=sources", "open Data sources"],
   plan: ["/details/roadmap", "open the Roadmap"],
   boardroom: ["/chat", "open the chat"],
@@ -542,7 +544,17 @@ const WHERE_TO: Record<string, [string, string, boolean?]> = {
   // A price is the install's, not the project's, so it is set where prices
   // live — an app-wide page, not one under the project.
   prices: ["/settings?section=prices", "open Model prices", true],
+  // So is a lineup: a model the key stopped listing is moved where the
+  // install's models are chosen.
+  models: ["/settings?section=models", "open Settings → Models", true],
+  providers: ["/settings?section=providers", "open Settings → Providers", true],
 };
+
+/** The failover check says "settings" like every other project setting, but
+    its control is on one tab of them; landing on the Brief tab instead is a
+    link that stops one click short. */
+const whereOf = (check: { key: string; where?: string | null }) =>
+  check.key === "fallback" ? "money" : check.where ?? "";
 
 /** Where each problem verdict is fixed: page under the project, and the link. */
 const FIX_AT: Record<string, [string, string]> = {
@@ -760,6 +772,7 @@ export default function Overview({
 
       <ModeStrip dash={dash} reload={ctx.reload} />
       <LateBanner ctx={ctx} />
+      <FailoverBanner dash={dash} settingsLink={`${base}/details/settings?s=money`} />
 
       <TeamFoot ctx={ctx} published={shelf?.matched ?? null} />
 

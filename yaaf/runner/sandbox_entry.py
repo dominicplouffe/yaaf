@@ -64,6 +64,12 @@ MODEL_FLAGS = json.loads(os.environ.get("YAAF_MODEL_FLAGS") or "{}")
 # The provider, for a harness that calls its API itself: base URL, the variable
 # its key is injected under, whether it states costs and searches.
 PROVIDER = json.loads(os.environ.get("YAAF_PROVIDER") or "{}")
+# The install's own search backend, for a run promised `web` on a harness that
+# searches through yaaf (docs/PROVIDERS.md §6): its name, address and price
+# per query. Its key is YAAF_SEARCH_KEY, which no shell a harness gives the
+# model is handed.
+SEARCH = json.loads(os.environ.get("YAAF_SEARCH") or "null")
+SEARCH_KEY_ENV = "YAAF_SEARCH_KEY"
 
 WORKSPACE = Path("/workspace")
 STAGING = Path("/workspace/.yaaf")
@@ -2099,6 +2105,9 @@ class AttemptResult:
     subtype: str | None = None
     cache_creation_1h: int = 0
     web_searches: int = 0
+    #: What the install's own search backend charged, in USD, for searches
+    #: made through yaaf rather than the provider (docs/PROVIDERS.md §6).
+    search_usd: float = 0.0
 
 
 def price_usage(price: dict, *, tokens_in: int, tokens_out: int, cache_read: int,
@@ -2116,11 +2125,12 @@ def price_usage(price: dict, *, tokens_in: int, tokens_out: int, cache_read: int
 
 def _priced(price: dict | None, bill: AttemptResult) -> float | None:
     if price is None:
-        return None
-    return price_usage(price, tokens_in=bill.tokens_in, tokens_out=bill.tokens_out,
-                       cache_read=bill.cache_read, cache_creation=bill.cache_creation,
-                       cache_creation_1h=bill.cache_creation_1h,
-                       web_searches=bill.web_searches)
+        # A platform search is priced by the install whatever the model is.
+        return bill.search_usd or None
+    return bill.search_usd + price_usage(
+        price, tokens_in=bill.tokens_in, tokens_out=bill.tokens_out,
+        cache_read=bill.cache_read, cache_creation=bill.cache_creation,
+        cache_creation_1h=bill.cache_creation_1h, web_searches=bill.web_searches)
 
 
 def usage_bill(usage, *, cost_usd: float | None, subtype: str | None) -> AttemptResult:
@@ -2180,6 +2190,85 @@ def run_prompt(context: dict) -> str:
         "another agent: plain words, things named by what they are rather than by an "
         "ID, readable by someone who has never seen your task."
     )
+
+
+# ── the platform's search backend ──────────────────────────────────────────────
+
+
+async def platform_search(query: str, count: int = 8,
+                          transport=None) -> tuple[str, AttemptResult]:
+    """One query on the install's search backend: the results as the model
+    reads them, and the query's bill at the install's price — whatever the
+    model is, the meter and the priced check both carry it (`_priced`)."""
+    try:
+        import wire  # copied into the image beside this file
+    except ModuleNotFoundError:  # the control plane's tests
+        from yaaf.runtimes import wire
+
+    found = SEARCH or {}
+    hits = await wire.search_web(found.get("backend") or "", found.get("base_url") or "",
+                                 os.environ.get(SEARCH_KEY_ENV, ""), query, count,
+                                 transport=transport)
+    price = float(found.get("price_usd") or 0.0)
+    bill = AttemptResult(cost_usd=price, tokens_in=0, tokens_out=0, cache_creation=0,
+                         cache_read=0, subtype="web_search", search_usd=price)
+    if not hits:
+        return f"no results for {query!r}", bill
+    return "\n\n".join(f"{n}. {h.title}\n{h.url}\n{h.snippet}"
+                        for n, h in enumerate(hits, 1)), bill
+
+
+class SearchLedger:
+    """Searches a model made through a tool in another process — the stdio MCP
+    server a CLI harness mounts — as the bills they are. The server appends
+    one line per query; the driver reads what is new as the run goes, so a
+    search is under the per-run cap the moment it is made, not at the end."""
+
+    def __init__(self) -> None:
+        #: Bytes read so far: only whole lines — one the server is still
+        #: writing is left for the next read, not skipped and lost.
+        self.read = 0
+
+    @staticmethod
+    def path() -> Path:
+        return STAGING / f"search-{RUN_ID}.jsonl"
+
+    @classmethod
+    def charge(cls, bill: AttemptResult) -> None:
+        with cls.path().open("a") as ledger:
+            ledger.write(json.dumps({"usd": bill.cost_usd}) + "\n")
+
+    def new(self) -> list[AttemptResult]:
+        try:
+            data = self.path().read_bytes()
+        except FileNotFoundError:
+            data = b""
+        except OSError:
+            return []
+        if len(data) < self.read:
+            # Only ever appended to: shorter than what was read is a ledger
+            # somebody cut, and charges cut from it are charges dodged. The
+            # run stops rather than go on unmetered.
+            raise LedgerTampered("the search ledger shrank — searches made this run can no "
+                                 "longer be metered, so the run stops")
+        whole = data.rfind(b"\n", self.read) + 1
+        if whole <= self.read:
+            return []
+        fresh, self.read = data[self.read:whole].decode(errors="replace"), whole
+        out = []
+        for line in fresh.splitlines():
+            try:
+                usd = float(json.loads(line).get("usd") or 0.0)
+            except (ValueError, AttributeError):
+                continue
+            out.append(AttemptResult(cost_usd=usd, tokens_in=0, tokens_out=0,
+                                     cache_creation=0, cache_read=0, subtype="web_search",
+                                     search_usd=usd))
+        return out
+
+
+class LedgerTampered(RuntimeError):
+    """A run's own search ledger was cut or removed under it."""
 
 
 async def run_harness(make_driver) -> int:

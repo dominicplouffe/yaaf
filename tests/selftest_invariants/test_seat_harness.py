@@ -17,6 +17,8 @@ with no price cannot be hired onto a harness that meters by price).
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from tests.conftest import (
@@ -83,8 +85,10 @@ def test_the_picker_offers_every_harness_a_seat_may_run_on_and_not_the_test_swit
     offered = {h["name"] for h in client.get("/admin/harnesses", headers=ADMIN).json()}
     assert "mock" not in offered
     assert offered == {name for name, h in harnesses.HARNESSES.items() if h.family != "mock"}
-    assert {"claude_agent_sdk", "claude_cli", "anthropic_api", "openai_compatible",
-            "codex_cli", "gemini_cli", "opencode"} <= offered
+    assert {"claude_agent_sdk", "claude_cli", "yaaf_loop", "codex_cli", "gemini_cli",
+            "opencode"} <= offered
+    # A name a harness used to go by is understood, never offered.
+    assert not offered & set(harnesses.ALIASES)
 
 
 def test_a_role_on_the_cli_runs_its_seats_on_the_cli(client):
@@ -292,7 +296,8 @@ def test_a_subscription_cannot_pay_for_a_seat_on_the_api_loop(client):
     refused = client.post("/admin/projects", headers=ADMIN, json=_project_body(
         "loop-on-a-plan", billing_secret_id=subscription, teams=teams))
     assert refused.status_code == 422
-    assert "Anthropic API (yaaf's own loop) cannot pay with a Claude subscription" in refused.text
+    assert ("yaaf agent loop (the provider's own API) cannot pay with a Claude subscription"
+            in refused.text)
     accepted = client.post("/admin/projects", headers=ADMIN, json=_project_body(
         "loop-on-a-key", billing_secret_id=key, teams=teams))
     assert accepted.status_code == 200, accepted.text
@@ -329,8 +334,16 @@ def test_a_seat_on_the_api_loop_is_leased_with_its_price_and_runs_on_its_entrypo
         dispatch_once(session)
     job = next(j for j in lease_and_prepare(limit=20)
                if j.agent_id == project["ceo_agent_id"])
-    assert (job.provider, job.harness) == ("anthropic", "anthropic_api")
+    # Named by its old name, stored and run under its new one.
+    assert client.get("/admin/roles/ceo", headers=ADMIN).json()["harness"] == "yaaf_loop"
+    assert (job.provider, job.harness) == ("anthropic", "yaaf_loop")
     row = catalog.model(job.model)
     assert job.price == row.price.as_dict()
-    assert job.model_flags == {"effort": row.effort, "web_tools": row.web_tools}
-    assert get_backend(job.harness).entrypoint == "anthropic_api_entry.py"
+    # And the window its history is compacted against (loop_harness), from
+    # the shipped snapshot.
+    from yaaf.core.price_feed import shipped_window
+
+    assert job.model_flags == {"effort": row.effort, "web_tools": row.web_tools,
+                               "efforts": None, "context": shipped_window(job.model)}
+    assert get_backend(job.harness).entrypoint == "loop_entry.py"
+    assert json.loads(json.dumps(job.provider_spec))["protocol"] == "anthropic"

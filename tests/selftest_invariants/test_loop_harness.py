@@ -121,7 +121,7 @@ def _staged(monkeypatch, tmp_path, perms: dict | None = None) -> SimpleNamespace
 
     loop = importlib.reload(loop_module)
     monkeypatch.setitem(sys.modules, "loop_harness", loop)
-    import yaaf.runner.anthropic_api_entry as api_module
+    import yaaf.runner.loop_entry as api_module
 
     api = importlib.reload(api_module)
     workspace = tmp_path / "workspace"
@@ -529,3 +529,121 @@ def test_web_fetch_reads_a_page_as_text(run, monkeypatch):
     assert "Title\nBody text." in text and "evil" not in text and "p{}" not in text
     assert _call(run, "WebFetch", url="file:///etc/passwd")["is_error"]
 
+
+
+# ── 9. a run that outgrows the model's window makes room rather than dying ─────
+#
+# Claude Code compacts on its own; a provider's API does not. A transcript the
+# loop holds grows by every tool result, so on a 128k model a long run would
+# die mid-task on a refusal for length. Old output goes first, then the
+# history is summarised — by the model, billed as the call it is.
+
+
+def _read(call_id: str, path: str) -> list[dict]:
+    return _reply([{"type": "tool_use", "id": call_id, "name": "Read",
+                    "input": {"file_path": path}}], "tool_use",
+                  start=_usage(inp=_read.size.pop(0), read=0, write=0))
+
+
+def _big_files(run) -> None:
+    for name in ("a.txt", "b.txt", "c.txt"):
+        (run.workspace / name).write_text((name[0] * 99 + "\n") * 120)
+
+
+def _results(request: dict) -> list[str]:
+    return [block["content"] for message in request["messages"]
+            if isinstance(message["content"], list)
+            for block in message["content"] if block.get("type") == "tool_result"]
+
+
+def test_old_tool_output_is_elided_when_the_window_fills(run):
+    run.mp.setattr(run.base, "MODEL_FLAGS", {**FLAGS, "context": 15_000})
+    _big_files(run)
+    _read.size = [100, 4200, 8700]
+    code, result = _drive(run, [{"sse": _read("t1", "a.txt")}, {"sse": _read("t2", "b.txt")},
+                                {"sse": _read("t3", "c.txt")}, {"sse": TEXT}])
+    assert code == 0 and result["ok"] is True, result["summary"]
+    assert len(run.requests) == 4, "eliding is free: no call is spent on it"
+    first, second, third = _results(run.requests[3])
+    assert first.startswith("[elided to fit the context window") and "Read output" in first
+    assert "aaaa" not in first
+    assert "bbbb" in second and "cccc" in third, "the latest results stay whole"
+    # The call and its pairing stay: every provider refuses a result without one.
+    assert run.requests[3]["messages"][1]["content"][0]["id"] == "t1"
+
+
+def test_the_history_is_summarised_when_eliding_is_not_enough(run):
+    run.mp.setattr(run.base, "MODEL_FLAGS", {**FLAGS, "context": 7_000})
+    _big_files(run)
+    _read.size = [100, 4500]
+    summary = _reply([{"type": "text", "text": "Read a.txt and b.txt; next, read c.txt."}],
+                     start=_usage(inp=3000, read=0, write=0), out=40)
+    code, result = _drive(run, [{"sse": _read("t1", "a.txt")}, {"sse": _read("t2", "b.txt")},
+                                {"sse": summary}, {"sse": TEXT}])
+    assert code == 0 and result["ok"] is True, result["summary"]
+    compaction, resumed = run.requests[2], run.requests[3]
+    # The summary call carries the history as text — no tool blocks, so no
+    # provider's pairing rules — and is offered no tools, not even search.
+    assert "tools" not in compaction
+    [asked] = compaction["messages"]
+    assert "being compacted" in asked["content"] and "RESULT of Read" in asked["content"]
+    [message] = resumed["messages"]
+    assert message["content"].startswith(run.requests[0]["messages"][0]["content"])
+    assert "Read a.txt and b.txt; next, read c.txt." in message["content"]
+    assert {t["name"] for t in resumed["tools"]} >= {"Read", "Write"}
+    # The summary was a call, and every call is billed.
+    assert result["tokens_out"] == 13 + 13 + 40 + 13
+
+
+def test_a_refusal_for_length_makes_room_and_makes_the_call_again(run):
+    """No window known — a model the catalog does not list — and the
+    provider's own refusal is the signal."""
+    _big_files(run)
+    _read.size = [100, 4200, 8700]
+    too_long = {"status": 400, "body": {"type": "error", "error": {
+        "type": "invalid_request_error",
+        "message": "prompt is too long: 214001 tokens > 200000 maximum"}}}
+    code, result = _drive(run, [{"sse": _read("t1", "a.txt")}, {"sse": _read("t2", "b.txt")},
+                                {"sse": _read("t3", "c.txt")}, too_long, {"sse": TEXT}])
+    assert code == 0 and result["ok"] is True, result["summary"]
+    assert run.requests[4]["messages"][:2] == run.requests[3]["messages"][:2]
+    assert _results(run.requests[4])[0].startswith("[elided")
+
+
+def test_a_history_that_will_not_fit_even_summarised_is_fatal_not_a_loop(run):
+    too_long = {"status": 400, "body": {"type": "error", "error": {
+        "type": "invalid_request_error", "message": "prompt is too long"}}}
+    summary = _reply([{"type": "text", "text": "Nothing done yet."}])
+    code, result = _drive(run, [too_long, {"sse": summary}, too_long, {"sse": TEXT}])
+    assert code == 1 and result["error_kind"] == "fatal"
+    assert "larger window" in result["summary"]
+    assert len(run.requests) == 3
+
+
+def test_a_prompt_whose_fixed_part_fills_the_window_ends_rather_than_thrashing(run):
+    """A summary is spent only once the history fits again. Reset after any
+    call that merely fit, a prompt whose fixed part alone filled the window
+    was summarised after every call — fifty paid summaries to the call limit,
+    no progress, and a run reported done."""
+    run.mp.setattr(run.base, "MODEL_FLAGS", {**FLAGS, "context": 7_000})
+    (run.workspace / "a.txt").write_text("x" * 50)
+    full = _reply([{"type": "tool_use", "id": "t1", "name": "Read",
+                    "input": {"file_path": "a.txt"}}], "tool_use",
+                  start=_usage(inp=6000, read=0, write=0))
+    summary = _reply([{"type": "text", "text": "summary"}],
+                     start=_usage(inp=3000, read=0, write=0), out=40)
+    code, result = _drive(run, [{"sse": full}, {"sse": summary}, {"sse": full},
+                                {"sse": summary}, {"sse": full}])
+    assert code == 1 and result["error_kind"] == "fatal"
+    assert "larger window" in result["summary"]
+    assert len(run.requests) == 3, "summarised again instead of stopping"
+
+
+def test_a_summary_that_came_back_empty_is_still_billed(run):
+    too_long = {"status": 400, "body": {"type": "error", "error": {
+        "type": "invalid_request_error", "message": "prompt is too long"}}}
+    empty = _reply([{"type": "text", "text": "   "}],
+                   start=_usage(inp=300_000, read=0, write=0), out=8000)
+    code, result = _drive(run, [too_long, {"sse": empty}])
+    assert code == 1 and "no summary" in result["summary"]
+    assert result["tokens_in"] >= 300_000, "a paid summary call went unmetered"

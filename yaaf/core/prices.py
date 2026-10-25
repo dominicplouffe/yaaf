@@ -15,6 +15,8 @@ priced.
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -37,6 +39,49 @@ def price(session: Session, model: str) -> catalog.Price | None:
     return _row_price(row) if row is not None else catalog.price(model)
 
 
+#: An administrator's own windows, {model: tokens}, apart from any price: a
+#: shipped price stays the shipped one when only its window is corrected.
+WINDOWS = "models.context_windows"
+
+
+def windows(session: Session) -> dict[str, int]:
+    from yaaf.core import platform
+
+    try:
+        stored = json.loads(platform.get_setting(session, WINDOWS) or "{}")
+    except ValueError:
+        stored = {}
+    return {m: int(n) for m, n in stored.items() if isinstance(n, int) and n > 0} \
+        if isinstance(stored, dict) else {}
+
+
+def set_window(session: Session, model: str, tokens: int | None) -> None:
+    from yaaf.core import platform
+
+    stored = windows(session)
+    if tokens:
+        stored[model] = int(tokens)
+    else:
+        stored.pop(model, None)
+    platform.set_setting(session, WINDOWS, json.dumps(stored, sort_keys=True))
+
+
+def context_window(session: Session, model: str) -> int | None:
+    """The model's input window in tokens: the one an administrator set, else
+    the one imported or typed with its price, else the shipped snapshot's,
+    else None — and then yaaf's own loop compacts only when the provider
+    refuses a call for length."""
+    from yaaf.core import price_feed
+
+    own = windows(session).get(model)
+    if own:
+        return own
+    row = session.get(ModelPrice, model)
+    if row is not None and row.context_window:
+        return row.context_window
+    return price_feed.shipped_window(model)
+
+
 def covered(session: Session, model: str) -> bool:
     """Whether a run on `model` can be metered in dollars: it has a price, or
     its provider states each call's cost (OpenRouter)."""
@@ -53,8 +98,11 @@ def table(session: Session) -> list[dict]:
         row = own.pop(model.id, None)
         out.append({"model": model.id, "provider": model.provider, "listed": True,
                     "shipped": shipped,
-                    "own": _row_price(row).as_dict() if row is not None else None})
+                    "own": _row_price(row).as_dict() if row is not None else None,
+                    "source": row.source if row is not None else None,
+                    "context_window": context_window(session, model.id)})
     for model_id, row in sorted(own.items()):
         out.append({"model": model_id, "provider": catalog.provider_of(model_id),
-                    "listed": False, "shipped": None, "own": _row_price(row).as_dict()})
+                    "listed": False, "shipped": None, "own": _row_price(row).as_dict(),
+                    "source": row.source, "context_window": context_window(session, model_id)})
     return out

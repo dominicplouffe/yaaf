@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from yaaf.core import prices, project_credentials
+from yaaf.core import model_policy, prices, project_credentials
 from yaaf.core.models import Agent, Project
 from yaaf.runtimes import catalog
 from yaaf.runtimes.providers import provider as seller
-from yaaf.runtimes.seats import refusal, seat_for
+from yaaf.runtimes.seats import refusal, seat_for, unmodelled
 
 
 def unpaid(who: str, model: str, paid: list[str]) -> str:
@@ -34,7 +34,7 @@ def unpaid(who: str, model: str, paid: list[str]) -> str:
 
 
 def seat_problem(session: Session, project: Project, agents: list[Agent], *,
-                 chat: bool = True) -> str | None:
+                 chat: bool = True, context=None, fallback: bool | None = None) -> str | None:
     """The first seat of `agents` that could not run on this project, named,
     with why — or None. The doors raise it; the lease and the health checklist
     read it. `chat` asks R7 too — whether the CEO's seat can hold the
@@ -48,20 +48,30 @@ def seat_problem(session: Session, project: Project, agents: list[Agent], *,
     # health says so) or runs on the scripted backend, which reads none.
     pays = bool(project.billing_secret_id) and (
         (project.integrations or {}).get("runtime") != "mock")
+    # `context` names another provider for the bare classes — the fallback
+    # door asking whether the seats would run there.
+    context = context or model_policy.context(session, project)
     for agent in agents:
         role_version = role_version_for(session, agent)
-        seat = seat_for(agent, role_version)
-        credential = project_credentials.seat_credential(session, project, seat.provider)
+        seat = seat_for(agent, role_version, context=context)
+        if not seat.resolved:
+            # R8 — a class with no model on its provider, before R5 asks who
+            # pays for a model that does not exist.
+            return f"{agent.name}: {unmodelled(seat.model)}"
+        credential = project_credentials.seat_credential(session, project, seat.provider,
+                                                         fallback=fallback)
         if credential is None and pays:
             # R5 — it fails at the door, not at 3am.
             return unpaid(agent.name, seat.model,
-                          sorted(project_credentials.held(session, project)))
+                          sorted(project_credentials.held(session, project,
+                                                          fallback=fallback)))
         problem = refusal(seat.harness, seat.model,
                           role_version.tool_permissions if role_version else {},
                           credential, priced=prices.covered(session, seat.model),
                           effort=seat.effort,
                           converses=(chat and agent.kind == AgentKind.CEO
-                                     and chat_enabled(project)))
+                                     and chat_enabled(project)),
+                          pinned=seat.pinned, platform_search=context.platform_search)
         if problem:
             return f"{agent.name}: {problem}"
     return None

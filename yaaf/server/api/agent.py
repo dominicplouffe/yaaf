@@ -135,6 +135,38 @@ def whoami(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) 
     }
 
 
+@router.post("/model-token")
+def model_token(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -> dict:
+    """A fresh model token for a run whose provider is paid with a key file
+    the control plane mints from (Vertex; yaaf.core.model_tokens). The run
+    asks before its own expires; the key file itself never leaves here. Only
+    for the provider the run was leased on, and only while it runs — a
+    finished run's token is refused at the door like every other call."""
+    from fastapi import HTTPException
+
+    from yaaf.core import model_tokens, project_credentials
+    from yaaf.core.crypto import decrypt
+    from yaaf.runtimes.providers import PROVIDERS
+
+    seller = PROVIDERS.get(ctx.run.provider or "")
+    if seller is None or not seller.mints_tokens:
+        raise HTTPException(status_code=409, detail="this run's model credential is a key, "
+                                                    "not one that mints tokens")
+    # The fallback counts as held here whether or not a failover is still on:
+    # a run leased onto it during an outage keeps running after the billing
+    # provider recovers, and its next token must not read as a dead key.
+    secret = project_credentials.credential_for(session, ctx.project, seller.name,
+                                                fallback=True)
+    if secret is None:
+        raise HTTPException(status_code=409, detail=f"this project no longer pays {seller.label}")
+    try:
+        token, expires = model_tokens.mint(seller.name, decrypt(secret.ciphertext))
+    except model_tokens.MintError as exc:
+        raise HTTPException(status_code=502 if exc.kind == "transient" else 409,
+                            detail=str(exc)) from exc
+    return {"token": token, "expires_at": int(expires)}
+
+
 @router.get("/context")
 def context_pack(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -> dict:
     from yaaf.server.contextpack import build_context_pack

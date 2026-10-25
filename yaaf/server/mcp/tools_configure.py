@@ -51,19 +51,23 @@ def _schema(required_args: list[str], **properties) -> dict:
         "with a reason. verb `add_team` hires a team; `repin` moves a team to the "
         "library's current version of its role; `pay_provider` pays a second provider "
         "(provider, credential — a stored credential's name) for seats on its models; "
-        "`stop_paying_provider` removes one."
+        "`stop_paying_provider` removes one; `set_fallback` names the credential (of "
+        "another provider) class seats move to while the billing one's provider is "
+        "failing — empty credential removes it."
     ),
     input_schema=_schema([],
                          verb={"type": "string", "enum": ["settings", "add_team", "repin",
                                                           "pay_provider",
-                                                          "stop_paying_provider"]},
+                                                          "stop_paying_provider",
+                                                          "set_fallback"]},
                          provider={"type": "string",
                                    "description": "pay_provider / stop_paying_provider: "
                                                   "e.g. openai, google, deepseek, "
                                                   "openrouter, moonshot, qwen, mistral, "
                                                   "xai, custom"},
                          credential={"type": "string",
-                                     "description": "pay_provider: a stored credential's name"},
+                                     "description": "pay_provider / set_fallback: a stored "
+                                                    "credential's name"},
                          name={"type": "string"},
                          goal={"type": "string"},
                          deadline={"type": "string", "description": "ISO 8601, or empty to clear"},
@@ -121,6 +125,19 @@ def project_configure(principal: Principal, session: Session, arguments: dict) -
             outcome = _call(principal, admin.remove_project_credential,
                             project_id=project.id, provider_name=provider_name,
                             session=session)
+    elif verb == "set_fallback":
+        named = _billing_secret(session, arguments.get("credential") or None)
+        preview = confirm.gate(session, principal, "project_configure", arguments, {
+            "verb": verb, "project": project.slug,
+            "credential": named.name if named else None,
+            "warning": "While the billing credential's provider is failing, class seats "
+                       "run on this one and bill against it."
+            if named else "Class seats will wait out an outage of the billing provider."})
+        if preview:
+            return preview
+        outcome = _call(principal, admin.set_fallback_credential, project_id=project.id,
+                        body=admin.FallbackIn(credential_id=named.id if named else None),
+                        session=session)
     elif verb == "repin":
         team = _owned(session, project, Team, str(arguments.get("team") or ""), "team")
         preview = confirm.gate(session, principal, "project_configure", arguments, {

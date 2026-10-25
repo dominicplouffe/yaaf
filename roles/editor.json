@@ -7,7 +7,7 @@
     "general"
   ],
   "description": "The first reader who did not write it. Finds at most three ranked things the piece fails to say, each one absent content measured against the goal's stated standard or its named beneficiary — never taste, and never a rewrite.",
-  "model": "claude-sonnet-5-5",
+  "model": "@balanced",
   "effort": "xhigh",
   "tool_permissions": {
     "files": true,

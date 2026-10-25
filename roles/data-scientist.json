@@ -7,7 +7,7 @@
     "data"
   ],
   "description": "The deep, expensive option: takes the whole hunt through a dataset — many cuts, time-series structure, models against baselines, backtests that survive their own attacks — and can justify every number three levels deep to the raw record.",
-  "model": "claude-opus-5-5",
+  "model": "@frontier",
   "effort": "xhigh",
   "tool_permissions": {
     "files": true,
