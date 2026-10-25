@@ -9,6 +9,7 @@ import {
   OrgView,
   PlanView,
   ProjectHealth,
+  SetupView,
   ReviewsView,
   RunRow,
   TaskRow,
@@ -36,6 +37,9 @@ export interface ProjectCtx {
   hypotheses: HypothesisRow[];
   org: OrgView | null;
   health: ProjectHealth | null;
+  /** The setup checklist, while there is one: the Inbox lists it and the
+      sidebar keeps one row for its next step. */
+  setup: SetupView | null;
   tasks: TaskRow[] | null;
   runs: RunRow[] | null;
   /** Each seat's day, in the project's own timezone. */
@@ -50,6 +54,7 @@ export interface ProjectCtx {
   reloadApprovals: () => void;
   reloadOrg: () => void;
   reloadHealth: () => void;
+  reloadSetup: () => void;
   reloadPlan: () => void;
   reloadTasks: () => void;
   /** Open one person's page — any screen can, on anyone. */
@@ -83,6 +88,8 @@ export function ProjectProvider({ projectId, children }: { projectId: string; ch
     () => get<OrgView>(`${base}/org`), 15000, [projectId]);
   const { data: health, reload: reloadHealth } = usePoll(
     () => get<ProjectHealth>(`${base}/health`), 10000, [projectId]);
+  const { data: setup, reload: reloadSetup } = usePoll(
+    () => get<SetupView>(`${base}/setup`), 10000, [projectId]);
   const { data: plan, reload: reloadPlan } = usePoll(
     () => get<PlanView>(`${base}/plan`), 8000, [projectId]);
   const { data: tasks, reload: reloadTasks } = usePoll(
@@ -110,19 +117,19 @@ export function ProjectProvider({ projectId, children }: { projectId: string; ch
       loading: false,
       error,
       ctx: {
-        projectId, dash, plan, org, health, tasks, runs, today, reviews, seats,
+        projectId, dash, plan, org, health, setup, tasks, runs, today, reviews, seats,
         approvals: approvals ?? [],
         asks: asks ?? [],
         hypotheses: hypotheses ?? [],
         ceoName: org?.ceo?.name ?? "your CEO",
         asOf: at,
         error,
-        reload, reloadApprovals, reloadOrg, reloadHealth, reloadPlan, reloadTasks,
+        reload, reloadApprovals, reloadOrg, reloadHealth, reloadSetup, reloadPlan, reloadTasks,
         openAgent,
       },
     };
-  }, [projectId, dash, plan, org, health, tasks, runs, today, reviews, seats, approvals, asks,
-    hypotheses, at, error, reload, reloadApprovals, reloadOrg, reloadHealth, reloadPlan,
+  }, [projectId, dash, plan, org, health, setup, tasks, runs, today, reviews, seats, approvals, asks,
+    hypotheses, at, error, reload, reloadApprovals, reloadOrg, reloadHealth, reloadSetup, reloadPlan,
     reloadTasks, openAgent]);
 
   return <ProjectContext.Provider value={frame}>{children}</ProjectContext.Provider>;

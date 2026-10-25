@@ -12,16 +12,20 @@ import Details from "./project/Details";
 import Member from "./project/Member";
 import Results from "./project/Results";
 import TeamPage from "./project/Team";
+import { SettingsPage } from "./project/Settings";
+import { PinSuggestion } from "../shortcuts";
 
 export type { ProjectCtx } from "../projectCtx";
 
-// Four pages: Team, Chat, Results, Details. Ten sidebar pages, before
-// that, were learnable but flat — they put the Roadmap, the Spend and the
-// Settings on the same footing as the team doing the work, and the team
-// was the sixth line. A project is a team at work, so the team is its front
-// page; what it made is the second thing anyone asks; how it works inside is
-// one page with tabs. Every old address still lands somewhere — see the
-// redirects at the foot of the routes.
+// Five pages: Inbox, Team, Chat, Results, Details, and Settings under the
+// project's gear. Ten sidebar pages, before that, were learnable but flat —
+// they put the Roadmap, the Spend and the Settings on the same footing as the
+// team doing the work, and the team was the sixth line. A project is a team
+// at work, so what it needs from you and the team come first; what it made is
+// next; how it works inside is one page with tabs. The pages a person opens
+// every day sit one level down, so each person can pin theirs (shortcuts.tsx).
+// Every old address still lands somewhere — see the redirects at the foot of
+// the routes.
 
 /** Pause wants a recorded reason; stop is terminal and requires typing the
     project's name. In-context confirmation, never a browser dialog. */
@@ -166,7 +170,7 @@ function StandingNotice({ dash }: { dash: Dashboard }) {
   return (
     <div className="notice-box" style={{ display: "flex", gap: "var(--s2)", alignItems: "baseline", flexWrap: "wrap" }}>
       <span style={{ flex: 1, minWidth: 0 }}>{said}</span>
-      <NavLink to={`/projects/${dash.id}/details/settings?s=people`}>Who chairs it</NavLink>
+      <NavLink to={`/projects/${dash.id}/settings?s=people`}>Who chairs it</NavLink>
     </div>
   );
 }
@@ -341,6 +345,7 @@ export default function ProjectPage() {
           who opens Tasks to see four of them sitting still should not have to
           go to the Overview to learn the project ran out of runs at 01:22. */}
       <StatusBriefBox dash={dash} projectId={projectId} reload={ctx.reload} />
+      <PinSuggestion projectId={projectId} />
       {ctx.error && (
         <div className="error">
           Not refreshing — {ctx.error}. The numbers below are the last that landed.
@@ -360,18 +365,19 @@ export default function ProjectPage() {
         <Route path="chat" element={<Boardroom projectId={projectId} dash={dash} org={ctx.org} />} />
         <Route path="results" element={<Results ctx={ctx} />} />
         <Route path="details/*" element={<Details ctx={ctx} />} />
+        <Route path="settings" element={<SettingsPage ctx={ctx} />} />
 
         {/* Old bookmarks, emails and links from outside the app. Every page
             that moved keeps working, query and all; nobody relearns a URL
-            they wrote down. Ten sidebar pages became four: Overview and Team
-            are the Team page, the rest are tabs of Details. */}
+            they wrote down. Ten sidebar pages became five: Overview and Team
+            are the Inbox and Team pages, Settings hangs off the project, and
+            the rest are tabs of Details. */}
         <Route path="roadmap" element={<Moved to={`${base}/details/roadmap`} />} />
         <Route path="tasks" element={<Moved to={`${base}/details/tasks`} />} />
         <Route path="deliverables" element={<Moved to={`${base}/details/deliverables`} />} />
         <Route path="spend" element={<Moved to={`${base}/details/spend`} />} />
         <Route path="reviews" element={<Moved to={`${base}/details/reviews`} />} />
         <Route path="activity/*" element={<Moved to={`${base}/details/activity`} />} />
-        <Route path="settings" element={<Moved to={`${base}/details/settings`} />} />
         <Route path="boardroom" element={<Navigate to={`${base}/chat`} replace />} />
         <Route path="progress" element={<Navigate to={`${base}/details/roadmap`} replace />} />
         <Route path="progress/board" element={<Navigate to={`${base}/details/tasks`} replace />} />

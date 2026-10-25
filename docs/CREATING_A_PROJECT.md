@@ -297,7 +297,10 @@ needs a credential — without one the project is created stopped.)
 
 ## Step 2 — Connect billing (if you skipped it at creation)
 
-Open your new project → **Settings** → "How agents pay for Claude". Pick a
+Open your new project. Its Inbox starts with **Finish setting up**, a list of
+what the project still needs, and **Model key** is first: it opens Settings →
+**Money** (the gear beside the project's name in the sidebar gets you there
+too). Pick a
 credential from the list, click **Save assignment**, then **Test connection**
 — if the key is bad, you find out now, not at 9am tomorrow. No credentials in
 the list? An administrator adds one under Settings → Providers; a
@@ -306,7 +309,10 @@ plan.
 
 ## Step 3 — Connect the data (if the work needs it)
 
-Settings → **Data sources — MCP servers**. A data source *is* an MCP server:
+The **Data sources** step on the checklist, or Settings → **Data sources** —
+the sidebar's **Finish setup** row opens whichever step is next, and every step
+sits in a strip across the top of Settings while any is left. A data source
+*is* an MCP server:
 a URL that offers tools. This is one form:
 
 - **Name**: a short label, like `ppc`. Agents will see the source's tools
@@ -369,8 +375,10 @@ reveals as its own text and can be edited in place to rotate.
 
 ## Step 4 — Follow the checklist
 
-Go to the project's **Team** page. If anything about the setup is wrong or
-missing, a **Setup & health** card sits at the top naming each problem in
+Go to the project's **Inbox**. **Finish setting up** lists what the project
+does not have yet — each step ticks itself off when it does, and every step but
+the model key can be skipped; **Done for now** puts the list away. If anything
+about the setup is wrong, a **Setup & health** card further down names each problem in
 plain English with a link to fix it — a dead or missing billing credential, a credential that
 should be a URL but isn't, a team running an outdated role version. Fix the
 red **problem** rows; amber **suggestion** rows are advice you can act on or
@@ -460,10 +468,12 @@ project pauses itself rather than burning money against a wall.
 1. New project → goal above → **Deliver** → credential picked → three one-person
    teams (researcher, engineer, writer) → `ppc` data source + engineer role →
    budget cap → Create.
-2. (Or later: Settings → billing → pick a credential → Save assignment → Test.)
-3. (Or later: Settings → Data sources → `ppc` + the MCP URL + engineer
+2. (Or later: Finish setting up → Model key → pick a credential → Save
+   assignment → Test.)
+3. (Or later: Finish setting up → Data sources → `ppc` + the MCP URL + engineer
    role → Save, auto-tested.)
-4. The project's Inbox → fix anything the health card names → card disappears.
+4. The project's Inbox → finish or skip the rest of the checklist, and fix
+   anything the health card names → both disappear.
 5. Chat → brief the CEO.
 6. Roadmap → accept the requirements you want, cut the rest, sign the date.
 7. Done. Check back in the morning.

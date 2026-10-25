@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { PinButton } from "../../shortcuts";
 import { ApiError, get } from "../../api";
 import Markdown from "../../Markdown";
 import { fmtWhen, usePoll } from "../../hooks";
@@ -684,8 +685,9 @@ function ImageView({ url, name }: { url?: string; name: string }) {
     still walking that list. Reading twenty files used to be twenty round trips
     through a table you had to find your place in again each time. */
 function Preview({
-  loaded, position, total, busy, onStep, onClose, onDownload,
+  loaded, position, total, busy, onStep, onClose, onDownload, projectId,
 }: {
+  projectId: string;
   loaded: Loaded;
   position: number;
   total: number;
@@ -785,6 +787,10 @@ function Preview({
           )}
           <div className="spacer" />
           <span className="help">← → to walk the list · Esc to close</span>
+          {/* A file you keep reopening — the model, the running draft — can
+              sit in the sidebar under this project, one click from anywhere. */}
+          <PinButton projectId={projectId} only label={entry.name.slice(0, 80)}
+            to={`details/deliverables?open=${encodeURIComponent(entry.id)}`} />
           <button className="small" onClick={onDownload}>↓ Download</button>
           <button className="small" onClick={onClose}>close</button>
         </div>
@@ -1389,6 +1395,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
       {loaded && (
         <Preview
           key={loaded.entry.id}
+          projectId={projectId}
           loaded={loaded}
           position={loaded.entry.pos ?? 0}
           total={matched || 1}

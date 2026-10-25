@@ -4,7 +4,7 @@ The chairman's cockpit is a React SPA served by the API at **`/app`**. Sign in
 with your email and password; the first admin's comes from the one-time link
 the install prints, and everybody else's from an invite (see
 [AUTH.md](AUTH.md)). The browser holds a session cookie it cannot read from
-script, and nothing is kept in `localStorage`.
+script, and no credential is kept in `localStorage`.
 
 Two places are about people rather than projects. **Settings → Account** is
 yours: your password, the personal tokens the CLI and your scripts hold, and the
@@ -30,7 +30,28 @@ always shows the same four things in the same order:
 | **Home** | The landing page: one sentence on whether anything needs you, the decisions themselves, every project side by side, and what happened while you were away. |
 | **Inbox** | Everything that needs you, across every project — and everything worth knowing that doesn't. The badge counts only the first. |
 | **Projects** | Your portfolio — one comparable row per project. |
-| **The project you are in** | A switcher (status, and how many things on it need you), then that project's five pages: Inbox, Team, Chat, Results, Details. |
+| **The project you are in** | A switcher (status, and how many things on it need you) with a **gear** beside it for the project's Settings, then that project's five pages: Inbox, Team, Chat, Results, Details — and under them your pins. |
+
+**Pins.** The pages under the five — Deliverables, Runs, a Settings section,
+even one file — are a level down, which is the right depth for a page you open
+once a month and the wrong one for a page you open every morning. So every one
+of them has a **Pin to sidebar** button, and a pinned page sits under the
+project's five pages, one click from anywhere. **Deliverables** comes pinned;
+unpin it with the **×** that appears on hover. You keep up to five, in the
+order you pinned them, and they are yours: they follow you to any browser you
+sign in on, and nobody else's sidebar changes. A pinned page is pinned in every
+project; a pinned file only in its own. After you open the same page three
+times in a week, the app offers once to pin it.
+
+**Details remembers where you were.** Details opens on the tab you used last
+(its name is beside it in the sidebar), so a reader who lives in Runs does not
+pass through the Roadmap to get back to them.
+
+**Setting a project up.** While a new project still needs things — a model key,
+data sources, the credentials its agents asked for, a Slack room, the people
+who can open it — the sidebar carries one more row, **Finish setup 2 of 6**,
+that opens the next one. It goes away when the last step is done or skipped.
+See [the checklist](#finishing-setup) on the project's Inbox.
 
 Under the project's pages a **Live now** list names who is working, who is
 waiting and who wakes next; click a name to open that agent. The **Role
@@ -43,17 +64,23 @@ phone the sidebar folds into a drawer behind the menu button.
 **Search and shortcuts.** **⌘K** (or **Ctrl+K**, or **/** on any page without
 a search box of its own) opens a palette
 that finds any page, project or person and runs the few app-wide actions
-(theme, shortcuts, sign out). **?** lists every shortcut. **g** then a letter
+(theme, shortcuts, sign out). Inside a project it goes one level further than
+the sidebar: the places you were in last, your pins, every Settings section and
+Activity view by name, the setup chores by what you want done (**Add a secret
+or variable**, **Connect a data source**, **Set the budget**, **Invite someone
+to this project**), and any deliverable by its name. **?** lists every shortcut. **g** then a letter
 goes to a page of the project you are in — **g o** its Inbox, **g t** Team, **g c** Chat,
 **g r** Results, **g d** Details, and straight to a Details tab with **g m**
 Roadmap, **g k** Tasks, **g f** Deliverables, **g s** Spend, **g v** Reviews,
-**g a** Activity — and **g i** to the Inbox. No single
+**g a** Activity, **g ,** the project's Settings, and **g 1** to **g 5** your
+pins in sidebar order — and **g i** to the Inbox. No single
 keypress ever decides anything: approving, denying and answering are always a
 click on a labelled button.
 
 Old links keep working. `#/desk` opens the Inbox, a project's `boardroom`
 opens Chat, `progress` opens Roadmap, `progress/board` opens Tasks, and
-`records/*` opens the matching Activity view — so a link in an old email or a
+`records/*` opens the matching Activity view, and `details/settings` opens the
+project's Settings — so a link in an old email or a
 bookmark still lands somewhere true.
 
 ---
@@ -402,7 +429,11 @@ A project has five pages, each answering one question:
 | **Team** | Who is doing my job, who do they report to, and what is each of them on? |
 | **Chat** | Talk to the CEO who runs them. |
 | **Results** | What has the team delivered, and who checked it? |
-| **Details** | How it works inside — Roadmap, Tasks, Deliverables, Spend, Reviews, Activity, Settings, as tabs. Nothing there needs you. |
+| **Details** | How it works inside — Roadmap, Tasks, Deliverables, Spend, Reviews, Activity, as tabs. Nothing there needs you. |
+
+The project's **Settings** are not a page of their own in the list: they open
+from the gear beside the project's name, because they are what the project is
+configured to be rather than how its work is going.
 
 The sidebar carries the count of decisions waiting on you beside Inbox (the
 same count as the Inbox above it, for this project), how many people are busy
@@ -412,9 +443,9 @@ obvious, a project paused or stopped and why, and a review that is open and
 waiting on you.
 
 Every old address still works: `/overview` opens the project's Inbox, `/team`
-the Team page, and `/roadmap`, `/tasks`, `/deliverables`, `/spend`, `/reviews`,
-`/activity/…` and `/settings` the matching Details tab, with their filters
-intact.
+the Team page, `/roadmap`, `/tasks`, `/deliverables`, `/spend`, `/reviews` and
+`/activity/…` the matching Details tab, and `/details/settings` the project's
+Settings, with their filters intact.
 
 **Explore projects have no Roadmap tab.** They have no requirements by
 design — their shape is bets and evidence — and a tab that only ever explains
@@ -434,6 +465,22 @@ must-be-true things are true (or bets in play, on an Explore project), how many
 results have been delivered, what this month has cost against the cap, and
 runs today. When the projection lands past the promised date, a banner says
 so in days, with your two levers: cut scope, or move the date.
+
+### Finishing setup
+
+<img src="screenshots/project-setup.png" alt="A project's Inbox with the Finish setting up card open: the model key ticked, then Brief, Data sources, Secrets & variables, Integrations and People each with Open and Skip, and in the sidebar the gear beside the project's name, a Finish setup row counting 1 of 6, and Deliverables pinned under the five pages">
+
+A new project's Inbox opens with **Finish setting up**: one line per thing a
+project needs in its first days — **Model key**, **Brief**, **Data sources**,
+**Secrets & variables**, **Integrations**, **People** — each saying what the
+project already has or what is missing, and each opening the exact Settings
+section. A step ticks itself off when the project has the thing: nobody ticks
+it, so it can never say a key is connected after the key was removed. Every
+step but the model key can be **skipped** (and brought back with **Undo**);
+the key cannot, because no agent can run without it. **Done for now** puts the
+whole list away for everyone on the project. Skipping and putting away are for
+the chairman and co-chairs; an observer sees the list but cannot change it.
+Projects that were already running when the checklist shipped never show it.
 
 **The Inbox** is the same Inbox as the one in the sidebar, for this project
 only — the same rows, the same tabs (Decide, Acknowledge, Updates, Watching,
@@ -573,7 +620,9 @@ the full file explorer.
 ## Details — how it works inside
 
 One page with a tab per subject, so the sidebar can say what the project is.
-Nothing on it needs you — anything that does is on Team and in the Inbox.
+Nothing on it needs you — anything that does is on Team and in the Inbox. Each
+tab, and each Activity view, has **Pin to sidebar** in the top corner for the
+one you open every day, and Details reopens on the tab you used last.
 
 ## Roadmap — scope, sequence, and the promise
 
@@ -746,6 +795,12 @@ from the Roadmap or Settings, and the dial that granted it is one amendment from
 being turned back. Under the Supervised dial the list stays empty by design.
 
 ## Settings
+
+Opened from the **gear** beside the project's name in the sidebar (or **g ,**).
+Each section has its own address, so a link to Secrets & variables lands there,
+and each can be pinned. While the project is being set up, every setup step
+sits in a strip across the top, done ones ticked, so going from one to the next
+is one click; the step you are on can be skipped from the same strip.
 
 Grouped by necessity, not by subsystem. The required path is Brief → Money →
 Data; everything after is occasional.

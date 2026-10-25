@@ -628,8 +628,16 @@ export function InboxView({ project }: { project?: string }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  // The list scrolls to keep the chosen row in view, and only the list:
+  // scrollIntoView moves every scroller above it too, so on a project's Inbox
+  // with a card above the list, opening the page scrolled its header away.
   useEffect(() => {
-    listRef.current?.querySelector(".ib-row.on")?.scrollIntoView({ block: "nearest" });
+    const list = listRef.current;
+    const row = list?.querySelector<HTMLElement>(".ib-row.on");
+    if (!list || !row) return;
+    const lr = list.getBoundingClientRect(), rr = row.getBoundingClientRect();
+    if (rr.top < lr.top) list.scrollTop -= lr.top - rr.top;
+    else if (rr.bottom > lr.bottom) list.scrollTop += rr.bottom - lr.bottom;
   }, [selected?.key]);
 
   const soonest = soonestClock(needs);

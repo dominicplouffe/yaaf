@@ -1,7 +1,7 @@
 import { FallbackCard } from "../../fallback";
 import { CredentialPicker, PlanMeter, ProviderCredentials } from "../../llmCredentials";
 import { useProviders } from "../../providers";
-import { plainStatus } from "../../ui/kit";
+import { PageHead, plainStatus } from "../../ui/kit";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -21,8 +21,10 @@ import { fmtWhen, usePoll } from "../../hooks";
 import type { FounderStatus, PresetCard } from "../StartProject";
 import DataSources from "./DataSources";
 import Secrets, { pendingNeeds } from "./Secrets";
-import { useProject } from "../../projectCtx";
+import { ProjectCtx, useProject } from "../../projectCtx";
+import { PinButton } from "../../shortcuts";
 import { MembersPanel } from "./Members";
+import { SETTINGS_NAV } from "../../nav";
 import { ConfirmModal, fmtUnit, SecretInput, StoredSecret } from "../../ui";
 
 /** "amazon-audit-v2" → "amazon-audit-v3"; "Acme" → "Acme (clone)". Twins come
@@ -1042,29 +1044,6 @@ function changedRules(
   return out;
 }
 
-/** Eleven headings on one scrolling page is not navigation. Ordered by
-    necessity, not by subsystem: the docs say the required path is brief →
-    money → data sources, and everything after that is occasional. */
-const SETTINGS_NAV = [
-  { group: "The work" },
-  { key: "brief", label: "Brief" },
-  { key: "money", label: "Money" },
-  // Data sources and variables were one page, "Data & credentials", with an
-  // add form open at the top of each half. They are two different objects
-  // with two different lifecycles — a connection with a health state, and a
-  // value — so they are two pages, beside the other things agents plug into.
-  { group: "Connections" },
-  { key: "sources", label: "Data sources" },
-  { key: "secrets", label: "Secrets & variables" },
-  { key: "integrations", label: "Integrations" },
-  { group: "Governance" },
-  { key: "people", label: "People" },
-  { key: "rules", label: "Rules in force" },
-  { group: "Housekeeping" },
-  { key: "duplicate", label: "Duplicate & export" },
-  { key: "advanced", label: "Advanced" },
-] as const;
-
 function Section({ on, children }: { on: boolean; children: React.ReactNode }) {
   return on ? <>{children}</> : null;
 }
@@ -1963,5 +1942,61 @@ export default function Settings({
       </Section>
       </div>
     </div>
+  );
+}
+
+/** The project's Settings as a page of its own, under the gear on the project
+    in the sidebar. While the project is being set up, every setup step sits
+    in a strip across the top, so moving from one to the next is one click
+    and never a trip back to the Inbox. */
+export function SettingsPage({ ctx }: { ctx: ProjectCtx }) {
+  const { projectId, dash, setup } = ctx;
+  const [params] = useSearchParams();
+  const asked = params.get("s") ?? "brief";
+  const section = asked === "data" ? "secrets" : asked;
+  const label = SETTINGS_NAV.find((i) => "key" in i && i.key === section);
+  return (
+    <>
+      <PageHead title="Settings"
+        lede="What this project is configured to be: its brief, how it pays, what it connects to, and who can open it."
+        actions={label && "key" in label
+          ? <PinButton projectId={projectId} to={`settings?s=${section}`} label={label.label} />
+          : undefined} />
+      {setup?.open && (
+        <nav className="setup-strip" aria-label="Setup steps">
+          <span className="setup-strip-t">Setup {setup.settled} of {setup.total}</span>
+          {setup.steps.map((st) => (
+            <Link key={st.key} to={`/projects/${projectId}/settings?s=${st.section}`} replace
+              className={`setup-chip ${st.state}${section === st.section ? " on" : ""}`}
+              aria-current={section === st.section ? "step" : undefined}
+              title={st.detail}>
+              {st.state === "done" ? "✓ " : ""}{st.label}
+              <span className="sr-only">{st.state === "todo" ? " — to do" : ` — ${st.state}`}</span>
+            </Link>
+          ))}
+          <SetupSkip ctx={ctx} section={section} />
+        </nav>
+      )}
+      <Settings projectId={projectId} dash={dash} org={ctx.org} reload={() => { ctx.reload(); ctx.reloadSetup(); }} />
+    </>
+  );
+}
+
+/** "Skip this step" for the setup step this section is, while it is still to
+    do and not one the project cannot run without. */
+function SetupSkip({ ctx, section }: { ctx: ProjectCtx; section: string }) {
+  const step = ctx.setup?.steps.find((s) => s.section === section);
+  const [busy, setBusy] = useState(false);
+  if (!step || step.state !== "todo" || step.required || ctx.dash.can_steer === false) return null;
+  return (
+    <button className="small setup-skip" disabled={busy} onClick={async () => {
+      setBusy(true);
+      try {
+        await post(`/admin/projects/${ctx.projectId}/setup`, { action: "skip", step: step.key });
+        ctx.reloadSetup();
+      } finally {
+        setBusy(false);
+      }
+    }}>Skip {step.label}</button>
   );
 }

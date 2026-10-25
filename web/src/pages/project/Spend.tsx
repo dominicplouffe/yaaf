@@ -92,7 +92,7 @@ export function BudgetCard({ ctx }: { ctx: ProjectCtx }) {
       <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode}
         meters={!!seller?.plan_meter} />
       {dash.can_steer !== false && (
-        <Link className="btnlink small" to={`/projects/${projectId}/details/settings?s=money`}>
+        <Link className="btnlink small" to={`/projects/${projectId}/settings?s=money`}>
           Change the budget…
         </Link>
       )}

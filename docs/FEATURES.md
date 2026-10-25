@@ -540,12 +540,21 @@ evidence at all about your *project*.
   browser receives the folder headers and only the rows it is showing. A
   stale index is served at once and refreshed behind the request, with its
   age in the footer, so a slow disk never stalls the tab.
+- **One click from anywhere.** Deliverables comes pinned under the project in
+  the sidebar, and **Pin to sidebar** on the file reader puts a single file
+  there too; ⌘K finds any deliverable by its name.
 - **The listing says what it dropped.** Past the per-project cap (50,000
   working files) the newest are kept, not the alphabetically first, and the
   screen says how many are not shown.
 
 ## 16. Setup that can't silently fail
 
+- **A setup checklist that ticks itself.** A new project's Inbox lists what it
+  still needs — model key, brief, data sources, the credentials its agents
+  asked for, integrations, people — each one click from the exact Settings
+  section, each ticked off by the project's own state rather than by anyone
+  pressing a box. The model key cannot be skipped; the rest can. While any step
+  is left, one sidebar row opens the next one; when none is, both go away.
 - **Health checklist** on each project's Inbox names anything misconfigured
   — dead billing, a credential that isn't a URL, an untested data source, a
   team running an outdated role version — in plain language, with a fix link. A

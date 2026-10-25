@@ -7,7 +7,8 @@ import { CommandPalette, Cheatsheet, useShortcuts } from "./palette";
 import { OfferHost } from "./precedent";
 import { UndoHost } from "./undo";
 import { firstName, useProjectFrame } from "./projectCtx";
-import { DETAIL_TABS, PROJECT_PAGES } from "./nav";
+import { DETAIL_TABS, PROJECT_PAGES, placeOf, SETTINGS_PAGE } from "./nav";
+import { lastDetailsTab, placeAt, usePins, useRememberPlaces } from "./shortcuts";
 import { Icon, IconName } from "./ui/Icon";
 import { Avatar, Person, ThemeToggle } from "./ui/kit";
 import { SEAT_LABEL } from "./ui/team";
@@ -42,13 +43,17 @@ function lastProject(): string | null {
 }
 
 function NavItem({
-  to, icon, label, end, aside, onClick,
+  to, icon, label, end, aside, onClick, match,
 }: {
   to: string; icon: IconName; label: ReactNode; end?: boolean; aside?: ReactNode; onClick?: () => void;
+  /** Lit for everything under this path, when `to` goes somewhere deeper. */
+  match?: string;
 }) {
+  const { pathname } = useLocation();
+  const under = match !== undefined && (pathname === match || pathname.startsWith(`${match}/`));
   return (
     <NavLink to={to} end={end} onClick={onClick}
-      className={({ isActive }) => "sb-item" + (isActive ? " on" : "")}>
+      className={({ isActive }) => "sb-item" + (isActive || under ? " on" : "")}>
       <Icon name={icon} size={16} />
       <span className="sb-label">{label}</span>
       {aside}
@@ -104,28 +109,55 @@ function ProjectNav({
   const ceo = ctx ? firstName(ctx.ceoName) : null;
   const base = `/projects/${project.id}`;
 
+  const { pinsFor, toggle } = usePins();
+  const pins = pinsFor(project.id);
+  const location = useLocation();
+  const here = placeAt(location.pathname, location.search, project.id);
+  // Details opens on the tab you were last on: a reader who lives in Runs
+  // should not pass through the Roadmap every time to get back to them.
+  const lastTab = lastDetailsTab();
+  const lastLabel = lastTab ? placeOf(`details/${lastTab}`)?.label : null;
+  const setup = ctx?.setup?.open ? ctx.setup : null;
+  const settingsOn = location.pathname.startsWith(`${base}/settings`);
+  const statusWord = project.status === "running" ? "Running" : project.status === "paused" ? "Paused"
+    : project.status === "draft" ? "Not started" : project.status;
+
   return (
     <>
       <div className="sb-head">Project</div>
-      <button className="sb-switch" onClick={onSwitch} title="Switch project (⌘K)">
-        <Avatar name={project.name} team={project.name} size="sm" />
-        <span className="sb-switch-t">
-          <b>{project.name}</b>
-          <span>
-            <i className={`dot ${project.status === "running" ? "run" : ""}`} />
-            {project.status === "running" ? "Running" : project.status === "paused" ? "Paused"
-              : project.status === "draft" ? "Not started" : project.status}
-            {ctx && !ctx.dash.billing_secret_id && ctx.dash.integrations?.runtime !== "mock"
-              && <> · <span className="warn">no key</span></>}
-            {needs > 0 && <> · <span className="warn">{needs} need you</span></>}
+      <div className="sb-switch-row">
+        <button className="sb-switch" onClick={onSwitch}
+          title={`${project.name} · ${statusWord}${needs > 0 ? ` · ${needs} need you` : ""}. Switch project (⌘K)`}>
+          <Avatar name={project.name} team={project.name} size="sm" />
+          <span className="sb-switch-t">
+            <b>{project.name}</b>
+            <span>
+              <i className={`dot ${project.status === "running" ? "run" : ""}`} />
+              {/* The card shares its row with the gear, so one fact fits:
+                  what needs you when anything does, the state otherwise —
+                  the dot still says running or not. */}
+              {needs > 0 ? <span className="warn">{needs} need you</span>
+                : ctx && !ctx.dash.billing_secret_id && ctx.dash.integrations?.runtime !== "mock"
+                  ? <>{statusWord} · <span className="warn">no key</span></>
+                  : statusWord}
+            </span>
           </span>
-        </span>
-        <Icon name="updown" size={14} />
-      </button>
+          <Icon name="updown" size={14} />
+        </button>
+        {/* Settings is what the project is configured to be, so it hangs off
+            the project itself, the way a gear sits on the thing it configures —
+            one click from anywhere, and no row of its own. */}
+        <Link to={`${base}/${SETTINGS_PAGE.path}`} onClick={onNavigate}
+          className={`sb-gear${settingsOn ? " on" : ""}`} title="Project settings (G then ,)"
+          aria-label={`${project.name} settings`} aria-current={settingsOn ? "page" : undefined}>
+          <Icon name="gear" size={15} />
+        </Link>
+      </div>
       {PROJECT_PAGES.map((p) => (
         <NavItem
           key={p.path}
-          to={p.path ? `${base}/${p.path}` : base}
+          to={p.path === "details" && lastTab ? `${base}/details/${lastTab}` : p.path ? `${base}/${p.path}` : base}
+          match={p.path === "details" ? `${base}/details` : undefined}
           end={p.path === ""}
           icon={p.icon}
           label={p.path === "chat" && ceo ? `Chat with ${ceo}` : p.label}
@@ -134,10 +166,42 @@ function ProjectNav({
                 {unread > 99 ? "99+" : unread}
               </span>
             : aside[p.path] !== undefined ? <span className="sb-aside">{aside[p.path]}</span>
-            : p.path === "chat" ? <span className="sb-aside">CEO</span> : undefined}
+            : p.path === "chat" ? <span className="sb-aside">CEO</span>
+            : p.path === "details" && lastLabel && lastTab !== "roadmap"
+              ? <span className="sb-aside" title="Details opens where you left it">{lastLabel}</span>
+            : undefined}
           onClick={onNavigate}
         />
       ))}
+      {(setup || pins.length > 0) && <div className="sb-rule" role="separator" />}
+      {/* While the project is being set up, one row goes straight to the next
+          thing it needs, and goes away when nothing is left. */}
+      {setup && setup.next && (
+        <Link to={`${base}/settings?s=${setup.next.section}`} onClick={onNavigate}
+          className={`sb-item sb-setup${here === `settings?s=${setup.next.section}` ? " on" : ""}`}
+          title={`Next: ${setup.next.label}`}>
+          <Icon name="check" size={16} />
+          <span className="sb-label">Finish setup</span>
+          <span className="sb-aside">{setup.settled} of {setup.total}</span>
+        </Link>
+      )}
+      {pins.map((pin, i) => {
+        const place = placeOf(pin.to.split("?open=")[0]);
+        const on = here === pin.to;
+        return (
+          <div key={`${pin.project_id ?? ""}:${pin.to}`} className={`sb-item sb-pin${on ? " on" : ""}`}>
+            <Link to={`${base}/${pin.to}`} onClick={onNavigate} className="sb-pin-a"
+              title={`${pin.label}${i < 5 ? ` (G then ${i + 1})` : ""}`} aria-current={on ? "page" : undefined}>
+              <Icon name={pin.to.includes("?open=") ? "file" : place?.icon ?? "pin"} size={16} />
+              <span className="sb-label">{pin.label}</span>
+            </Link>
+            <button className="sb-unpin" onClick={() => void toggle(pin)}
+              title={`Unpin ${pin.label}`} aria-label={`Unpin ${pin.label}`}>
+              <Icon name="x" size={13} />
+            </button>
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -199,6 +263,10 @@ function Crumbs() {
         const seat = frame.ctx.seats.find((s) => s.id === path.split("/")[4]);
         parts.push({ label: seat?.name ?? "Person" });
       }
+    } else if (project[2] === SETTINGS_PAGE.path) {
+      const section = placeOf(`settings${location.search}`);
+      parts.push({ label: "Settings", to: `/projects/${project[1]}/settings` });
+      if (section && section.label !== "Settings") parts.push({ label: section.label });
     }
   } else if (path.startsWith("/projects/new")) {
     parts.push({ label: "Projects", to: "/projects" }, { label: "New project" });
@@ -248,6 +316,8 @@ export function Shell({ children }: { children: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false);
   const projects = data?.projects ?? [];
   const current = useCurrentProject(projects);
+  const frameNow = useProjectFrame();
+  useRememberPlaces(frameNow?.ctx?.projectId ?? null);
 
   useShortcuts({
     projectId: current?.id ?? null,

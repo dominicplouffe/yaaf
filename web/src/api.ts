@@ -561,6 +561,41 @@ export interface HealthCheck {
   acked_at: string | null;
 }
 
+/** GET /observe/projects/:id/setup — the setup checklist (yaaf.server.checklist). */
+export interface SetupStep {
+  key: string;
+  label: string;
+  /** The project Settings section that does it (`?s=`). */
+  section: string;
+  required: boolean;
+  detail: string;
+  state: "done" | "skipped" | "todo";
+}
+export interface SetupView {
+  /** Shown at all: a step is left and nobody closed the list. */
+  open: boolean;
+  closed_at: string | null;
+  steps: SetupStep[];
+  settled: number;
+  total: number;
+  next: { key: string; label: string; section: string } | null;
+}
+
+/** GET /me/pins — the places this person pinned under a project. */
+export interface Pin {
+  /** A path inside the project, with its query: "details/deliverables". */
+  to: string;
+  label: string;
+  /** Set for a pin that only makes sense in one project, like one file. */
+  project_id: string | null;
+}
+export interface PinsView {
+  pins: Pin[];
+  /** Nobody changed them: this is the default set. */
+  default: boolean;
+  max: number;
+}
+
 export interface ProjectHealth {
   ok: boolean;
   all_ok: boolean;

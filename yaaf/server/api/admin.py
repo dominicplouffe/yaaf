@@ -3862,6 +3862,28 @@ class HealthAck(BaseModel):
     ack: bool = True
 
 
+class SetupAction(BaseModel):
+    action: Literal["skip", "unskip", "close", "reopen"]
+    step: str | None = Field(default=None, max_length=32)
+
+
+@router.post("/projects/{project_id}/setup", dependencies=[authority.STEER])
+def setup_action(project_id: str, body: SetupAction, session: Session = Depends(db)) -> dict:
+    """Skip or bring back one setup step, or close or reopen the checklist.
+    Steering, not reading: the list is the project's, so putting it away puts
+    it away for everyone who opens the project."""
+    from yaaf.server import checklist
+
+    project = _get_project(session, project_id)
+    try:
+        out = checklist.act(session, project, body.action, body.step, acting.user_id())
+    except checklist.Refused as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _audit(session, project.id, f"setup.{body.action}", "project", project.id,
+           {"step": body.step} if body.step else None)
+    return out
+
+
 @router.post("/projects/{project_id}/health/ack", dependencies=[authority.READ])
 def health_ack(project_id: str, body: HealthAck, session: Session = Depends(db)) -> dict:
     """Put one health-card suggestion away for the person reading — or, with
