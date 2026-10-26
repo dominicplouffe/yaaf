@@ -580,6 +580,14 @@ evidence at all about your *project*.
   for the address first and checks it before anything is stored, including how
   it wants you to sign in. Every source then shows one state in words with the
   button that fixes it, and the granted roles' sandboxes mount it as real tools.
+- **The company's tools, connected once.** An administrator connects the MCP
+  servers every project could use — the CRM, the task manager, the docs —
+  once, in Settings → Integrations, saying what each is for. A project uses
+  one only when it says so, for the roles it picks; the Founder refuses a
+  draft that leaves one undecided and asks about the ones that overlap the
+  goal; an agent about to build what one already does is told it exists and
+  can ask for it. A task manager can take a one-way copy of the board.
+  ([INTEGRATIONS.md](INTEGRATIONS.md#shared-integrations--connected-once-for-every-project))
 - **Secrets & variables on one line each.** Plain settings show as they are;
   secrets show their last four characters; an access map shows every grant,
   variables and data sources alike, against every team, and saves ticks as one

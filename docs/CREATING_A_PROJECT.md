@@ -288,6 +288,14 @@ the **path** to it, which is what the tooling expects; the platform writes the
 file into the sandbox outside the workspace and it goes away with the run. See
 [Credentials that are files](INTEGRATIONS.md#credentials-that-are-files).
 
+**Your company's integrations.** If an administrator connected tools for every
+project — the CRM, the task manager — each is listed with *Use it / Not for
+this project / Decide later*, and the ones your goal mentions open asking.
+Using one gives the teams you pick its tools under the administrator's sign-in;
+a task manager can also take a copy of the board. The Founder asks the same
+question in conversation and will not hand you a draft that skips one. See
+[Shared integrations](INTEGRATIONS.md#shared-integrations--connected-once-for-every-project).
+
 **Data sources (optional).** MCP servers can be connected right here too —
 name, URL, optional token, roles — tested before the project starts. Or add
 them later in Settings (next section).

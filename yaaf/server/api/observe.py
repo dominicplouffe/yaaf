@@ -1085,6 +1085,15 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 + (f" — {last.get('detail', 'reachable')}" if last else ", never tested"),
                 "data_sources")
 
+    # The task board's mirror: cards that will not write. The board is still
+    # the record, so this is a warning about a copy, never a failure of work.
+    from yaaf.server import task_mirror
+
+    for name, count, latest in task_mirror.failing(session, project.id):
+        add(f"task-mirror:{name}", "warn",
+            f"task board mirror into '{name}': {count} card{'s' if count != 1 else ''} not "
+            f"written — {latest}", "data_sources")
+
     # Teams: no role-version drift. (Roles never own data sources — the whole
     # role-source failure class was removed with the concept.)
     for team in session.execute(

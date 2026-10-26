@@ -200,6 +200,9 @@ WITHHELD = {
     "POST /admin/projects/{project_id}/mcp_servers/{name}/promote":
         "lifts one project's source into the list every project draws on — an "
         "administrator's decision about what the whole box may reach.",
+    "PUT /admin/integrations/{name}/task-mirror":
+        "decides what is written into a task manager every project shares, and "
+        "clearing it stops every project's mirror at once.",
     "POST /admin/integrations/probe":
         "the administrator's form's first step; it stores nothing and decides nothing.",
     "POST /admin/integrations/{name}/check":

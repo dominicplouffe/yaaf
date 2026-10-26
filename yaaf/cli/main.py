@@ -1653,6 +1653,25 @@ def integration_promote(
             json={"description": description, "covers": _csv(covers)}))
 
 
+@integration.command("task-mirror")
+def integration_task_mirror(
+    name: str,
+    mapping: Path = typer.Option(None, "--from-file", exists=True, dir_okay=False,
+                                 help="JSON: create_tool, create_arguments, id_path, and "
+                                      "optionally update_tool, update_arguments"),
+    clear: bool = typer.Option(False, "--clear", help="It is not a task manager (stops "
+                                                       "every project's mirror)"),
+) -> None:
+    """Say how tasks are written to a task manager, so projects may mirror
+    their board into it. Templates fill {title}, {description}, {status},
+    {url}, {project} and {external_id}."""
+    if clear == (mapping is not None):
+        raise typer.BadParameter("pass exactly one of --from-file or --clear")
+    body = {"task_mirror": None if clear else json.loads(mapping.read_text())}
+    with _client() as client:
+        _show(client.put(f"/admin/integrations/{name}/task-mirror", json=body))
+
+
 @integration.command("check")
 def integration_check(name: str) -> None:
     """Speak MCP to it now and report its tools."""

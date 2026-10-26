@@ -223,6 +223,21 @@ locked-out admin gets back in:
 | `yaaf users token [EMAIL \| --first-admin] [--minutes M \| --days D] [--name N]` | Print a personal token and nothing else, for a script to capture. The deploy scripts mint a ten-minute one to load the role library. |
 | `yaaf users has-admin` / `yaaf users list` | Exit 0 if the box has an admin; list the accounts. |
 
+## Integrations
+
+MCP servers connected once for every project ([INTEGRATIONS.md](INTEGRATIONS.md#shared-integrations--connected-once-for-every-project)).
+Editing the list is an administrator's; using one is a project's.
+
+| Command | What it does |
+|---|---|
+| `yaaf integration list [--project P]` | The list (who uses each, for an admin), or one project's used / declined / undecided. |
+| `yaaf integration add NAME URL [--auth bearer\|oauth] [--covers ...] [--tools ...]` | Connect or edit one. A bearer token is prompted; OAuth signs in from Settings. |
+| `yaaf integration check NAME` / `delete NAME` | Speak MCP to it now; remove it (refused while a project uses it). |
+| `yaaf integration use P NAME --roles a,b [--mirror-tasks]` | Use it on a project for these roles. |
+| `yaaf integration decline P NAME [--reason ...]` / `forget P NAME` | Decline it, or back to undecided. |
+| `yaaf integration promote P SOURCE [--covers ...]` | Make a project's own data source an integration; the project keeps it. |
+| `yaaf integration task-mirror NAME --from-file mapping.json` / `--clear` | How cards are written to a task manager, or stop every mirror into it. |
+
 ## MCP client tokens
 
 The chairman's MCP server ([MCP_SERVER.md](MCP_SERVER.md)) has its own

@@ -351,7 +351,7 @@ it, the governance layer underneath stands on its own.
 | [Dashboard](docs/DASHBOARD.md) | Every screen, and what you do there |
 | [Governance](docs/GOVERNANCE.md) | Every rule and its default |
 | [Autonomy](docs/AUTONOMY.md) | How much the CEO decides without you |
-| [Integrations](docs/INTEGRATIONS.md) | Slack, GitHub, data sources, webhooks, billing, storage |
+| [Integrations](docs/INTEGRATIONS.md) | Slack, GitHub, data sources, shared integrations, webhooks, billing, storage |
 | [Deployment](docs/DEPLOYMENT.md) | Install, configure, back up, upgrade |
 | [CLI](docs/CLI.md) | Every `yaaf` command |
 | [Agent API](docs/AGENT_API.md) | What agents can do; writing a role |

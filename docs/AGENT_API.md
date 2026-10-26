@@ -321,6 +321,18 @@ A data source marked `access: "bulk"` is **not mounted as tools at all**, so its
 rows cannot reach a context by accident; `data_fetch` is the only way in. Mark
 sources that serve rows as bulk and leave small-lookup sources `inline`.
 
+## The company's integrations
+
+An integration the project uses for your role mounts exactly like a data source
+(same `mcp__<name>__*` tools, same `MCP_<NAME>_*` variables, same `data_fetch`
+and per-call approvals). The ones your role does **not** have are listed in your
+prompt under *INTEGRATIONS YOU DO NOT HAVE* — and only then is the tool below
+sent.
+
+| Endpoint | Body | Notes |
+|---|---|---|
+| `POST /integrations/request` | `name`, `why`, `without`, optional `roles` (defaults to yours) | Files an `integration` approval naming it and the roles. Nothing mounts until the chairman says yes; his yes is what attaches it, from the next run. Refused for one you already have, one already pending, a name not on the install, or a role this project does not run. An `integration` approval filed as prose through `POST /approvals` is refused. |
+
 ---
 
 ## Writing a role that uses this well

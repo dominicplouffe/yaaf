@@ -308,6 +308,136 @@ Two operational notes:
   projects sharing one would invalidate each other), and an **export** carries
   only the `auth: "oauth"` marker.
 
+## Shared integrations — connected once, for every project
+
+**Settings → Integrations** (administrators), then each project's **Settings →
+Data sources → Shared integrations**.
+
+A data source belongs to one project. That is right for a warehouse only one
+project reads, and wrong for the HubSpot, Notion, Trello or GitHub the company
+already pays for: it had to be connected again in every project, and a project
+nobody connected it to never learned it existed — so it rebuilt email
+campaigns, a CRM or a task board next to the one already paid for.
+
+An integration is the same MCP server held above the projects. The
+administrator sets it up once — address, sign-in (none, bearer or OAuth),
+how agents read results (`inline` or `bulk`), the tools that may be called
+freely, a description and what it is **for** (`covers`: "crm", "email
+marketing", "task management"). Each project then decides about it:
+
+| Decision | What it means |
+|---|---|
+| **Use** | The roles you pick get its tools as `mcp__<name>__*`, under the administrator's sign-in and allowed tools, from their next run. |
+| **Decline** | Not for this project, with a reason. The Founder does not ask again, and an agent arguing for it sees the reason. |
+| *undecided* | Nobody said. The project's settings and its agents may raise it. |
+
+**Opt in is enforced, not described.** An integration's address and tokens live
+encrypted in its own vault — never as `Secret` rows, because a platform-scope
+secret granted to a role slug reaches every project with that role. A run
+receives them only through its project's **use** for its role; a project that
+did not choose it gets nothing, whatever its roles are called. Everything else
+reads exactly like a project's own data source: the same `MCP_<NAME>_URL` /
+`MCP_<NAME>_TOKEN` variables, the same `data_fetch` for bulk access, the same
+per-call approval for a tool outside the allowed list.
+
+**One sign-in serves every project.** An OAuth integration is connected once, in
+Settings. Providers rotate the refresh token on every use, so renewal happens
+under a row lock: two projects starting runs together renew once, and the
+second reads the token the first stored. A sign-in that stops renewing marks the
+integration **needs re-auth** on every using project's health page, which names
+the administrator as the one who reconnects it.
+
+Rules that are refusals, not advice:
+
+- Only an instance administrator edits the list, checks it, connects it or
+  removes it. A chairman sees the list (never who else uses one).
+- An integration in use cannot be removed; each project stops using it first,
+  so its chairman sees it go.
+- A project's own data source and an integration never share a name — two
+  servers would mount as one set of tools.
+- Using one names at least one role this project actually runs.
+
+```bash
+yaaf integration add hubspot https://mcp.hubspot.com/mcp --auth oauth \
+  --description "The company CRM" --covers "crm,email marketing"
+yaaf integration use my-project hubspot --roles marketer,ceo
+yaaf integration decline other-project hubspot --reason "uses Mailchimp"
+yaaf integration list --project my-project
+```
+
+### At founding
+
+Every founding path asks, the way it asks who pays:
+
+- **The Founder** reads the list (`list_integrations`) and a draft is refused
+  until it decides **every** integration in `integration_decisions`. The ones
+  whose purpose overlaps the goal are questions for the chairman, with a
+  recommendation to use what the company already pays for; the rest it declines
+  itself, with a reason, in the ledger.
+- **The New Project form** shows each integration with *Use it / Not for this
+  project / Decide later*, and opens asking when the goal mentions what one is
+  for.
+- **MCP `create_project`** lists each integration and what the spec decided in
+  its preview; `catalog what=integrations` reads the list.
+
+An export carries the decisions by name, a clone copies them (there is nothing
+to reconnect — the sign-in is the integration's), and the creation endpoint
+refuses a name that is not on the install or a role the project does not hire.
+
+### Agents asking for one
+
+A run is told which integrations its role does **not** have — undecided,
+declined (with the reason) or given to other roles — under *INTEGRATIONS YOU DO
+NOT HAVE*, and only then is offered `integration_request(name, why, without)`.
+Asking files an **integration** approval naming the integration and the roles.
+Nothing mounts until the chairman says yes; approving it is what attaches it.
+An integration cannot be asked for as a prose approval — approving prose would
+attach nothing — and a second request while one is pending is refused.
+
+### Promoting a project's data source
+
+A project that connected HubSpot before integrations existed does not
+reconnect it: an administrator picks **Share with every project…** on the data
+source (or `yaaf integration promote PROJECT SOURCE`). The address, token, and
+an OAuth connection's refresh token and client move into the integration's
+vault; the run variables keep their names; the project keeps it for the same
+roles, and any approval already granted for one of its calls still names the
+same source.
+
+### Mirroring the task board into a task manager
+
+An integration that is a task manager can take a copy of a project's board.
+The administrator says how cards are written, as data (Settings →
+Integrations → *It is a task manager…*, or `yaaf integration task-mirror NAME
+--from-file mapping.json`):
+
+```json
+{
+  "create_tool": "create_card",
+  "create_arguments": {"list_id": "64f…", "name": "{title}", "desc": "{description}\n\n{url}"},
+  "id_path": "id",
+  "update_tool": "update_card",
+  "update_arguments": {"card_id": "{external_id}", "name": "[{status}] {title}"}
+}
+```
+
+`{title}`, `{description}`, `{status}`, `{url}`, `{project}` and
+`{external_id}` are filled in per task; a template naming anything else is
+refused when saved, and `{external_id}` only exists after a card is made.
+`id_path` is where the new card's id sits in the create tool's answer
+(`structuredContent`, or the first text block as JSON).
+
+A project turns the mirror on when it uses the integration (`mirror_tasks`),
+and the Founder asks whether the chairman wants the work visible there.
+
+**It is a mirror, one way.** yaaf's board stays the record — claims, leases,
+success tests and the verifier live on it, and a card cannot refuse an agent
+anything — so nothing read from the task manager ever changes a task. A pass
+every 30 seconds makes the cards that do not exist and moves the ones whose
+task changed, at most 25 calls a pass across the box. A card that fails five
+times waits until its task changes, and the failure is on the project's health
+page. Clearing the mapping stops every project's mirror and records it on each.
+
 ## Slack
 
 **Settings → Slack connection** (app-wide), then **project → Settings →

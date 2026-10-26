@@ -249,6 +249,43 @@ def start_integration_oauth(name: str, request: Request, session: Session = Depe
             "note": "Complete the sign-in in the opened tab, then test the integration."}
 
 
+class TaskMirrorIn(BaseModel):
+    # None: it is not (or no longer) a task manager.
+    task_mirror: dict | None = None
+
+
+@router.put("/integrations/{name}/task-mirror", dependencies=[authority.INSTANCE_ADMIN])
+def set_task_mirror(name: str, body: TaskMirrorIn, session: Session = Depends(db)) -> dict:
+    """Say how tasks are written to this integration, so projects may mirror
+    their board into it. Clearing it stops every project's mirror at once,
+    and each one is told — a mirror that silently stopped is a screen people
+    keep trusting."""
+    from sqlalchemy import select
+
+    from yaaf.server import task_mirror
+
+    row = _get(session, name)
+    if body.task_mirror is None:
+        stopped = []
+        for decision in session.execute(select(ProjectIntegration).where(
+                ProjectIntegration.integration_id == row.id,
+                ProjectIntegration.mirror_tasks.is_(True))).scalars():
+            decision.mirror_tasks = False
+            stopped.append(decision.project_id)
+            _audit(session, decision.project_id, "integration.mirror_stopped", row.id,
+                   {"name": name, "why": "the administrator cleared its task mapping"})
+        row.task_mirror = None
+        _audit(session, None, "integration.task_mirror", row.id, {"name": name, "set": False})
+        return {"name": name, "task_mirror": None, "stopped_projects": len(stopped)}
+    try:
+        row.task_mirror = task_mirror.validate(body.task_mirror)
+    except task_mirror.MirrorConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _audit(session, None, "integration.task_mirror", row.id,
+           {"name": name, "set": True, "create_tool": row.task_mirror["create_tool"]})
+    return {"name": name, "task_mirror": row.task_mirror}
+
+
 @router.delete("/integrations/{name}", dependencies=[authority.INSTANCE_ADMIN])
 def delete_integration(name: str, session: Session = Depends(db)) -> dict:
     """Refused while any project uses it — the same rule as an LLM credential a

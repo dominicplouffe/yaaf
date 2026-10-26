@@ -25,7 +25,15 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from tests.conftest import ADMIN, agent_by_name, bearer, headers_of, live_token, make_project, person
+from tests.conftest import (
+    ADMIN,
+    agent_by_name,
+    bearer,
+    headers_of,
+    live_token,
+    make_project,
+    person,
+)
 from tests.selftest_invariants.test_mcp_oauth import MCP_URL, OAuthWorld
 from yaaf.core import ids
 from yaaf.core.db import db_session
@@ -620,3 +628,195 @@ def test_a_promoted_oauth_source_stays_signed_in(client, world):
     job = _lease((project["id"], _employee(project)))[project["id"]]
     assert job.billing_env["MCP_CRM_TOKEN"] == world.access_token
     assert world.token_requests[-1]["grant_type"] == "refresh_token"
+
+
+# ── the task board, mirrored out ────────────────────────────────────────────────
+
+MIRROR = {"create_tool": "create_card",
+          "create_arguments": {"list_id": "L1", "name": "{title}", "desc": "{description}"},
+          "id_path": "card.id",
+          "update_tool": "update_card",
+          "update_arguments": {"card_id": "{external_id}", "name": "[{status}] {title}"}}
+
+
+class Board:
+    """A task manager speaking MCP: makes cards, moves them, remembers both."""
+
+    def __init__(self):
+        import httpx
+
+        self.calls: list[tuple[str, dict]] = []
+        self.refuse = False
+        self.transport = httpx.MockTransport(self.handler)
+
+    def handler(self, request):
+        import json
+
+        import httpx
+
+        body = json.loads(request.content)
+        if body.get("method") == "initialize":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}})
+        if body.get("method") != "tools/call":
+            return httpx.Response(202)
+        name, args = body["params"]["name"], body["params"]["arguments"]
+        self.calls.append((name, args))
+        if self.refuse:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {
+                "isError": True, "content": [{"type": "text", "text": "list is archived"}]}})
+        card = {"card": {"id": f"card-{len(self.calls)}"}}
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": {
+            "content": [{"type": "text", "text": json.dumps(card)}]}})
+
+
+def _task(project, title="Draft the campaign", status="ready") -> str:
+    from yaaf.core.models import Task
+
+    with db_session() as session:
+        task_id = ids.new_id(ids.TASK)
+        session.add(Task(id=task_id, project_id=project["id"], team_id=project["teams"][0]["id"],
+                         created_by_agent_id=project["ceo_agent_id"], title=title,
+                         goal="Write the spring campaign.", success_test={"kind": "observable"},
+                         status=status))
+    return task_id
+
+
+def _sync(board) -> int:
+    from yaaf.server import task_mirror
+
+    with db_session() as session:
+        return task_mirror.sync(session, transport=board.transport)
+
+
+def _trello(client) -> None:
+    _save(client, name="trello", covers=["task management"])
+    set_ = client.put("/admin/integrations/trello/task-mirror", json={"task_mirror": MIRROR},
+                      headers=ADMIN)
+    assert set_.status_code == 200, set_.text
+
+
+def test_a_mapping_naming_a_field_a_task_does_not_have_is_refused(client):
+    _save(client, name="trello")
+    refused = client.put("/admin/integrations/trello/task-mirror", headers=ADMIN, json={
+        "task_mirror": {**MIRROR, "create_arguments": {"name": "{assignee}"}}})
+    assert refused.status_code == 422 and "{assignee}" in refused.json()["detail"]
+    early = client.put("/admin/integrations/trello/task-mirror", headers=ADMIN, json={
+        "task_mirror": {**MIRROR, "create_arguments": {"id": "{external_id}"}}})
+    assert early.status_code == 422
+
+
+def test_a_project_mirrors_only_into_a_task_manager_it_chose(client):
+    project = make_project(client, start=False)
+    _save(client)  # hubspot: not a task manager
+    refused = _use(client, project["id"], mirror_tasks=True)
+    assert refused.status_code == 422 and "task manager" in refused.json()["detail"]
+
+
+def test_the_board_is_copied_out_and_follows_the_task(client):
+    project = make_project(client, start=False)
+    _trello(client)
+    assert client.put(f"/admin/projects/{project['id']}/integrations/trello", headers=ADMIN,
+                      json={"decision": "use", "roles": ["worker"],
+                            "mirror_tasks": True}).status_code == 200
+    task_id = _task(project)
+    board = Board()
+    assert _sync(board) == 1
+    assert board.calls == [("create_card", {"list_id": "L1", "name": "Draft the campaign",
+                                            "desc": "Write the spring campaign."})]
+    # Nothing moved: nothing written.
+    assert _sync(board) == 0
+
+    from yaaf.core.models import Task
+
+    with db_session() as session:
+        session.get(Task, task_id).status = "done"
+    assert _sync(board) == 1
+    assert board.calls[-1] == ("update_card", {"card_id": "card-1",
+                                               "name": "[done] Draft the campaign"})
+
+
+def test_a_project_that_did_not_ask_for_the_mirror_writes_nothing(client):
+    project = make_project(client, start=False)
+    _trello(client)
+    client.put(f"/admin/projects/{project['id']}/integrations/trello", headers=ADMIN,
+               json={"decision": "use", "roles": ["worker"]})
+    _task(project)
+    board = Board()
+    assert _sync(board) == 0 and board.calls == []
+
+
+def test_a_refused_card_is_named_on_the_health_page_and_rests(client):
+    from yaaf.server import task_mirror
+
+    project = make_project(client, start=False)
+    _trello(client)
+    client.put(f"/admin/projects/{project['id']}/integrations/trello", headers=ADMIN,
+               json={"decision": "use", "roles": ["worker"], "mirror_tasks": True})
+    _task(project)
+    board = Board()
+    board.refuse = True
+    for _ in range(task_mirror.MAX_ATTEMPTS + 3):
+        _sync(board)
+    assert len(board.calls) == task_mirror.MAX_ATTEMPTS
+    health = client.get(f"/observe/projects/{project['id']}/health", headers=ADMIN).text
+    assert "list is archived" in health
+
+
+def test_clearing_the_mapping_stops_every_mirror_and_says_so(client):
+    project = make_project(client, start=False)
+    _trello(client)
+    client.put(f"/admin/projects/{project['id']}/integrations/trello", headers=ADMIN,
+               json={"decision": "use", "roles": ["worker"], "mirror_tasks": True})
+    cleared = client.put("/admin/integrations/trello/task-mirror", json={"task_mirror": None},
+                         headers=ADMIN)
+    assert cleared.json()["stopped_projects"] == 1
+    view = client.get(f"/admin/projects/{project['id']}/integrations", headers=ADMIN).json()
+    assert view["used"][0]["mirror_tasks"] is False
+
+
+def test_two_leases_racing_for_the_shared_token_renew_it_once(client, world):
+    """The row lock itself, under real concurrency: two connections renewing at
+    the same instant, the provider slow enough that both are inside the refresh
+    together. Without the lock the second spends a refresh token the first
+    already rotated, gets invalid_grant, and marks the integration needs
+    re-auth for every project on the box. Postgres only — SQLite has one
+    writer at a time and no row locks to prove anything with."""
+    import threading
+    import time
+
+    with db_session() as session:
+        if session.get_bind().dialect.name != "postgresql":
+            pytest.skip("row locks need Postgres")
+    from yaaf.server import integrations
+
+    _connect(client, world)
+    _age(60)
+    original = world.handler
+
+    def slow(request):
+        if request.url.path == "/token":
+            time.sleep(0.4)
+        return original(request)
+
+    import httpx
+
+    world.transport = httpx.MockTransport(slow)
+    barrier = threading.Barrier(2)
+    tokens: list[str | None] = []
+
+    def lease():
+        with db_session() as session:
+            row = session.query(Integration).one()
+            barrier.wait()
+            tokens.append(integrations.ensure_fresh_locked(session, row))
+
+    threads = [threading.Thread(target=lease) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
+    refreshes = [r for r in world.token_requests if r["grant_type"] == "refresh_token"]
+    assert len(refreshes) == 1
+    assert tokens == [world.access_token, world.access_token]
+    with db_session() as session:
+        assert session.query(Integration).one().entry["oauth"]["status"] == "connected"

@@ -837,7 +837,12 @@ Data; everything after is occasional.
   remove live in the row's **⋯** menu. **Add data source** opens a drawer that
   asks for the address first, checks it before anything is stored, and says how
   the server wants you to sign in — no sign-in, a pasted token, or OAuth — so
-  the rest of the form follows from the answer.
+  the rest of the form follows from the answer. Below the project's own
+  sources, **Shared integrations** lists the ones an administrator connected
+  for every project: in use (with who gets them), not decided (**Use it** /
+  **Decline**) and declined. An administrator also sees **Share with every
+  project…** in a source's **⋯** menu, which makes it an integration and keeps
+  it here for the same teams.
 - **Secrets & variables** — what agents receive as environment variables, one
   56px line each: the name agents see (`$NAME`), its type (**Secret**, **Plain
   value** or **File**), enough of the value to tell two apart (a plain value

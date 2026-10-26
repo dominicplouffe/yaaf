@@ -153,7 +153,7 @@ export function IntegrationsSection() {
               </div>
               <div className="sname">
                 <code className="vnm">{row.name}</code>
-                <span className="shost">{row.description || `${row.url_host}:${row.url_port}`}</span>
+                <span className="help">{row.description || `${row.url_host}:${row.url_port}`}</span>
                 <span className="gchips" style={{ marginTop: 6 }}>
                   {row.covers.map((c) => <span className="gchip" key={c}>{c}</span>)}
                   {row.task_mirror && <span className="gchip"><Icon name="check" size={12} /> task manager</span>}
@@ -539,7 +539,7 @@ export function ProjectIntegrationsBlock({ projectId, org, notice }: {
               </div>
               <div className="sname">
                 <code className="vnm">{row.name}</code>
-                <span className="shost">{row.description}</span>
+                <span className="help">{row.description}</span>
                 <span className="gchips" style={{ marginTop: 6 }}>
                   {row.covers.map((c) => <span className="gchip" key={c}>{c}</span>)}
                   {row.mirror_tasks && <span className="gchip"><Icon name="check" size={12} /> task board mirrored here</span>}
@@ -566,7 +566,7 @@ export function ProjectIntegrationsBlock({ projectId, org, notice }: {
             <div className="sstate warn"><span className="sdot" /><span>Not decided</span></div>
             <div className="sname">
               <code className="vnm">{row.name}</code>
-              <span className="shost">{row.description}</span>
+              <span className="help">{row.description}</span>
               <span className="gchips" style={{ marginTop: 6 }}>
                 {row.covers.map((c) => <span className="gchip" key={c}>{c}</span>)}
               </span>
@@ -583,7 +583,7 @@ export function ProjectIntegrationsBlock({ projectId, org, notice }: {
             <div className="sstate"><span className="sdot" /><span>Declined</span></div>
             <div className="sname">
               <code className="vnm">{row.name}</code>
-              <span className="shost">{row.reason || row.description}</span>
+              <span className="help">{row.reason || row.description}</span>
             </div>
             <div className="swho" />
             <div className="sacts">
@@ -765,7 +765,7 @@ export function FoundingIntegrations({ goal, roleOptions, value, onChange }: {
               ))}
             </div>
             {choice.use === true && (
-              <>
+              <div style={{ marginTop: 10 }}>
                 <TeamSwitches options={options} selected={choice.roles}
                               onChange={(roles) => set(integration.name, { roles })}
                               label="Who gets its tools" what="its tools" credential={false}
@@ -777,10 +777,10 @@ export function FoundingIntegrations({ goal, roleOptions, value, onChange }: {
                     Mirror the task board into {integration.name} — yaaf&apos;s board stays the record
                   </label>
                 )}
-              </>
+              </div>
             )}
             {choice.use === false && (
-              <input value={choice.reason ?? ""} placeholder="Why not (optional) — e.g. this one uses Mailchimp"
+              <input style={{ marginTop: 10 }} value={choice.reason ?? ""} placeholder="Why not (optional) — e.g. this one uses Mailchimp"
                      onChange={(e) => set(integration.name, { reason: e.target.value })} />
             )}
           </div>

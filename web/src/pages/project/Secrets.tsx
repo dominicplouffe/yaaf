@@ -5,9 +5,12 @@ import {
   Dashboard,
   del,
   get,
+  IntegrationDecision,
   McpServerEntry,
   OrgView,
   post,
+  ProjectIntegrations,
+  put,
   SecretHistoryRow,
   SecretRow,
 } from "../../api";
@@ -775,8 +778,8 @@ function AddDrawer({ projectId, org, existing, owners, tab: startTab, need, onCl
   );
 }
 
-/** Every grant on one screen: variables and data sources as rows, teams as
-    columns. The question it answers — "what does the Data team get?" — took a
+/** Every grant on one screen: variables, data sources and the shared
+    integrations this project uses as rows, teams as columns. The question it answers — "what does the Data team get?" — took a
     5,000px scroll on the old page. Changes stage (an amber ring) and save as
     one batch, because a grant that saves on a stray click hands a key to a
     team before anyone meant it to. */
@@ -788,28 +791,36 @@ function AccessMap({ projectId, dash, options, rows, onSaved }: {
   onSaved: (message: string) => void;
 }) {
   const sources = (dash.integrations["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
+  // The shared integrations in use: a grant like any other, so a map that
+  // says "every grant" has to show them.
+  const [shared, setShared] = useState<IntegrationDecision[]>([]);
+  useEffect(() => {
+    get<ProjectIntegrations>(`/admin/projects/${projectId}/integrations`)
+      .then((view) => setShared(view.used)).catch(() => setShared([]));
+  }, [projectId]);
   const [pending, setPending] = useState<Record<string, true>>({});
   const [hot, setHot] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const key = (kind: "v" | "s", name: string, slug: string) => `${kind}\u0000${name}\u0000${slug}`;
-  const base = (kind: "v" | "s", name: string): string[] =>
+  const key = (kind: "v" | "s" | "i", name: string, slug: string) => `${kind}\u0000${name}\u0000${slug}`;
+  const base = (kind: "v" | "s" | "i", name: string): string[] =>
     kind === "v" ? rows.find((r) => r.name === name)?.role_scopes ?? []
+      : kind === "i" ? shared.find((s) => s.name === name)?.roles ?? []
       : sources.find((s) => s.name === name)?.roles ?? [];
-  const isOn = (kind: "v" | "s", name: string, slug: string) =>
+  const isOn = (kind: "v" | "s" | "i", name: string, slug: string) =>
     base(kind, name).includes(slug) !== !!pending[key(kind, name, slug)];
   const toggle = (k: string) => setPending((prev) => {
     const copy = { ...prev };
     if (copy[k]) delete copy[k]; else copy[k] = true;
     return copy;
   });
-  const after = (kind: "v" | "s", name: string) =>
+  const after = (kind: "v" | "s" | "i", name: string) =>
     [...base(kind, name).filter((slug) => !pending[key(kind, name, slug)]),
      ...options.map((o) => o.slug).filter((slug) => !base(kind, name).includes(slug) && pending[key(kind, name, slug)])];
 
   const changes = Object.keys(pending).map((k) => {
-    const [kind, name, slug] = k.split("\u0000") as ["v" | "s", string, string];
+    const [kind, name, slug] = k.split("\u0000") as ["v" | "s" | "i", string, string];
     return { kind, name, slug, on: isOn(kind, name, slug) };
   });
   const teamName = (slug: string) => options.find((o) => o.slug === slug)?.name ?? slug;
@@ -822,22 +833,27 @@ function AccessMap({ projectId, dash, options, rows, onSaved }: {
     setBusy(true);
     setError(null);
     const touched = [...new Set(changes.map((c) => `${c.kind}\u0000${c.name}`))];
-    const emptied = touched.filter((t) => t.startsWith("s") && after("s", t.split("\u0000")[1]).length === 0);
+    const emptied = touched.filter((t) => !t.startsWith("v")
+      && after(t[0] as "s" | "i", t.split("\u0000")[1]).length === 0);
     if (emptied.length) {
-      setError(`A data source needs at least one team — ${emptied.map((t) => t.split("\u0000")[1]).join(", ")} would have none. Remove it on Data sources instead.`);
+      setError(`A data source or integration needs at least one team — ${emptied.map((t) => t.split("\u0000")[1]).join(", ")} would have none. Remove or decline it on Data sources instead.`);
       setBusy(false);
       return;
     }
     try {
       for (const t of touched) {
-        const [kind, name] = t.split("\u0000") as ["v" | "s", string];
+        const [kind, name] = t.split("\u0000") as ["v" | "s" | "i", string];
         if (kind === "v")
           await post("/admin/secrets", { project_id: projectId, name, role_scopes: after("v", name) });
+        else if (kind === "i")
+          await put(`/admin/projects/${projectId}/integrations/${name}`, { decision: "use", roles: after("i", name) });
         else
           await post(`/admin/projects/${projectId}/mcp_servers/${name}/roles`, { roles: after("s", name) });
       }
       const n = changes.length;
       setPending({});
+      get<ProjectIntegrations>(`/admin/projects/${projectId}/integrations`)
+        .then((view) => setShared(view.used)).catch(() => {});
       onSaved(`Saved ${n} change${n === 1 ? "" : "s"}. They apply on each team's next run.`);
     } catch (e) {
       setError((e as Error).message);
@@ -849,7 +865,7 @@ function AccessMap({ projectId, dash, options, rows, onSaved }: {
   if (options.length === 0)
     return <p className="help">No teams yet — there is nobody to give anything to.</p>;
 
-  const cell = (kind: "v" | "s", name: string, slug: string, label: string) => {
+  const cell = (kind: "v" | "s" | "i", name: string, slug: string, label: string) => {
     const k = key(kind, name, slug);
     const on = isOn(kind, name, slug);
     return (
@@ -862,7 +878,7 @@ function AccessMap({ projectId, dash, options, rows, onSaved }: {
       </td>
     );
   };
-  const total = (kind: "v" | "s", name: string) => {
+  const total = (kind: "v" | "s" | "i", name: string) => {
     const n = peopleOf(options.map((o) => o.slug).filter((slug) => isOn(kind, name, slug)));
     return <td className="mtot">{n ? `${n} ${n === 1 ? "person" : "people"}` : <span className="warn-text">nobody</span>}</td>;
   };
@@ -906,6 +922,17 @@ function AccessMap({ projectId, dash, options, rows, onSaved }: {
                   <code className="vnm">{s.name}</code><span className="dim small">tools</span></span></th>
                 {options.map((o) => cell("s", s.name, o.slug, `${s.name}'s tools`))}
                 {total("s", s.name)}
+              </tr>
+            ))}
+            {shared.length > 0 && (
+              <tr className="msect"><th colSpan={options.length + 2}>Shared integrations — the administrator&apos;s sign-in, your choice of teams</th></tr>
+            )}
+            {shared.map((s) => (
+              <tr key={s.id}>
+                <th className="mrow"><span className="vname"><span className="vkind"><Icon name="plug" size={13} /></span>
+                  <code className="vnm">{s.name}</code><span className="dim small">tools</span></span></th>
+                {options.map((o) => cell("i", s.name, o.slug, `${s.name}'s tools`))}
+                {total("i", s.name)}
               </tr>
             ))}
           </tbody>
