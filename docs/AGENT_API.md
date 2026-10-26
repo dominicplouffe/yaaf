@@ -280,7 +280,7 @@ is responsible, because every task carries a start time the CEO chose).
 
 | Endpoint | Body | Notes |
 |---|---|---|
-| `GET /credentials` | — | What this role has been granted: names and what each *is*, never values. A row marked `file` holds a **path** in its variable — the platform has already written the file. |
+| `GET /credentials` | — | What this role has been granted: names and what each *is*, never values. A row marked `file` holds a **path** in its variable — the platform has already written the file. A row marked `shared` comes from the install's [shared store](SHARED_STORE.md): the CEO can scope it across its teams, and its value is the instance admin's to change. |
 | `POST /credentials/{name}/scope` | `roles` | Re-scope an existing credential across the team — only where `capability_authority` grants it. Never billing, never values. |
 | `POST /needs` | `what`, `why` | "I cannot do this without X." Rides the approval machinery **and** lands as a boardroom line, so the chairman fulfils it in one motion: credential stored, roles scoped, need approved. The answer may be a **file** (a service-account key, an SSH key), in which case the variable holds its path. |
 | `POST /assists` | `what`, `context` | Hand a captcha, a 2FA prompt, or any human-only step to the chairman. Save session state to the workspace first; his answer rides back verbatim and wakes you. The platform never defeats a security challenge. |

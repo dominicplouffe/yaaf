@@ -101,13 +101,16 @@ PROVIDERS_COLUMNS = (
 )
 # 0056: a person's sidebar pins, and a project's setup checklist.
 SHORTCUTS_COLUMNS = (("users", "pins"), ("projects", "setup"))
+# 0058: the shared store (docs/SHARED_STORE.md).
+SHARED_STORE_TABLES = ("shared_data_sources", "shared_access")
+SHARED_STORE_COLUMNS = (("secrets", "shared_with"),)
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
                   + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES + RUNTIMES_TABLES
-                  + PEOPLE_TABLES + PROVIDERS_TABLES)
+                  + PEOPLE_TABLES + PROVIDERS_TABLES + SHARED_STORE_TABLES)
 REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
                    + STAGE_10_COLUMNS + RUNTIMES_COLUMNS + PEOPLE_COLUMNS + PROVIDERS_COLUMNS
-                   + SHORTCUTS_COLUMNS
+                   + SHORTCUTS_COLUMNS + SHARED_STORE_COLUMNS
                    + (("secrets", "llm_mode"),))
 
 

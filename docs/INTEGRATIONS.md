@@ -224,6 +224,17 @@ A file credential is an ordinary `service` credential in every other respect: it
 is granted per role, it clones, and an export carries its name and the fact that
 it is a file — never its bytes.
 
+### Shared across projects
+
+A credential several projects need, such as a mail login or a vendor key, can
+live once in the **shared store** (Settings → Shared store) instead of once per
+project. The instance admin stores it and makes it available to every project
+or to listed ones. Each project's chairs then grant it to their teams from
+Secrets & variables, beside their own. Shared data sources work the same way,
+except OAuth ones, which stay per project. A project can never hold its own
+value under a shared one's name, in either order. See
+[SHARED_STORE.md](SHARED_STORE.md).
+
 ## Data sources — external MCP servers
 
 **Settings → Data sources.** One form: **address first, then name, sign-in,

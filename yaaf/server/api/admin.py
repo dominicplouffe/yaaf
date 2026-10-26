@@ -23,7 +23,15 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import credential_files, ids, model_policy, platform, prices, web_search
+from yaaf.core import (
+    credential_files,
+    ids,
+    model_policy,
+    platform,
+    prices,
+    shared_store,
+    web_search,
+)
 from yaaf.core.constitution import (
     GROUP_THEMES,
     THEME_ORDER,
@@ -80,6 +88,7 @@ from yaaf.core.models import (
     RunQueue,
     RunStatus,
     Secret,
+    SharedAccess,
     Task,
     TaskStatus,
     Team,
@@ -1883,6 +1892,12 @@ def export_project(project_id: str, include_values: bool = False,
         },
         "roles": list(roles.values()),
         "secrets": secret_out,
+        # By name, never by value, even in a backup: a shared value is the
+        # instance admin's, and its project's export is not its backup. Listed
+        # so a reader can see what the project used; no importer acts on it
+        # (docs/SHARED_STORE.md, "Deliberately not built").
+        "shared_grants": [{"kind": h.kind, "name": h.item.name, "roles": h.roles}
+                          for h in shared_store.available(session, project.id)],
     }
 
 
@@ -2142,6 +2157,18 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     if checked:
         project.integrations = {**integrations, "mcp_servers": checked}
 
+    # Shared grants carry only on items open to every project. The admin
+    # listed the source, not its twin, so a listed item's access is not the
+    # cloner's to copy — it is named in the answer instead, for the admin.
+    shared_left: list[str] = []
+    for held in shared_store.received(session, source.id):
+        if held.item.shared_with != shared_store.ALL:
+            shared_left.append(held.item.name)
+            continue
+        session.add(SharedAccess(id=ids.new_id(ids.SHARED_ACCESS), project_id=project.id,
+                                 item_kind=held.kind, item_id=held.item.id,
+                                 role_scopes=held.roles))
+
     _audit(session, source.id, "project.clone", "project", project.id, {"slug": body.slug})
     _audit(session, project.id, "project.create", "project", project.id,
            {"cloned_from": source.id, "cloned_from_slug": source.slug})
@@ -2159,6 +2186,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
             "slack_rooms_dropped": slack_rooms_dropped,
             "deadline_dropped": deadline_expired,
             "billing_credential_hidden": billing_credential_hidden,
+            "shared_left_behind": shared_left,
         },
     }
 
@@ -2583,6 +2611,10 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
 
     servers = (project.integrations or {}).get("mcp_servers", [])
     prior = next((s for s in servers if s.get("name") == body.name), None)
+    if prior is None:
+        taken = shared_store.name_taken(session, project.id, source_name=body.name)
+        if taken:
+            raise HTTPException(status_code=422, detail=taken)
     # `auth` reads like `bearer` does: absent keeps an existing source's mode
     # (so pre-OAuth callers keep meaning what they always meant), a pasted
     # token implies bearer, and a brand-new source with neither is open.
@@ -4256,6 +4288,10 @@ def fulfill_need(
             status_code=422,
             detail=f"'{body.secret_name}' would be injected as {env_var}, and YAAF_* "
                    "belongs to the platform inside a sandbox. Pick another name")
+    if _project_secret(session, project.id, body.secret_name) is None:
+        taken = shared_store.name_taken(session, project.id, secret_name=body.secret_name)
+        if taken:
+            raise HTTPException(status_code=422, detail=taken)
     filename = None
     if body.filename is not None:
         try:
@@ -6302,6 +6338,11 @@ def delete_secret(secret_id: str, session: Session = Depends(db)) -> dict:
     if row is None:
         raise HTTPException(status_code=404, detail="unknown secret")
     _require_secret_steer(session, row.project_id)
+    if row.shared_with is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{row.name}' is in the shared store — delete it there, where it says "
+                   "which projects still use it")
     from yaaf.core.project_credentials import projects_using
 
     if projects_using(session, row.id):
@@ -6495,6 +6536,17 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
     existing = session.execute(
         select(Secret).where(Secret.project_id == body.project_id, Secret.name == body.name)
     ).scalar_one_or_none()
+    if existing is not None and existing.shared_with is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{body.name}' is in the shared store — change it there "
+                   "(Settings → Shared store)")
+    if existing is None and body.project_id is not None:
+        # A second value under a name the shared store already puts into this
+        # project's runs would leave one of the two silently unread.
+        taken = shared_store.name_taken(session, body.project_id, secret_name=body.name)
+        if taken:
+            raise HTTPException(status_code=422, detail=taken)
     # A file credential and a string one are stored differently (base64 vs the
     # value), so which one this is has to be settled before anything is
     # encrypted — and it is settled once, at creation.

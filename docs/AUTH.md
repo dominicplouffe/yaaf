@@ -54,11 +54,17 @@ that row on every request.
 
 **On the box:** `users.is_admin` — the *instance admin*. Invites people, issues
 setup links, promotes and deactivates; owns the platform settings, the LLM
-credentials, platform-level secrets and the role and crew libraries. Can read
+credentials, platform-level secrets, the [shared store](SHARED_STORE.md) and the role
+and crew libraries. Can read
 every project, because whoever runs the box can read its database anyway and the
 page should say so. **Decides nothing on a project it does not chair** — with one
 exception, the break-glass: it may transfer a project's chairmanship, audited,
 for the chairman who left.
+
+The shared store takes two keys, one each side of that line. The instance admin
+decides which projects may use a shared value. A project's chairman or co-chairs
+decide which of their teams receive it. Neither can turn the other's key
+([SHARED_STORE.md](SHARED_STORE.md)).
 
 **On a project:** a row in `project_members`.
 

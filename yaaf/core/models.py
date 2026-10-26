@@ -2275,6 +2275,64 @@ class Secret(Base):
     # address is the credential's own (yaaf.runtimes.providers: a custom
     # OpenAI-compatible server). Not a secret, so not in the ciphertext.
     base_url: Mapped[str | None] = mapped_column(String(500))
+    # Set => this platform-scope row is in the shared store (docs/SHARED_STORE.md):
+    # "all" may be granted by any project's chairs, "listed" only by the chairs
+    # of a project the instance admin added. NULL on every other row — project
+    # credentials, LLM credentials, and the platform's own tokens, none of which
+    # a project may ever be granted. A shared row's `role_scopes` stays empty:
+    # who receives it is per project, in `shared_access`, so no reader of
+    # `role_scopes` can hand it to a role box-wide.
+    shared_with: Mapped[str | None] = mapped_column(String(8))
+
+
+class SharedDataSource(Base):
+    """A data source in the shared store: one MCP server, many projects.
+
+    `entry` is the shape a project's `integrations.mcp_servers[]` entry has
+    (url_host, url_port, access, auth, tools, last_check) minus the roles,
+    which are per project in `shared_access`. The address and token are
+    encrypted on the row rather than stored as platform secrets: they belong
+    to the source and to nothing else, and a platform-scope name is a name the
+    platform's own tokens could collide with.
+    """
+
+    __tablename__ = "shared_data_sources"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    name: Mapped[str] = mapped_column(String(32), unique=True)
+    url_cipher: Mapped[str] = mapped_column(Text)
+    bearer_cipher: Mapped[str | None] = mapped_column(Text)
+    entry: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # "all" | "listed", as on Secret.shared_with.
+    shared_with: Mapped[str] = mapped_column(String(8), default="listed",
+                                             server_default="listed")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, default=utcnow,
+                                                        onupdate=utcnow)
+
+
+class SharedAccess(Base):
+    """One project's access to one shared item, and which of its roles get it.
+
+    The row existing is the first key — this project may use the item. For a
+    "listed" item only the instance admin writes it; for an "all" item a
+    chair's first grant does. `role_scopes` is the second key, the chairs'
+    own: empty means available here and received by nobody yet.
+    """
+
+    __tablename__ = "shared_access"
+    __table_args__ = (UniqueConstraint("project_id", "item_kind", "item_id"),
+                      Index("ix_shared_access_item", "item_kind", "item_id"))
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    # "variable" (a shared Secret row) | "data_source" (a SharedDataSource)
+    item_kind: Mapped[str] = mapped_column(String(16))
+    item_id: Mapped[str] = mapped_column(String(40))
+    role_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, default=utcnow,
+                                                        onupdate=utcnow)
 
 
 class ProjectLlmCredential(Base):

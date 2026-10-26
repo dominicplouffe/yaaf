@@ -311,6 +311,11 @@ dates are its cycles' (§4).
   above projects, is never role-grantable, and reaches a sandbox only as the
   model credential the billing path injects. Slack and GitHub platform tokens
   are decrypted server-side only and never enter a sandbox.
+- **One credential, many projects.** The [shared store](SHARED_STORE.md) holds
+  secrets, variables and data sources above every project. The instance admin
+  decides which projects may use each one, and each project's chairs decide
+  which teams receive it. Both are refusals on the server. A shared value and a
+  project's own can never answer to one name.
 - **Idempotent side effects.** Before any external action (a PR, a deploy, a
   message to an outside system) an agent records it with a stable idempotency
   key. After a crash-and-retry the ledger says the prior attempt completed — so

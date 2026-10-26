@@ -8,6 +8,7 @@ import {
   McpServerEntry,
   OrgView,
   post,
+  put,
   SecretHistoryRow,
   SecretRow,
 } from "../../api";
@@ -16,6 +17,7 @@ import { GrantChips, GrantOption, TeamDot } from "../../grants";
 import { fmtWhen } from "../../hooks";
 import { useProject } from "../../projectCtx";
 import { grantOptions, grantRoles, RoleGrants } from "../../roles";
+import { ProjectSharedSection, SharedRow, useProjectShared } from "../../sharedStore";
 import { clip, CredentialValue, Drawer, RowMenu, SecretInput } from "../../ui";
 import { Icon, type IconName } from "../../ui/Icon";
 
@@ -113,6 +115,8 @@ export default function Secrets({
   notice: (message: string) => void;
 }) {
   const { approvals, reloadApprovals } = useProject();
+  const { view: sharedView, reload: reloadShared } = useProjectShared(projectId);
+  const sharedRows = sharedView?.variables ?? [];
   const [query, setQuery] = useState("");
   const [team, setTeam] = useState("");
   const [view, setView] = useState<"list" | "map">("list");
@@ -135,6 +139,7 @@ export default function Secrets({
   const close = () => setDrawn(null);
   const saved = (message: string) => {
     refreshSecrets();
+    reloadShared();
     reloadApprovals();
     notice(message);
     setDrawn(null);
@@ -206,7 +211,8 @@ export default function Secrets({
 
       {view === "map" ? (
         <AccessMap projectId={projectId} dash={dash} options={options}
-                   rows={shown} onSaved={saved} />
+                   rows={shown} shared={[...sharedRows, ...(sharedView?.data_sources ?? [])]}
+                   onSaved={saved} />
       ) : (
         <div className="vlist" role="table" aria-label="Variables">
           <div className="vrow vhead" role="row">
@@ -216,7 +222,11 @@ export default function Secrets({
             <span role="columnheader" className="vupd">Updated</span>
             <span />
           </div>
-          {own.length === 0 ? (
+          {own.length === 0 && sharedRows.length > 0 ? (
+            <div className="vempty">
+              None of this project&apos;s own yet. The shared ones below are kept by your administrator.
+            </div>
+          ) : own.length === 0 ? (
             <div className="vempty">
               <b>No variables yet.</b> Add the API keys, passwords and settings your agents need
               for outside services. Never paste one into the chat: messages become model context.
@@ -264,6 +274,9 @@ export default function Secrets({
               </div>
             );
           })}
+          <ProjectSharedSection projectId={projectId} org={org} kind="variables"
+                                rows={sharedRows.filter((s) => !team || s.roles.includes(team))}
+                                onSaved={saved} />
           {managed.length > 0 && (
             <>
               <button className="vgroup" aria-expanded={showManaged}
@@ -780,11 +793,13 @@ function AddDrawer({ projectId, org, existing, owners, tab: startTab, need, onCl
     5,000px scroll on the old page. Changes stage (an amber ring) and save as
     one batch, because a grant that saves on a stray click hands a key to a
     team before anyone meant it to. */
-function AccessMap({ projectId, dash, options, rows, onSaved }: {
+function AccessMap({ projectId, dash, options, rows, shared, onSaved }: {
   projectId: string;
   dash: Dashboard;
   options: GrantOption[];
   rows: SecretRow[];
+  /** The shared store's items this project may use, keyed by id in the map. */
+  shared: SharedRow[];
   onSaved: (message: string) => void;
 }) {
   const sources = (dash.integrations["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
@@ -793,28 +808,36 @@ function AccessMap({ projectId, dash, options, rows, onSaved }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const key = (kind: "v" | "s", name: string, slug: string) => `${kind}\u0000${name}\u0000${slug}`;
-  const base = (kind: "v" | "s", name: string): string[] =>
+  type Cell = "v" | "s" | "x";
+  const key = (kind: Cell, name: string, slug: string) => `${kind}\u0000${name}\u0000${slug}`;
+  const base = (kind: Cell, name: string): string[] =>
     kind === "v" ? rows.find((r) => r.name === name)?.role_scopes ?? []
+      : kind === "x" ? shared.find((r) => r.id === name)?.roles ?? []
       : sources.find((s) => s.name === name)?.roles ?? [];
-  const isOn = (kind: "v" | "s", name: string, slug: string) =>
+  const sharedLabel = (id: string) => {
+    const row = shared.find((r) => r.id === id);
+    if (!row) return id;
+    return row.kind === "variable" ? envVarName(row.name) : `${row.name}'s tools`;
+  };
+  const isOn = (kind: Cell, name: string, slug: string) =>
     base(kind, name).includes(slug) !== !!pending[key(kind, name, slug)];
   const toggle = (k: string) => setPending((prev) => {
     const copy = { ...prev };
     if (copy[k]) delete copy[k]; else copy[k] = true;
     return copy;
   });
-  const after = (kind: "v" | "s", name: string) =>
+  const after = (kind: Cell, name: string) =>
     [...base(kind, name).filter((slug) => !pending[key(kind, name, slug)]),
      ...options.map((o) => o.slug).filter((slug) => !base(kind, name).includes(slug) && pending[key(kind, name, slug)])];
 
   const changes = Object.keys(pending).map((k) => {
-    const [kind, name, slug] = k.split("\u0000") as ["v" | "s", string, string];
+    const [kind, name, slug] = k.split("\u0000") as [Cell, string, string];
     return { kind, name, slug, on: isOn(kind, name, slug) };
   });
   const teamName = (slug: string) => options.find((o) => o.slug === slug)?.name ?? slug;
   const sentence = changes.map((c) =>
-    `${teamName(c.slug)} ${c.on ? "gets" : "loses"} ${c.kind === "v" ? envVarName(c.name) : `${c.name}'s tools`}`);
+    `${teamName(c.slug)} ${c.on ? "gets" : "loses"} ${c.kind === "v" ? envVarName(c.name)
+      : c.kind === "x" ? sharedLabel(c.name) : `${c.name}'s tools`}`);
   const peopleOf = (slugs: string[]) =>
     options.filter((o) => slugs.includes(o.slug)).reduce((n, o) => n + (o.people?.length || 1), 0);
 
@@ -830,10 +853,14 @@ function AccessMap({ projectId, dash, options, rows, onSaved }: {
     }
     try {
       for (const t of touched) {
-        const [kind, name] = t.split("\u0000") as ["v" | "s", string];
+        const [kind, name] = t.split("\u0000") as [Cell, string];
         if (kind === "v")
           await post("/admin/secrets", { project_id: projectId, name, role_scopes: after("v", name) });
-        else
+        else if (kind === "x") {
+          const row = shared.find((r) => r.id === name)!;
+          await put(`/admin/projects/${projectId}/shared/${row.kind === "variable" ? "variables" : "data-sources"}/${name}`,
+                    { roles: after("x", name) });
+        } else
           await post(`/admin/projects/${projectId}/mcp_servers/${name}/roles`, { roles: after("s", name) });
       }
       const n = changes.length;
@@ -849,7 +876,7 @@ function AccessMap({ projectId, dash, options, rows, onSaved }: {
   if (options.length === 0)
     return <p className="help">No teams yet — there is nobody to give anything to.</p>;
 
-  const cell = (kind: "v" | "s", name: string, slug: string, label: string) => {
+  const cell = (kind: Cell, name: string, slug: string, label: string) => {
     const k = key(kind, name, slug);
     const on = isOn(kind, name, slug);
     return (
@@ -862,7 +889,7 @@ function AccessMap({ projectId, dash, options, rows, onSaved }: {
       </td>
     );
   };
-  const total = (kind: "v" | "s", name: string) => {
+  const total = (kind: Cell, name: string) => {
     const n = peopleOf(options.map((o) => o.slug).filter((slug) => isOn(kind, name, slug)));
     return <td className="mtot">{n ? `${n} ${n === 1 ? "person" : "people"}` : <span className="warn-text">nobody</span>}</td>;
   };
@@ -906,6 +933,18 @@ function AccessMap({ projectId, dash, options, rows, onSaved }: {
                   <code className="vnm">{s.name}</code><span className="dim small">tools</span></span></th>
                 {options.map((o) => cell("s", s.name, o.slug, `${s.name}'s tools`))}
                 {total("s", s.name)}
+              </tr>
+            ))}
+            {shared.length > 0 && (
+              <tr className="msect"><th colSpan={options.length + 2}>From the shared store — its value is kept by your administrator</th></tr>
+            )}
+            {shared.map((r) => (
+              <tr key={r.id}>
+                <th className="mrow"><span className="vname"><span className="vkind locked"><Icon name="users" size={13} /></span>
+                  <code className="vnm">{r.kind === "variable" ? envVarName(r.name) : r.name}</code>
+                  {r.kind !== "variable" && <span className="dim small">tools</span>}</span></th>
+                {options.map((o) => cell("x", r.id, o.slug, sharedLabel(r.id)))}
+                {total("x", r.id)}
               </tr>
             ))}
           </tbody>

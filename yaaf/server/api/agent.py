@@ -2601,11 +2601,16 @@ def _arguments_digest(arguments: dict | None) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _project_data_source(project, name: str) -> dict | None:
+def _project_data_source(session: Session, project, name: str) -> dict | None:
     for source in (project.integrations or {}).get("mcp_servers", []):
         if source.get("name") == name:
             return source
-    return None
+    # A shared source this project receives carries its allowlist the same way;
+    # one an approval could not find would be a write nobody can approve.
+    from yaaf.core import shared_store
+
+    held = shared_store.received_source(session, project.id, name)
+    return {"name": name, **(held.item.entry or {})} if held is not None else None
 
 
 class DisclosedChange(BaseModel):
@@ -2664,7 +2669,7 @@ def data_write_request(
     body: DataWriteRequest, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
     """File ONE call for the chairman to approve, fingerprint and all."""
-    source = _project_data_source(ctx.project, body.source)
+    source = _project_data_source(session, ctx.project, body.source)
     if source is None:
         raise Refusal(
             f"{body.source!r} is not one of this project's data sources.", status_code=404)
@@ -3425,10 +3430,19 @@ def credentials_list(
     billing credential is not listed at all."""
     if ctx.agent.kind != AgentKind.CEO:
         raise Refusal("The credential roster is the CEO's to read.", status_code=403)
+    from yaaf.core import shared_store
+
     rows = session.execute(
         select(Secret).where(Secret.project_id == ctx.project.id,
                              Secret.kind == "service").order_by(Secret.name)
     ).scalars()
+    # The shared store's, as this project holds them. `shared` because the CEO
+    # can delegate one across its teams but cannot ask the chairman to change
+    # its value — that is the instance admin's, above the project.
+    shared = [{"name": h.item.name, "role_scopes": h.roles, "file": bool(h.item.filename),
+               "shared": True}
+              for h in shared_store.available(session, ctx.project.id)
+              if h.kind == shared_store.VARIABLE]
     # `file` is not decoration: a CEO answering "do we have Google access?" or
     # delegating one to a team needs to know the variable will hold a path, or
     # it will tell a worker to read a credential out of a variable that holds a
@@ -3436,7 +3450,7 @@ def credentials_list(
     # lists credentials the CEO may not itself hold, and a key file is often
     # named after the account it belongs to. A shape, never a value.
     return [{"name": s.name, "role_scopes": s.role_scopes or [],
-             "file": bool(s.filename)} for s in rows]
+             "file": bool(s.filename)} for s in rows] + shared
 
 
 class CredentialScope(BaseModel):
@@ -3478,6 +3492,10 @@ def credential_scope(
     row = session.execute(
         select(Secret).where(Secret.project_id == ctx.project.id, Secret.name == name)
     ).scalar_one_or_none()
+    if row is None:
+        shared = _shared_scope(session, ctx, name, body)
+        if shared is not None:
+            return shared
     if row is None or row.kind != "service":
         raise Refusal(f"No service credential named {name!r} on this project.",
                       status_code=404)
@@ -3502,6 +3520,48 @@ def credential_scope(
         attention=Attention.FYI,
     )
     return {"name": name, "role_scopes": scopes, "was": was,
+            "note": "Effective on each granted role's next run. On the record, and it "
+                    "reaches the chairman in his briefing."}
+
+
+def _shared_scope(session: Session, ctx: RunContext, name: str,
+                  body: CredentialScope) -> dict | None:
+    """credential_scope on a shared variable this project may use: the same
+    tickbox, through the chairs' own door (`shared.grant`), so it refuses what
+    theirs refuses — a role nobody here employs, a name the project already
+    holds."""
+    from fastapi import HTTPException
+
+    from yaaf.core import shared_store
+    from yaaf.server.api import shared as shared_api
+
+    held = next((h for h in shared_store.available(session, ctx.project.id)
+                 if h.kind == shared_store.VARIABLE and h.item.name == name), None)
+    if held is None:
+        return None
+    scopes = [s for s in held.roles if s not in body.remove_roles]
+    scopes += [s for s in body.add_roles if s not in scopes]
+    try:
+        outcome = shared_api.grant(session, ctx.project, shared_store.VARIABLE,
+                                   held.item.id, scopes)
+    except HTTPException as exc:
+        raise Refusal(str(exc.detail), status_code=exc.status_code) from exc
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="credential.scope",
+        entity="secret", entity_id=held.item.id,
+        detail={"name": name, "was": outcome["was"], "now": scopes, "reason": body.reason,
+                "shared": True},
+    ))
+    chairman_notify(
+        session, ctx.project, f"CEO re-scoped shared credential {name}",
+        f"{name} (shared store): {', '.join(outcome['was']) or '(nobody)'} → "
+        f"{', '.join(scopes) or '(nobody)'}\nIts reason: {body.reason}\nExercised under "
+        "capability_authority: ceo. Effective on each role's next run; reverse it any "
+        "time in Settings.",
+        attention=Attention.FYI,
+    )
+    return {"name": name, "role_scopes": scopes, "was": outcome["was"], "shared": True,
             "note": "Effective on each granted role's next run. On the record, and it "
                     "reaches the chairman in his briefing."}
 

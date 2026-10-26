@@ -1015,7 +1015,8 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                                  Secret.project_id.is_(None)),
                              # The LLM credentials live at platform scope too, and
                              # one named like a data source's secret is not that secret.
-                             Secret.llm_mode.is_(None))
+                             # Neither is a shared store row of the same name.
+                             Secret.llm_mode.is_(None), Secret.shared_with.is_(None))
     ).scalars().all()
     secrets_by_name = {s.name: s for s in secrets}
 
@@ -1057,6 +1058,30 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         else:
             add(f"data-source:{name}", "fail",
                 f"data source '{name}': last check failed — {last.get('detail', '')}",
+                "data_sources")
+
+    # Shared data sources this project receives. Their address and token are
+    # on the store's row, so there is nothing of the project's to be missing;
+    # what can fail is the source, and only the instance admin can fix it.
+    from yaaf.core import shared_store
+
+    for held in shared_store.received(session, project.id):
+        if held.kind != shared_store.DATA_SOURCE:
+            continue
+        name = held.item.name
+        last = (held.item.entry or {}).get("last_check") or {}
+        if not last:
+            add(f"data-source:{name}", "warn",
+                f"shared data source '{name}': never tested — ask the instance admin to "
+                "run its check", "data_sources")
+        elif last.get("ok"):
+            add(f"data-source:{name}", "ok",
+                f"shared data source '{name}': {last.get('detail', 'reachable')}",
+                "data_sources")
+        else:
+            add(f"data-source:{name}", "fail",
+                f"shared data source '{name}': last check failed — "
+                f"{last.get('detail', '')}. It is the instance admin's to fix",
                 "data_sources")
 
     # Teams: no role-version drift. (Roles never own data sources — the whole

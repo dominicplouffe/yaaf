@@ -94,7 +94,18 @@ def _web_dist() -> Path | None:
 
 def create_app() -> FastAPI:
     from yaaf.server import mcp
-    from yaaf.server.api import admin, agent, auth, founder, me, oauth, observe, webhooks, ws
+    from yaaf.server.api import (
+        admin,
+        agent,
+        auth,
+        founder,
+        me,
+        oauth,
+        observe,
+        shared,
+        webhooks,
+        ws,
+    )
     from yaaf.server.api import settings as app_settings
     from yaaf.server.mcp import oauth_server
 
@@ -114,6 +125,9 @@ def create_app() -> FastAPI:
     # project inherits. Mounted under /admin for the same reason the Founder is
     # — one sign-in, not a second one.
     app.include_router(app_settings.router, prefix="/admin/settings", tags=["settings"])
+    # The shared store: values above every project, and each project's grants
+    # of them (docs/SHARED_STORE.md).
+    app.include_router(shared.router, prefix="/admin", tags=["shared"])
     app.include_router(observe.router, prefix="/observe", tags=["observe"])
     # Unauthenticated by bearer-token design: senders sign each body with a
     # chairman-provisioned secret instead. See yaaf.server.api.webhooks.

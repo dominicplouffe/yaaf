@@ -26,6 +26,9 @@ REACHED = {
     "GET /admin/harnesses": "catalog (harnesses)",
     "GET /admin/providers": "catalog (providers)",
     "GET /admin/models": "catalog (models)",
+    "GET /admin/projects/{project_id}/shared": "shared (list) — names, shapes and grants, "
+                                               "never a value",
+    "PUT /admin/projects/{project_id}/shared/{kind}/{item_id}": "shared (grant)",
     # steer
     "POST /admin/projects/{project_id}/boardroom": "boardroom_say",
     "POST /admin/approvals/{approval_id}/decide": "approval_decide",
@@ -356,6 +359,31 @@ WITHHELD = {
     "POST /admin/settings/slack/test": "reaches the app-wide Slack credential.",
     "DELETE /admin/settings/slack":
         "unwires Slack for every project that inherits it, in one call.",
+    # The shared store's own doors, withheld as a block for the reason the
+    # settings above are: they are above every project a client is scoped to,
+    # and what they hold is values other projects receive.
+    "GET /admin/shared":
+        "the whole store names every project's use of every value; a client reads its "
+        "own project's share through `shared (list)`.",
+    "POST /admin/shared/variables": "a shared credential value, inbound, for every "
+                                    "project it reaches.",
+    "GET /admin/shared/variables/{item_id}/value":
+        "reading a credential back into a model's context is exfiltration, whatever "
+        "the scope.",
+    "DELETE /admin/shared/variables/{item_id}": "the store's lifecycle is the instance "
+                                                "admin's.",
+    "POST /admin/shared/data-sources": "a shared source's address and token, inbound, for "
+                                       "every project it reaches.",
+    "POST /admin/shared/data-sources/{item_id}/check":
+        "a shared source is the admin's to test; a project's own `data_source (check)` "
+        "tests its own.",
+    "DELETE /admin/shared/data-sources/{item_id}": "the store's lifecycle is the instance "
+                                                   "admin's.",
+    "POST /admin/shared/{kind}/{item_id}/projects":
+        "which projects may use a value is the admin's key; a client holding it could "
+        "list its own project for anything in the store.",
+    "POST /admin/shared/{kind}/{item_id}/revoke":
+        "withdrawing a value from a project is the same key, turned the other way.",
     "GET /admin/projects/{project_id}/slack":
         "which Slack rooms a project mirrors to is wiring the chairman reads in "
         "Settings; no tool has needed it.",

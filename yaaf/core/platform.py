@@ -346,8 +346,11 @@ def shape_error(mode: str, plaintext: str, provider: str | None = None) -> str |
 
 
 def secret_row(session: Session, name: str) -> Secret | None:
+    # Not the shared store's: those are platform-scope rows too, and an admin
+    # who shares a variable called "github" has not installed a GitHub token.
     return session.execute(
-        select(Secret).where(Secret.project_id.is_(None), Secret.name == name)
+        select(Secret).where(Secret.project_id.is_(None), Secret.shared_with.is_(None),
+                             Secret.name == name)
     ).scalar_one_or_none()
 
 

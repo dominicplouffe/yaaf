@@ -450,6 +450,12 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
             if source.get("bearer_secret"):
                 spec["bearer_env"] = _env_var_name(source["bearer_secret"])
             specs.append(spec)
+        if role is not None:
+            # Shared sources the project's chairs granted this role. Same spec,
+            # so nothing past the lease can tell where a source came from.
+            from yaaf.core import shared_store
+
+            specs += shared_store.role_sources(session, project.id, role.slug)
         if specs:
             # New dict, never in-place: job.tool_permissions shallow-copies the
             # role version's dict and must not mutate its nested lists.
@@ -543,11 +549,15 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
     env vars. The grant lives on the SECRET (chairman-editable, effective on
     the next run) — never on the role version, which teams pin at creation.
     Empty role_scopes means injected nowhere: billing credentials and
-    not-yet-granted secrets stay out of every sandbox."""
+    not-yet-granted secrets stay out of every sandbox.
+
+    Then the shared store's, which are granted per project in `shared_access`
+    and never through a platform row's own `role_scopes`. Reading those here
+    used to be the one way a platform-scope value could reach every project
+    that hired a role, and no door the chairman sees would have shown it."""
     if role_version is None:
         return {}
-    from sqlalchemy import or_
-
+    from yaaf.core import shared_store
     from yaaf.core.crypto import decrypt
     from yaaf.core.models import Role
 
@@ -555,9 +565,7 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
     if role is None:
         return {}
     candidates = session.execute(
-        select(Secret)
-        .where(or_(Secret.project_id == project.id, Secret.project_id.is_(None)))
-        .order_by(Secret.project_id.is_(None))  # project-scoped wins over platform
+        select(Secret).where(Secret.project_id == project.id).order_by(Secret.created_at)
     ).scalars()
     env: dict = {}
     for secret in candidates:
@@ -569,7 +577,7 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
             continue
         var = _env_var_name(secret.name)
         if var in env or _file_cred_carrier(var) in env:
-            continue  # project-scoped already claimed this name
+            continue  # two names that read as one variable: the first stored wins
         try:
             value = decrypt(secret.ciphertext)
         except Exception:
@@ -585,6 +593,7 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
                 {"filename": secret.filename, "b64": value})
         else:
             env[var] = value
+    env.update(shared_store.role_env(session, project.id, role.slug, env))
     return env
 
 

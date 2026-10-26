@@ -77,7 +77,11 @@ def _done(session: Session, project: Project, step: Step) -> tuple[bool, str]:
                           if orders else "The goal is confirmed.")
         return False, "Add the standing orders every agent reads under the goal."
     if step.key == "sources":
-        sources = integrations.get("mcp_servers") or []
+        from yaaf.core import shared_store
+
+        sources = list(integrations.get("mcp_servers") or [])
+        sources += [h for h in shared_store.received(session, project.id)
+                    if h.kind == shared_store.DATA_SOURCE]
         if sources:
             return True, f"{len(sources)} connected."
         return False, "Where agents read from: a database, an API, a folder of files."
@@ -87,10 +91,13 @@ def _done(session: Session, project: Project, step: Step) -> tuple[bool, str]:
                 Approval.project_id == project.id, Approval.kind == ApprovalKind.TOOL_REQUEST,
                 Approval.status == ApprovalStatus.PENDING, Approval.grant.is_(None))
         ).scalar_one()
+        from yaaf.core import shared_store
+
         held = session.execute(
             select(func.count()).select_from(Secret).where(
                 Secret.project_id == project.id, Secret.llm_mode.is_(None))
-        ).scalar_one()
+        ).scalar_one() + sum(1 for h in shared_store.received(session, project.id)
+                             if h.kind == shared_store.VARIABLE)
         if asked:
             return False, (f"Your agents asked for {asked} credential{'s' if asked != 1 else ''} "
                            "they do not have.")

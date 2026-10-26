@@ -3345,6 +3345,9 @@ button.danger-text:where(:not(:disabled)):hover { background: rgba(var(--critica
 .vgroup:hover { background: var(--hover-strong); border-color: var(--border); }
 .vgroup > svg { color: var(--muted); }
 .vgroup-note { margin-left: auto; font-size: var(--t-micro); color: var(--muted); font-weight: 400; }
+/* The shared store's heading is a label, not a toggle: nothing to hover. */
+.vgroup.static { display: flex; align-items: center; cursor: default; }
+.vgroup.static:hover { background: var(--surface-2); }
 
 /* Who gets it, compact: a dot in the team's colour and its name. */
 .gchips { display: flex; gap: 5px; flex-wrap: wrap; min-width: 0; }

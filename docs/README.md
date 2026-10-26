@@ -19,6 +19,7 @@ Start here if you're new; skim the table if you're not.
 | [GOVERNANCE.md](GOVERNANCE.md) | The constitution: every rule, its default, what each refuses, and how to change one. |
 | [AUTONOMY.md](AUTONOMY.md) | How much the CEO decides without you — the five authority switches, and what never moves at any setting. |
 | [INTEGRATIONS.md](INTEGRATIONS.md) | Billing, credentials, MCP data sources, Slack, GitHub, webhooks, notifications, artifact storage. |
+| [SHARED_STORE.md](SHARED_STORE.md) | Secrets, variables and data sources stored once and granted to many projects: who holds which key, and what is refused. |
 
 ## Building on it
 

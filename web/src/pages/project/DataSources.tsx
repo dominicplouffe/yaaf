@@ -16,6 +16,7 @@ import {
 import { GrantChips, listJoin, TeamSwitches } from "../../grants";
 import { fmtWhen } from "../../hooks";
 import { grantOptions } from "../../roles";
+import { ProjectSharedSection, useProjectShared } from "../../sharedStore";
 import { Drawer, RowMenu, SecretInput } from "../../ui";
 import { Icon } from "../../ui/Icon";
 
@@ -125,6 +126,7 @@ export default function DataSources({
 }) {
   const sources = (dash.integrations["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
   const options = grantOptions(org);
+  const { view: sharedView, reload: reloadShared } = useProjectShared(projectId);
   const [drawn, setDrawn] = useState<Drawn | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -208,7 +210,12 @@ export default function DataSources({
         </div>
       )}
       <div className="vlist">
-        {sources.length === 0 && (
+        {sources.length === 0 && (sharedView?.data_sources.length ?? 0) > 0 && (
+          <div className="vempty">
+            None of this project&apos;s own. The shared ones below are kept by your administrator.
+          </div>
+        )}
+        {sources.length === 0 && !(sharedView?.data_sources.length) && (
           <div className="vempty">
             <b>No data sources yet.</b> Add an MCP server — Notion, Linear, your warehouse, an ads
             API — and the teams you choose can call its tools.
@@ -270,6 +277,14 @@ export default function DataSources({
           );
         })}
       </div>
+
+      {(sharedView?.data_sources.length ?? 0) > 0 && (
+        <div className="vlist" style={{ marginTop: 12 }}>
+          <ProjectSharedSection projectId={projectId} org={org} kind="data-sources"
+                                rows={sharedView!.data_sources}
+                                onSaved={(message) => { reloadShared(); notice(message); }} />
+        </div>
+      )}
 
       {drawn && (
         <SourceDrawer

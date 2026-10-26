@@ -537,6 +537,112 @@ def set_secret(
         }))
 
 
+# ── the shared store (docs/SHARED_STORE.md) ────────────────────────────────────
+
+
+def _shared_item(client: httpx.Client, kind: str, name: str) -> str:
+    """A shared item's id from its name, read off the admin's store."""
+    store = _json_or_die(client.get("/admin/shared"))
+    rows = store["variables"] if kind == "variables" else store["data_sources"]
+    for row in rows:
+        if row["name"] == name or row.get("env") == name:
+            return row["id"]
+    typer.echo(f"nothing in the shared store called {name!r}")
+    raise typer.Exit(1)
+
+
+def _shared_kind(source: bool) -> str:
+    return "data-sources" if source else "variables"
+
+
+@app.command()
+def shared(project: str = typer.Option(None, "--project",
+                                       help="Show what one project may use instead")) -> None:
+    """List the shared store: names, shapes, and which projects use each.
+
+    With --project, what that project may use and which of its roles get each —
+    the view its chairs have, which never carries a value.
+    """
+    with _client() as client:
+        if project:
+            _show(client.get(f"/admin/projects/{_resolve_project(client, project)}/shared"))
+        else:
+            _show(client.get("/admin/shared"))
+
+
+@app.command()
+def set_shared(
+    name: str,
+    plain: bool = typer.Option(None, "--plain/--secret",
+                               help="--plain for a setting that is not secret. Omit to keep "
+                                    "it as it is"),
+    every_project: bool = typer.Option(None, "--all/--listed",
+                                       help="--all lets any project's chairs grant it; "
+                                            "--listed (the default for a new one) only "
+                                            "projects you add with `yaaf share`"),
+    from_file: Path = typer.Option(
+        None, "--from-file", exists=True, dir_okay=False,
+        help="Store a FILE credential; granted roles receive its PATH"),
+    keep_value: bool = typer.Option(False, "--keep-value",
+                                    help="Change --plain/--all without re-entering it"),
+) -> None:
+    """Store a shared secret or variable once, for every project you allow
+    (instance admin; value prompted, never echoed)."""
+    body: dict = {"name": name}
+    if from_file is not None:
+        body.update(value=base64.b64encode(from_file.read_bytes()).decode(),
+                    filename=from_file.name)
+    elif not keep_value:
+        body["value"] = typer.prompt("Value", hide_input=True)
+    if plain is not None:
+        body["visibility"] = "plain" if plain else "secret"
+    if every_project is not None:
+        body["shared_with"] = "all" if every_project else "listed"
+    with _client() as client:
+        _show(client.post("/admin/shared/variables", json=body))
+
+
+@app.command()
+def share(
+    name: str,
+    project: str,
+    source: bool = typer.Option(False, "--source", help="NAME is a shared data source"),
+    revoke: bool = typer.Option(False, "--revoke", help="Withdraw it from the project instead"),
+) -> None:
+    """Make a shared item available to a project, or withdraw it (instance
+    admin). No team on the project receives it until its chairs grant it."""
+    kind = _shared_kind(source)
+    with _client() as client:
+        item_id = _shared_item(client, kind, name)
+        verb = "revoke" if revoke else "projects"
+        _show(client.post(f"/admin/shared/{kind}/{item_id}/{verb}",
+                          json={"project_id": _resolve_project(client, project)}))
+
+
+@app.command()
+def grant_shared(
+    name: str,
+    project: str,
+    roles: str = typer.Option(..., "--roles",
+                              help="Comma-separated role slugs that should receive it; "
+                                   "'' for nobody"),
+    source: bool = typer.Option(False, "--source", help="NAME is a shared data source"),
+) -> None:
+    """Choose which of a project's roles receive a shared item (its chairman
+    or a co-chair)."""
+    kind = _shared_kind(source)
+    with _client() as client:
+        project_id = _resolve_project(client, project)
+        view = _json_or_die(client.get(f"/admin/projects/{project_id}/shared"))
+        rows = view["variables"] if kind == "variables" else view["data_sources"]
+        match = next((r for r in rows if name in (r["name"], r.get("env"))), None)
+        if match is None:
+            typer.echo(f"no shared item {name!r} is available to {project}")
+            raise typer.Exit(1)
+        _show(client.put(f"/admin/projects/{project_id}/shared/{kind}/{match['id']}",
+                         json={"roles": [r for r in roles.split(",") if r]}))
+
+
 @app.command()
 def settings() -> None:
     """Show the app-wide settings — the model credential and the Slack connection.

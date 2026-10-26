@@ -145,6 +145,13 @@ link to the credentials list.
   and pick the model it uses. It pays for drafting and **never reaches a
   project's agents**: borrowing runs one way — the Founder may use a
   project-paying credential, a project never uses the Founder's.
+- **Shared store** — secrets, variables and data sources kept once for many
+  projects ([SHARED_STORE.md](SHARED_STORE.md)). Each row says whether every
+  project may use it or only the ones you list, and which projects have it. Its
+  drawer stores, rotates and reveals the value (each reveal logged), and adds or
+  removes projects. Adding a project gives it access and no team anything:
+  that project's chairs choose the teams. An item is deleted only once no
+  project has it.
 - **Slack connection** — the bot/signing/app tokens for your Slack workspace,
   your member ID, and the channel naming convention, stored once. Every project
   inherits them, so
@@ -837,7 +844,10 @@ Data; everything after is occasional.
   remove live in the row's **⋯** menu. **Add data source** opens a drawer that
   asks for the address first, checks it before anything is stored, and says how
   the server wants you to sign in — no sign-in, a pasted token, or OAuth — so
-  the rest of the form follows from the answer.
+  the rest of the form follows from the answer. Sources from the install's
+  shared store are listed under **From the shared store**, where you choose
+  which teams get their tools. Their address and sign-in are your
+  administrator's.
 - **Secrets & variables** — what agents receive as environment variables, one
   56px line each: the name agents see (`$NAME`), its type (**Secret**, **Plain
   value** or **File**), enough of the value to tell two apart (a plain value
@@ -851,7 +861,10 @@ Data; everything after is occasional.
   pasted file into rows for review. A credential an agent asked for shows at the
   top with **Add it**, which stores it, grants the asking team and answers the
   request in one motion. Values a data source or the Slack bridge owns are
-  listed, locked, and link to where they are edited.
+  listed, locked, and link to where they are edited. Values from the install's
+  **shared store** are listed under their own heading and in the access map:
+  you choose which teams get each, and nobody on the project can read or change
+  the value itself.
 
 - **Integrations** — the Slack bridge and the GitHub workspace. Slack starts
   out **inherited** from the app-wide connection, so the only thing this card

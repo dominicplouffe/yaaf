@@ -352,6 +352,56 @@ def credential(principal: Principal, session: Session, arguments: dict) -> dict:
 
 
 @register(
+    "shared",
+    scope="configure",
+    description=(
+        "The shared store, as this project holds it: secrets, variables and data "
+        "sources the instance admin made available. verb: list (names, shapes and which "
+        "roles here receive each — never a value), grant (kind `variable` or "
+        "`data_source`, name, roles: the full list of roles that should receive it; [] "
+        "keeps access and gives it to nobody). Storing or changing a shared value is "
+        "the admin's, in the dashboard."
+    ),
+    input_schema=_schema([],
+                         verb={"type": "string", "enum": ["list", "grant"]},
+                         kind={"type": "string", "enum": ["variable", "data_source"]},
+                         name={"type": "string",
+                               "description": "A variable's stored name, or a source's"},
+                         roles={"type": "array", "items": {"type": "string"}}),
+)
+def shared(principal: Principal, session: Session, arguments: dict) -> dict:
+    from yaaf.core import shared_store
+    from yaaf.server.api import shared as shared_api
+
+    project = resolve_project(session, principal, required(arguments, "project"))
+    if (arguments.get("verb") or "list") == "list":
+        return envelope.fit({"project": project.slug,
+                             **shared_api.project_view(session, project.id)},
+                            arguments.get("detail"))
+
+    kind = arguments.get("kind") or shared_store.VARIABLE
+    if kind not in shared_store.KINDS:
+        raise ToolRefusal("kind is `variable` or `data_source`")
+    name = required(arguments, "name")
+    held = next((h for h in shared_store.available(session, project.id)
+                 if h.kind == kind and h.item.name == name), None)
+    if held is None:
+        raise ToolRefusal(f"no shared {kind.replace('_', ' ')} {name!r} is available to "
+                          f"{project.slug}")
+    roles = [r for r in (arguments.get("roles") or []) if isinstance(r, str)]
+    preview = confirm.gate(session, principal, "shared", arguments, {
+        "verb": "grant", "project": project.slug, "kind": kind, "name": name,
+        "roles": roles, "was": held.roles,
+        "note": "Effective on each granted role's next run. The value never passes "
+                "through this surface."})
+    if preview:
+        return preview
+    outcome = _call(principal, shared_api.grant, session=session, project=project,
+                    kind=kind, item_id=held.item.id, roles=roles)
+    return _record(session, principal, project.id, "shared", arguments, outcome)
+
+
+@register(
     "amend",
     scope="configure",
     description=(

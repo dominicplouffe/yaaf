@@ -66,6 +66,8 @@ SETUP_LINK = "usetup"  # a single-use link that sets a password
 HEADS_UP = "hdup"  # something the chairman asked to be told
 SNOOZE = "snoz"  # one person's "not now" on one Inbox row
 CHAIRMAN_NOTE = "cnot"  # his note on a decision, held until the CEO answers it
+SHARED_SOURCE = "shds"  # a data source in the shared store
+SHARED_ACCESS = "shac"  # one project's access to one shared item
 
 
 def new_id(prefix: str) -> str:
