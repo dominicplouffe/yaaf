@@ -275,6 +275,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
 
     job.system_prompt += credentials_prompt(*announced_credentials(role_secrets))
     job.system_prompt += _data_source_prompt(source_specs, job.harness)
+    job.system_prompt += _offered_prompt(job.tool_permissions.get("integrations_offered"))
     return job
 
 
@@ -352,6 +353,30 @@ def _mint_secret_id(session: Session, project: Project, provider: str) -> str | 
         return None
     secret = project_credentials.credential_for(session, project, provider)
     return secret.id if secret is not None else None
+
+
+def _offered_prompt(offer: list[dict] | None) -> str:
+    """The integrations the company already pays for that this role does not
+    have — named, so a run about to build an email engine or a task board
+    learns that one exists before it builds it rather than never.
+
+    Information, not the rule: the rule is that using one takes the chairman's
+    yes (`integration_request` files an approval, and approving it is what
+    attaches it), and that nothing here mounts until then."""
+    if not offer:
+        return ""
+    lines = ["\n\nINTEGRATIONS YOU DO NOT HAVE: the company already pays for these, "
+             "connected by an administrator for every project. Before you build, buy or "
+             "sign up for something one of them does, ask for it with "
+             "integration_request(name, why) — the chairman's yes gives your role its "
+             "tools from the next run. Do not rebuild what is listed here."]
+    for row in offer:
+        covers = f" — for {', '.join(row['covers'])}" if row.get("covers") else ""
+        said = (f" (declined for this project: {row['declined']})" if row.get("declined")
+                else f" (this project gives it to {', '.join(row['used_by'])})"
+                if row.get("used_by") else "")
+        lines.append(f"\n- {row['name']}{covers}. {row.get('description', '')}{said}")
+    return "".join(lines)
 
 
 def _data_source_prompt(specs: list[dict], harness: str | None = None) -> str:
@@ -462,6 +487,12 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
 
         shared, env = integrations.mount(session, project, role.slug if role else None)
         specs.extend(shared)
+        # What this role could ask for: named in the prompt and offered as a
+        # tool only when there is something to ask for, because a schema an
+        # agent cannot use is paid for on every call.
+        offer = integrations.offered(session, project.id, role.slug if role else None)
+        if offer:
+            job.tool_permissions = {**job.tool_permissions, "integrations_offered": offer}
         if specs:
             # New dict, never in-place: job.tool_permissions shallow-copies the
             # role version's dict and must not mutate its nested lists.

@@ -430,3 +430,193 @@ def test_with_no_integrations_the_founder_is_asked_for_nothing(client):
 
     with db_session() as session:
         assert tools.integration_problems(_draft(), session) == []
+
+
+# ── agents see what they do not have, and ask ───────────────────────────────────
+
+
+def _request(client, project, who="Lead", **overrides):
+    _, token = live_token(project["id"], agent_by_name(project, who))
+    body = {"name": "hubspot", "why": "send the spring campaign to the customer list",
+            "without": "we build our own mailer and its own list", **overrides}
+    return client.post("/agent/integrations/request", headers=bearer(token), json=body)
+
+
+def test_a_run_is_told_what_the_company_has_that_it_does_not(client):
+    project = make_project(client)
+    _save(client)
+    job = _lease((project["id"], _employee(project)))[project["id"]]
+    assert "INTEGRATIONS YOU DO NOT HAVE" in job.system_prompt
+    assert "hubspot — for crm, email marketing" in job.system_prompt
+    assert job.tool_permissions["integrations_offered"][0]["name"] == "hubspot"
+    # Told, not given: nothing mounts and no value travels.
+    assert not any("HUBSPOT" in key for key in job.billing_env)
+
+
+def test_a_run_that_has_it_is_not_offered_it(client):
+    project = make_project(client)
+    _save(client)
+    _use(client, project["id"])
+    job = _lease((project["id"], _employee(project)))[project["id"]]
+    assert "INTEGRATIONS YOU DO NOT HAVE" not in job.system_prompt
+    assert "integrations_offered" not in job.tool_permissions
+
+
+def test_an_employee_asks_and_the_chairmans_yes_attaches_it(client):
+    project = make_project(client)
+    _save(client)
+    filed = _request(client, project)
+    assert filed.status_code == 200, filed.text
+    assert filed.json()["roles"] == ["worker"]
+    approval_id = filed.json()["approval_id"]
+    with db_session() as session:
+        from yaaf.core.models import Approval
+
+        row = session.get(Approval, approval_id)
+        assert row.kind == "integration" and row.integration["name"] == "hubspot"
+        assert "What happens without it: we build our own mailer" in row.body
+    # Filing it mounted nothing.
+    job = _lease((project["id"], _employee(project)))[project["id"]]
+    assert not any("HUBSPOT" in key for key in job.billing_env)
+
+    decided = client.post(f"/admin/approvals/{approval_id}/decide",
+                          json={"approve": True}, headers=ADMIN)
+    assert decided.status_code == 200, decided.text
+    view = client.get(f"/admin/projects/{project['id']}/integrations", headers=ADMIN).json()
+    assert view["used"][0]["roles"] == ["worker"]
+    job = _lease((project["id"], _employee(project)))[project["id"]]
+    assert job.billing_env["MCP_HUBSPOT_TOKEN"] == "hs-secret-token"
+
+
+def test_a_no_attaches_nothing(client):
+    project = make_project(client)
+    _save(client)
+    approval_id = _request(client, project).json()["approval_id"]
+    client.post(f"/admin/approvals/{approval_id}/decide",
+                json={"approve": False, "note": "we use Mailchimp"}, headers=ADMIN)
+    with db_session() as session:
+        assert session.query(ProjectIntegration).count() == 0
+
+
+def test_asking_twice_or_for_what_you_have_is_refused(client):
+    project = make_project(client)
+    _save(client)
+    assert _request(client, project).status_code == 200
+    again = _request(client, project, who="Emp2")
+    assert again.status_code == 409 and "already on the chairman's desk" in again.json()["error"]
+
+    other = make_project(client, slug="beta")
+    _use(client, other["id"])
+    have = _request(client, other)
+    assert have.status_code == 422 and "already yours" in have.json()["error"]
+
+
+def test_a_request_must_name_something_real_for_someone_real(client):
+    project = make_project(client)
+    _save(client)
+    assert _request(client, project, name="marketo").status_code == 404
+    stranger = _request(client, project, roles=["designer"])
+    assert stranger.status_code == 422 and "designer" in stranger.json()["error"]
+
+
+def test_an_integration_cannot_be_asked_for_as_prose(client):
+    """Approving prose would attach nothing — so prose is refused, and the
+    refusal names the verb that carries the name and roles."""
+    project = make_project(client)
+    _, token = live_token(project["id"], agent_by_name(project, "CEO"))
+    refused = client.post("/agent/approvals", headers=bearer(token), json={
+        "kind": "integration", "title": "Use the CRM please",
+        "body": "We need the CRM for the campaign.", "if_declined": "We build a mailer."})
+    assert refused.status_code == 422 and "integration_request" in refused.json()["error"]
+
+
+def test_a_declined_integration_can_be_argued_for_and_says_it_was_declined(client):
+    project = make_project(client)
+    _save(client)
+    client.put(f"/admin/projects/{project['id']}/integrations/hubspot",
+               json={"decision": "decline", "reason": "not at launch"}, headers=ADMIN)
+    job = _lease((project["id"], _employee(project)))[project["id"]]
+    assert "declined for this project: not at launch" in job.system_prompt
+    filed = _request(client, project)
+    assert filed.status_code == 200
+    with db_session() as session:
+        from yaaf.core.models import Approval
+
+        assert "declined it before — not at launch" in session.get(
+            Approval, filed.json()["approval_id"]).body
+
+
+# ── promoting a project's own source ────────────────────────────────────────────
+
+
+def _own_source(client, project_id, **overrides):
+    body = {"name": "crm", "url": URL, "bearer": "own-token", "roles": ["worker"],
+            "tools": ["search_contacts"], **overrides}
+    saved = client.post(f"/admin/projects/{project_id}/mcp_servers", json=body, headers=ADMIN)
+    assert saved.status_code == 200, saved.text
+
+
+def test_promoting_moves_everything_and_the_run_sees_the_same_tools(client):
+    project = make_project(client)
+    _own_source(client, project["id"])
+    before = _lease((project["id"], _employee(project)))[project["id"]]
+    promoted = client.post(f"/admin/projects/{project['id']}/mcp_servers/crm/promote",
+                           json={"description": "The CRM", "covers": ["CRM"]}, headers=ADMIN)
+    assert promoted.status_code == 200, promoted.text
+    assert "own-token" not in promoted.text
+    with db_session() as session:
+        assert session.query(Secret).filter(Secret.name.like("mcp-crm-%")).count() == 0
+        row = session.query(Integration).one()
+        assert row.entry["tools"] == ["search_contacts"] and row.covers == ["crm"]
+    after = _lease((project["id"], _employee(project)))[project["id"]]
+    spec = next(s for s in after.tool_permissions["mcp_servers"] if s["name"] == "crm")
+    assert spec == next(s for s in before.tool_permissions["mcp_servers"] if s["name"] == "crm")
+    assert after.billing_env["MCP_CRM_URL"] == before.billing_env["MCP_CRM_URL"] == URL
+    assert after.billing_env["MCP_CRM_TOKEN"] == "own-token"
+    # And now any project can choose it.
+    other = make_project(client, slug="beta", start=False)
+    assert client.put(f"/admin/projects/{other['id']}/integrations/crm",
+                      json={"decision": "use", "roles": ["worker"]},
+                      headers=ADMIN).status_code == 200
+
+
+def test_only_an_administrator_promotes(client):
+    project = make_project(client, start=False)
+    _own_source(client, project["id"])
+    someone = person("someone@example.com")
+    refused = client.post(f"/admin/projects/{project['id']}/mcp_servers/crm/promote",
+                          json={}, headers=headers_of(someone))
+    assert refused.status_code == 403
+    with db_session() as session:
+        assert session.query(Integration).count() == 0
+
+
+def test_promoting_onto_a_taken_name_is_refused(client):
+    project = make_project(client, start=False)
+    _own_source(client, project["id"], name="hubspot")
+    _save(client)
+    refused = client.post(f"/admin/projects/{project['id']}/mcp_servers/hubspot/promote",
+                          json={}, headers=ADMIN)
+    assert refused.status_code == 409
+
+
+def test_a_promoted_oauth_source_stays_signed_in(client, world):
+    project = make_project(client)
+    saved = client.post(f"/admin/projects/{project['id']}/mcp_servers", headers=ADMIN, json={
+        "name": "crm", "url": MCP_URL, "roles": ["worker"], "auth": "oauth"})
+    assert saved.status_code == 200
+    started = client.post(f"/admin/projects/{project['id']}/mcp_servers/crm/oauth/start",
+                          json={}, headers=ADMIN)
+    state = parse_qs(urlparse(started.json()["authorize_url"]).query)["state"][0]
+    world.codes.add("code-1")
+    assert client.get("/oauth/mcp/callback",
+                      params={"state": state, "code": "code-1"}).status_code == 200
+    assert client.post(f"/admin/projects/{project['id']}/mcp_servers/crm/promote",
+                       json={}, headers=ADMIN).status_code == 200
+    row = client.get("/admin/integrations", headers=ADMIN).json()[0]
+    assert row["oauth"]["status"] == "connected"
+    # The refresh token moved with it: renewal still works from the vault.
+    _age(60)
+    job = _lease((project["id"], _employee(project)))[project["id"]]
+    assert job.billing_env["MCP_CRM_TOKEN"] == world.access_token
+    assert world.token_requests[-1]["grant_type"] == "refresh_token"

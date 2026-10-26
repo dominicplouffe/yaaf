@@ -338,3 +338,13 @@ def test_the_saving_is_real_and_is_measured(monkeypatch, sandbox_entry):
     assert withheld / whole > 0.33, (
         f"CEO-only tools are {100 * withheld / whole:.0f}% of the schema block; "
         "this gating was built when it was 48%")
+
+
+def test_integration_request_is_sent_only_when_something_is_on_offer(monkeypatch, sandbox_entry):
+    """Like data_fetch for a role with no source: a schema with nothing to ask
+    for is paid for on every call and answered with a 404 every time. The
+    lease names what is on offer (`integrations_offered`); nothing else sends it."""
+    assert "integration_request" not in {t.name for t in sandbox_entry.run_tools()}
+    monkeypatch.setattr(sandbox_entry, "PERMS", {"integrations_offered": [{"name": "hubspot"}]})
+    monkeypatch.setattr(sandbox_entry, "AGENT_KIND", "employee")
+    assert "integration_request" in {t.name for t in sandbox_entry.run_tools()}

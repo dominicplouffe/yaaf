@@ -351,3 +351,89 @@ def forget_integration(project_id: str, name: str, session: Session = Depends(db
         raise HTTPException(status_code=404, detail=f"this project never decided about {name}")
     _audit(session, project.id, "integration.forget", row.id, {"name": name})
     return {"forgotten": name}
+
+
+# ── promoting a project's data source ───────────────────────────────────────────
+
+
+class PromoteIn(BaseModel):
+    description: str = Field(default="", max_length=2000)
+    covers: list[str] = Field(default_factory=list, max_length=12)
+
+
+@router.post("/projects/{project_id}/mcp_servers/{name}/promote",
+             dependencies=[authority.INSTANCE_ADMIN])
+def promote_data_source(project_id: str, name: str, body: PromoteIn,
+                        session: Session = Depends(db)) -> dict:
+    """Turn one project's data source into an integration every project can
+    use, and keep this project using it for the same roles.
+
+    Everything moves, nothing is re-entered: the address, the token and an
+    OAuth connection's refresh token and client go from the project's secrets
+    into the integration's vault, ciphertext decrypted only to be re-encrypted
+    in the same process. The variables a run reads keep their names, so this
+    project's agents see the same tools on their next run, and any approval
+    already granted for one of its calls still names the same source.
+    """
+    from yaaf.core.models import Integration
+    from yaaf.server.api.admin import _audit as admin_audit
+    from yaaf.server.api.admin import _get_project, _oauth_secret_names
+
+    project = _get_project(session, project_id)
+    servers = (project.integrations or {}).get("mcp_servers", [])
+    entry = next((s for s in servers if s.get("name") == name), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="unknown data source")
+    if integrations.by_name(session, name) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"there is already an integration called {name!r}. Remove this "
+                   "project's own source and use that integration instead.")
+    source_home = mcp_oauth.ProjectHome(session, project)
+    url = source_home.read(entry.get("url_secret"))
+    if not url:
+        raise HTTPException(status_code=422, detail="the data source's address is missing — "
+                                                    "save it again first")
+    row = Integration(id=ids.new_id(ids.INTEGRATION), name=name, entry={}, vault={},
+                      covers=sorted({c.strip().lower() for c in body.covers if c.strip()}),
+                      description=body.description.strip(), created_at=utcnow())
+    session.add(row)
+    home = integrations.IntegrationHome(row)
+    moved = {k: v for k, v in entry.items() if k not in ("name", "roles")}
+    moved["url_secret"] = home.write(moved, integrations.URL_KEY, url, granted=False)
+    if entry.get("bearer_secret"):
+        token = source_home.read(entry["bearer_secret"])
+        if token:
+            moved["bearer_secret"] = home.write(moved, "token", token, granted=False)
+        else:
+            moved.pop("bearer_secret")
+    oauth = dict(entry.get("oauth") or {})
+    for field, key in (("refresh_secret", "oauth-refresh"),
+                       ("client_secret_secret", "oauth-client")):
+        if oauth.get(field):
+            value = source_home.read(oauth[field])
+            if value:
+                oauth[field] = home.write(moved, key, value, granted=False)
+            else:
+                oauth.pop(field)
+    if oauth:
+        moved["oauth"] = oauth
+    row.entry = moved
+
+    for secret_name in {entry.get("url_secret"), *_oauth_secret_names(entry)}:
+        if secret_name:
+            source_home.delete(secret_name)
+    project.integrations = {**(project.integrations or {}),
+                            "mcp_servers": [s for s in servers if s.get("name") != name]}
+    session.flush()
+    try:
+        integrations.attach(session, project, row, list(entry.get("roles") or []),
+                            decided_by=acting.stamp(),
+                            reason="promoted from this project's own data source")
+    except integrations.IntegrationError as exc:
+        raise _refused(exc) from exc
+    admin_audit(session, project.id, "mcp_server.promote", "integration", row.id,
+                {"name": name, "roles": entry.get("roles")})
+    return {"integration": integrations.view(row), "roles": list(entry.get("roles") or []),
+            "note": "Every project can now use it from Settings → Data sources; this one "
+                    "keeps it for the same teams."}

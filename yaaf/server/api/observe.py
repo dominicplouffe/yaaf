@@ -277,6 +277,7 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
         pending = [
             {"id": a.id, "title": a.title, "kind": a.kind, "amount_usd": a.amount_usd,
              "expires_at": aware(a.expires_at).isoformat(), "capacity": a.capacity,
+             "integration": a.integration,
              "undo": approval_undo(a.kind),
              # What silence decides on THIS project; the row said "denied"
              # on every project, including those whose rules approve.

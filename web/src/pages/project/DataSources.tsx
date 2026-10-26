@@ -15,6 +15,7 @@ import {
 } from "../../datasource";
 import { GrantChips, listJoin, TeamSwitches } from "../../grants";
 import { ProjectIntegrationsBlock } from "../../integrations";
+import { useMe } from "../../me";
 import { fmtWhen } from "../../hooks";
 import { grantOptions } from "../../roles";
 import { Drawer, RowMenu, SecretInput } from "../../ui";
@@ -126,6 +127,9 @@ export default function DataSources({
 }) {
   const sources = (dash.integrations["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
   const options = grantOptions(org);
+  const { me } = useMe();
+  // Bumped after a promotion so the integrations block below re-reads.
+  const [shared, setShared] = useState(0);
   const [drawn, setDrawn] = useState<Drawn | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -158,6 +162,29 @@ export default function DataSources({
       const check = await post<{ ok: boolean; detail: string }>(
         `/admin/projects/${projectId}/mcp_servers/${name}/check`, {});
       notice(`'${name}': ${check.detail}`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Lift this project's source into Settings → Integrations, keeping it
+      here for the same teams. Administrators only: it is then every project's. */
+  async function promote(name: string) {
+    const covers = window.prompt(
+      `Make '${name}' an integration every project can use. What is it for? ` +
+      "(a few words, comma-separated — e.g. crm, email marketing)");
+    if (covers === null) return;
+    setBusy(name);
+    setError(null);
+    try {
+      await post(`/admin/projects/${projectId}/mcp_servers/${name}/promote`, {
+        covers: covers.split(",").map((c) => c.trim()).filter(Boolean),
+      });
+      notice(`'${name}' is now a shared integration. This project keeps it for the same teams.`);
+      setShared((n) => n + 1);
+      reload();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -259,6 +286,8 @@ export default function DataSources({
                 <RowMenu label={`More for ${source.name}`} items={[
                   { label: "Test connection", icon: "refresh", onClick: () => test(source.name) },
                   { label: "Edit", icon: "edit", onClick: () => setDrawn({ kind: "edit", name: source.name }) },
+                  ...(me?.is_admin ? [{ label: "Share with every project…", icon: "plus" as const,
+                    onClick: () => promote(source.name) }] : []),
                   { label: "Remove…", icon: "trash", danger: true,
                     onClick: () => setDrawn({ kind: "edit", name: source.name, confirmDelete: true }) },
                 ]} />
@@ -272,7 +301,7 @@ export default function DataSources({
         })}
       </div>
 
-      <ProjectIntegrationsBlock projectId={projectId} org={org} notice={notice} />
+      <ProjectIntegrationsBlock key={shared} projectId={projectId} org={org} notice={notice} />
 
       {drawn && (
         <SourceDrawer

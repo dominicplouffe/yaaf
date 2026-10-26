@@ -901,8 +901,17 @@ export interface ApprovalRow {
       credential is also a tool_request, and carries none. */
   grant?: { source: string; tool: string; arguments_sha256: string } | null;
   capacity?: CapacityAsk | null;
+  /** An integration request: which one, for whom. Approving it is what
+      gives those roles its tools. */
+  integration?: IntegrationAsk | null;
   /** Your note, and the CEO's answer to it once given. */
   held_note?: HeldNote | null;
+}
+
+export interface IntegrationAsk {
+  integration_id: string;
+  name: string;
+  roles: string[];
 }
 
 /** The platform files "what happens without it" as the last line of every
@@ -950,6 +959,7 @@ export interface DeskApproval {
   amount_usd: number | null;
   expires_at: string;
   capacity?: CapacityAsk | null;
+  integration?: IntegrationAsk | null;
   /** Whether a yes can be undone, where the kind alone says (yaaf.server.rows). */
   undo?: string | null;
   /** What silence decides on this project. */

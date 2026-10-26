@@ -675,6 +675,33 @@
     "name": "hypothesis_kill"
   },
   {
+    "description": "Ask the chairman to use one of the company's integrations \u2014 a CRM, a task manager, an email platform an administrator connected for every project \u2014 that your role does not have yet (they are listed under INTEGRATIONS YOU DO NOT HAVE). Use it BEFORE you build, buy or sign up for something it already does. name is the integration; roles defaults to yours; why is what you would use it for; without is what the project does if he says no. Nothing mounts until he says yes; keep working meanwhile, and his answer wakes you.",
+    "input_schema": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "roles": {
+          "type": "array"
+        },
+        "why": {
+          "type": "string"
+        },
+        "without": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "roles",
+        "why",
+        "without"
+      ],
+      "type": "object"
+    },
+    "name": "integration_request"
+  },
+  {
     "description": "Your durable memory, in the standard memory-tool directory shape \u2014 over the SAME governed store as the memory_* tools, with the same rules (caps refuse adds; only a scope's curator edits, folds or deletes). Commands: view (path '/memories' lists entries; '/memories/<id>' shows one) \u00b7 create (path '/memories/<scope>/<subject>.md' where scope is project|team, file_text is the content) \u00b7 str_replace (path '/memories/<id>', old_str, new_str \u2014 edits one entry) \u00b7 delete (path '/memories/<id>') \u00b7 rename (path '/memories/<id>', new_path names the new subject). Check your memory directory at the start of a run; record only what will still be true next month.",
     "input_schema": {
       "properties": {

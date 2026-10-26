@@ -2333,6 +2333,13 @@ def approval_request(
         # nothing.
         raise Refusal("A brief is filed with brief_propose, which carries the goal and "
                       "standing orders his Confirm puts in force.", status_code=422)
+    if body.kind == ApprovalKind.INTEGRATION:
+        # The same shape: approving one is what attaches the integration, so it
+        # must name which one and for whom. Prose asking for "the CRM" would be
+        # approved and attach nothing.
+        raise Refusal("Ask for an integration with integration_request, which names it "
+                      "and the roles — his yes is what gives them its tools.",
+                      status_code=422)
     # An approval is a blocker on a human's desk with a default-deny clock on
     # it. Filing one for something the dial already put in the CEO's hands is
     # the one way an autonomous project can still stall on its chairman.
@@ -3176,6 +3183,99 @@ def capacity_request(
             "is the same as today. Plan for today's cap and treat a yes as upside."
         ),
     }
+
+
+class IntegrationRequestIn(BaseModel):
+    name: str = Field(min_length=1, max_length=32)
+    # Whose runs get its tools. Omitted, the asker's own role — the commonest
+    # case, and the one an employee can speak for.
+    roles: list[str] = Field(default_factory=list, max_length=10)
+    # What it would be used for, and what the project does without it. The
+    # second half is the one a request written from inside the work leaves out.
+    why: str = Field(min_length=20, max_length=2000)
+    without: str = Field(min_length=10, max_length=2000)
+
+
+@router.post("/integrations/request")
+def integration_request(
+    body: IntegrationRequestIn, ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    """Ask the chairman to use one of the company's integrations.
+
+    The administrator connected it for every project; this project has not
+    chosen it for this role. Any agent may ask — the one about to build an email
+    engine is usually the one who notices HubSpot — and nothing mounts until he
+    says yes: approving the request is what attaches it, from the next run.
+    """
+    from yaaf.core.models import IntegrationDecision
+    from yaaf.server import integrations
+
+    integration = integrations.by_name(session, body.name)
+    if integration is None:
+        names = ", ".join(i.name for i in integrations.catalog(session)) or "none"
+        raise Refusal(f"There is no integration called {body.name!r}. The company's "
+                      f"integrations: {names}.", status_code=404)
+    own_role = _agent_role_slug(session, ctx.agent)
+    roles = sorted(set(body.roles or ([own_role] if own_role else [])))
+    hired = integrations.roster(session, ctx.project.id)
+    if not roles or (strangers := sorted(set(roles) - hired)):
+        raise Refusal(f"Name roles this project runs ({', '.join(sorted(hired))}); "
+                      f"{', '.join(strangers) if roles else 'none'} would receive "
+                      f"{body.name} in no run at all.")
+    decision = next((d for d, i in integrations.decisions(session, ctx.project.id)
+                     if i.id == integration.id), None)
+    have = set(decision.roles or []) if decision is not None \
+        and decision.decision == IntegrationDecision.USE else set()
+    if set(roles) <= have:
+        raise Refusal(f"{body.name} is already yours: {', '.join(sorted(have))} get its "
+                      f"tools as mcp__{body.name}__*. Use them.")
+    pending = session.execute(select(Approval).where(
+        Approval.project_id == ctx.project.id, Approval.kind == ApprovalKind.INTEGRATION,
+        Approval.status == ApprovalStatus.PENDING)).scalars().all()
+    if any((a.integration or {}).get("integration_id") == integration.id for a in pending):
+        raise Refusal(f"A request for {body.name} is already on the chairman's desk. "
+                      "Keep working without it; his answer wakes you.", status_code=409)
+
+    roles = sorted(have | set(roles))
+    detail = [f"Use {body.name} ({integration.description or 'an integration'}) for "
+              f"{', '.join(roles)}.",
+              f"What for: {body.why.strip()}"]
+    if integration.covers:
+        detail.append(f"It is the company's tool for {', '.join(integration.covers)}.")
+    if decision is not None and decision.decision == IntegrationDecision.DECLINE:
+        detail.append(f"NOTE: this project declined it before — "
+                      f"{decision.reason or 'no reason was given'}.")
+    tools_free = (integration.entry or {}).get("tools")
+    if tools_free is not None:
+        detail.append(f"Its freely callable tools: {', '.join(tools_free) or 'none'}; "
+                      "every other call still needs your approval, one at a time.")
+    detail.append(f"What happens without it: {body.without.strip()}")
+    approval = _file_approval(session, ctx, ApprovalKind.INTEGRATION,
+                              f"Use {body.name} for {', '.join(roles)}", "\n".join(detail))
+    # Structured, so approving it is what attaches it.
+    approval.integration = {"integration_id": integration.id, "name": integration.name,
+                            "roles": roles}
+    session.flush()
+    cons = effective(session, ctx.project.id)
+    chairman_notify(
+        session, ctx.project, f"Your agents ask to use {body.name}",
+        "\n".join(detail) + "\n\n" + inbox_line(approval.id),
+        kind="approval_requested", data={"approval": approval_row(approval)},
+        attention=Attention.ACTION,
+    )
+    return {"approval_id": approval.id, "integration": body.name, "roles": roles,
+            "note": ("Filed. Nothing is mounted yet: keep working without it. His yes "
+                     f"gives {', '.join(roles)} its tools from the next run; unanswered "
+                     f"within {cons.approval_timeout_days} days it expires to no.")}
+
+
+def _agent_role_slug(session: Session, agent) -> str | None:
+    from yaaf.server.contextpack import role_version_for
+
+    version = role_version_for(session, agent)
+    role = session.get(Role, version.role_id) if version is not None else None
+    return role.slug if role is not None else None
 
 
 class BriefIn(BaseModel):

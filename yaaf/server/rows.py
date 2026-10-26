@@ -20,6 +20,7 @@ _UNDO = {
     "spend": "No — a purchase cannot be taken back once it is made.",
     "capacity": "Yes — lower it again any time in Settings → Rules in force.",
     "brief": "Yes — edit the brief in Settings, or confirm a new one.",
+    "integration": "Yes — stop using it any time in Settings → Data sources.",
 }
 
 
@@ -46,6 +47,8 @@ def approval_row(a: Approval, *, outcome: dict | None = None,
         # A brief's proposed text — the goal, the standing orders, what is retired.
         "brief": a.brief,
         "capacity": a.capacity,
+        # An integration request's {integration_id, name, roles}.
+        "integration": a.integration,
         "undo": approval_undo(a.kind),
         # What the spent call was observed to do, filed by the agent afterwards.
         "outcome": outcome,

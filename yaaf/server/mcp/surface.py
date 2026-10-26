@@ -197,6 +197,9 @@ WITHHELD = {
     "GET /admin/integrations/{name}/address":
         "reading a stored address back is a reveal, audited for the edit form; a "
         "model has no form to fill.",
+    "POST /admin/projects/{project_id}/mcp_servers/{name}/promote":
+        "lifts one project's source into the list every project draws on — an "
+        "administrator's decision about what the whole box may reach.",
     "POST /admin/integrations/probe":
         "the administrator's form's first step; it stores nothing and decides nothing.",
     "POST /admin/integrations/{name}/check":

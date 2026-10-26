@@ -4076,6 +4076,8 @@ def decide_approval(
         return _decide_brief(session, approval, project, body)
     if approval.kind == ApprovalKind.CAPACITY and approval.capacity:
         return _decide_capacity(session, approval, project, body)
+    if approval.kind == ApprovalKind.INTEGRATION and approval.integration:
+        return _decide_integration(session, approval, project, body)
     _apply_decision(
         session, approval, project, body.approve, body.note,
         notice_body=(f"Approval '{approval.title}' was "
@@ -4129,6 +4131,43 @@ def _decide_brief(session: Session, approval: Approval, project: Project,
                    "✅ Brief confirmed. Every agent works from it from its next run"
                    + (", with your edits" if edited else "") + ".")
     return {"id": approval.id, "status": approval.status, "brief": applied}
+
+
+def _decide_integration(session: Session, approval: Approval, project: Project,
+                        body: ApprovalDecision) -> dict:
+    """Approving a request to use an integration IS using it: the roles it
+    names get its tools from their next run. Declining changes nothing — the
+    project keeps whatever it had decided before, which may be nothing."""
+    from yaaf.core.models import Integration
+    from yaaf.server import integrations
+    from yaaf.server.notify import boardroom_line
+
+    ask = approval.integration or {}
+    name = ask.get("name", "the integration")
+    if not body.approve:
+        _apply_decision(session, approval, project, False, body.note,
+                        notice_body=(f"The chairman did not give you {name}"
+                                     + (f": {body.note}" if body.note else ".")
+                                     + " Work without it — and do not rebuild what it does "
+                                     "without saying so."))
+        return {"id": approval.id, "status": approval.status}
+    integration = session.get(Integration, ask.get("integration_id") or "")
+    if integration is None:
+        raise HTTPException(status_code=409, detail=f"{name} was removed from Settings → "
+                                                    "Integrations since this was asked")
+    try:
+        integrations.attach(session, project, integration, list(ask.get("roles") or []),
+                            decided_by=acting.stamp(), reason=f"asked for: {approval.title}")
+    except integrations.IntegrationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    _apply_decision(session, approval, project, True, body.note,
+                    notice_body=(f"You have {name}: {', '.join(ask.get('roles') or [])} get "
+                                 f"its tools as mcp__{name}__* from the next run"
+                                 + (f". {body.note}" if body.note else ".")),
+                    audit_detail={"integration": name, "roles": ask.get("roles")})
+    boardroom_line(session, project.id,
+                   f"🔌 {name} is now in use for {', '.join(ask.get('roles') or [])}.")
+    return {"id": approval.id, "status": approval.status}
 
 
 def _decide_capacity(session: Session, approval: Approval, project: Project,

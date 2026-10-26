@@ -50,6 +50,7 @@ from yaaf.runner.daemon import (
     _merge_project_data_sources,
     _mint_secret_id,
     _mint_token,
+    _offered_prompt,
     _pin_seat,
     _provider_spec,
     _role_secret_env,
@@ -454,6 +455,7 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     # does, so it gets the same paragraph describing them.
     source_specs, source_env = _merge_project_data_sources(session, project, role_version, job)
     job.system_prompt += _data_source_prompt(source_specs, seat.harness)
+    job.system_prompt += _offered_prompt(job.tool_permissions.get("integrations_offered"))
     role_secrets = _role_secret_env(session, project, role_version)
     # The resident CEO knows its credentials the same way a run does.
     from yaaf.core.naming import announced_credentials

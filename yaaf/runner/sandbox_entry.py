@@ -1057,6 +1057,22 @@ async def t_accounts_list(args):
 
 
 @tool(
+    "integration_request",
+    "Ask the chairman to use one of the company's integrations — a CRM, a task "
+    "manager, an email platform an administrator connected for every project — that "
+    "your role does not have yet (they are listed under INTEGRATIONS YOU DO NOT HAVE). "
+    "Use it BEFORE you build, buy or sign up for something it already does. name is "
+    "the integration; roles defaults to yours; why is what you would use it for; "
+    "without is what the project does if he says no. Nothing mounts until he says yes; "
+    "keep working meanwhile, and his answer wakes you.",
+    {"name": str, "roles": list, "why": str, "without": str},
+)
+async def t_integration_request(args):
+    payload = {k: v for k, v in args.items() if v not in (None, "", [])}
+    return _text(_call("POST", "/agent/integrations/request", payload))
+
+
+@tool(
     "capacity_request",
     "CEO only. Put a case to the chairman for MORE of a capacity dial — runs a day, "
     "runs an hour, concurrency, queue depth, the month's money. This is the verb for "
@@ -1790,6 +1806,11 @@ def run_tools() -> list:
     """
     tools = [t for t in ALL_TOOLS
              if AGENT_KIND == "ceo" or t.name not in CEO_ONLY_TOOLS]
+    if PERMS.get("integrations_offered"):
+        # Only when there is something to ask for: the schema is paid for on
+        # every call, and the endpoint answers a run with nothing on offer
+        # with a 404 every time.
+        tools.append(t_integration_request)
     specs = _data_source_specs()
     if not specs:
         return tools

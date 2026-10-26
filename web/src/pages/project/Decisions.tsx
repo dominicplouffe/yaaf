@@ -23,6 +23,8 @@ function whyYours(kind: string): string {
       return "An agent is asking for a capability it does not have. Only you can grant one.";
     case "capacity":
       return "The project is asking for more room to work — runs, concurrency, queue depth or money. It is the one kind where the CEO argues for itself, so it stays yours at every autonomy setting. Saying yes raises the dial at once. It is not blocking: the project keeps working at the cap it has, and if you say nothing the cap simply stays.";
+    case "integration":
+      return "An agent is asking to use one of the company's integrations — a tool an administrator connected for every project, which this project does not use for these roles yet. Saying yes gives them its tools from their next run, under the administrator's sign-in and allowed tools; you can stop using it any time in Settings → Data sources.";
     case "brief":
       return "Only you decide what this project is for. Until you confirm, every agent keeps working from the brief in force; once you do, this one replaces it in every agent's instructions, on every run.";
     case "assist":

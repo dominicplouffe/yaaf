@@ -171,6 +171,27 @@ def available(session: Session, project_id: str) -> list[tuple[Integration, Proj
             if decided.get(i.id) is None or decided[i.id].decision != IntegrationDecision.USE]
 
 
+def offered(session: Session, project_id: str, role_slug: str | None) -> list[dict]:
+    """What a run on this role could ask for: every integration this role does
+    not get — undecided, declined (with the reason), or used by other roles.
+    Names, purposes and the decline; never an address."""
+    decided = {i.id: d for d, i in decisions(session, project_id)}
+    out = []
+    for integration in catalog(session):
+        decision = decided.get(integration.id)
+        if (decision is not None and decision.decision == IntegrationDecision.USE
+                and role_slug in (decision.roles or [])):
+            continue
+        row = {"name": integration.name, "description": integration.description or "",
+               "covers": list(integration.covers or [])}
+        if decision is not None and decision.decision == IntegrationDecision.DECLINE:
+            row["declined"] = decision.reason or "no reason given"
+        elif decision is not None:
+            row["used_by"] = list(decision.roles or [])
+        out.append(row)
+    return out
+
+
 def view(integration: Integration, *, using: list[Project] | None = None) -> dict:
     """What a screen or a tool may see. Never the vault, never a value."""
     entry = integration.entry or {}

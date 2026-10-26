@@ -78,6 +78,7 @@ function whyYours(kind: string): string {
   if (kind.includes("legal")) return "Anything with legal weight is yours by rule, at any autonomy setting.";
   if (kind.includes("tool")) return "A capability the project does not have — you hold the values.";
   if (kind.includes("assist") || kind.includes("to do")) return "A step only a human can take. Press Done when it is done. The platform hands these over, never defeats them.";
+  if (kind.includes("integration")) return "One of the company's integrations, for this project. Saying yes gives the named roles its tools from their next run.";
   if (kind.includes("capacity")) return "More room for the project to work. Saying yes raises the dial at once; saying nothing keeps it.";
   if (kind.includes("owner")) return "The CEO judged this yours rather than its own.";
   return "The constitution routes this kind of decision to you.";

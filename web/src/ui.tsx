@@ -1028,6 +1028,7 @@ export interface Decidable {
   title?: string;
   amount_usd?: number | null;
   capacity?: { from: number; to: number } | null;
+  integration?: { name: string } | null;
   grant?: unknown;
 }
 
@@ -1052,6 +1053,8 @@ export function decideLabels(a: Decidable): {
             yesHint: "Tell the CEO where to find it", yesPlaceholder: "e.g. it's in the aws-key credential" };
     case "brief":
       return withNote("Confirm", "Not yet");
+    case "integration":
+      return withNote(a.integration ? `Use ${a.integration.name}` : "Approve", "Not now");
     case "assist":
       return { yes: "Done", no: "Not done", yesMore: "Done, with a reply…",
         yesHint: "Send the CEO a fill price, a code", yesPlaceholder: "e.g. filled at $48.15" };

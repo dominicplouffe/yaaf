@@ -1638,6 +1638,21 @@ def integration_add(
         _show(client.post("/admin/integrations", json=body))
 
 
+@integration.command("promote")
+def integration_promote(
+    project: str,
+    source: str,
+    description: str = typer.Option("", "--description"),
+    covers: str = typer.Option(None, "--covers", help="What it is for, comma-separated"),
+) -> None:
+    """Make one project's data source an integration every project can use.
+    The project keeps it for the same roles; nothing is re-entered."""
+    with _client() as client:
+        _show(client.post(
+            f"/admin/projects/{_resolve_project(client, project)}/mcp_servers/{source}/promote",
+            json={"description": description, "covers": _csv(covers)}))
+
+
 @integration.command("check")
 def integration_check(name: str) -> None:
     """Speak MCP to it now and report its tools."""
