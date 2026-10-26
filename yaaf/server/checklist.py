@@ -77,9 +77,15 @@ def _done(session: Session, project: Project, step: Step) -> tuple[bool, str]:
                           if orders else "The goal is confirmed.")
         return False, "Add the standing orders every agent reads under the goal."
     if step.key == "sources":
+        from yaaf.server import integrations as shared_sources
+
         sources = integrations.get("mcp_servers") or []
-        if sources:
-            return True, f"{len(sources)} connected."
+        shared = shared_sources.used(session, project.id)
+        if sources or shared:
+            return True, " and ".join(filter(None, [
+                f"{len(sources)} connected" if sources else "",
+                f"{len(shared)} shared integration{'s' if len(shared) != 1 else ''} in use"
+                if shared else ""])) + "."
         return False, "Where agents read from: a database, an API, a folder of files."
     if step.key == "secrets":
         asked = session.execute(

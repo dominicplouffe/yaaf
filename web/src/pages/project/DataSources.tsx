@@ -14,6 +14,7 @@ import {
   SourceAuth,
 } from "../../datasource";
 import { GrantChips, listJoin, TeamSwitches } from "../../grants";
+import { ProjectIntegrationsBlock } from "../../integrations";
 import { fmtWhen } from "../../hooks";
 import { grantOptions } from "../../roles";
 import { Drawer, RowMenu, SecretInput } from "../../ui";
@@ -270,6 +271,8 @@ export default function DataSources({
           );
         })}
       </div>
+
+      <ProjectIntegrationsBlock projectId={projectId} org={org} notice={notice} />
 
       {drawn && (
         <SourceDrawer

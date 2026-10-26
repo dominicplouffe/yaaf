@@ -666,6 +666,55 @@ export type SourceState =
   | "ok" | "unauthorized" | "not_found" | "not_mcp" | "no_tools" | "blocked" | "timeout"
   | "unreachable" | "needs_signin" | "needs_reauth";
 
+/** One of the administrator's integrations: an MCP server connected once for
+    every project (GET /admin/integrations). Never a value — the address and
+    token stay in the integration's vault. `used_by` only for administrators. */
+export interface Integration {
+  id: string;
+  name: string;
+  description: string;
+  /** What it is for ("crm", "task management") — what the Founder matches a
+      goal against, and what an agent reads before building the same thing. */
+  covers: string[];
+  url_host: string;
+  url_port: number;
+  access: "inline" | "bulk";
+  auth: "none" | "bearer" | "oauth";
+  tools?: string[] | null;
+  last_check?: McpServerEntry["last_check"];
+  oauth?: McpServerEntry["oauth"] | null;
+  /** How tasks are written to it, when it is a task manager a project may
+      mirror its board into. Null when it is not one. */
+  task_mirror?: TaskMirrorConfig | null;
+  created_at: string | null;
+  used_by?: { id: string; slug: string; name: string }[];
+}
+
+export interface TaskMirrorConfig {
+  create_tool: string;
+  create_arguments: Record<string, unknown>;
+  id_path: string;
+  update_tool?: string | null;
+  update_arguments?: Record<string, unknown> | null;
+}
+
+/** One project's decision about one integration. */
+export interface IntegrationDecision extends Integration {
+  decision: "use" | "decline";
+  roles: string[];
+  reason: string | null;
+  mirror_tasks: boolean;
+  decided_by: string | null;
+  decided_at: string | null;
+}
+
+/** GET /admin/projects/{id}/integrations. */
+export interface ProjectIntegrations {
+  used: IntegrationDecision[];
+  declined: IntegrationDecision[];
+  undecided: Integration[];
+}
+
 /** One row of GET /admin/secrets. Values never ride it — except, for someone
     who could reveal them anyway, a plain value whole and a secret's last four. */
 export interface SecretRow {
@@ -1493,6 +1542,15 @@ export interface ProjectBundle {
       harness_overrides?: Record<string, string>;
     }[];
     solo: boolean;
+    /** The administrator's integrations, by name, as the project decided about
+        them. Absent from files exported before integrations existed. */
+    integration_decisions?: {
+      name: string;
+      use: boolean;
+      roles: string[];
+      reason?: string | null;
+      mirror_tasks?: boolean;
+    }[];
   };
   roles: BundleRole[];
   secrets: {

@@ -23,6 +23,7 @@ import {
   sourceReady,
 } from "../datasource";
 import { TeamSwitches } from "../grants";
+import { choicesBody, choicesFromBundle, FoundingChoices, FoundingIntegrations } from "../integrations";
 import { CeoPicker, HirePanel, needsOf, roughMonthly } from "../roles";
 import { clip, CredentialValue, SecretInput } from "../ui";
 import type { FounderStatus, PresetCard } from "./StartProject";
@@ -230,6 +231,8 @@ export default function NewProject() {
   ]);
   const [credentials, setCredentials] = useState<CredentialDraft[]>([]);
   const [dataSources, setDataSources] = useState<DataSourceDraft[]>([]);
+  // The administrator's integrations, as this project decides about them.
+  const [integrationChoices, setIntegrationChoices] = useState<FoundingChoices>({});
 
   // Constitution knobs surfaced in the wizard — a card fills them, every one
   // stays editable, and all of them can change later in Settings.
@@ -621,6 +624,7 @@ export default function NewProject() {
         );
       }
       setRuntime(String(p.integrations["runtime"] ?? "agent_sdk"));
+      setIntegrationChoices(choicesFromBundle(p.integration_decisions));
       setControlledDomains((p.controlled_domains ?? []).join(", "));
       setSolo(Boolean(p.solo));
       // An Explore window that is still open carries; a spent one would be
@@ -811,6 +815,10 @@ export default function NewProject() {
     } else roleOptions.push({ slug: team.role_slug, teams: [label] });
   }
 
+  // The CEO is a grant target for an integration too: a CEO with the CRM can
+  // read the pipeline it is planning against.
+  const grantCeo = bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
+
   // A setup file carries its data sources' wiring but not their addresses —
   // those are secrets, and secrets stay behind. So some rows in the credential
   // list below are not opaque keys at all: they are URLs the sandbox hands
@@ -935,6 +943,7 @@ export default function NewProject() {
               : autonomyPresets.find((p) => p.value === autonomy)?.constitution ?? {}),
           },
           integrations: { ...(bundle?.project.integrations ?? {}), runtime },
+          integration_decisions: choicesBody(integrationChoices),
           ...(bundle?.project.github_repo ? { github_repo: bundle.project.github_repo } : {}),
           ceo_role_slug: chosenCeo,
           ceo_name: bundle?.project.ceo_name ?? "CEO",
@@ -2302,6 +2311,16 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           + Add credential
         </button>
         </details>
+
+        <FoundingIntegrations
+          goal={goal}
+          roleOptions={[
+            ...(grantCeo ? [{ slug: grantCeo, teams: ["CEO"] }] : []),
+            ...roleOptions.filter((o) => o.slug !== grantCeo),
+          ]}
+          value={integrationChoices}
+          onChange={setIntegrationChoices}
+        />
 
         <details className="opt-sec" open={dataSources.length > 0}>
         <summary><h2>Data sources (optional)</h2>

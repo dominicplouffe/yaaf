@@ -330,6 +330,67 @@ def _expires_soon(expires_at: str | None, margin_s: int) -> bool:
     return deadline - utcnow() < timedelta(seconds=margin_s)
 
 
+class SourceHome:
+    """Where one OAuth-connected source keeps its tokens and its entry.
+
+    The ladder above is the same for a project's data source and for an
+    integration the administrator connected for every project; only the
+    storage differs. A project source keeps its tokens as that project's
+    secrets, granted to the roles that mount it; an integration keeps them in
+    its own encrypted vault, granted to no role at all, because a run receives
+    them only through an attachment. One renewal path for both is what keeps
+    the two from drifting on rotation, expiry and needs_reauth.
+    """
+
+    #: What the sign-in pages call it.
+    noun = "data source"
+    #: The project an audit row belongs to, None above every project.
+    project_id: str | None = None
+
+    def key(self, entry: dict, part: str) -> str:
+        """The name a part ("token", "oauth-refresh", "oauth-client") is stored under."""
+        raise NotImplementedError
+
+    def read(self, name: str | None) -> str | None:
+        raise NotImplementedError
+
+    def write(self, entry: dict, name: str, value: str, *, granted: bool) -> str:
+        raise NotImplementedError
+
+    def delete(self, name: str) -> None:
+        raise NotImplementedError
+
+    def persist(self, entry: dict) -> None:
+        raise NotImplementedError
+
+
+class ProjectHome(SourceHome):
+    def __init__(self, session: Session, project: Project):
+        self.session, self.project, self.project_id = session, project, project.id
+
+    def key(self, entry: dict, part: str) -> str:
+        return f"mcp-{entry.get('name', '')}-{part}"
+
+    def read(self, name: str | None) -> str | None:
+        from yaaf.server.api.admin import _project_secret_value
+
+        return _project_secret_value(self.session, self.project.id, name) if name else None
+
+    def write(self, entry: dict, name: str, value: str, *, granted: bool) -> str:
+        from yaaf.server.api.admin import _upsert_project_secret
+
+        roles = list(entry.get("roles") or []) if granted else []
+        return _upsert_project_secret(self.session, self.project.id, name, value, roles).name
+
+    def delete(self, name: str) -> None:
+        from yaaf.server.api.admin import _delete_project_secret
+
+        _delete_project_secret(self.session, self.project.id, name)
+
+    def persist(self, entry: dict) -> None:
+        persist_entry(self.project, entry)
+
+
 def persist_entry(project: Project, entry: dict) -> None:
     """Write the (mutated) source entry back so it actually reaches the
     database. Reassigning the attribute is not enough on its own: `entry` is
@@ -346,26 +407,28 @@ def persist_entry(project: Project, entry: dict) -> None:
 
 def ensure_fresh_token(session: Session, project: Project, entry: dict, *,
                        margin_s: int = REFRESH_MARGIN_S, transport=None) -> str | None:
+    """A project data source's current access token (see `ensure_fresh`)."""
+    return ensure_fresh(ProjectHome(session, project), entry, margin_s=margin_s,
+                        transport=transport)
+
+
+def ensure_fresh(home: SourceHome, entry: dict, *, margin_s: int = REFRESH_MARGIN_S,
+                 transport=None) -> str | None:
     """The access token this source should present right now — refreshed and
     re-stored when it is close to expiry, stale when renewal is impossible,
     None only when the source was never connected. Both callers (the health
     check and the lease path) get the same behavior: a broken renewal marks
     the source needs_reauth and keeps the old token mounted, so the failure
     shows up as a named auth error instead of a silently absent source."""
-    from yaaf.server.api.admin import _project_secret_value
-
     if entry.get("auth") != "oauth":
         return None
     oauth = dict(entry.get("oauth") or {})
     name = entry.get("name", "")
-    access = None
-    if entry.get("bearer_secret"):
-        access = _project_secret_value(session, project.id, entry["bearer_secret"])
+    access = home.read(entry.get("bearer_secret"))
     if access and not _expires_soon(oauth.get("expires_at"), margin_s):
         return access
 
-    refresh_name = oauth.get("refresh_secret")
-    refresh = _project_secret_value(session, project.id, refresh_name) if refresh_name else None
+    refresh = home.read(oauth.get("refresh_secret"))
     if not refresh or not oauth.get("token_endpoint") or not oauth.get("client_id"):
         if access is not None:
             # Expiring, and nothing to renew with: the provider issued no
@@ -373,53 +436,110 @@ def ensure_fresh_token(session: Session, project: Project, entry: dict, *,
             oauth["status"] = "needs_reauth"
             oauth["error"] = "the access token is expiring and the provider issued no refresh token"
             entry["oauth"] = oauth
-            persist_entry(project, entry)
+            home.persist(entry)
         return access
 
-    client_secret = None
-    if oauth.get("client_secret_secret"):
-        client_secret = _project_secret_value(session, project.id, oauth["client_secret_secret"])
+    client_secret = home.read(oauth.get("client_secret_secret"))
     try:
         tokens = refresh_tokens(oauth["token_endpoint"], refresh, oauth["client_id"],
                                 client_secret, oauth.get("resource"), transport=transport)
     except OAuthSetupError as exc:
-        log.warning("token refresh failed for data source %s/%s: %s",
-                    project.id, name, exc)
+        log.warning("token refresh failed for %s %s/%s: %s",
+                    home.noun, home.project_id, name, exc)
         oauth["status"] = "needs_reauth"
         oauth["error"] = str(exc)
         entry["oauth"] = oauth
-        persist_entry(project, entry)
+        home.persist(entry)
         return access
 
     entry["oauth"] = oauth
-    store_tokens(session, project, entry, tokens)
+    store(home, entry, tokens)
     return tokens["access_token"]
 
 
 def store_tokens(session: Session, project: Project, entry: dict, tokens: dict) -> None:
+    store(ProjectHome(session, project), entry, tokens)
+
+
+def store(home: SourceHome, entry: dict, tokens: dict) -> None:
     """The one place freshly-minted OAuth tokens land — the sign-in callback and
     every later refresh both call it, so the access token's role grants, the
     refresh secret's name, and the connected/expires_at/obtained_at bookkeeping
     can never drift between the two paths. The access token reuses the source's
-    ordinary mcp-<name>-token secret (so the sandbox path is unchanged); the
-    refresh token is stored ungranted (role_scopes=[]) and never injected."""
-    from yaaf.server.api.admin import _upsert_project_secret
-
-    name = entry.get("name", "")
+    ordinary token slot (so the sandbox path is unchanged); the refresh token is
+    stored ungranted and never injected."""
     oauth = dict(entry.get("oauth") or {})
-    token_secret = _upsert_project_secret(
-        session, project.id, f"mcp-{name}-token", tokens["access_token"],
-        list(entry.get("roles") or []))
-    entry["bearer_secret"] = token_secret.name
+    entry["bearer_secret"] = home.write(entry, home.key(entry, "token"),
+                                        tokens["access_token"], granted=True)
     if tokens.get("refresh_token"):
         # Rotation: the old refresh token died the moment this one was issued.
-        refresh_name = oauth.get("refresh_secret") or f"mcp-{name}-oauth-refresh"
-        _upsert_project_secret(session, project.id, refresh_name,
-                               tokens["refresh_token"], [])
+        refresh_name = oauth.get("refresh_secret") or home.key(entry, "oauth-refresh")
+        home.write(entry, refresh_name, tokens["refresh_token"], granted=False)
         oauth["refresh_secret"] = refresh_name
     oauth["status"] = "connected"
     oauth["expires_at"] = tokens.get("expires_at")
     oauth["obtained_at"] = utcnow().isoformat()
     oauth.pop("error", None)
     entry["oauth"] = oauth
-    persist_entry(project, entry)
+    home.persist(entry)
+
+
+def begin_sign_in(home: SourceHome, entry: dict, redirect_uri: str, *,
+                  by_user_id: str | None) -> str:
+    """Discover the authorization server, register a client there (or reuse one
+    the chairman pasted), and mint the URL his browser must visit. The `state`
+    in that URL is single-use and 256 bits — it is the whole credential the
+    unauthenticated callback route later redeems, which is why a fresh call
+    here voids any earlier half-finished sign-in."""
+    import secrets as pysecrets
+
+    from yaaf.core.crypto import encrypt
+
+    url = home.read(entry.get("url_secret"))
+    if not url:
+        raise OAuthSetupError(f"the {home.noun}'s address is missing — save it again")
+    oauth = dict(entry.get("oauth") or {})
+    try:
+        disc = discover(url)
+        # A client we registered is bound to the callback it named. When this
+        # install's public origin moves, that client is refused with
+        # invalid_redirect forever, so register afresh. A pasted client
+        # (no registered_redirect_uri) is the chairman's and is never replaced.
+        registered_for = oauth.get("registered_redirect_uri")
+        if registered_for and registered_for != redirect_uri:
+            oauth.pop("client_id", None)
+            if oauth.get("client_secret_secret"):
+                home.delete(oauth.pop("client_secret_secret"))
+        if not oauth.get("client_id"):
+            client_id, client_secret = register_client(disc, redirect_uri)
+            oauth["client_id"] = client_id
+            oauth["registered_redirect_uri"] = redirect_uri
+            if client_secret:
+                oauth["client_secret_secret"] = home.write(
+                    entry, home.key(entry, "oauth-client"), client_secret, granted=False)
+    except OAuthSetupError as exc:
+        entry["oauth"] = {**oauth, "error": str(exc)}
+        home.persist(entry)
+        raise
+
+    state = pysecrets.token_urlsafe(32)
+    verifier = pysecrets.token_urlsafe(64)
+    oauth.update({
+        "status": "pending",
+        "authorization_endpoint": disc.authorization_endpoint,
+        "token_endpoint": disc.token_endpoint,
+        "registration_endpoint": disc.registration_endpoint,
+        "resource": disc.resource,
+        # The PKCE verifier is a secret with a fifteen-minute life; it still
+        # never touches the config JSON in plaintext.
+        "pending": {"state": state, "verifier_cipher": encrypt(verifier),
+                    "redirect_uri": redirect_uri, "created_at": utcnow().isoformat(),
+                    # Who pressed Connect: the callback arrives with no
+                    # credential but a state, and its record should name them.
+                    "by_user_id": by_user_id},
+    })
+    oauth.pop("error", None)
+    entry["oauth"] = oauth
+    home.persist(entry)
+    return build_authorize_url(disc, oauth["client_id"], redirect_uri, state, verifier,
+                               oauth.get("scope"))

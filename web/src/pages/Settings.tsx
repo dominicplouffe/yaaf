@@ -31,6 +31,7 @@ import {
 } from "../providers";
 import { providerStatus, Readiness, READINESS } from "../readiness";
 import { ModelsSection } from "../settingsModels";
+import { IntegrationsSection } from "../integrations";
 import { SecretInput } from "../ui";
 
 interface PlatformSettings {
@@ -623,7 +624,7 @@ function WebSearchSection({ reload: reloadRail }: { reload: () => void }) {
   </>;
 }
 
-type SectionKey = "providers" | "prices" | "models" | "search" | "founder" | "slack" | "people" | "account";
+type SectionKey = "providers" | "prices" | "models" | "search" | "integrations" | "founder" | "slack" | "people" | "account";
 
 const SECTIONS: ({ group: string; admin: boolean } | { key: SectionKey; label: string; admin: boolean })[] = [
   { group: "This box", admin: true },
@@ -631,6 +632,7 @@ const SECTIONS: ({ group: string; admin: boolean } | { key: SectionKey; label: s
   { key: "models", label: "Models", admin: true },
   { key: "prices", label: "Model prices", admin: true },
   { key: "search", label: "Web search", admin: true },
+  { key: "integrations", label: "Integrations", admin: true },
   { key: "founder", label: "Founder", admin: true },
   { key: "slack", label: "Slack", admin: true },
   { key: "people", label: "People", admin: true },
@@ -672,6 +674,7 @@ function railNote(
   if (key === "prices") return { text: "what models cost", tone: "" };
   if (key === "models") return { text: "what each class runs on", tone: "" };
   if (key === "search") return { text: "for providers that cannot", tone: "" };
+  if (key === "integrations") return { text: "for every project", tone: "" };
   if (key === "founder") {
     const founder = s.platform ?? s.anthropic;
     return founder.configured
@@ -775,6 +778,7 @@ export default function Settings() {
               {section === "prices" && <ModelPrices />}
               {section === "models" && <ModelsSection />}
               {section === "search" && <WebSearchSection reload={reload} />}
+              {section === "integrations" && <IntegrationsSection />}
               {section === "founder" && settings && (
                 <>
                   <h2 style={{ marginTop: 0 }}>The key the Founder drafts on</h2>

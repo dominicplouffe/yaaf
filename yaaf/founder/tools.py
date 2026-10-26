@@ -1,8 +1,8 @@
 """What the Founder can do besides talk.
 
-Eight tools, and the split between them is deliberate. Four are *lookups*
+Nine tools, and the split between them is deliberate. Five are *lookups*
 over things this install already has (the role library, the crew library, the
-credentials, the outside world). Two are *judgement* delegated to something
+credentials, the integrations the company already pays for, the outside world). Two are *judgement* delegated to something
 that judges better than a single pass of prose can — the goal grade and the
 fire drill. One, `propose_bundle`, is the deliverable. And one, `ask`, is the
 interview: the questions still open, each with the Founder's answer already
@@ -45,9 +45,10 @@ FETCH_TIMEOUT_S = 20.0
 SERVER = "founder"
 
 TOOL_NAMES = ("search_roles", "search_crews", "read_source",
-              "grade_goal", "list_credentials", "propose_bundle", "rehearse", "ask")
+              "grade_goal", "list_credentials", "list_integrations", "propose_bundle",
+              "rehearse", "ask")
 
-#: What the CLI is allowed to run. Only these eight — no Bash, no file writes,
+#: What the CLI is allowed to run. Only these nine — no Bash, no file writes,
 #: no web tools of its own. The Founder drafts a project and asks about it; it
 #: does not act on the world, and the one tool that touches the outside
 #: (`read_source`) reads and labels what it reads as data.
@@ -164,6 +165,37 @@ def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
              "provider's model needs that provider paid too: put {provider: id} in the "
              "draft's `credentials`, under the same rule — one per provider, or ask.")
     return {"credentials": rows, "note": note}
+
+
+def list_integrations(session: Session) -> dict:
+    """The MCP servers the administrator connected for every project — the CRM,
+    the task manager, the docs the company already pays for — and what each is
+    for. Never an address or a value.
+
+    It exists because a project told nothing about them rebuilds them: an email
+    campaign engine next to the HubSpot already paid for, a task board next to
+    the Trello everybody reads. The Founder is the one moment every project
+    passes through, so it is where each one gets decided — and the draft is
+    refused until each one is (`integration_problems`).
+    """
+    from yaaf.server import integrations
+
+    rows = [{"name": i.name, "description": i.description or "",
+             "covers": list(i.covers or []), "task_manager": bool(i.task_mirror),
+             "free_tools": (i.entry or {}).get("tools")}
+            for i in integrations.catalog(session)]
+    if not rows:
+        return {"integrations": [], "note": "None on this install. Leave "
+                "integration_decisions out of the draft."}
+    return {"integrations": rows, "note": (
+        "Every one of these must be decided in the draft's `integration_decisions`: "
+        "{name, use: true, roles: [role slugs on this roster]} or {name, use: false, "
+        "reason}. ASK the chairman about each one whose `covers` touches what this goal "
+        "will do — recommend using it, because building what the company already pays "
+        "for is the waste this list exists to prevent. Decline the rest yourself with "
+        "a reason, and put that in the ledger. A task manager can also mirror the "
+        "project's task board (`mirror_tasks: true`): ask whether he wants the work "
+        "visible there; yaaf's board stays the record either way.")}
 
 
 def read_source(url: str) -> dict:
@@ -371,7 +403,7 @@ class FounderTools(NamedTuple):
 
 def build_server(session: Session, state: dict, env: dict[str, str],
                  model: str, thread_id: str = "") -> FounderTools:
-    """The eight tools, as an in-process MCP server the CLI can call.
+    """The nine tools, as an in-process MCP server the CLI can call.
 
     `state` is the one mutable thing here — the draft, and the round of
     questions. `propose_bundle` writes the first and `ask` the second, and the
@@ -465,6 +497,14 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         return await step("list_credentials",
                           lambda: list_credentials(session, with_plan=True))
 
+    @tool("list_integrations", "The tools the company already pays for — a CRM, a task "
+          "manager, its docs — connected by an administrator for every project, and "
+          "what each is for. Call it before you propose: the draft must decide every "
+          "one, and the ones that overlap the goal are questions for the chairman.",
+          {})
+    async def _list_integrations(args):
+        return await step("list_integrations", lambda: list_integrations(session))
+
     @tool("propose_bundle", "Put a complete project in front of the chairman. This "
           "is your deliverable: it replaces the current draft and is what the review "
           "screen shows. It creates nothing and spends nothing. Send the whole "
@@ -472,7 +512,8 @@ def build_server(session: Session, state: dict, env: dict[str, str],
           "/admin/projects accepts: slug, name, goal, mode, ceo_role_slug, ceo_name, "
           "teams, controlled_domains, constitution — only the knobs you can "
           "justify — billing_secret_id from list_credentials when the chairman has "
-          "chosen (or there was only one), and a deadline ONLY when one of two things is true: the "
+          "chosen (or there was only one), integration_decisions for every one "
+          "list_integrations names, and a deadline ONLY when one of two things is true: the "
           "world imposes it (deadline_source {'kind':'external'} with a "
           "citation) or the chairman wants it (deadline_source "
           "{'kind':'chairman'}). Otherwise write no date; scope is the honest "
@@ -556,8 +597,8 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         finally:
             progress.finish_step(thread_id)
 
-    built = [_search_roles, _search_crews, _read_source,
-             _grade_goal, _list_credentials, _propose_bundle, _rehearse, _ask]
+    built = [_search_roles, _search_crews, _read_source, _grade_goal, _list_credentials,
+             _list_integrations, _propose_bundle, _rehearse, _ask]
     from yaaf.founder.loop import schema
 
     return FounderTools(
@@ -756,7 +797,55 @@ def doctrine_problems(project: dict, session=None) -> list[str]:
     between a contract and a standard.
     """
     return (roster_problems(project, session) + stakes_problems(project)
-            + tempo_problems(project))
+            + tempo_problems(project) + integration_problems(project, session))
+
+
+def integration_problems(project: dict, session=None) -> list[str]:
+    """Every integration the company already pays for, decided — used or not.
+
+    The chairman founding through the form may leave one undecided; he knows
+    what he has. The Founder may not, because a project nobody told about
+    HubSpot builds its own email campaigns next to it, and the founding
+    conversation is the one moment every project passes through. Silence is
+    what is refused; either answer passes.
+    """
+    from contextlib import nullcontext
+
+    from yaaf.core.db import db_session
+    from yaaf.server import integrations
+
+    with (nullcontext(session) if session is not None else db_session()) as db:
+        names = [i.name for i in integrations.catalog(db)]
+    choices = project.get("integration_decisions") or []
+    if not names and not choices:
+        return []
+    problems = []
+    decided = {c.get("name") for c in choices if isinstance(c, dict)}
+    unknown = sorted(n for n in decided - set(names) if n)
+    if unknown:
+        problems.append(f"integration_decisions: {', '.join(unknown)} is not on this "
+                        f"install — the list is {', '.join(names) or 'empty'}. Call "
+                        "list_integrations.")
+    missing = [n for n in names if n not in decided]
+    if missing:
+        problems.append(
+            f"integration_decisions: decide {', '.join(missing)} — {{name, use: true, "
+            "roles}} or {name, use: false, reason}. Ask the chairman about each one "
+            "whose purpose overlaps this goal; the company already pays for it, and a "
+            "project told nothing builds its own.")
+    roster = {project.get("ceo_role_slug") or "ceo",
+              *(t.get("role_slug") for t in project.get("teams") or [])}
+    for choice in choices:
+        if not isinstance(choice, dict) or not choice.get("use", True):
+            continue
+        roles = choice.get("roles") or []
+        if not roles:
+            problems.append(f"integration_decisions: {choice.get('name')} is used by "
+                            "nobody — name the roles that get its tools, or decline it.")
+        elif strangers := sorted(set(roles) - roster):
+            problems.append(f"integration_decisions: {choice.get('name')} goes to "
+                            f"{', '.join(strangers)}, which this roster does not hire.")
+    return problems
 
 
 def stakes_problems(project: dict) -> list[str]:

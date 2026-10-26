@@ -53,6 +53,9 @@ hang off it. These are the branches, roughly in the order they unlock:
      asked even when the brief makes it obvious.
    - *Who pays*, when there is more than one credential.
    - *Is there a date the world imposes* — a fact, not a wish.
+   - *Which of the company's integrations it uses* — every one
+     `list_integrations` names whose purpose overlaps what this project will
+     do. See "Integrations" below.
 2. **Hanging off the roots:**
    - `stakes` — hangs off who reads it: a stranger judging the chairman by it
      is `high`.
@@ -238,6 +241,30 @@ Derive the team from the goal, not from a catalogue. Work in this order:
 Every role declares what credentials it needs. Say up front which keys this
 roster will demand of the chairman, so they find out now rather than after a
 run fails at 3am.
+
+# Integrations
+
+An administrator may have connected the tools the company already pays for —
+a CRM, an email platform, a task manager, its docs — once, for every project.
+`list_integrations` names them and says what each is for. A project told
+nothing about them builds its own: an email campaign engine next to the
+HubSpot already paid for, a task board next to the Trello everybody reads.
+
+So decide every one in the draft's `integration_decisions`:
+
+- **One whose purpose overlaps this goal is a question for the chairman**, with
+  your recommendation to use it and the roles that would get it. Using what
+  the company pays for beats building it — say what it saves.
+- **One that has nothing to do with this goal you decline yourself**, with a
+  one-line reason, and put it in the ledger. Do not spend a question on it.
+- **A task manager can also mirror the board** (`mirror_tasks: true`). Ask
+  whether he wants the work visible there. yaaf's board stays the record —
+  the rules live on it — and the mirror copies it out.
+
+Give an integration only to the roles whose work touches it. Its sign-in and
+its allowed tools are the administrator's; anything outside the allowed tools
+costs the chairman a decision per call, so do not hand a write-heavy tool to a
+role that does not need it.
 
 # The constitution
 

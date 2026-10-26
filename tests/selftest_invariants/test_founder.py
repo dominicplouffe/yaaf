@@ -414,12 +414,13 @@ def test_the_platform_credential_never_becomes_a_project_secret(client, founder)
 # ── the tool surface ────────────────────────────────────────────────────────────
 
 
-def test_the_founder_gets_eight_tools_and_no_way_to_act(client, founder):
+def test_the_founder_gets_nine_tools_and_no_way_to_act(client, founder):
     """The Founder drafts a project; it does not act on the world. Built-in
-    tools are off and only these eight are allowed — the restriction is the
+    tools are off and only these nine are allowed — the restriction is the
     design, not a default. One reads credential *names*; the value stays where
-    every other value stays. The eighth, `ask`, puts questions on the page and
-    touches nothing else."""
+    every other value stays. `list_integrations` reads the integrations'
+    names and purposes, never an address or a token. `ask` puts questions on
+    the page and touches nothing else."""
     from yaaf.founder import tools
 
     calls = founder()
@@ -427,7 +428,7 @@ def test_the_founder_gets_eight_tools_and_no_way_to_act(client, founder):
     opts = calls[0]["opts"]
 
     assert opts.allowed_tools == tools.ALLOWED_TOOLS
-    assert len(tools.ALLOWED_TOOLS) == 8
+    assert len(tools.ALLOWED_TOOLS) == 9
     assert all(name.startswith("mcp__founder__") for name in opts.allowed_tools)
     # No Bash, no file writes, no browsing of its own.
     assert opts.tools == []

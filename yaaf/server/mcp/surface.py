@@ -79,6 +79,9 @@ REACHED = {
     "POST /admin/projects/{project_id}/mcp_servers": "data_source (add)",
     "POST /admin/projects/{project_id}/mcp_servers/{name}/check": "data_source (check)",
     "DELETE /admin/projects/{project_id}/mcp_servers/{name}": "data_source (remove)",
+    "GET /admin/projects/{project_id}/integrations": "integration (list)",
+    "PUT /admin/projects/{project_id}/integrations/{name}": "integration (use, decline)",
+    "DELETE /admin/projects/{project_id}/integrations/{name}": "integration (forget)",
     "POST /admin/secrets": "credential (save)",
     "POST /admin/projects/{project_id}/amendments": "amend (propose)",
     "POST /admin/amendments/{amendment_id}/cancel": "amend (cancel)",
@@ -182,6 +185,27 @@ WITHHELD = {
     "POST /admin/projects/{project_id}/mcp_servers/{name}/oauth/start":
         "returns a sign-in URL a browser must open, carrying a single-use state. A "
         "model holding it can do nothing with it.",
+    # The integrations list is above every project, like the LLM credentials:
+    # a client scoped to projects has no scoping answer that makes editing it
+    # safe, and one of these carries credential values inbound.
+    "GET /admin/integrations":
+        "the administrator's view names every project using each one; `integration` "
+        "(list) shows the same list as the one project the client acts for sees it.",
+    "POST /admin/integrations":
+        "connects a server for every project, often with a credential value inbound — "
+        "an administrator's decision about what every project may reach.",
+    "GET /admin/integrations/{name}/address":
+        "reading a stored address back is a reveal, audited for the edit form; a "
+        "model has no form to fill.",
+    "POST /admin/integrations/probe":
+        "the administrator's form's first step; it stores nothing and decides nothing.",
+    "POST /admin/integrations/{name}/check":
+        "checks a connection every project shares; its health reaches a model through "
+        "`integration` (list), which carries each one's last check.",
+    "POST /admin/integrations/{name}/oauth/start":
+        "returns a sign-in URL a browser must open, carrying a single-use state.",
+    "DELETE /admin/integrations/{name}":
+        "takes a server away from every project on the box at once.",
     "POST /admin/users": "creating people is not a project decision.",
     "GET /admin/projects/{project_id}/members":
         "who sits on a project is read in the dashboard; no tool has needed it yet.",

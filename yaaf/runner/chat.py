@@ -452,8 +452,8 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     # Same sources, same cost lesson: the chat lane mounts them exactly as a run
     # does, so it gets the same paragraph describing them.
-    job.system_prompt += _data_source_prompt(
-        _merge_project_data_sources(session, project, role_version, job), seat.harness)
+    source_specs, source_env = _merge_project_data_sources(session, project, role_version, job)
+    job.system_prompt += _data_source_prompt(source_specs, seat.harness)
     role_secrets = _role_secret_env(session, project, role_version)
     # The resident CEO knows its credentials the same way a run does.
     from yaaf.core.naming import announced_credentials
@@ -461,7 +461,7 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
 
     job.system_prompt += credentials_prompt(*announced_credentials(role_secrets))
     job.billing_env = {**_billing_env(session, project, seat.provider), **role_secrets,
-                       **_search_env(session, job)}
+                       **source_env, **_search_env(session, job)}
     job.mint_secret_id = _mint_secret_id(session, project, seat.provider)
     if (refused := _mint_token(job)) is not None:
         # The session would only fail its first call; say why where it is read.

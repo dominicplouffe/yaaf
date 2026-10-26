@@ -1059,6 +1059,31 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 f"data source '{name}': last check failed — {last.get('detail', '')}",
                 "data_sources")
 
+    # Integrations this project uses: the administrator's connection, so the
+    # fix for a broken one is theirs — said, so a chairman is not sent hunting
+    # through his own project's settings for a sign-in he cannot see.
+    from yaaf.server import integrations as shared_sources
+
+    for decision, integration in shared_sources.used(session, project.id):
+        name = integration.name
+        entry = integration.entry or {}
+        oauth_status = (entry.get("oauth") or {}).get("status")
+        last = entry.get("last_check") or {}
+        if entry.get("auth") == "oauth" and oauth_status != "connected":
+            add(f"integration:{name}", "fail",
+                f"integration '{name}': its shared sign-in "
+                f"{'expired' if oauth_status == 'needs_reauth' else 'is not connected'} — "
+                "an administrator reconnects it in Settings → Integrations", "data_sources")
+        elif last and not last.get("ok"):
+            add(f"integration:{name}", "fail",
+                f"integration '{name}': last check failed — {last.get('detail', '')}",
+                "data_sources")
+        else:
+            add(f"integration:{name}", "ok" if last else "warn",
+                f"integration '{name}': used by {', '.join(decision.roles or [])}"
+                + (f" — {last.get('detail', 'reachable')}" if last else ", never tested"),
+                "data_sources")
+
     # Teams: no role-version drift. (Roles never own data sources — the whole
     # role-source failure class was removed with the concept.)
     for team in session.execute(

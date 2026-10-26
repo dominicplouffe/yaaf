@@ -57,17 +57,25 @@ def _page(title: str, detail: str, status_code: int = 200) -> HTMLResponse:
     return HTMLResponse(content=body, status_code=status_code)
 
 
-def _find_pending(session: Session, state: str) -> tuple[Project, dict] | None:
-    """The one (project, source entry) whose pending sign-in minted this
-    state. A linear scan over projects is fine: pending flows are rare,
-    short-lived, and this route only runs when a human finishes one."""
+def _find_pending(session: Session, state: str) -> tuple[mcp_oauth.SourceHome, dict] | None:
+    """The one source whose pending sign-in minted this state — a project's
+    data source, or an integration connected for every project. A linear scan
+    is fine: pending flows are rare, short-lived, and this route only runs
+    when a human finishes one."""
+    from yaaf.core.models import Integration
+    from yaaf.server.integrations import IntegrationHome, entry_of
+
     if not state:
         return None
     for project in session.execute(select(Project)).scalars():
         for entry in (project.integrations or {}).get("mcp_servers", []):
             pending = (entry.get("oauth") or {}).get("pending") or {}
             if pending.get("state") == state:
-                return project, entry
+                return mcp_oauth.ProjectHome(session, project), entry
+    for integration in session.execute(select(Integration)).scalars():
+        pending = ((integration.entry or {}).get("oauth") or {}).get("pending") or {}
+        if pending.get("state") == state:
+            return IntegrationHome(integration), entry_of(integration)
     return None
 
 
@@ -91,8 +99,10 @@ def mcp_oauth_callback(state: str = "", code: str = "", error: str = "",
         return _page("Sign-in link not recognized",
                      "This link was already used, or belongs to a sign-in that was "
                      "restarted. Press Connect again in the project's Settings.", 400)
-    project, entry = found
+    home, entry = found
     name = entry.get("name", "")
+    where = ("the project's Settings" if home.project_id
+             else "Settings → Integrations")
     oauth = dict(entry.get("oauth") or {})
     pending = dict(oauth.pop("pending", {}) or {})
     # The person who pressed Connect, completing their own sign-in in their own
@@ -108,7 +118,7 @@ def mcp_oauth_callback(state: str = "", code: str = "", error: str = "",
         else:
             oauth.pop("error", None)
         entry["oauth"] = oauth
-        mcp_oauth.persist_entry(project, entry)
+        home.persist(entry)
 
     started = None
     with suppress(ValueError):
@@ -117,56 +127,58 @@ def mcp_oauth_callback(state: str = "", code: str = "", error: str = "",
         persist("needs_auth", "the sign-in link expired before it was completed")
         return _page("Sign-in link expired",
                      "This sign-in took longer than fifteen minutes. Press Connect "
-                     "again in the project's Settings for a fresh one.", 400)
+                     f"again in {where} for a fresh one.", 400)
 
     if error:
         detail = error_description or error
         persist("needs_auth", f"the provider reported: {detail}")
-        _audit(session, project.id, "mcp_server.oauth_denied", "project", project.id,
-               {"name": name, "error": error})
+        _audit(session, home.project_id, f"{_subject(home)}.oauth_denied",
+               _entity(home), home.project_id or name, {"name": name, "error": error})
         return _page("Sign-in not completed",
-                     f"The provider reported: {detail}. Press Connect in Settings "
+                     f"The provider reported: {detail}. Press Connect in {where} "
                      "to try again.", 400)
 
-    client_secret = None
-    if oauth.get("client_secret_secret"):
-        from yaaf.server.api.admin import _project_secret_value
-
-        client_secret = _project_secret_value(session, project.id,
-                                              oauth["client_secret_secret"])
+    client_secret = home.read(oauth.get("client_secret_secret"))
     try:
         tokens = mcp_oauth.exchange_code(
             oauth["token_endpoint"], code, decrypt(pending["verifier_cipher"]),
             oauth["client_id"], client_secret, pending["redirect_uri"],
             oauth.get("resource"))
     except (mcp_oauth.OAuthSetupError, KeyError) as exc:
-        log.warning("OAuth code exchange failed for %s/%s: %s", project.id, name, exc)
+        log.warning("OAuth code exchange failed for %s %s/%s: %s",
+                    home.noun, home.project_id, name, exc)
         persist("needs_auth", f"the token exchange failed: {exc}")
         return _page("Sign-in failed",
                      f"The provider would not exchange the sign-in for a token: {exc}. "
-                     "Press Connect in Settings to try again.", 400)
+                     f"Press Connect in {where} to try again.", 400)
 
     # One writer for freshly-minted tokens, shared with the refresh path, so
     # the two can never disagree on secret names, role grants, or status.
     entry["oauth"] = oauth
-    mcp_oauth.store_tokens(session, project, entry, tokens)
+    mcp_oauth.store(home, entry, tokens)
     oauth = entry["oauth"]
 
     # Prove the connection while the chairman is still looking: the tab they
     # return to should already show a green check or a named failure.
-    url = None
-    from yaaf.server.api.admin import _project_secret_value
-
-    if entry.get("url_secret"):
-        url = _project_secret_value(session, project.id, entry["url_secret"])
+    url = home.read(entry.get("url_secret"))
     if url:
         check = _oauth_checked(url, tokens["access_token"], entry)
         entry["last_check"] = {**check, "at": utcnow().isoformat()}
-        mcp_oauth.persist_entry(project, entry)
+        home.persist(entry)
 
-    _audit(session, project.id, "mcp_server.oauth_connect", "project", project.id,
+    _audit(session, home.project_id, f"{_subject(home)}.oauth_connect", _entity(home),
+           home.project_id or name,
            {"name": name, "expires_at": oauth.get("expires_at"),
             "refresh_token": bool(tokens.get("refresh_token"))})
     return _page("Connected",
-                 f"The data source '{name}' is signed in. You can close this tab "
+                 f"The {home.noun} '{name}' is signed in. You can close this tab "
                  "and return to yaaf.")
+
+
+def _subject(home: mcp_oauth.SourceHome) -> str:
+    """The audit verb's prefix, kept as it always was for a project source."""
+    return "mcp_server" if home.project_id else "integration"
+
+
+def _entity(home: mcp_oauth.SourceHome) -> str:
+    return "project" if home.project_id else "integration"

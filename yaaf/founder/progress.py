@@ -42,6 +42,7 @@ LABELS = {
     "read_source": "Reading a source you pointed me at",
     "grade_goal": "Grading the goal against the grammar",
     "list_credentials": "Checking what can pay for this project",
+    "list_integrations": "Checking which of your tools it can use",
     "propose_bundle": "Writing the draft",
     "rehearse": "Running the fire drill on the draft",
     "ask": "Writing your next questions",

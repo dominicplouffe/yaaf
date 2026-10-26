@@ -35,10 +35,11 @@ CHECKS = re.compile(r"authority\.(require\w*|owns)\(|_require_\w+\(|_thread\(")
 
 
 def _routers():
-    from yaaf.server.api import admin, auth, founder, observe
+    from yaaf.server.api import admin, auth, founder, integrations, observe
     from yaaf.server.api import settings as app_settings
 
-    return [("/admin", admin.router), ("/admin/founder", founder.router),
+    return [("/admin", admin.router), ("/admin", integrations.router),
+            ("/admin/founder", founder.router),
             ("/admin/settings", app_settings.router), ("/observe", observe.router),
             ("/auth", auth.router)]
 

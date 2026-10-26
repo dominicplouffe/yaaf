@@ -852,6 +852,18 @@ class TeamSpec(BaseModel):
     harness_overrides: dict[str, str] = Field(default_factory=dict)
 
 
+class IntegrationChoice(BaseModel):
+    """One integration from Settings → Integrations, decided at founding:
+    used (by which roles, and whether the task board mirrors into it) or
+    declined, with the reason the chairman gave."""
+
+    name: str = Field(min_length=1, max_length=32)
+    use: bool = True
+    roles: list[str] = Field(default_factory=list)
+    reason: str | None = Field(default=None, max_length=1000)
+    mirror_tasks: bool = False
+
+
 class ProjectCreate(BaseModel):
     billing_secret_id: str | None = None
     slug: str = Field(pattern="^[a-z0-9-]{2,64}$")
@@ -906,6 +918,10 @@ class ProjectCreate(BaseModel):
     # {"kind": "external", "url"/"note": ...} for a fact the world imposes;
     # {"kind": "chairman", "note": why} for a target he wants.
     deadline_source: dict | None = None
+    # The administrator's integrations, by name, as this project decided about
+    # them. One the founding said nothing about stays undecided — the project's
+    # Settings and its agents may still raise it.
+    integration_decisions: list[IntegrationChoice] = Field(default_factory=list)
 
 
 def _latest_role_version(session: Session, slug: str) -> RoleVersion:
@@ -1463,6 +1479,49 @@ def _founding_chairman(session: Session, named: str | None) -> User:
     return chairman
 
 
+def apply_integration_decisions(session: Session, project: Project,
+                                choices: list[IntegrationChoice], roster: set[str]) -> None:
+    """Record what the founding decided about each integration. A role that is
+    not on this project's roster would receive the tools in no run at all, so
+    it is refused here, where the founder can still fix the draft, rather than
+    found later as an integration that silently mounts for nobody."""
+    from yaaf.server import integrations
+
+    seen: set[str] = set()
+    for choice in choices:
+        if choice.name in seen:
+            raise HTTPException(status_code=422,
+                                detail=f"integration {choice.name!r} is decided twice")
+        seen.add(choice.name)
+        row = integrations.by_name(session, choice.name)
+        if row is None:
+            names = ", ".join(i.name for i in integrations.catalog(session)) or "none yet"
+            raise HTTPException(
+                status_code=422,
+                detail=f"there is no integration called {choice.name!r} on this install "
+                       f"(the list: {names})")
+        try:
+            if choice.use:
+                strangers = sorted(set(choice.roles) - roster)
+                if strangers:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"integration {choice.name!r} is given to "
+                               f"{', '.join(strangers)}, which this project does not "
+                               f"hire — its roles are {', '.join(sorted(roster))}")
+                integrations.attach(session, project, row, choice.roles,
+                                    decided_by=acting.stamp(), reason=choice.reason,
+                                    mirror_tasks=choice.mirror_tasks)
+            else:
+                integrations.decline(session, project, row, decided_by=acting.stamp(),
+                                     reason=choice.reason)
+        except integrations.IntegrationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        _audit(session, project.id, "integration.use" if choice.use else "integration.decline",
+               "integration", row.id, {"name": row.name, "roles": choice.roles,
+                                       "reason": choice.reason, "at_founding": True})
+
+
 @router.post("/projects", dependencies=[authority.SIGNED_IN])
 def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     from yaaf.core.llm_credentials import assigned_credential
@@ -1637,6 +1696,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
                          "agents": [{"id": a.id, "name": a.name} for a in agents]})
     for provider_name, credential_id in body.credentials.items():
         attach_provider_credential(session, project, provider_name, credential_id)
+    apply_integration_decisions(session, project, body.integration_decisions,
+                                {body.ceo_role_slug, *(t.role_slug for t in body.teams)})
     refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
     if body.fallback_secret_id:
         apply_fallback(session, project, body.fallback_secret_id)
@@ -1880,10 +1941,24 @@ def export_project(project_id: str, include_values: bool = False,
             "ceo_harness_override": ceo.harness_override,
             "teams": teams,
             "solo": ceo.team_id is not None,
+            # By name, like the credentials: the integration itself (address,
+            # sign-in) is the install's, and an import resolves the names
+            # against the list there.
+            "integration_decisions": integration_choices_of(session, project.id),
         },
         "roles": list(roles.values()),
         "secrets": secret_out,
     }
+
+
+def integration_choices_of(session: Session, project_id: str) -> list[dict]:
+    from yaaf.core.models import IntegrationDecision
+    from yaaf.server import integrations
+
+    return [{"name": i.name, "use": d.decision == IntegrationDecision.USE,
+             "roles": list(d.roles or []), "reason": d.reason,
+             "mirror_tasks": bool(d.mirror_tasks)}
+            for d, i in integrations.decisions(session, project_id)]
 
 
 # Config a twin must not inherit: this project's own webhook signing keys.
@@ -2054,6 +2129,18 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     if source.fallback_secret_id and project.billing_secret_id \
             and resolve(session, credential_id=source.fallback_secret_id) is not None:
         project.fallback_secret_id = source.fallback_secret_id
+    # Its integration decisions, verbatim. Unlike an OAuth data source, there
+    # is nothing to reconnect: the sign-in is the integration's, and every
+    # project that uses it shares the one the administrator made.
+    from yaaf.core.models import ProjectIntegration
+
+    for row in session.scalars(select(ProjectIntegration).where(
+            ProjectIntegration.project_id == source.id)).all():
+        session.add(ProjectIntegration(
+            id=ids.new_id(ids.PROJECT_INTEGRATION), project_id=project.id,
+            integration_id=row.integration_id, decision=row.decision,
+            roles=list(row.roles or []), reason=row.reason, mirror_tasks=row.mirror_tasks,
+            decided_by=acting.stamp()[:80], created_at=utcnow()))
 
     source_ceo = session.execute(
         select(Agent).where(Agent.project_id == source.id, Agent.kind == AgentKind.CEO)
@@ -2809,17 +2896,23 @@ def probe_data_source(project_id: str, body: DataSourceProbeIn,
     Nothing is stored and nothing is granted. It reaches out exactly as the
     save would, from the same seat, for the same people."""
     _get_project(session, project_id)
+    return probe_source(body.url, body.bearer)
+
+
+def probe_source(raw_url: str, bearer: str | None) -> dict:
+    """Reach an address and say how it wants to be signed in to — the probe
+    behind both the data source form and the integration form."""
     _parse_source_url(
-        body.url,
+        raw_url,
         "that is not a URL — a data source needs a full address like "
         "https://host:1234/path (schemes http/https only)",
     )
     import httpx
 
-    url = body.url.strip()
-    check = _check_data_source(url, body.bearer or None)
-    auth = "bearer" if body.bearer else "none"
-    if check.get("state") == "unauthorized" and not body.bearer:
+    url = raw_url.strip()
+    check = _check_data_source(url, bearer or None)
+    auth = "bearer" if bearer else "none"
+    if check.get("state") == "unauthorized" and not bearer:
         from yaaf.server import mcp_oauth
 
         try:
@@ -2836,17 +2929,23 @@ def probe_data_source(project_id: str, body: DataSourceProbeIn,
     return {"check": check, "auth": auth}
 
 
+def oauth_redirect_uri(request: Request) -> str:
+    """Where a provider sends the browser back after consent. Deriving it from
+    the request is a dev convenience; behind a TLS-terminating proxy it reports
+    http, so production sets YAAF_PUBLIC_BASE_URL."""
+    from yaaf.core.config import settings
+
+    base = (settings().public_base_url or str(request.base_url)).rstrip("/")
+    return f"{base}/oauth/mcp/callback"
+
+
 @router.post("/projects/{project_id}/mcp_servers/{name}/oauth/start", dependencies=[authority.STEER])
 def start_data_source_oauth(project_id: str, name: str, request: Request,
                             session: Session = Depends(db)) -> dict:
     """Begin the browser sign-in for an OAuth data source: discover the
     authorization server, register a client there (or reuse one the chairman
-    pasted), and mint the URL the chairman's browser must visit. The `state`
-    in that URL is single-use and 256 bits — it is the whole credential the
-    unauthenticated callback route later redeems, which is why a fresh call
-    here voids any earlier half-finished sign-in."""
-    from yaaf.core.config import settings
-    from yaaf.core.crypto import encrypt
+    pasted), and mint the URL the chairman's browser must visit
+    (`mcp_oauth.begin_sign_in`)."""
     from yaaf.server import mcp_oauth
 
     project = _get_project(session, project_id)
@@ -2857,64 +2956,15 @@ def start_data_source_oauth(project_id: str, name: str, request: Request,
     if _source_auth(entry) != "oauth":
         raise HTTPException(status_code=422, detail="this data source is not set to OAuth "
                                                     "sign-in — edit it and pick OAuth first")
-    url = _project_secret_value(session, project.id, entry.get("url_secret") or "")
-    if not url:
-        raise HTTPException(status_code=422, detail="the data source's URL secret is missing")
-
-    # The browser-facing origin. Deriving it from the request is a dev
-    # convenience; behind a TLS-terminating proxy it reports http, so
-    # production sets YAAF_PUBLIC_BASE_URL.
-    base = (settings().public_base_url or str(request.base_url)).rstrip("/")
-    redirect_uri = f"{base}/oauth/mcp/callback"
-
-    oauth = dict(entry.get("oauth") or {})
     try:
-        disc = mcp_oauth.discover(url)
-        # A client we registered is bound to the callback it named. When this
-        # install's public origin moves, that client is refused with
-        # invalid_redirect forever, so register afresh. A pasted client
-        # (no registered_redirect_uri) is the chairman's and is never replaced.
-        registered_for = oauth.get("registered_redirect_uri")
-        if registered_for and registered_for != redirect_uri:
-            oauth.pop("client_id", None)
-            if oauth.get("client_secret_secret"):
-                _delete_project_secret(session, project.id, oauth.pop("client_secret_secret"))
-        if not oauth.get("client_id"):
-            client_id, client_secret = mcp_oauth.register_client(disc, redirect_uri)
-            oauth["client_id"] = client_id
-            oauth["registered_redirect_uri"] = redirect_uri
-            if client_secret:
-                client_row = _upsert_project_secret(
-                    session, project.id, f"mcp-{name}-oauth-client", client_secret, [])
-                oauth["client_secret_secret"] = client_row.name
+        authorize_url = mcp_oauth.begin_sign_in(
+            mcp_oauth.ProjectHome(session, project), entry, oauth_redirect_uri(request),
+            by_user_id=acting.user_id())
     except mcp_oauth.OAuthSetupError as exc:
-        entry["oauth"] = {**oauth, "error": str(exc)}
-        mcp_oauth.persist_entry(project, entry)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    state = pysecrets.token_urlsafe(32)
-    verifier = pysecrets.token_urlsafe(64)
-    oauth.update({
-        "status": "pending",
-        "authorization_endpoint": disc.authorization_endpoint,
-        "token_endpoint": disc.token_endpoint,
-        "registration_endpoint": disc.registration_endpoint,
-        "resource": disc.resource,
-        # The PKCE verifier is a secret with a fifteen-minute life; it still
-        # never touches the config JSON in plaintext.
-        "pending": {"state": state, "verifier_cipher": encrypt(verifier),
-                    "redirect_uri": redirect_uri, "created_at": utcnow().isoformat(),
-                    # Who pressed Connect: the callback arrives with no
-                    # credential but a state, and its record should name them.
-                    "by_user_id": acting.user_id()},
-    })
-    oauth.pop("error", None)
-    entry["oauth"] = oauth
-    mcp_oauth.persist_entry(project, entry)
-    authorize_url = mcp_oauth.build_authorize_url(
-        disc, oauth["client_id"], redirect_uri, state, verifier, oauth.get("scope"))
+    disc_endpoint = (entry.get("oauth") or {}).get("authorization_endpoint")
     _audit(session, project.id, "mcp_server.oauth_start", "project", project.id,
-           {"name": name, "authorization_endpoint": disc.authorization_endpoint})
+           {"name": name, "authorization_endpoint": disc_endpoint})
     return {"authorize_url": authorize_url,
             "note": "Complete the sign-in in the opened tab, then test the source."}
 

@@ -70,14 +70,17 @@ MAX_DRILL_DAYS = 90
         "provider's lineup and every catalog model with whether it can be metered. "
         "`harnesses` lists what can drive a seat's model; name one in a team's "
         "`harness_overrides` only when the chairman asks for it — absent, a seat runs on "
-        "its credential's default."
+        "its credential's default. `integrations` lists the tools the company already "
+        "pays for (a CRM, a task manager), connected once for every project — decide "
+        "each in the spec's `integration_decisions` rather than drafting a team that "
+        "rebuilds one."
     ),
     input_schema={
         "type": "object",
         "properties": {
             "what": {"type": "string",
                      "enum": ["roles", "crews", "credentials", "models", "harnesses",
-                              "providers"]},
+                              "providers", "integrations"]},
             "query": {"type": "string"},
             "category": {"type": "string",
                          "enum": ["leadership", "research", "build", "content",
@@ -92,6 +95,8 @@ def catalog(principal: Principal, session: Session, arguments: dict) -> dict:
     what = arguments.get("what") or "roles"
     if what == "credentials":
         payload = founder_tools.list_credentials(session)
+    elif what == "integrations":
+        payload = founder_tools.list_integrations(session)
     elif what == "harnesses":
         from yaaf.server.api.admin import list_harnesses
 
@@ -380,6 +385,31 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
             "No LLM credentials exist on this install yet. The project can be "
             "created, but cannot start until an administrator adds one in Settings "
             "and assigns it.")
+    # The integrations, as the form shows them: what this spec decided about
+    # each, and the ones it said nothing about — which stay undecided rather
+    # than used, so the chairman sees what the project will NOT have before
+    # he confirms, not when an agent builds it from scratch.
+    from yaaf.server import integrations
+
+    decided = {c.get("name"): c for c in body.get("integration_decisions") or []
+               if isinstance(c, dict)}
+    shared = integrations.catalog(session)
+    if shared:
+        def said(choice: dict | None) -> str:
+            if choice is None:
+                return "undecided"
+            if choice.get("use", True):
+                return "used by " + ", ".join(choice.get("roles") or [])
+            return "declined"
+
+        about["integrations"] = [{"name": i.name, "for": list(i.covers or []),
+                                  "decision": said(decided.get(i.name))} for i in shared]
+        if any(i.name not in decided for i in shared):
+            about["integrations_note"] = (
+                "Some of the company's integrations are undecided. Ask the chairman "
+                "about each whose purpose overlaps this project and put the answer in "
+                "`spec.integration_decisions` — a project told nothing about them "
+                "builds its own.")
     preview = confirm.gate(session, principal, "create_project", arguments, about)
     if preview:
         return preview

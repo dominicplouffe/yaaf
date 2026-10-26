@@ -2601,11 +2601,12 @@ def _arguments_digest(arguments: dict | None) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _project_data_source(project, name: str) -> dict | None:
-    for source in (project.integrations or {}).get("mcp_servers", []):
-        if source.get("name") == name:
-            return source
-    return None
+def _project_data_source(session: Session, project, name: str) -> dict | None:
+    """A source this project's agents reach under `name`: one of its own data
+    sources, or an integration it uses — whose allowlist binds the same way."""
+    from yaaf.server import integrations
+
+    return integrations.source_entry(session, project, name)
 
 
 class DisclosedChange(BaseModel):
@@ -2664,7 +2665,7 @@ def data_write_request(
     body: DataWriteRequest, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
     """File ONE call for the chairman to approve, fingerprint and all."""
-    source = _project_data_source(ctx.project, body.source)
+    source = _project_data_source(session, ctx.project, body.source)
     if source is None:
         raise Refusal(
             f"{body.source!r} is not one of this project's data sources.", status_code=404)

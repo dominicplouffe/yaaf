@@ -276,6 +276,66 @@ def data_source(principal: Principal, session: Session, arguments: dict) -> dict
 
 
 @register(
+    "integration",
+    scope="configure",
+    description=(
+        "MCP servers the administrator connected once for every project — the CRM, "
+        "the task manager, the docs the company already pays for — and whether this "
+        "project uses each. verb: list (used, declined, undecided), use (name, roles; "
+        "mirror_tasks for a task manager), decline (name, reason), forget (back to "
+        "undecided). Prefer using one over building what it already does."
+    ),
+    input_schema=_schema([],
+                         verb={"type": "string",
+                               "enum": ["list", "use", "decline", "forget"]},
+                         name={"type": "string", "description": "The integration's name"},
+                         roles={"type": "array", "items": {"type": "string"}},
+                         reason={"type": "string"},
+                         mirror_tasks={"type": "boolean"}),
+)
+def integration(principal: Principal, session: Session, arguments: dict) -> dict:
+    from yaaf.server.api import integrations as integrations_api
+
+    project = resolve_project(session, principal, required(arguments, "project"))
+    verb = arguments.get("verb") or "list"
+    if verb == "list":
+        listed = _call(principal, integrations_api.project_integrations,
+                       project_id=project.id, session=session)
+        return envelope.fit({"project": project.slug, **listed}, arguments.get("detail"))
+
+    name = required(arguments, "name")
+    if verb == "forget":
+        preview = confirm.gate(session, principal, "integration", arguments, {
+            "verb": verb, "project": project.slug, "forgetting": name,
+            "warning": "If it was in use, the roles that had it lose its tools."})
+        if preview:
+            return preview
+        outcome = _call(principal, integrations_api.forget_integration,
+                        project_id=project.id, name=name, session=session)
+    else:
+        roles = [r for r in (arguments.get("roles") or []) if isinstance(r, str)]
+        if verb == "use" and not roles:
+            raise ToolRefusal("name at least one role that should get this integration")
+        preview = confirm.gate(session, principal, "integration", arguments, {
+            "verb": verb, "project": project.slug, "name": name, "roles": roles,
+            "reason": arguments.get("reason"),
+            "mirror_tasks": arguments.get("mirror_tasks"),
+            "note": ("The administrator's sign-in and allowed tools apply as they are."
+                     if verb == "use" else
+                     "Declining one in use takes its tools away from the next run.")})
+        if preview:
+            return preview
+        outcome = _call(principal, integrations_api.decide_integration,
+                        project_id=project.id, name=name,
+                        body=integrations_api.DecisionIn(
+                            decision=verb, roles=roles if verb == "use" else [],
+                            reason=arguments.get("reason"),
+                            mirror_tasks=arguments.get("mirror_tasks")),
+                        session=session)
+    return _record(session, principal, project.id, "integration", arguments, outcome)
+
+
+@register(
     "credential",
     scope="configure",
     description=(

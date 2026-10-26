@@ -262,10 +262,10 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
         context=model_policy.context(session, project)))
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     job.agent_kind = agent.kind
-    source_specs = _merge_project_data_sources(session, project, role_version, job)
+    source_specs, source_env = _merge_project_data_sources(session, project, role_version, job)
     role_secrets = _role_secret_env(session, project, role_version)
     job.billing_env = {**_billing_env(session, project, job.provider), **role_secrets,
-                       **_search_env(session, job)}
+                       **source_env, **_search_env(session, job)}
     job.provider_spec = _provider_spec(session, project, job.provider)
     job.mint_secret_id = _mint_secret_id(session, project, job.provider)
     # Credentials are capabilities: each variable arrives with what it is and
@@ -410,16 +410,24 @@ def _data_source_prompt(specs: list[dict], harness: str | None = None) -> str:
 
 
 def _merge_project_data_sources(session: Session, project: Project, role_version,
-                                job: RunJob) -> list[str]:
+                                job: RunJob) -> tuple[list[dict], dict]:
     """Data sources are project-owned (config.mcp_servers), mounted for the
     roles they are assigned to — roles never declare their own servers. The
     mapping lives on the project and is applied at lease time, which is why
-    connecting a source needs no role-library edit and no team repin. Returns
-    the merged specs (name + access), which the prompt paragraph describes."""
+    connecting a source needs no role-library edit and no team repin.
+
+    The integrations this project uses for the role mount beside them, in the
+    same spec shape. Their address and token are not role-granted secrets —
+    nothing an integration holds is granted to a role — so they come back as
+    the second value, the variables the caller adds to the run's environment.
+
+    Returns the merged specs (name + access), which the prompt paragraph
+    describes, and the integrations' variables."""
     # Pinned versions minted before data sources became project-owned may still
     # freeze a legacy mcp_servers key; it is dead weight, never mounted.
     job.tool_permissions.pop("mcp_servers", None)
     specs: list[dict] = []
+    env: dict = {}
     if role_version is not None:
         from yaaf.core.models import Role
 
@@ -450,11 +458,15 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
             if source.get("bearer_secret"):
                 spec["bearer_env"] = _env_var_name(source["bearer_secret"])
             specs.append(spec)
+        from yaaf.server import integrations
+
+        shared, env = integrations.mount(session, project, role.slug if role else None)
+        specs.extend(shared)
         if specs:
             # New dict, never in-place: job.tool_permissions shallow-copies the
             # role version's dict and must not mutate its nested lists.
             job.tool_permissions = {**job.tool_permissions, "mcp_servers": specs}
-    return specs
+    return specs, env
 
 
 def _prepare_workspace(session: Session, project: Project) -> str:

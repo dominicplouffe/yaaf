@@ -1581,6 +1581,114 @@ def people_reactivate(email: str) -> None:
         _show(client.patch(f"/admin/users/{_person_id(client, email)}", json={"active": True}))
 
 
+# ── integrations ────────────────────────────────────────────────────────────────
+
+integration = typer.Typer(
+    no_args_is_help=True,
+    help="MCP servers connected once for every project, and each project's use of them.")
+app.add_typer(integration, name="integration")
+
+
+def _csv(raw: str | None) -> list[str]:
+    return [part.strip() for part in (raw or "").split(",") if part.strip()]
+
+
+@integration.command("list")
+def integration_list(
+    project: str = typer.Option(None, "--project",
+                                help="Show one project's decisions instead of the list"),
+) -> None:
+    """The administrator's list (who uses each, for an admin) — or, with
+    --project, what that project uses, declined, and has not decided."""
+    with _client() as client:
+        if project:
+            _show(client.get(f"/admin/projects/{_resolve_project(client, project)}/integrations"))
+        else:
+            _show(client.get("/admin/integrations"))
+
+
+@integration.command("add")
+def integration_add(
+    name: str,
+    url: str,
+    description: str = typer.Option("", "--description",
+                                     help="What it is, for the people and agents choosing it"),
+    covers: str = typer.Option(None, "--covers",
+                               help="What it is for, comma-separated: 'crm,email marketing'"),
+    auth: str = typer.Option(None, "--auth", help="none, bearer (prompted) or oauth"),
+    access: str = typer.Option("inline", "--access", help="inline, or bulk for anything "
+                                                          "that serves rows"),
+    tools: str = typer.Option(None, "--tools",
+                              help="The tools it may be called with, comma-separated; any "
+                                   "other is a per-call approval"),
+) -> None:
+    """Connect (or edit) an integration for every project. Administrators only.
+
+    A bearer token is prompted, never echoed. An OAuth server is signed in to
+    from Settings → Integrations → Connect, because a browser has to do it."""
+    body: dict = {"name": name, "url": url, "description": description,
+                  "covers": _csv(covers), "access": access}
+    if auth:
+        body["auth"] = auth
+    if tools is not None:
+        body["tools"] = _csv(tools)
+    if auth == "bearer":
+        body["bearer"] = typer.prompt("Bearer token", hide_input=True)
+    with _client() as client:
+        _show(client.post("/admin/integrations", json=body))
+
+
+@integration.command("check")
+def integration_check(name: str) -> None:
+    """Speak MCP to it now and report its tools."""
+    with _client() as client:
+        _show(client.post(f"/admin/integrations/{name}/check", json={}))
+
+
+@integration.command("delete")
+def integration_delete(name: str) -> None:
+    """Remove it from the list. Refused while any project uses it."""
+    with _client() as client:
+        _show(client.request("DELETE", f"/admin/integrations/{name}"))
+
+
+@integration.command("use")
+def integration_use(
+    project: str,
+    name: str,
+    roles: str = typer.Option(..., "--roles", help="Role slugs that get its tools"),
+    mirror_tasks: bool = typer.Option(None, "--mirror-tasks/--no-mirror-tasks",
+                                      help="Mirror the task board into it (a task "
+                                           "manager only)"),
+) -> None:
+    """Use an integration on a project, for these roles."""
+    body: dict = {"decision": "use", "roles": _csv(roles)}
+    if mirror_tasks is not None:
+        body["mirror_tasks"] = mirror_tasks
+    with _client() as client:
+        _show(client.put(
+            f"/admin/projects/{_resolve_project(client, project)}/integrations/{name}",
+            json=body))
+
+
+@integration.command("decline")
+def integration_decline(project: str, name: str,
+                        reason: str = typer.Option(None, "--reason")) -> None:
+    """Decline an integration for a project, so nobody asks again by accident."""
+    with _client() as client:
+        _show(client.put(
+            f"/admin/projects/{_resolve_project(client, project)}/integrations/{name}",
+            json={"decision": "decline", "reason": reason}))
+
+
+@integration.command("forget")
+def integration_forget(project: str, name: str) -> None:
+    """Back to undecided for a project."""
+    with _client() as client:
+        _show(client.request(
+            "DELETE", f"/admin/projects/{_resolve_project(client, project)}/integrations/{name}"))
+
+
 # ── MCP clients ─────────────────────────────────────────────────────────────────
 
 mcp_token = typer.Typer(no_args_is_help=True, help="Tokens for model clients that speak MCP.")

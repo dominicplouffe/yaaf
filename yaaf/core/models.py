@@ -444,6 +444,15 @@ class ApprovalKind(enum.StrEnum):
     # deleted cut an order five weeks later, "from the original project
     # settings". The approval's `brief` carries the text; approving applies it.
     BRIEF = "brief"
+    # An agent asking to use an integration the administrator connected and
+    # this project does not use yet. The approval's `integration` carries
+    # {"integration_id", "name", "roles"}; approving it is what attaches it.
+    INTEGRATION = "integration"
+
+
+class IntegrationDecision(enum.StrEnum):
+    USE = "use"
+    DECLINE = "decline"
 
 
 class ApprovalStatus(enum.StrEnum):
@@ -2043,6 +2052,9 @@ class Approval(Base):
     # and none moved anything; one desk filed the same token-cap raise three
     # times, because each yes left the cap exactly where it was.
     capacity: Mapped[dict | None] = mapped_column(JSONVariant)
+    # An INTEGRATION approval's request: {"integration_id", "name", "roles"}.
+    # Approving it is what attaches the integration for those roles.
+    integration: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
 class Snooze(Base):
@@ -2294,6 +2306,104 @@ class ProjectLlmCredential(Base):
     provider: Mapped[str] = mapped_column(String(32))
     secret_id: Mapped[str] = mapped_column(ForeignKey("secrets.id"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Integration(Base):
+    """An MCP server the administrator connected once, for every project.
+
+    A data source is project-owned, so the HubSpot the company already pays for
+    had to be connected again in every project that should use it — and a
+    project nobody connected it to never learned it existed, and rebuilt email
+    campaigns from scratch. An integration is the same server, held above the
+    projects: one address, one sign-in, one set of allowed tools, and each
+    project decides whether to use it (`ProjectIntegration`).
+
+    `entry` has the shape of a data source entry (`access`, `auth`, `tools`,
+    `oauth`, `last_check`, the url host and port) minus `roles`, which are a
+    project's decision rather than the integration's. Its `*_secret` fields name
+    keys in `vault`, not `Secret` rows: an integration's credentials are not a
+    project's and not a role's, and a platform-scope `Secret` granted to a role
+    slug is injected into every project with that role (`_role_secret_env`) —
+    the opposite of opt in. So they live here, encrypted, and a run receives
+    them only through an attachment.
+    """
+
+    __tablename__ = "integrations"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    # The MCP server name agents see (`mcp__<name>__*`), under the data
+    # source rule: lowercase, digits and dashes.
+    name: Mapped[str] = mapped_column(String(32), unique=True)
+    # What it is, for the people and the agents deciding whether to use it.
+    description: Mapped[str] = mapped_column(Text, default="")
+    # What it is for, in a few words ("crm", "email marketing", "task
+    # management"). The Founder matches a goal against these to know which
+    # integrations it must ask about; an agent reads them to know which
+    # integration does the job it was about to build.
+    covers: Mapped[list] = mapped_column(JSONVariant, default=list)
+    entry: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # {key: ciphertext} — the address, the token, the OAuth refresh token and
+    # client secret. Never returned by any route.
+    vault: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # How tasks are written to it, when it is a task manager a project may
+    # mirror its board to (yaaf.server.task_mirror). Null: it is not one.
+    task_mirror: Mapped[dict | None] = mapped_column(JSONVariant)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, default=utcnow,
+                                                        onupdate=utcnow)
+
+
+class ProjectIntegration(Base):
+    """One project's decision about one integration: use it, or don't.
+
+    A decline is a row too, because "the chairman was asked and said no" and
+    "nobody asked" are different facts, and only the first should stop the
+    Founder asking again. An agent may still argue for a declined integration;
+    its request shows the decline beside it.
+    """
+
+    __tablename__ = "project_integrations"
+    __table_args__ = (UniqueConstraint("project_id", "integration_id"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    integration_id: Mapped[str] = mapped_column(ForeignKey("integrations.id"))
+    decision: Mapped[str] = mapped_column(String(16))  # IntegrationDecision
+    # The role slugs that get its tools. Empty on a decline.
+    roles: Mapped[list] = mapped_column(JSONVariant, default=list)
+    reason: Mapped[str | None] = mapped_column(Text)
+    # Mirror this project's task board into it. Only on a `use` of an
+    # integration with a `task_mirror`; the board stays the system of record.
+    mirror_tasks: Mapped[bool] = mapped_column(Boolean, default=False,
+                                               server_default=text("false"))
+    decided_by: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, default=utcnow,
+                                                        onupdate=utcnow)
+
+
+class TaskMirrorItem(Base):
+    """One task as it was last written to an external task manager.
+
+    The external id is what lets a status change update the card it already
+    made rather than making a second one; `synced_status` is what lets the
+    mirror skip a task nothing has happened to. A failed write keeps its error
+    here and is retried on the next pass, so one bad card never stops the rest.
+    """
+
+    __tablename__ = "task_mirror_items"
+    __table_args__ = (UniqueConstraint("task_id", "integration_id"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
+    integration_id: Mapped[str] = mapped_column(ForeignKey("integrations.id"))
+    external_id: Mapped[str | None] = mapped_column(String(200))
+    synced_status: Mapped[str | None] = mapped_column(String(32))
+    error: Mapped[str | None] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime, default=utcnow,
+                                                        onupdate=utcnow)
 
 
 class ModelPrice(Base):

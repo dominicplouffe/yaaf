@@ -94,7 +94,18 @@ def _web_dist() -> Path | None:
 
 def create_app() -> FastAPI:
     from yaaf.server import mcp
-    from yaaf.server.api import admin, agent, auth, founder, me, oauth, observe, webhooks, ws
+    from yaaf.server.api import (
+        admin,
+        agent,
+        auth,
+        founder,
+        integrations,
+        me,
+        oauth,
+        observe,
+        webhooks,
+        ws,
+    )
     from yaaf.server.api import settings as app_settings
     from yaaf.server.mcp import oauth_server
 
@@ -104,6 +115,10 @@ def create_app() -> FastAPI:
     # personal token, and a person's own credentials. See docs/AUTH.md.
     app.include_router(auth.router, prefix="/auth", tags=["auth"])
     app.include_router(admin.router, prefix="/admin", tags=["admin"])
+    # MCP servers connected once for every project, and each project's choice
+    # of them. Its own module: the list is above every project, the choice is
+    # one project's, and admin.py is already the size of a small book.
+    app.include_router(integrations.router, prefix="/admin", tags=["integrations"])
     # The signed-in person's own state (their snoozes), never a project's.
     app.include_router(me.router, prefix="/me", tags=["me"])
     # The founding conversation, before a project exists. Signed in like the
