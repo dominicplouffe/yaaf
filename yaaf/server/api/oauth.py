@@ -86,6 +86,12 @@ def mcp_oauth_callback(state: str = "", code: str = "", error: str = "",
                      "This is not a valid sign-in link. Press Connect again in the "
                      "project's Settings.", 400)
 
+    from yaaf.server import shared_oauth
+
+    shared = shared_oauth.find_pending(session, state)
+    if shared is not None:
+        return _shared_callback(session, shared, code, error, error_description)
+
     found = _find_pending(session, state)
     if found is None:
         return _page("Sign-in link not recognized",
@@ -170,3 +176,71 @@ def mcp_oauth_callback(state: str = "", code: str = "", error: str = "",
     return _page("Connected",
                  f"The data source '{name}' is signed in. You can close this tab "
                  "and return to yaaf.")
+
+
+def _shared_callback(session: Session, row, code: str, error: str,
+                     error_description: str) -> HTMLResponse:
+    """The same landing for a shared data source: the same checks on the same
+    state, with the tokens stored on the store's row, where every project
+    granted the source reads them."""
+    from yaaf.core.crypto import decrypt
+    from yaaf.server import shared_oauth
+    from yaaf.server.api.admin import _audit, _check_data_source
+
+    entry = dict(row.entry or {})
+    oauth = dict(entry.get("oauth") or {})
+    pending = dict(oauth.pop("pending", {}) or {})
+    starter = pending.get("by_user_id")
+    acting.bind(acting.person(starter) if starter
+                else acting.Actor("system", "oauth-callback"))
+
+    def persist(status: str, error_detail: str | None = None) -> None:
+        oauth["status"] = status
+        if error_detail:
+            oauth["error"] = error_detail
+        else:
+            oauth.pop("error", None)
+        entry["oauth"] = oauth
+        shared_oauth.persist(row, entry)
+
+    started = None
+    with suppress(ValueError):
+        started = datetime.fromisoformat(pending.get("created_at", ""))
+    if started is None or utcnow() - started > timedelta(seconds=mcp_oauth.PENDING_TTL_S):
+        persist("needs_auth", "the sign-in link expired before it was completed")
+        return _page("Sign-in link expired",
+                     "This sign-in took longer than fifteen minutes. Press Connect again "
+                     "in Settings → Shared store for a fresh one.", 400)
+    if error:
+        detail = error_description or error
+        persist("needs_auth", f"the provider reported: {detail}")
+        _audit(session, None, "shared.source_oauth_denied", "shared_data_source", row.id,
+               {"name": row.name, "error": error})
+        return _page("Sign-in not completed",
+                     f"The provider reported: {detail}. Press Connect in Settings → Shared "
+                     "store to try again.", 400)
+    try:
+        tokens = mcp_oauth.exchange_code(
+            oauth["token_endpoint"], code, decrypt(pending["verifier_cipher"]),
+            oauth["client_id"],
+            decrypt(oauth["client_secret_cipher"]) if oauth.get("client_secret_cipher")
+            else None,
+            pending["redirect_uri"], oauth.get("resource"))
+    except (mcp_oauth.OAuthSetupError, KeyError) as exc:
+        log.warning("OAuth code exchange failed for shared source %s: %s", row.name, exc)
+        persist("needs_auth", f"the token exchange failed: {exc}")
+        return _page("Sign-in failed",
+                     f"The provider would not exchange the sign-in for a token: {exc}. "
+                     "Press Connect in Settings → Shared store to try again.", 400)
+
+    entry["oauth"] = oauth
+    shared_oauth.persist(row, entry)
+    shared_oauth.store_tokens(row, tokens)
+    check = _check_data_source(decrypt(row.url_cipher), tokens["access_token"])
+    shared_oauth.persist(row, {**(row.entry or {}),
+                               "last_check": {**check, "at": utcnow().isoformat()}})
+    _audit(session, None, "shared.source_oauth_connect", "shared_data_source", row.id,
+           {"name": row.name, "refresh_token": bool(tokens.get("refresh_token"))})
+    return _page("Connected",
+                 f"The shared data source '{row.name}' is signed in, for every project "
+                 "it is granted to. You can close this tab and return to yaaf.")

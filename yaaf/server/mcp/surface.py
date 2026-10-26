@@ -379,6 +379,9 @@ WITHHELD = {
         "tests its own.",
     "DELETE /admin/shared/data-sources/{item_id}": "the store's lifecycle is the instance "
                                                    "admin's.",
+    "POST /admin/shared/data-sources/{item_id}/oauth/start":
+        "returns a sign-in URL a browser must open, carrying a single-use state, and the "
+        "connection it makes serves every project granted the source.",
     "POST /admin/shared/{kind}/{item_id}/projects":
         "which projects may use a value is the admin's key; a client holding it could "
         "list its own project for anything in the store.",

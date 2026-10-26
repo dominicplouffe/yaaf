@@ -11,9 +11,10 @@ the admin's availability grants no team anything.
 from __future__ import annotations
 
 import contextlib
+import secrets as pysecrets
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,7 +22,7 @@ from sqlalchemy.orm import Session
 from yaaf.core import credential_files, ids, shared_store
 from yaaf.core.models import Project, Secret, SharedAccess, SharedDataSource, utcnow
 from yaaf.core.naming import env_var_name, is_reserved
-from yaaf.server import authority, policy
+from yaaf.server import authority, policy, shared_oauth
 from yaaf.server.api import admin
 from yaaf.server.deps import db
 from yaaf.server.identity import signed_in
@@ -83,7 +84,9 @@ def _base_row(kind: str, row) -> dict:
                     + ([env_var_name(shared_store.source_token_name(row.name))]
                        if row.bearer_cipher else []),
                     **{k: entry.get(k) for k in ("url_host", "url_port", "access", "auth",
-                                                 "tools", "last_check")}})
+                                                 "tools", "last_check")},
+                    # The state alone: the oauth dict also holds ciphertexts.
+                    "oauth_status": (entry.get("oauth") or {}).get("status")})
     return out
 
 
@@ -145,6 +148,8 @@ class SharedVariableIn(BaseModel):
 
 
 def _name_problem(session: Session, name: str, existing: Secret | None) -> str | None:
+    """Names a shared variable may not take. Another shared variable's is not
+    one of them: that is the same item, and the save updates it."""
     env = env_var_name(name)
     if not env:
         return "a name needs at least one letter or digit"
@@ -157,9 +162,8 @@ def _name_problem(session: Session, name: str, existing: Secret | None) -> str |
     if name.lower().startswith("platform-") or name.lower() == "github":
         return "this name is reserved for a platform connection"
     for row in session.execute(select(Secret).where(Secret.project_id.is_(None),
+                                                    Secret.shared_with.is_(None),
                                                     Secret.hidden_at.is_(None))).scalars():
-        if existing is not None and row.id == existing.id:
-            continue
         if env_var_name(row.name) == env:
             return (f"${env} is already taken at platform scope by '{row.name}' — two "
                     "values cannot answer to one name")
@@ -173,10 +177,12 @@ def put_variable(body: SharedVariableIn, session: Session = Depends(db)) -> dict
     file refused as plain, a file's contents refused as a string."""
     from yaaf.core.crypto import encrypt
 
-    existing = session.execute(
-        select(Secret).where(Secret.project_id.is_(None), Secret.shared_with.is_not(None),
-                             Secret.name == body.name)
-    ).scalar_one_or_none()
+    # By the name agents see, not the spelling stored: `email-password` and
+    # EMAIL_PASSWORD reach a sandbox as one variable, so saving either is
+    # writing that one item. Two store rows behind one name is the confusion
+    # this store exists to remove.
+    existing = next((row for row in shared_store.variables(session)
+                     if env_var_name(row.name) == env_var_name(body.name)), None)
     problem = _name_problem(session, body.name, existing)
     if problem:
         raise HTTPException(status_code=409 if "taken" in problem else 422, detail=problem)
@@ -298,22 +304,32 @@ class SharedSourceIn(BaseModel):
     bearer: str | None = None
     access: Literal["inline", "bulk"] = "inline"
     tools: list[str] | None = None
-    # OAuth is refused, not hidden: see docs/SHARED_STORE.md.
+    # None infers from `bearer`, as on a project source. "oauth" is one browser
+    # sign-in that every granted project then uses (yaaf.server.shared_oauth).
     auth: Literal["none", "bearer", "oauth"] | None = None
     shared_with: Literal["all", "listed"] | None = None
+    # For an OAuth server without dynamic client registration.
+    client_id: str | None = None
+    client_secret: str | None = None
+    scope: str | None = None
+
+
+def _needs_reauth(check: dict) -> dict:
+    """A 401 on an OAuth source asks for a fresh sign-in, not a pasted token."""
+    return {**check, "state": "needs_reauth",
+            "detail": "the server rejected the access token — press Reconnect"}
 
 
 @router.post("/shared/data-sources", dependencies=[authority.INSTANCE_ADMIN])
 def put_data_source(body: SharedSourceIn, session: Session = Depends(db)) -> dict:
-    """Store or edit a shared MCP server by name, and prove it answers."""
+    """Store or edit a shared MCP server by name, and prove it answers.
+
+    `bearer` reads as on a project source: omitted keeps the token, "" removes
+    it. An OAuth source answers `needs_connect` until its one sign-in is done,
+    and an edit that keeps its address keeps that sign-in — re-consenting is
+    for a new server, not for a new list of projects."""
     from yaaf.core.crypto import decrypt, encrypt
 
-    if body.auth == "oauth":
-        raise HTTPException(
-            status_code=422,
-            detail="an OAuth source cannot be shared: its refresh token rotates on use, so "
-                   "one sign-in cannot serve several projects. Add it to each project "
-                   "that needs it instead")
     parsed = admin._parse_source_url(
         body.url,
         "that is not a URL — a data source needs a full address like "
@@ -322,22 +338,60 @@ def put_data_source(body: SharedSourceIn, session: Session = Depends(db)) -> dic
     row = session.execute(select(SharedDataSource).where(
         SharedDataSource.name == body.name)).scalar_one_or_none()
     prior = dict(row.entry or {}) if row is not None else {}
-
-    token: str | None
-    if body.bearer:
-        token = body.bearer
-    elif body.bearer == "" or body.auth == "none":
-        token = None
+    prior_auth = prior.get("auth") or ("bearer" if row is not None and row.bearer_cipher
+                                       else "none")
+    if body.auth:
+        auth = body.auth
+    elif body.bearer:
+        auth = "bearer"
+    elif row is not None and body.bearer is None:
+        auth = prior_auth
     else:
-        token = decrypt(row.bearer_cipher) if row is not None and row.bearer_cipher else None
+        auth = "none"
 
     entry = {"url_host": parsed.hostname,
              "url_port": parsed.port or (443 if parsed.scheme == "https" else 80),
-             "access": body.access, "auth": "bearer" if token else "none"}
+             "access": body.access, "auth": auth}
     allowlist = body.tools if body.tools is not None else prior.get("tools")
     if allowlist is not None:
         entry["tools"] = sorted({t.strip() for t in allowlist if t.strip()})
-    check = admin._check_data_source(url, token)
+
+    token: str | None = None
+    needs_connect = False
+    if auth == "oauth":
+        same_server = (row is not None and prior_auth == "oauth"
+                       and decrypt(row.url_cipher).strip() == url)
+        if same_server:
+            oauth = dict(prior.get("oauth") or {})
+            token = decrypt(row.bearer_cipher) if row.bearer_cipher else None
+        else:
+            # A new server, a moved address, or a switch from a pasted token:
+            # whatever tokens exist were minted for something else.
+            oauth = {"status": "needs_auth", "resource": url}
+        if body.client_id:
+            oauth["client_id"] = body.client_id
+            oauth.pop("registered_redirect_uri", None)
+        if body.client_secret:
+            oauth["client_secret_cipher"] = encrypt(body.client_secret)
+        if body.scope is not None:
+            oauth["scope"] = body.scope or None
+        entry["oauth"] = oauth
+        needs_connect = token is None or oauth.get("status") != "connected"
+        if token:
+            check = admin._check_data_source(url, token)
+            if check.get("code") == "unauthorized":
+                oauth["status"] = "needs_reauth"
+                check = _needs_reauth(check)
+        else:
+            check = {"ok": False, "state": "needs_signin",
+                     "detail": "OAuth connection required — press Connect"}
+    else:
+        if body.bearer:
+            token = body.bearer
+        elif body.bearer is None and auth == "bearer" and prior_auth == "bearer" \
+                and row is not None and row.bearer_cipher:
+            token = decrypt(row.bearer_cipher)
+        check = admin._check_data_source(url, token)
     entry["last_check"] = {**check, "at": utcnow().isoformat()}
 
     created = row is None
@@ -349,15 +403,81 @@ def put_data_source(body: SharedSourceIn, session: Session = Depends(db)) -> dic
         row.shared_with = body.shared_with
     row.url_cipher = encrypt(url)
     row.bearer_cipher = encrypt(token) if token else None
-    row.entry = entry
+    shared_oauth.persist(row, entry)
     row.updated_at = utcnow()
     session.flush()
     admin._audit(session, None, "shared.source_save", "shared_data_source", row.id,
                  {"name": row.name, "host": entry["url_host"], "access": body.access,
-                  "auth": entry["auth"], "shared_with": row.shared_with,
+                  "auth": auth, "shared_with": row.shared_with,
                   "check_ok": check.get("ok"), "created": created})
     return {**_base_row(shared_store.DATA_SOURCE, row), "check": check,
+            "needs_connect": needs_connect,
             "note": "Projects that receive it get the change on their next run."}
+
+
+@router.post("/shared/data-sources/{item_id}/oauth/start",
+             dependencies=[authority.INSTANCE_ADMIN])
+def start_data_source_oauth(item_id: str, request: Request,
+                            session: Session = Depends(db)) -> dict:
+    """Begin the one browser sign-in a shared OAuth source needs. The same
+    ladder a project source walks (yaaf.server.mcp_oauth), the same callback
+    URL, and the same single-use 256-bit state; what the callback stores lands
+    on the store's row, for every project granted the source."""
+    from yaaf.core.config import settings
+    from yaaf.core.crypto import decrypt, encrypt
+    from yaaf.server import acting, mcp_oauth
+
+    row = _item_or_404(session, shared_store.DATA_SOURCE, item_id)
+    if not shared_oauth.is_oauth(row):
+        raise HTTPException(status_code=422, detail="this data source is not set to OAuth "
+                                                    "sign-in — edit it and pick OAuth first")
+    url = decrypt(row.url_cipher)
+    base = (settings().public_base_url or str(request.base_url)).rstrip("/")
+    redirect_uri = f"{base}/oauth/mcp/callback"
+    entry = dict(row.entry or {})
+    oauth = dict(entry.get("oauth") or {})
+    try:
+        disc = mcp_oauth.discover(url)
+        # A client registered for another origin is refused forever; register
+        # afresh. A client the admin pasted has no registered_redirect_uri and
+        # is never replaced.
+        registered_for = oauth.get("registered_redirect_uri")
+        if registered_for and registered_for != redirect_uri:
+            oauth.pop("client_id", None)
+            oauth.pop("client_secret_cipher", None)
+        if not oauth.get("client_id"):
+            client_id, client_secret = mcp_oauth.register_client(disc, redirect_uri)
+            oauth["client_id"] = client_id
+            oauth["registered_redirect_uri"] = redirect_uri
+            if client_secret:
+                oauth["client_secret_cipher"] = encrypt(client_secret)
+    except mcp_oauth.OAuthSetupError as exc:
+        entry["oauth"] = {**oauth, "error": str(exc)}
+        shared_oauth.persist(row, entry)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    state = pysecrets.token_urlsafe(32)
+    verifier = pysecrets.token_urlsafe(64)
+    oauth.update({
+        "status": "pending",
+        "authorization_endpoint": disc.authorization_endpoint,
+        "token_endpoint": disc.token_endpoint,
+        "registration_endpoint": disc.registration_endpoint,
+        "resource": disc.resource,
+        "pending": {"state": state, "verifier_cipher": encrypt(verifier),
+                    "redirect_uri": redirect_uri, "created_at": utcnow().isoformat(),
+                    "by_user_id": acting.user_id()},
+    })
+    oauth.pop("error", None)
+    entry["oauth"] = oauth
+    shared_oauth.persist(row, entry)
+    authorize_url = mcp_oauth.build_authorize_url(
+        disc, oauth["client_id"], redirect_uri, state, verifier, oauth.get("scope"))
+    admin._audit(session, None, "shared.source_oauth_start", "shared_data_source", row.id,
+                 {"name": row.name, "authorization_endpoint": disc.authorization_endpoint})
+    return {"authorize_url": authorize_url,
+            "note": "Complete the sign-in in the opened tab. Every project granted this "
+                    "source uses the connection."}
 
 
 @router.post("/shared/data-sources/{item_id}/check", dependencies=[authority.INSTANCE_ADMIN])
@@ -365,9 +485,23 @@ def check_data_source(item_id: str, session: Session = Depends(db)) -> dict:
     from yaaf.core.crypto import decrypt
 
     row = _item_or_404(session, shared_store.DATA_SOURCE, item_id)
-    check = admin._check_data_source(
-        decrypt(row.url_cipher), decrypt(row.bearer_cipher) if row.bearer_cipher else None)
-    row.entry = {**(row.entry or {}), "last_check": {**check, "at": utcnow().isoformat()}}
+    url = decrypt(row.url_cipher)
+    if shared_oauth.is_oauth(row):
+        token = shared_oauth.ensure_fresh(session, row)
+        if token is None:
+            check = {"ok": False, "state": "needs_signin",
+                     "detail": "OAuth connection required — press Connect"}
+        else:
+            check = admin._check_data_source(url, token)
+            if check.get("code") == "unauthorized":
+                oauth = {**((row.entry or {}).get("oauth") or {}), "status": "needs_reauth"}
+                shared_oauth.persist(row, {**(row.entry or {}), "oauth": oauth})
+                check = _needs_reauth(check)
+    else:
+        check = admin._check_data_source(
+            url, decrypt(row.bearer_cipher) if row.bearer_cipher else None)
+    shared_oauth.persist(row, {**(row.entry or {}),
+                               "last_check": {**check, "at": utcnow().isoformat()}})
     admin._audit(session, None, "shared.source_check", "shared_data_source", row.id,
                  {"name": row.name, "ok": check.get("ok")})
     return check
@@ -402,9 +536,6 @@ def make_available(kind: str, item_id: str, body: ProjectRef,
     if held is not None:
         return {"project_id": project.id, "roles": list(held.role_scopes or []),
                 "created": False}
-    problem = shared_store.project_collision(session, project.id, kind, row)
-    if problem:
-        raise HTTPException(status_code=422, detail=problem)
     session.add(SharedAccess(id=ids.new_id(ids.SHARED_ACCESS), project_id=project.id,
                              item_kind=kind, item_id=row.id, role_scopes=[]))
     admin._audit(session, project.id, "shared.available", kind, row.id,
@@ -476,10 +607,52 @@ class SharedGrantIn(BaseModel):
     roles: list[str] = Field(default_factory=list)
 
 
+def replaces(session: Session, project: Project, kind: str, row) -> list[str]:
+    """What of the project's own a grant of `row` would replace, in words —
+    for a preview, before anything is removed."""
+    own, source = shared_store.project_clashes(session, project.id, kind, row)
+    return ([f"data source '{source['name']}'"] if source else []) + \
+        [f"${env_var_name(s.name)}" for s in own]
+
+
+def _replace_project_own(session: Session, project: Project, kind: str, row) -> list[str]:
+    """The overwrite: this project's own value under the shared item's name
+    goes, so the name has one value again. Its own data source goes whole —
+    address, token and OAuth tokens together — through the door that removes
+    one, so nothing is left half-wired."""
+    own, source = shared_store.project_clashes(session, project.id, kind, row)
+    replaced: list[str] = []
+    if source is not None:
+        admin.delete_data_source(project_id=project.id, name=source["name"], session=session)
+        session.flush()
+        replaced.append(f"data source '{source['name']}'")
+        own, _ = shared_store.project_clashes(session, project.id, kind, row)
+    for secret in own:
+        owner = admin._secret_owner(session, project.id, secret.name)
+        if owner is not None:
+            # A value something else on the project runs on is not a
+            # duplicate of a shared one; removing it would break its owner.
+            raise HTTPException(
+                status_code=422,
+                detail=f"${env_var_name(secret.name)} here belongs to {owner}, so the "
+                       f"{shared_store.label(kind, row)} cannot replace it — rename one "
+                       "of them")
+        session.delete(secret)
+        admin._audit(session, project.id, "secret.delete", "secret", secret.id,
+                     {"name": secret.name,
+                      "replaced_by": shared_store.label(kind, row)})
+        replaced.append(f"${env_var_name(secret.name)}")
+    return replaced
+
+
 def grant(session: Session, project: Project, kind: str, item_id: str,
-          roles: list[str]) -> dict:
+          roles: list[str], *, replace: bool = True) -> dict:
     """The chairs' key, shared by the HTTP door, the MCP tool and the CEO's
-    delegation, so all three refuse the same things in the same words."""
+    delegation, so all three refuse the same things in the same words.
+
+    Granting over a name the project already holds replaces the project's own
+    value. The CEO's delegation passes `replace=False`: it scopes credentials
+    and never removes one the chairman stored."""
     row = shared_store.item(session, kind, item_id)
     held = shared_store.access(session, project.id, kind, item_id) if row else None
     if row is None or (held is None and row.shared_with != shared_store.ALL):
@@ -491,10 +664,16 @@ def grant(session: Session, project: Project, kind: str, item_id: str,
         policy.check_roles_on_project(session, project.id, roles)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    replaced: list[str] = []
     if roles:
-        problem = shared_store.project_collision(session, project.id, kind, row)
-        if problem:
-            raise HTTPException(status_code=422, detail=problem)
+        if not replace:
+            clashing = replaces(session, project, kind, row)
+            if clashing:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"this project holds its own {', '.join(clashing)}; replacing it "
+                           f"with the {shared_store.label(kind, row)} is the chairman's call")
+        replaced = _replace_project_own(session, project, kind, row)
     if held is None:
         held = SharedAccess(id=ids.new_id(ids.SHARED_ACCESS), project_id=project.id,
                             item_kind=kind, item_id=row.id, role_scopes=[])
@@ -503,9 +682,13 @@ def grant(session: Session, project: Project, kind: str, item_id: str,
     held.role_scopes = roles
     held.updated_at = utcnow()
     admin._audit(session, project.id, "shared.grant", kind, row.id,
-                 {"name": row.name, "was": was, "roles": roles})
+                 {"name": row.name, "was": was, "roles": roles, "replaced": replaced})
+    note = "Effective on each granted role's next run."
+    if replaced:
+        note = (f"Replaced this project's own {', '.join(replaced)} with the "
+                f"{shared_store.label(kind, row)}. " + note)
     return {"id": row.id, "name": row.name, "kind": kind, "roles": roles, "was": was,
-            "note": "Effective on each granted role's next run."}
+            "replaced": replaced, "note": note}
 
 
 @router.put("/projects/{project_id}/shared/{kind}/{item_id}", dependencies=[authority.STEER])

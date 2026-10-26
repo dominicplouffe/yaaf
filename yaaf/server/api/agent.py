@@ -3528,8 +3528,9 @@ def _shared_scope(session: Session, ctx: RunContext, name: str,
                   body: CredentialScope) -> dict | None:
     """credential_scope on a shared variable this project may use: the same
     tickbox, through the chairs' own door (`shared.grant`), so it refuses what
-    theirs refuses — a role nobody here employs, a name the project already
-    holds."""
+    theirs refuses. One thing more: where the project holds its own value under
+    the name, the chairs' grant would replace it, and the CEO's is refused —
+    it scopes credentials and never removes one the chairman stored."""
     from fastapi import HTTPException
 
     from yaaf.core import shared_store
@@ -3543,7 +3544,7 @@ def _shared_scope(session: Session, ctx: RunContext, name: str,
     scopes += [s for s in body.add_roles if s not in scopes]
     try:
         outcome = shared_api.grant(session, ctx.project, shared_store.VARIABLE,
-                                   held.item.id, scopes)
+                                   held.item.id, scopes, replace=False)
     except HTTPException as exc:
         raise Refusal(str(exc.detail), status_code=exc.status_code) from exc
     session.add(AuditLog(

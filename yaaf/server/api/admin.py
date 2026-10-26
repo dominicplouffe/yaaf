@@ -2611,10 +2611,9 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
 
     servers = (project.integrations or {}).get("mcp_servers", [])
     prior = next((s for s in servers if s.get("name") == body.name), None)
+    replaced: list[str] = []
     if prior is None:
-        taken = shared_store.name_taken(session, project.id, source_name=body.name)
-        if taken:
-            raise HTTPException(status_code=422, detail=taken)
+        replaced = _take_back_shared(session, project.id, source_name=body.name)
     # `auth` reads like `bearer` does: absent keeps an existing source's mode
     # (so pre-OAuth callers keep meaning what they always meant), a pasted
     # token implies bearer, and a brand-new source with neither is open.
@@ -2721,7 +2720,9 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
             "access": body.access, "auth": auth, "check_ok": check["ok"],
             "tools": entry.get("tools")})
     return {"name": body.name, "check": check, "needs_connect": needs_connect,
-            "note": "Effective on each granted role's next run."}
+            "replaced": replaced,
+            "note": (f"Replaces the {', '.join(replaced)} on this project. " if replaced
+                     else "") + "Effective on each granted role's next run."}
 
 
 @router.delete("/projects/{project_id}/mcp_servers/{name}", dependencies=[authority.STEER])
@@ -4289,9 +4290,7 @@ def fulfill_need(
             detail=f"'{body.secret_name}' would be injected as {env_var}, and YAAF_* "
                    "belongs to the platform inside a sandbox. Pick another name")
     if _project_secret(session, project.id, body.secret_name) is None:
-        taken = shared_store.name_taken(session, project.id, secret_name=body.secret_name)
-        if taken:
-            raise HTTPException(status_code=422, detail=taken)
+        _take_back_shared(session, project.id, secret_name=body.secret_name)
     filename = None
     if body.filename is not None:
         try:
@@ -6484,6 +6483,24 @@ def provision_slack_channels(project_id: str, session: Session = Depends(db)) ->
     return result
 
 
+def _take_back_shared(session: Session, project_id: str, *, secret_name: str | None = None,
+                      source_name: str | None = None) -> list[str]:
+    """The other half of one name, one value (yaaf.core.shared_store): a value
+    the project stores itself replaces a shared one under the same name, so
+    the shared item is taken back from this project's teams. Access stays, so
+    the chairs can give it back by removing their own."""
+    taken: list[str] = []
+    for held in shared_store.received_matching(session, project_id, secret_name=secret_name,
+                                               source_name=source_name):
+        was = held.roles
+        held.access.role_scopes = []
+        _audit(session, project_id, "shared.grant", held.kind, held.item.id,
+               {"name": held.item.name, "was": was, "roles": [],
+                "replaced_by_own": secret_name or source_name})
+        taken.append(shared_store.label(held.kind, held.item))
+    return taken
+
+
 def _require_secret_steer(session: Session, project_id: str | None) -> None:
     """A project's credentials are its chairs' to change; the platform's own
     — project_id null — are the instance admin's."""
@@ -6541,12 +6558,10 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
             status_code=422,
             detail=f"'{body.name}' is in the shared store — change it there "
                    "(Settings → Shared store)")
-    if existing is None and body.project_id is not None:
-        # A second value under a name the shared store already puts into this
-        # project's runs would leave one of the two silently unread.
-        taken = shared_store.name_taken(session, body.project_id, secret_name=body.name)
-        if taken:
-            raise HTTPException(status_code=422, detail=taken)
+    replaced: list[str] = []
+    if existing is None and body.project_id is not None and body.value is not None:
+        # One name, one value: the project's own replaces a shared one.
+        replaced = _take_back_shared(session, body.project_id, secret_name=body.name)
     # A file credential and a string one are stored differently (base64 vs the
     # value), so which one this is has to be settled before anything is
     # encrypted — and it is settled once, at creation.
@@ -6671,7 +6686,7 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
            {"name": body.name, "role_scopes": row.role_scopes, "kind": kind,
             "filename": filename, "visibility": row.visibility})
     return {"id": row.id, "rotated": False, "role_scopes": row.role_scopes, "kind": kind,
-            "filename": row.filename, "visibility": row.visibility}
+            "filename": row.filename, "visibility": row.visibility, "replaced": replaced}
 
 
 # ── MCP clients ─────────────────────────────────────────────────────────────────

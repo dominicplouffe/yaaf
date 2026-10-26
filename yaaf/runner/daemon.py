@@ -454,7 +454,11 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
             # Shared sources the project's chairs granted this role. Same spec,
             # so nothing past the lease can tell where a source came from.
             from yaaf.core import shared_store
+            from yaaf.server import shared_oauth
 
+            # One connection for every project: renewed here, on the store's
+            # row and under its lock, before the role's env is read from it.
+            shared_oauth.refresh_for_role(session, project.id, role.slug)
             specs += shared_store.role_sources(session, project.id, role.slug)
         if specs:
             # New dict, never in-place: job.tool_permissions shallow-copies the

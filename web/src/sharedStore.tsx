@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { del, get, OrgView, post, put } from "./api";
-import { envVarName } from "./datasource";
+import { AuthPicker, envVarName, OAuthClientFields, SourceAuth } from "./datasource";
 import { GrantChips } from "./grants";
 import { fmtWhen } from "./hooks";
 import { grantOptions, RoleGrants } from "./roles";
@@ -41,7 +41,9 @@ export interface SharedRow {
   url_host?: string;
   url_port?: number;
   access?: "inline" | "bulk";
-  auth?: string;
+  auth?: SourceAuth;
+  /** An OAuth source's one connection, which every granted project uses. */
+  oauth_status?: "connected" | "needs_auth" | "needs_reauth" | "pending" | null;
   last_check?: Check | null;
   updated_at: string | null;
   roles: string[];
@@ -70,6 +72,14 @@ interface Store {
 const TYPE_LABEL = { secret: "Secret", plain: "Plain value", file: "File" } as const;
 
 const envOf = (row: { env: string | string[] }) => (Array.isArray(row.env) ? row.env[0] : row.env);
+
+/** An OAuth source that is not signed in yet says so wherever it is listed:
+    every project granted it is waiting on the same one sign-in. */
+const signInNote = (row: { auth?: SourceAuth; oauth_status?: string | null }) =>
+  row.auth !== "oauth" ? ""
+    : row.oauth_status === "connected" ? " · OAuth, one sign-in for every project"
+    : row.oauth_status === "needs_reauth" ? " · sign-in expired"
+    : " · not signed in yet";
 
 export function useProjectShared(projectId: string) {
   const [view, setView] = useState<ProjectShared | null>(null);
@@ -116,7 +126,7 @@ export function ProjectSharedSection({ projectId, org, kind, rows, onSaved }: {
               <span className="vsub">
                 {kind === "variables"
                   ? `Shared · ${TYPE_LABEL[row.type ?? "secret"]}`
-                  : `Shared · ${row.url_host}:${row.url_port}`}
+                  : `Shared · ${row.url_host}:${row.url_port}${signInNote(row)}`}
               </span>
             </span>
           </span>
@@ -289,7 +299,10 @@ function StoreList({ rows, kind, onOpen, empty }: {
             </span>
             <span className="vname-text">
               <code className="vnm">{kind === "variables" ? envOf(r) : r.name}</code>
-              <span className="vsub">{r.shared_with === "all" ? "Any project may use it" : "Listed projects only"}</span>
+              <span className="vsub">
+                {r.shared_with === "all" ? "Any project may use it" : "Listed projects only"}
+                {kind === "data-sources" && signInNote(r)}
+              </span>
             </span>
           </span>
           <span className="vval">
@@ -331,6 +344,8 @@ function StoreDrawer({ kind, row, projects, onClose, onSaved, onChanged }: {
   const [replacing, setReplacing] = useState(creating);
   const [url, setUrl] = useState("");
   const [bearer, setBearer] = useState("");
+  const [auth, setAuth] = useState<SourceAuth>(row?.auth ?? "none");
+  const [client, setClient] = useState({ id: "", secret: "", scope: "" });
   const [access, setAccess] = useState<"inline" | "bulk">(row?.access ?? "inline");
   const [availability, setAvailability] = useState<Availability>(row?.shared_with ?? "listed");
   const [revealed, setRevealed] = useState<string | null>(null);
@@ -363,13 +378,51 @@ function StoreDrawer({ kind, row, projects, onClose, onSaved, onChanged }: {
       onSaved(`Saved $${envVarName(name)}. Projects that receive it get the change on their next run.`);
     } else {
       if (!url.trim()) throw new Error("Paste the server's address to save it — it is checked when you do.");
-      const saved = await post<{ check: Check }>("/admin/shared/data-sources", {
-        name: name.trim(), url: url.trim(), access, shared_with: availability,
-        ...(bearer ? { bearer } : {}),
-      });
-      onSaved(`Saved '${name.trim()}' — ${saved.check.ok ? "" : "but "}${saved.check.detail ?? ""}`);
+      // Opened in the click itself: a tab opened after an await is a popup
+      // the browser blocks. Closed again if no sign-in turns out to be needed.
+      const tab = auth === "oauth" ? window.open("", "_blank") : null;
+      try {
+        const saved = await post<{ id: string; check: Check; needs_connect: boolean }>(
+          "/admin/shared/data-sources", {
+            name: name.trim(), url: url.trim(), access, shared_with: availability, auth,
+            ...(auth === "bearer" && bearer ? { bearer } : {}),
+            ...(auth === "oauth" && client.id ? { client_id: client.id } : {}),
+            ...(auth === "oauth" && client.secret ? { client_secret: client.secret } : {}),
+            ...(auth === "oauth" && client.scope ? { scope: client.scope } : {}),
+          });
+        if (saved.needs_connect) {
+          await signIn(saved.id, tab);
+          onSaved(`Saved '${name.trim()}'. Finish the provider's sign-in in the tab that opened — every project granted it then uses that one connection.`);
+        } else {
+          tab?.close();
+          onSaved(`Saved '${name.trim()}' — ${saved.check.ok ? "" : "but "}${saved.check.detail ?? ""}`);
+        }
+      } catch (e) {
+        tab?.close();
+        throw e;
+      }
     }
   });
+
+  async function signIn(id: string, tab: Window | null) {
+    const started = await post<{ authorize_url: string }>(
+      `/admin/shared/data-sources/${id}/oauth/start`, {});
+    if (tab) tab.location.href = started.authorize_url;
+    else window.open(started.authorize_url, "_blank");
+  }
+
+  const connect = () => {
+    const tab = window.open("", "_blank");
+    return run(async () => {
+      try {
+        await signIn(row!.id, tab);
+        onSaved(`Finish the provider's sign-in in the tab that opened. Every project granted '${row!.name}' uses the connection.`);
+      } catch (e) {
+        tab?.close();
+        throw e;
+      }
+    });
+  };
 
   const remove = () => run(async () => {
     await del(`/admin/shared/${kind}/${row!.id}`);
@@ -495,10 +548,34 @@ function StoreDrawer({ kind, row, projects, onClose, onSaved, onChanged }: {
                          placeholder={row ? `${row.url_host}:${row.url_port} — paste the full address to save` : "https://mcp.example.com/mcp"} />
           </div>
           <div className="tswitch-field">
-            <label className="lbl" htmlFor="shared-bearer">Bearer token</label>
-            <SecretInput id="shared-bearer" value={bearer} onChange={setBearer}
-                         placeholder={row?.auth === "bearer" ? "Leave empty to keep the current token" : "Optional"} />
+            <AuthPicker value={auth} onChange={setAuth}
+                        oauthNote={<>One sign-in, done here, serves every project you give this
+                          source to. yaaf stores the tokens encrypted and refreshes them in one
+                          place, so projects never compete for them.</>} />
+            {auth === "bearer" && (
+              <SecretInput id="shared-bearer" value={bearer} onChange={setBearer}
+                           placeholder={row?.auth === "bearer" ? "Leave empty to keep the current token" : "The token"} />
+            )}
+            {auth === "oauth" && (
+              <OAuthClientFields clientId={client.id} clientSecret={client.secret} scope={client.scope}
+                                 onClientId={(id) => setClient({ ...client, id })}
+                                 onClientSecret={(secret) => setClient({ ...client, secret })}
+                                 onScope={(scope) => setClient({ ...client, scope })} />
+            )}
           </div>
+          {row?.auth === "oauth" && (
+            <div className="valbox">
+              <span className="valbox-v">
+                {row.oauth_status === "connected" ? "Signed in. Every granted project uses this connection."
+                  : row.oauth_status === "needs_reauth" ? "The sign-in expired."
+                  : "Not signed in yet."}
+              </span>
+              <button className="small" disabled={busy} onClick={connect}>
+                {row.oauth_status === "connected" ? "Sign in again"
+                  : row.oauth_status === "needs_reauth" ? "Reconnect" : "Connect"}
+              </button>
+            </div>
+          )}
           <div className="tswitch-field">
             <span className="lbl">Results</span>
             <div className="kindpick" role="radiogroup">

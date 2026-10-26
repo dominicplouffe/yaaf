@@ -138,15 +138,6 @@ def env_names(held: Held) -> list[str]:
     return names
 
 
-def received_names(session: Session, project_id: str) -> dict[str, str]:
-    """Env var name → the shared item that puts it into this project's runs."""
-    out: dict[str, str] = {}
-    for held in received(session, project_id):
-        for name in env_names(held):
-            out[name] = label(held.kind, held.item)
-    return out
-
-
 def received_source(session: Session, project_id: str, name: str) -> Held | None:
     for held in received(session, project_id):
         if held.kind == DATA_SOURCE and held.item.name == name:
@@ -154,54 +145,44 @@ def received_source(session: Session, project_id: str, name: str) -> Held | None
     return None
 
 
-# ── collisions: refused at every door, never resolved at lease ─────────────────
+# ── one name, one value: the newer one replaces the older ─────────────────────
+#
+# A shared value and a project's own under one name would leave one of them
+# silently unread, and an agent told about both would guess which it holds. So
+# a name never has two values on a project: granting a shared item replaces
+# the project's own, and storing a project value takes the shared one back
+# from that project's teams. The doors below say which they replaced.
 
 
-def project_collision(session: Session, project_id: str, kind: str,
-                      row: Secret | SharedDataSource) -> str | None:
-    """Why this project cannot receive this item, if its own wiring already
-    holds the name. A grant that shadowed a project value, or was shadowed by
-    one, would leave one of the two silently invisible to every agent."""
+def project_clashes(session: Session, project_id: str, kind: str,
+                    row: Secret | SharedDataSource) -> tuple[list[Secret], dict | None]:
+    """What of this project's own a grant of `row` would replace: its
+    credentials under the same variable names, and its own data source of the
+    same name."""
     from yaaf.core.models import Project
 
-    project = session.get(Project, project_id)
-    own_env = {env_var_name(s.name): s.name for s in session.execute(
+    wanted = set(env_names(Held(kind, row, None)))
+    own = [s for s in session.execute(
         select(Secret).where(Secret.project_id == project_id, Secret.llm_mode.is_(None))
-    ).scalars()}
+    ).scalars() if env_var_name(s.name) in wanted]
+    source = None
     if kind == DATA_SOURCE:
+        project = session.get(Project, project_id)
         sources = (project.integrations or {}).get("mcp_servers", []) if project else []
-        if any(s.get("name") == row.name for s in sources):
-            return (f"this project has its own data source '{row.name}' — remove it or "
-                    "rename it before using the shared one")
-        wanted = env_names(Held(kind, row, None))
-    else:
-        wanted = [env_var_name(row.name)]
-    for name in wanted:
-        if name in own_env:
-            return (f"this project already holds its own ${name} ({own_env[name]}) — "
-                    "delete it before using the shared one, or two values would answer "
-                    "to one name")
-    return None
+        source = next((s for s in sources if s.get("name") == row.name), None)
+    return own, source
 
 
-def name_taken(session: Session, project_id: str, *, secret_name: str | None = None,
-               source_name: str | None = None) -> str | None:
-    """The shared item a project-side write would collide with, as a refusal.
-    Asked by the project's own credential and data source doors."""
-    names = received_names(session, project_id)
-    if secret_name is not None:
-        hit = names.get(env_var_name(secret_name))
-        if hit:
-            return (f"${env_var_name(secret_name)} already reaches this project as the "
-                    f"{hit} — take it from the teams that have it first, or pick "
-                    "another name")
-    if source_name is not None:
-        held = received_source(session, project_id, source_name)
-        if held is not None:
-            return (f"'{source_name}' already reaches this project as a shared data "
-                    "source — take it from the teams that have it first, or pick "
-                    "another name")
-    return None
+def received_matching(session: Session, project_id: str, *, secret_name: str | None = None,
+                      source_name: str | None = None) -> list[Held]:
+    """The shared items a project-side write under this name would replace."""
+    def matches(held: Held) -> bool:
+        if secret_name is not None and env_var_name(secret_name) in env_names(held):
+            return True
+        return (source_name is not None and held.kind == DATA_SOURCE
+                and held.item.name == source_name)
+
+    return [held for held in received(session, project_id) if matches(held)]
 
 
 # ── the lease ───────────────────────────────────────────────────────────────────
@@ -210,8 +191,8 @@ def name_taken(session: Session, project_id: str, *, secret_name: str | None = N
 def role_env(session: Session, project_id: str, role_slug: str, taken: dict) -> dict:
     """Decrypted env for the shared items this role receives on this project.
     `taken` is what the project's own credentials already put there. A name in
-    it is skipped, because a project value never loses to a shared one. The
-    doors refuse that collision. This is the second line of defence."""
+    it is skipped: the doors never leave both, and if a race ever did, the
+    project's own value is the one its chairs can see and change."""
     from yaaf.core.crypto import decrypt
 
     env: dict = {}

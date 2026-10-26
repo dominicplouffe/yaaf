@@ -231,8 +231,10 @@ live once in the **shared store** (Settings → Shared store) instead of once pe
 project. The instance admin stores it and makes it available to every project
 or to listed ones. Each project's chairs then grant it to their teams from
 Secrets & variables, beside their own. Shared data sources work the same way,
-except OAuth ones, which stay per project. A project can never hold its own
-value under a shared one's name, in either order. See
+OAuth ones included: one sign-in serves every project granted the source. A
+name holds one value per project, and the newer replaces the older: granting a
+shared item replaces the project's own under that name, and storing the
+project's own takes the shared one back from its teams. See
 [SHARED_STORE.md](SHARED_STORE.md).
 
 ## Data sources — external MCP servers

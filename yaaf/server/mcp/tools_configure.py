@@ -392,6 +392,8 @@ def shared(principal: Principal, session: Session, arguments: dict) -> dict:
     preview = confirm.gate(session, principal, "shared", arguments, {
         "verb": "grant", "project": project.slug, "kind": kind, "name": name,
         "roles": roles, "was": held.roles,
+        # One name, one value: say what goes before it goes.
+        "replaces": shared_api.replaces(session, project, kind, held.item) if roles else [],
         "note": "Effective on each granted role's next run. The value never passes "
                 "through this surface."})
     if preview:

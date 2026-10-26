@@ -18,6 +18,7 @@ import pytest
 
 from tests.conftest import ADMIN, headers_of, make_project, person
 from tests.selftest_invariants.test_auth_roles import seat
+from tests.selftest_invariants.test_mcp_oauth import MCP_URL, OAuthWorld
 from yaaf.core import ids
 from yaaf.core.db import db_session
 from yaaf.core.models import Agent, Project, RunKind, RunQueue, Secret, SharedAccess
@@ -180,32 +181,54 @@ def test_a_grant_is_held_to_the_projects_own_roster(client):
     assert refused.status_code == 422 and "This project employs" in refused.json()["detail"]
 
 
-def test_two_values_never_answer_to_one_name(client):
-    """Refused both ways round, because whichever lost would be silently
-    invisible to every agent that thought it held it."""
+def test_one_name_has_one_value_and_the_newer_one_wins(client):
+    """Two values under one name would leave an agent guessing which it holds.
+    So the newer replaces the older, in either order, and the answer says what
+    it replaced."""
     acme = make_project(client, slug="acme")
     item = _shared(client, "EMAIL_PASSWORD", PASSWORD, shared_with="all")
 
-    # The project holds its own: the grant is refused and names it.
+    # The project held its own; granting the shared one replaces it.
     own = client.post("/admin/secrets", headers=ADMIN, json={
-        "project_id": acme["id"], "name": "email-password", "value": "the-projects-own-9876"})
+        "project_id": acme["id"], "name": "email-password", "value": "the-projects-own-9876",
+        "role_scopes": ["worker"]})
     assert own.status_code == 200, own.text
-    refused = _grant(client, acme["id"], item["id"], ["worker"])
-    assert refused.status_code == 422 and "EMAIL_PASSWORD" in refused.json()["detail"]
-    client.delete(f"/admin/secrets/{own.json()['id']}", headers=ADMIN)
-
-    # The project receives the shared one: its own is refused.
-    assert _grant(client, acme["id"], item["id"], ["worker"]).status_code == 200
-    again = client.post("/admin/secrets", headers=ADMIN, json={
-        "project_id": acme["id"], "name": "EMAIL_PASSWORD", "value": "the-projects-own-9876"})
-    assert again.status_code == 422 and "shared variable" in again.json()["detail"]
-
-    # And the lease would still prefer the project's, were a row to get past.
+    granted = _grant(client, acme["id"], item["id"], ["worker"])
+    assert granted.status_code == 200, granted.text
+    assert granted.json()["replaced"] == ["$EMAIL_PASSWORD"]
     with db_session() as session:
-        session.add(Secret(id=ids.new_id(ids.SECRET), project_id=acme["id"],
-                           name="EMAIL_PASSWORD", ciphertext=_cipher("hand-edited-row"),
-                           role_scopes=["worker"], kind="service"))
-    assert _env(acme)["EMAIL_PASSWORD"] == "hand-edited-row"
+        assert session.get(Secret, own.json()["id"]) is None
+    assert _env(acme)["EMAIL_PASSWORD"] == PASSWORD
+
+    # Then the project stores its own again: that one wins, and the shared one
+    # is taken back from this project's teams (access kept, nobody receiving).
+    again = client.post("/admin/secrets", headers=ADMIN, json={
+        "project_id": acme["id"], "name": "EMAIL_PASSWORD", "value": "the-projects-own-9876",
+        "role_scopes": ["worker"]})
+    assert again.status_code == 200, again.text
+    assert again.json()["replaced"] == ["shared variable EMAIL_PASSWORD"]
+    assert _env(acme)["EMAIL_PASSWORD"] == "the-projects-own-9876"
+    with db_session() as session:
+        assert session.query(SharedAccess).one().role_scopes == []
+
+    # Never both at once on the screen either.
+    view = client.get(f"/admin/projects/{acme['id']}/shared", headers=ADMIN).json()
+    assert view["variables"][0]["roles"] == []
+
+
+def test_a_value_something_else_runs_on_is_never_overwritten(client):
+    """A Slack bridge token is not a duplicate of a shared variable; replacing
+    it would break the bridge. That one clash is still refused."""
+    acme = make_project(client, slug="acme")
+    client.post("/admin/secrets", headers=ADMIN, json={
+        "project_id": acme["id"], "name": "slack-bot", "value": "xoxb-not-real-123456"})
+    with db_session() as session:
+        project = session.get(Project, acme["id"])
+        project.integrations = {**(project.integrations or {}),
+                                "slack": {"bot_token_secret": "slack-bot"}}
+    item = _shared(client, "SLACK_BOT", "another-token-123456", shared_with="all")
+    refused = _grant(client, acme["id"], item["id"], ["worker"])
+    assert refused.status_code == 422 and "Slack" in refused.json()["detail"]
 
 
 def _cipher(value: str) -> str:
@@ -218,9 +241,14 @@ def test_names_that_belong_to_something_else_are_refused(client):
     for name in ("yaaf-api-token", "MCP_CRM_URL", "github", "platform-thing"):
         refused = _share(client, name, "a-value-of-some-length")
         assert refused.status_code == 422, (name, refused.text)
-    _shared(client, "EMAIL_PASSWORD", PASSWORD)
-    twin = _share(client, "email-password", "another-value-1234")
-    assert twin.status_code == 409 and "EMAIL_PASSWORD" in twin.json()["detail"]
+
+
+def test_a_second_spelling_of_a_shared_name_is_the_same_item(client):
+    first = _shared(client, "EMAIL_PASSWORD", PASSWORD)
+    again = _shared(client, "email-password", "another-value-1234")
+    assert again["id"] == first["id"] and again["rotated"] is True
+    store = client.get("/admin/shared", headers=ADMIN).json()
+    assert [r["env"] for r in store["variables"]] == ["EMAIL_PASSWORD"]
 
 
 def test_a_shared_rows_own_role_scopes_reach_nobody(client):
@@ -338,26 +366,31 @@ def test_a_shared_source_mounts_for_the_granted_role_only(client):
     assert "MCP_CRM_URL" not in ceo_env
 
 
-def test_an_oauth_source_is_never_shared(client):
-    refused = _source(client, auth="oauth", bearer=None)
-    assert refused.status_code == 422 and "refresh token" in refused.json()["detail"]
-
-
-def test_a_project_source_and_a_shared_one_never_share_a_name(client):
+def test_a_project_source_and_a_shared_one_replace_each_other(client):
     acme = make_project(client, slug="acme")
     source = _source(client).json()
     own = client.post(f"/admin/projects/{acme['id']}/mcp_servers", headers=ADMIN, json={
-        "name": "crm", "url": "http://own.example.com/mcp", "roles": ["worker"]})
+        "name": "crm", "url": "http://own.example.com/mcp", "roles": ["worker"],
+        "bearer": "own-token"})
     assert own.status_code == 200
-    refused = _grant(client, acme["id"], source["id"], ["worker"], kind="data-sources")
-    assert refused.status_code == 422 and "own data source" in refused.json()["detail"]
 
-    client.delete(f"/admin/projects/{acme['id']}/mcp_servers/crm", headers=ADMIN)
-    assert _grant(client, acme["id"], source["id"], ["worker"],
-                  kind="data-sources").status_code == 200
+    granted = _grant(client, acme["id"], source["id"], ["worker"], kind="data-sources")
+    assert granted.status_code == 200, granted.text
+    assert granted.json()["replaced"] == ["data source 'crm'"]
+    with db_session() as session:
+        assert "mcp_servers" not in (session.get(Project, acme["id"]).integrations or {}) \
+            or not session.get(Project, acme["id"]).integrations["mcp_servers"]
+        # Its address and token went with it: nothing half-wired is left.
+        assert session.query(Secret).filter(Secret.project_id == acme["id"],
+                                            Secret.name.like("mcp-crm-%")).count() == 0
+    assert _env(acme)["MCP_CRM_TOKEN"] == "tok-shared"
+
     again = client.post(f"/admin/projects/{acme['id']}/mcp_servers", headers=ADMIN, json={
-        "name": "crm", "url": "http://own.example.com/mcp", "roles": ["worker"]})
-    assert again.status_code == 422 and "shared data source" in again.json()["detail"]
+        "name": "crm", "url": "http://own.example.com/mcp", "roles": ["worker"],
+        "bearer": "own-token"})
+    assert again.status_code == 200, again.text
+    assert again.json()["replaced"] == ["shared data source 'crm'"]
+    assert _env(acme)["MCP_CRM_TOKEN"] == "own-token"
 
 
 def test_an_approved_write_finds_a_shared_sources_allowlist(client):
@@ -498,3 +531,147 @@ def test_a_model_client_lists_and_grants_but_never_reads_a_value(client):
     assert failed is False
     with db_session() as session:
         assert session.query(SharedAccess).one().role_scopes == ["worker"]
+
+
+def test_the_ceo_scopes_a_shared_name_but_never_removes_the_chairmans(client):
+    from tests.conftest import bearer, live_token
+
+    acme = make_project(client, slug="acme", constitution={"capability_authority": "ceo"})
+    _shared(client, "EMAIL_PASSWORD", PASSWORD, shared_with="all")
+    own = client.post("/admin/secrets", headers=ADMIN, json={
+        "project_id": acme["id"], "name": "email-password", "value": "the-chairmans-own-1"})
+    _, token = live_token(acme["id"], acme["ceo_agent_id"])
+    refused = client.post("/agent/credentials/EMAIL_PASSWORD/scope", headers=bearer(token),
+                          json={"add_roles": ["worker"], "reason": "the mail team sends it"})
+    assert refused.status_code == 422 and "chairman's call" in refused.text
+    with db_session() as session:
+        assert session.get(Secret, own.json()["id"]) is not None
+
+
+# ── one OAuth connection, every project ─────────────────────────────────────────
+
+@pytest.fixture()
+def oauth_world(monkeypatch) -> OAuthWorld:
+    """The fake provider the project-source OAuth suite runs against: it
+    rotates refresh tokens on use, as real providers do."""
+    import httpx
+
+    from yaaf.server import mcp_oauth
+
+    fake = OAuthWorld()
+    monkeypatch.setattr(mcp_oauth, "_client",
+                        lambda transport=None: httpx.Client(timeout=10, follow_redirects=True,
+                                                            transport=fake.transport))
+    monkeypatch.setattr(admin_module, "_check_data_source",
+                        lambda url, bearer, transport=None: {"ok": True, "detail": "reachable"})
+    return fake
+
+
+def _oauth_source(client, world) -> dict:
+    """Save, start, and finish the one sign-in a shared OAuth source needs."""
+    from urllib.parse import parse_qs, urlparse
+
+    saved = client.post("/admin/shared/data-sources", headers=ADMIN, json={
+        "name": "vault", "url": MCP_URL, "auth": "oauth", "shared_with": "all"})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["needs_connect"] is True
+    source = saved.json()
+    started = client.post(f"/admin/shared/data-sources/{source['id']}/oauth/start",
+                          headers=ADMIN, json={})
+    assert started.status_code == 200, started.text
+    query = parse_qs(urlparse(started.json()["authorize_url"]).query)
+    assert query["resource"] == [MCP_URL] and "code_challenge" in query
+    world.codes.add("code-1")
+    landed = client.get("/oauth/mcp/callback",
+                        params={"state": query["state"][0], "code": "code-1"})
+    assert landed.status_code == 200 and "every project" in landed.text
+    replay = client.get("/oauth/mcp/callback",
+                        params={"state": query["state"][0], "code": "code-1"})
+    assert replay.status_code == 400
+    return source
+
+
+def _lease(project) -> object:
+    employee = project["teams"][0]["agents"][0]["id"]
+    with db_session() as session:
+        session.add(RunQueue(id=ids.new_id(ids.RUN), project_id=project["id"],
+                             agent_id=employee, kind=RunKind.AGENT_RUN,
+                             trigger={"reasons": []}, attempt=1))
+    return daemon.lease_and_prepare(limit=1)[0]
+
+
+def _age(source_id: str, seconds: int) -> None:
+    from datetime import timedelta
+
+    from yaaf.core.models import SharedDataSource, utcnow
+    from yaaf.server.shared_oauth import persist
+
+    with db_session() as session:
+        row = session.get(SharedDataSource, source_id)
+        entry = dict(row.entry)
+        entry["oauth"] = {**entry["oauth"],
+                          "expires_at": (utcnow() + timedelta(seconds=seconds)).isoformat()}
+        persist(row, entry)
+
+
+def test_one_oauth_sign_in_serves_every_project(oauth_world, client):
+    """The point: one connection, read by every project granted it — and
+    renewed once, on the store's row, never once per project. Two copies
+    would spend each other's rotating refresh token."""
+    acme = make_project(client, slug="acme")
+    beta = make_project(client, slug="beta")
+    source = _oauth_source(client, oauth_world)
+    connected = oauth_world.access_token
+    for project in (acme, beta):
+        assert _grant(client, project["id"], source["id"], ["worker"],
+                      kind="data-sources").status_code == 200
+
+    assert _lease(acme).billing_env["MCP_VAULT_TOKEN"] == connected
+    assert _lease(beta).billing_env["MCP_VAULT_TOKEN"] == connected
+
+    # Near expiry: the first lease renews it; the second finds the renewed
+    # token instead of spending the refresh token the first one rotated.
+    _age(source["id"], 60)
+    renewals = len([r for r in oauth_world.token_requests if r["grant_type"] == "refresh_token"])
+    first = _lease(acme).billing_env["MCP_VAULT_TOKEN"]
+    second = _lease(beta).billing_env["MCP_VAULT_TOKEN"]
+    assert first == second == oauth_world.access_token != connected
+    assert len([r for r in oauth_world.token_requests
+                if r["grant_type"] == "refresh_token"]) == renewals + 1
+
+    # No project holds a copy of any of it.
+    with db_session() as session:
+        assert session.query(Secret).filter(Secret.name.like("mcp-vault-%")).count() == 0
+    view = client.get(f"/admin/projects/{acme['id']}/shared", headers=ADMIN).json()
+    assert view["data_sources"][0]["oauth_status"] == "connected"
+    assert oauth_world.refresh_token not in json.dumps(view)
+    store = client.get("/admin/shared", headers=ADMIN).json()
+    assert oauth_world.refresh_token not in json.dumps(store)
+    assert oauth_world.access_token not in json.dumps(store)
+
+
+def test_a_dead_shared_connection_says_so_on_every_project(oauth_world, client):
+    acme = make_project(client, slug="acme")
+    source = _oauth_source(client, oauth_world)
+    _grant(client, acme["id"], source["id"], ["worker"], kind="data-sources")
+    _age(source["id"], 60)
+    oauth_world.refresh_token = "revoked-elsewhere"
+    checked = client.post(f"/admin/shared/data-sources/{source['id']}/check",
+                          headers=ADMIN, json={})
+    assert checked.status_code == 200
+    checks = client.get(f"/observe/projects/{acme['id']}/health", headers=ADMIN).json()["checks"]
+    row = next(c for c in checks if c["key"] == "data-source:vault")
+    assert row["status"] == "fail" and "expired" in row["detail"]
+
+
+def test_an_edit_that_keeps_the_address_keeps_the_sign_in(oauth_world, client):
+    source = _oauth_source(client, oauth_world)
+    edited = client.post("/admin/shared/data-sources", headers=ADMIN, json={
+        "name": "vault", "url": MCP_URL, "access": "bulk"})
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["needs_connect"] is False
+    assert edited.json()["oauth_status"] == "connected"
+    moved = client.post("/admin/shared/data-sources", headers=ADMIN, json={
+        "name": "vault", "url": MCP_URL + "/v2", "auth": "oauth"})
+    assert moved.json()["needs_connect"] is True
+    assert source["id"] == moved.json()["id"]

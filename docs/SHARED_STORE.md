@@ -13,7 +13,7 @@ chooses which of their teams receive it.
 ## The two keys
 
 Two people turn a key before a shared value reaches a sandbox. Both are
-refusals on the server, not settings in the UI.
+enforced on the server, not settings in the UI.
 
 | Key | Held by | What it decides |
 |---|---|---|
@@ -45,7 +45,7 @@ and it would leave a grant nobody on the project can change.
 | **Secret** | a platform-scope `Secret` row, `shared_with` set, masked | an env var named like any project credential (`EMAIL_PASSWORD`) |
 | **Plain variable** | the same, with `visibility: plain` | an env var. It is shown as-is to the admin, who could reveal it anyway |
 | **File** | the same, with `filename` | the env var holds a path, exactly as a project file credential does |
-| **Data source** | a `shared_data_sources` row. Its address and token are encrypted on the row | the source mounted as `mcp__<name>__*` (or reachable through `data_fetch` when it is `bulk`), the same as a project source |
+| **Data source** | a `shared_data_sources` row. Its address and token are encrypted on the row | the source mounted as `mcp__<name>__*` (or reachable through `data_fetch` when it is `bulk`), the same as a project source. Read-only and write sources alike: a tool allowlist (`tools`) makes unlisted tools need the project chairman's approval per call, as on a project source |
 
 Grants live in `shared_access`, one row per (project, item), holding the
 project's role slugs. **A shared row's own `role_scopes` is always empty**, so
@@ -53,21 +53,53 @@ no path that reads `role_scopes` can inject a shared value box-wide. The one
 platform-scope branch that used to read them (`_role_secret_env`) now reads
 `shared_access` instead.
 
-## Collisions are refused, never resolved
+## One OAuth connection for every project
+
+A shared data source can sign in with OAuth (Notion, Linear, Atlassian and the
+like), and that one connection serves every project granted the source. The
+admin presses **Connect** once in Settings → Shared store. The access token and
+refresh token are stored once, encrypted on the store's row. No project holds a
+copy.
+
+One copy is what makes this safe. Providers rotate refresh tokens on use, so
+two copies of one connection would invalidate each other on the first refresh.
+Here the token is renewed in one place (`yaaf/server/shared_oauth.py`), under
+a lock on the store's row. When two projects' runs start at the same moment,
+the second finds the token the first one renewed instead of spending a refresh
+token that was just rotated.
+
+An edit that keeps the source's address keeps its sign-in. A moved address
+needs a new one. A connection that expires shows on every granted project's
+health page, with the admin named as the person who can fix it.
+
+## One name, one value: the newer one replaces the older
 
 A shared value and a project's own value under the same variable name would
-make one of them silently invisible. That is a working-looking mistake, which
-is the worst kind. So:
+leave one of them silently unread, and an agent told about both would guess
+which it holds. So a name never has two values on a project, and the most
+recent decision wins:
 
-- a grant is refused while the project holds its own credential under the
-  same env var name, or its own data source under the same name;
-- a project credential or data source is refused while the project receives a
-  shared one under the same name;
-- shared names are unique by env var name, and `MCP_*` (the data sources'
-  own variables), `YAAF_*`, `platform-*` and `github` are refused.
+- **Granting a shared item replaces the project's own** credential under the
+  same env var name, or its own data source of the same name (address, token
+  and OAuth tokens together). The grant's answer, the audit row and the
+  project's history say what was replaced.
+- **Storing a project value under a name the project already receives** from
+  the store takes the shared item back from this project's teams. Access is
+  kept, so the chairs can switch it back on, which replaces their own again.
+- **Saving a shared variable under another spelling** of a shared name
+  (`email-password` for `EMAIL_PASSWORD`) updates that item rather than
+  making a second one.
 
-Lease time keeps the old precedence as a second line of defence: a project's
-own value is injected first and a shared one never overwrites it.
+Two cases stay refused, because the clash is not a duplicate:
+
+- a project value something else runs on, such as the Slack bridge's token, is
+  never replaced by a shared one. Rename one of them;
+- the CEO's `credential_scope` never removes a value the chairman stored. It
+  can give a shared item to its teams, and where that would replace the
+  project's own, the chairman decides.
+
+`MCP_*` (the data sources' own variables), `YAAF_*`, `platform-*` and `github`
+are still refused as shared names, since they belong to the platform.
 
 ## Who sees what
 
@@ -104,13 +136,9 @@ click.
 
 ## Deliberately not built
 
-- **OAuth data sources in the store.** An OAuth source's refresh token rotates
-  on use, so one connection cannot serve several projects. The clone path
-  already refuses to copy one for that reason. A shared source is `none` or
-  `bearer`. An OAuth source stays a project source.
-- **Per-project values for a shared name** (a "default with overrides"). The
-  collision rule above refuses it. Two values under one name is what this
-  feature exists to remove.
+- **A shared default with per-project overrides held side by side.** A
+  project's own value replaces the shared one instead (see "One name, one
+  value"), so there is never a second value to choose between.
 - **Importing a grant from a project file.** A setup file names a shared item
   it cannot prove the importer may use. Grants are made on the project after
   it exists.

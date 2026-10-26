@@ -314,8 +314,10 @@ dates are its cycles' (§4).
 - **One credential, many projects.** The [shared store](SHARED_STORE.md) holds
   secrets, variables and data sources above every project. The instance admin
   decides which projects may use each one, and each project's chairs decide
-  which teams receive it. Both are refusals on the server. A shared value and a
-  project's own can never answer to one name.
+  which teams receive it. Both are enforced on the server. A name holds one
+  value per project: the newer of a shared value and the project's own
+  replaces the older. An OAuth data source in the store is one sign-in that
+  serves every project granted it.
 - **Idempotent side effects.** Before any external action (a PR, a deploy, a
   message to an outside system) an agent records it with a stable idempotency
   key. After a crash-and-retry the ledger says the prior attempt completed — so

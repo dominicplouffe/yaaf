@@ -149,7 +149,8 @@ link to the credentials list.
   projects ([SHARED_STORE.md](SHARED_STORE.md)). Each row says whether every
   project may use it or only the ones you list, and which projects have it. Its
   drawer stores, rotates and reveals the value (each reveal logged), and adds or
-  removes projects. Adding a project gives it access and no team anything:
+  removes projects. A data source there can sign in with OAuth: **Connect**
+  once, and every project granted it uses that one connection. Adding a project gives it access and no team anything:
   that project's chairs choose the teams. An item is deleted only once no
   project has it.
 - **Slack connection** — the bot/signing/app tokens for your Slack workspace,
@@ -864,7 +865,9 @@ Data; everything after is occasional.
   listed, locked, and link to where they are edited. Values from the install's
   **shared store** are listed under their own heading and in the access map:
   you choose which teams get each, and nobody on the project can read or change
-  the value itself.
+  the value itself. Giving a team a shared variable whose name the project
+  already holds replaces the project's own; adding your own under a shared
+  name takes the shared one back from your teams.
 
 - **Integrations** — the Slack bridge and the GitHub workspace. Slack starts
   out **inherited** from the app-wide connection, so the only thing this card

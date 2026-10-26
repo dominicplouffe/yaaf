@@ -1070,7 +1070,15 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             continue
         name = held.item.name
         last = (held.item.entry or {}).get("last_check") or {}
-        if not last:
+        oauth_status = ((held.item.entry or {}).get("oauth") or {}).get("status")
+        if (held.item.entry or {}).get("auth") == "oauth" and oauth_status != "connected":
+            what = {"needs_reauth": "its OAuth connection expired",
+                    "pending": "its OAuth sign-in was started but never finished"}.get(
+                oauth_status, "its OAuth connection was never made")
+            add(f"data-source:{name}", "fail",
+                f"shared data source '{name}': {what} — ask the instance admin to "
+                "connect it in Settings → Shared store", "data_sources")
+        elif not last:
             add(f"data-source:{name}", "warn",
                 f"shared data source '{name}': never tested — ask the instance admin to "
                 "run its check", "data_sources")
