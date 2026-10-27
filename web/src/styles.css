@@ -2681,6 +2681,10 @@ button.onode:hover { background: var(--surface); border-color: var(--border-stro
 .on-ceo { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--accent); }
 .onode.addnode { align-items: flex-start; border-style: dashed; background: transparent; box-shadow: none; color: var(--muted); font-size: 13px; }
 .addform { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.seat-door { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.seat-door p { margin: 0; font-size: 13px; color: var(--ink-2); }
+.seat-door b { color: var(--ink); }
 .reason-form { display: flex; flex-direction: column; gap: 6px; }
 .reason-acts { display: flex; gap: 6px; }
 .seat-table { width: 100%; }
