@@ -192,7 +192,8 @@ export function isPriced(model: string | null, info: ModelsInfo | null,
     pinned models and the provider-qualified classes to the providers a
     project pays. */
 export function ModelSelect({ value, onChange, info, registry, primary, providersShown,
-                              classes = true, qualified = false, empty, disabled, id }: {
+                              classes = true, qualified = false, empty, disabled, id,
+                              unpaidShown }: {
   value: string; onChange: (ref: string) => void;
   info: ModelsInfo | null; registry: ProviderInfo[];
   /** Which provider a bare class resolves on, for the hint beside it. */
@@ -203,6 +204,9 @@ export function ModelSelect({ value, onChange, info, registry, primary, provider
   qualified?: boolean;
   /** A first, empty option ("each role's own model"). */
   empty?: string;
+  /** Providers listed after the paid ones, marked "no credential here" —
+      offered so picking one opens the door to pay it (SeatEditor's door). */
+  unpaidShown?: string[];
   disabled?: boolean; id?: string;
 }) {
   const shownProviders = providersShown ?? registry.map((p) => p.name);
@@ -215,6 +219,15 @@ export function ModelSelect({ value, onChange, info, registry, primary, provider
     for (const list of out.values()) list.sort((a, b) => b.tier - a.tier);
     return out;
   }, [info, shownProviders]);
+  const unpaidGroups = useMemo(() => {
+    const out = new Map<string, CatalogModel[]>();
+    for (const m of info?.models ?? []) {
+      if (!(unpaidShown ?? []).includes(m.provider)) continue;
+      out.set(m.provider, [...(out.get(m.provider) ?? []), m]);
+    }
+    for (const list of out.values()) list.sort((a, b) => b.tier - a.tier);
+    return out;
+  }, [info, unpaidShown]);
   const known = value === "" || isClass(value) || (info?.models ?? []).some((m) => m.id === value);
   const [other, setOther] = useState(!known);
   useEffect(() => { if (!known) setOther(true); }, [known]);
@@ -248,6 +261,10 @@ export function ModelSelect({ value, onChange, info, registry, primary, provider
           {models.map((m) => <option key={m.id} value={m.id}>
             {m.id}{m.priced ? "" : " · no price yet"}
           </option>)}
+        </optgroup>)}
+      {[...unpaidGroups.entries()].map(([name, models]) =>
+        <optgroup key={`unpaid-${name}`} label={`${labelOf(name)} — no credential on this project`}>
+          {models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
         </optgroup>)}
       <option value="__other">Another model, by name…</option>
     </select>
