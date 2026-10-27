@@ -5,7 +5,7 @@ import { TaskChain } from "../../chain";
 import { WhatTheyDid } from "../../did";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { firstName, ProjectCtx } from "../../projectCtx";
-import { ModelSelect, useModels, useProviders } from "../../providers";
+import { ModelSelect, providerOf, useModels, useProviders } from "../../providers";
 import { clip, fmtAgo } from "../../ui";
 import { Avatar, plainStatus } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
@@ -118,6 +118,14 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
   const paid = credentials.map((c) => c.provider);
   const billing = credentials.find((c) => c.billing)?.provider ?? catalog?.default_provider;
   const role = work.role_seat;
+  // A model on a provider nothing here pays: the server would refuse it (R5).
+  // The door to pay that provider takes the place of Save, so the refusal is
+  // met before it happens rather than answered by it.
+  const modelProvider = model && paid.length > 0 ? providerOf(model, catalog, registry, "") : "";
+  const unpaidProvider = modelProvider && !paid.includes(modelProvider) ? modelProvider : null;
+  const sellerLabel = unpaidProvider
+    ? registry.find((p) => p.name === unpaidProvider)?.label ?? unpaidProvider : "";
+  const paidNames = credentials.map((c) => c.label).join(", ");
   const harnessLabel = (h: string | null | undefined) =>
     h ? harnesses.find((x) => x.name === h)?.label ?? h : "whatever the paying credential runs on";
 
@@ -129,6 +137,11 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
           qualified={paid.length > 1} disabled={busy}
           empty={`The role's — ${role?.model ?? "the default"}`} />
       </label>
+      {unpaidProvider && (
+        <div className="seat-door">
+          <p>This project pays <b>{paidNames}</b>. <b>{model}</b> is a {sellerLabel} model.</p>
+        </div>
+      )}
       <label className="field">Effort
         <select value={effort} disabled={busy} onChange={(e) => setEffort(e.target.value)}>
           <option value="">The role&apos;s — {role?.effort ?? "the default"}</option>
@@ -148,21 +161,33 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
         finishes on what it has — the change takes effect from {name}&apos;s next run.
       </p>
       <div className="reason-acts">
-        <button className="small primary" disabled={busy} onClick={async () => {
-          setBusy(true);
-          setError(null);
-          try {
-            await patch(`/admin/agents/${agentId}/seat`,
-              { model: model || null, effort: effort || null, harness: harness || null });
-            ctx.reloadOrg();
-            onDone();
-          } catch (e) {
-            setError((e as Error).message);
-          } finally {
-            setBusy(false);
-          }
-        }}>Save</button>
-        <button className="small" disabled={busy} onClick={onDone}>Cancel</button>
+        {unpaidProvider ? (
+          <>
+            <Link className="btnlink small primary"
+              to={`/projects/${ctx.projectId}/settings?s=money`}>
+              Connect a {sellerLabel} credential
+            </Link>
+            <button className="small" onClick={onDone}>Cancel</button>
+          </>
+        ) : (
+          <>
+            <button className="small primary" disabled={busy} onClick={async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                await patch(`/admin/agents/${agentId}/seat`,
+                  { model: model || null, effort: effort || null, harness: harness || null });
+                ctx.reloadOrg();
+                onDone();
+              } catch (e) {
+                setError((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}>Save</button>
+            <button className="small" disabled={busy} onClick={onDone}>Cancel</button>
+          </>
+        )}
       </div>
       {error && <div className="help" style={{ color: "var(--critical)" }}>{error}</div>}
     </div>
