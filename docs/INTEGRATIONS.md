@@ -43,13 +43,15 @@ Moonshot's or Alibaba's China region is used). Each credential's form says
 where its key comes from, and **Check** asks the provider itself whether it
 answers to it.
 
-**The billing credential's provider is the project's.** Roles name a model
-*class* — `@frontier`, `@balanced`, `@fast` — and every class seat runs on the
-billing provider's model for it ([PROVIDERS.md](PROVIDERS.md)), so the shipped
-role library runs on an OpenAI key, a Gemini key or a DeepSeek key with no
-seat moved by hand. Settings → Models shows and sets what each class is on
-each provider; a provider yaaf ships no lineup for (Groq, Together and the
-rest of the long tail, whose model lists move monthly) has one picked from its
+**The app's provider runs every project.** The install's own key — the one the
+Founder runs on — pays anything a project does not. A role says how hard its
+seat thinks; the app's model is the default beneath it, and the shipped role
+library runs on an OpenAI key, a Gemini key or a DeepSeek key with no seat
+moved by hand ([PROVIDERS.md](PROVIDERS.md)). Legacy class refs — `@frontier`,
+`@balanced`, `@fast` — still resolve per provider. Settings → Models shows and
+sets the app's default model and harness, and what each class is on each
+provider; a provider yaaf ships no lineup for (Groq, Together and the rest of
+the long tail, whose model lists move monthly) has one picked from its
 own live model list there. A project with a seat pinned to a second provider's
 model pays that provider too, under its **Settings → Money → Other
 providers**, with a credential metered in the same unit — one project, one

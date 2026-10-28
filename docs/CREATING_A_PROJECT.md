@@ -80,14 +80,13 @@ one click, and rotating that credential rotates this too; adding your first
 LLM credential offers it, ticked. Or give the Founder a key of its own, from
 any provider — it runs on that provider's frontier model unless you name
 another. Either way it pays for drafting only, and no project's agents ever see
-it. Every project you create still pays its own way, and the Founder knows it:
-it reads the list of LLM credentials — each with what the roles' model classes
-would run on if it paid — names the one that pays in its draft when there is
-only one, and asks you which when there are several. Whichever pays, the role
-library is the same: roles name a class of model, and the project's provider
-supplies it ([PROVIDERS.md](PROVIDERS.md)). That is an instruction to the model, not a rule the server can
-enforce, so the draft panel says which credential it chose — look before you
-click Review.
+it. The Founder knows it: it reads the list of LLM credentials — each with what
+the roles would run on if it paid — names the one that pays in its draft when
+there is only one, and asks you which when there are several. Whichever pays,
+the role library is the same: roles say how hard each seat thinks, and the
+app's model is the default beneath them ([PROVIDERS.md](PROVIDERS.md)). That is an
+instruction to the model, not a rule the server can enforce, so the draft
+panel says which credential it chose — look before you click Review.
 
 Two things worth knowing:
 
