@@ -97,6 +97,22 @@ def default_provider(session: Session) -> str:
     return name if name in PROVIDERS else DEFAULT_PROVIDER
 
 
+def app_model(session: Session) -> str:
+    """The model a seat runs on when neither it nor its role names one: the
+    install's setting (PLAN-09), or the shipped class — so an install that has
+    never chosen behaves exactly as it always has."""
+    ref = (platform.get_setting(session, platform.APP_MODEL) or "").strip()
+    return ref or catalog.DEFAULT_MODEL
+
+
+def app_harness(session: Session) -> str | None:
+    """The harness a seat runs on when neither it nor its role names one
+    (PLAN-09): the install's setting, or None — the paying credential's
+    default, as every install before the choice behaves."""
+    value = (platform.get_setting(session, platform.APP_HARNESS) or "").strip()
+    return value or None
+
+
 def set_default_provider(session: Session, name: str) -> None:
     if name not in PROVIDERS:
         raise HTTPException(status_code=422, detail=(
@@ -172,13 +188,19 @@ def context(session: Session, project: Project | None = None, *,
                                                      fallback=fallback).items():
             modes[name] = (project.billing_mode if secret.id == project.billing_secret_id
                            else secret.llm_mode or "api_key")
+        # The install's own credential also pays its provider here (PLAN-09):
+        # a project that never assigned a key still runs, on the app's.
+        payer = platform.payer(session)
+        if payer is not None and payer.provider not in modes:
+            modes[payer.provider or DEFAULT_PROVIDER] = payer.llm_mode or "api_key"
     if provider is None:
         moved = failover(session, project)
         provider = (moved.provider or DEFAULT_PROVIDER) if moved is not None \
             else primary_provider(session, project)
     return ModelContext(provider=provider,
                         lineups=lineups(session), modes=modes or {},
-                        platform_search=web_search.configured(session))
+                        platform_search=web_search.configured(session),
+                        app_model=app_model(session), app_harness=app_harness(session))
 
 
 def resolve(session: Session, ref: str | None, project: Project | None = None, *,

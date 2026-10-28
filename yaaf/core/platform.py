@@ -54,6 +54,10 @@ BILLING_MODE = "platform.billing_mode"  # "api_key" | "subscription"
 FOUNDER_MODEL = "founder.model"
 #: The LLM credential the Founder borrows when it holds no key of its own.
 FOUNDER_LLM_CREDENTIAL = "founder.llm_credential"
+#: The install's own defaults, what a seat runs on when neither it nor its
+#: role names a model or a harness (PLAN-09): the app's model and harness.
+APP_MODEL = "app.model"
+APP_HARNESS = "app.harness"
 SLACK_CHAIRMAN_USER = "slack.chairman_user"
 SLACK_CHANNEL_PREFIX = "slack.channel_prefix"  # "" => the project slug
 SLACK_CHANNEL_VISIBILITY = "slack.channel_visibility"  # "private" | "public"
@@ -164,6 +168,12 @@ def _credential_row(session: Session) -> Secret | None:
     """What pays for the Founder: its own key when it has one, else the LLM
     credential it borrows. One function, so every reader agrees."""
     return _own_row(session) or _borrowed_row(session)
+
+
+def payer(session: Session) -> Secret | None:
+    """The install's own credential — what the Founder runs on, and (PLAN-09)
+    what pays a seat whose provider no project credential pays."""
+    return _credential_row(session)
 
 
 def credential_source(session: Session) -> dict:

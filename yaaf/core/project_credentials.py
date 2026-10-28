@@ -50,7 +50,19 @@ def held(session: Session, project: Project, *,
 
 def credential_for(session: Session, project: Project, provider: str, *,
                    fallback: bool | None = None) -> Secret | None:
-    return held(session, project, fallback=fallback).get(provider)
+    return held(session, project, fallback=fallback).get(provider) \
+        or _install_payer(session, provider)
+
+
+def _install_payer(session: Session, provider: str) -> Secret | None:
+    """The install's own credential, when it pays `provider` (PLAN-09): what
+    pays a seat whose provider no project credential pays."""
+    from yaaf.core import platform
+
+    row = platform.payer(session)
+    if row is not None and (row.provider or None) == provider:
+        return row
+    return None
 
 
 def seat_credential(session: Session, project: Project, provider: str, *,
