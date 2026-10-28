@@ -1044,7 +1044,9 @@ def delete_model_price(model: str, session: Session = Depends(db)) -> dict:
 def get_models(session: Session = Depends(db)) -> dict:
     """Settings → Models: what each class names on each provider, where bare
     classes resolve when a project pays nobody yet, and how many runs each
-    provider may carry at once (docs/PROVIDERS.md §1, §8)."""
+    provider may carry at once (docs/PROVIDERS.md §1, §8) — plus the app's
+    own defaults, what a seat runs on when neither it nor its role names a
+    model or a harness (PLAN-09)."""
     from yaaf.core import model_policy, model_upkeep, provider_check_runs
     from yaaf.runtimes import catalog
 
@@ -1066,6 +1068,8 @@ def get_models(session: Session = Depends(db)) -> dict:
         row["served"] = ({"at": found["at"], "count": len(found["models"])}
                          if found else None)
     return {"default_provider": model_policy.default_provider(session),
+            "app_model": model_policy.app_model(session),
+            "app_harness": model_policy.app_harness(session),
             "lineups": lineups,
             "ceilings": model_policy.ceilings(session),
             "upkeep": {"enabled": model_upkeep.enabled(session),
@@ -1112,6 +1116,55 @@ def put_default_provider(body: DefaultProviderIn, session: Session = Depends(db)
     model_policy.set_default_provider(session, body.provider)
     _audit(session, None, "models.default_provider", "provider", body.provider, {})
     return get_models(session)
+
+
+class AppModelIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: A model, or a class; null goes back to the shipped default class.
+    model: str | None = Field(default=None, max_length=128)
+
+
+@router.put("/models/app-model", dependencies=[authority.INSTANCE_ADMIN])
+def put_app_model(body: AppModelIn, session: Session = Depends(db)) -> dict:
+    """Name the model a seat runs on when neither it nor its role names one
+    (PLAN-09). The seats the choice would now refuse are named in the answer
+    rather than discovered at 3am."""
+    from yaaf.core import model_policy, platform
+    from yaaf.runtimes import catalog
+    from yaaf.server.api.admin import _audit
+
+    ref = (body.model or "").strip() or None
+    if ref and (bad := catalog.valid_ref(ref)):
+        raise HTTPException(status_code=422, detail=f"app model: {bad}")
+    platform.set_setting(session, platform.APP_MODEL, ref or "")
+    _audit(session, None, "models.app_model", "setting", platform.APP_MODEL,
+           {"model": ref})
+    session.flush()
+    return {**get_models(session), "unrunnable": _unrunnable_seats(session)}
+
+
+class AppHarnessIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: A harness name; null goes back to the paying credential's default.
+    harness: str | None = Field(default=None, max_length=32)
+
+
+@router.put("/models/app-harness", dependencies=[authority.INSTANCE_ADMIN])
+def put_app_harness(body: AppHarnessIn, session: Session = Depends(db)) -> dict:
+    """Name the harness a seat runs on when neither it nor its role names one
+    (PLAN-09)."""
+    from yaaf.core import model_policy, platform
+    from yaaf.server.api.admin import _audit
+    from yaaf.runtimes.harnesses import canonical
+
+    value = canonical((body.harness or "").strip() or None)
+    platform.set_setting(session, platform.APP_HARNESS, value or "")
+    _audit(session, None, "models.app_harness", "setting", platform.APP_HARNESS,
+           {"harness": value})
+    session.flush()
+    return {**get_models(session), "unrunnable": _unrunnable_seats(session)}
 
 
 class CeilingIn(BaseModel):

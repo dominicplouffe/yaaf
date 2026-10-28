@@ -7,7 +7,6 @@
     "general"
   ],
   "description": "Answers well-scoped questions with sourced findings: market scans, technical evaluations, competitive analysis, data digging.",
-  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

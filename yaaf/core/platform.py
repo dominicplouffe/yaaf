@@ -176,6 +176,13 @@ def payer(session: Session) -> Secret | None:
     return _credential_row(session)
 
 
+def install_key(session: Session) -> Secret | None:
+    """The platform's own key, and nothing borrowed: what pays a project that
+    holds no key of its own (PLAN-09). A borrowed credential pays the Founder,
+    never a project's seats — borrowing makes nobody a project's payer."""
+    return _own_row(session)
+
+
 def credential_source(session: Session) -> dict:
     """Where the Founder's key comes from, for a screen to say so. No value."""
     if _own_row(session) is not None:

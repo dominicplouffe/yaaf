@@ -7,7 +7,6 @@
     "general"
   ],
   "description": "Produces publishable prose: docs, posts, landing copy, reports. Craft-first — if you would not put your name on it, it does not ship.",
-  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

@@ -55,11 +55,12 @@ def credential_for(session: Session, project: Project, provider: str, *,
 
 
 def _install_payer(session: Session, provider: str) -> Secret | None:
-    """The install's own credential, when it pays `provider` (PLAN-09): what
-    pays a seat whose provider no project credential pays."""
+    """The install's own key, when it pays `provider` (PLAN-09): what pays a
+    seat whose provider no project credential pays. The platform's own key
+    only — a borrowed one pays the Founder, never a project's seats."""
     from yaaf.core import platform
 
-    row = platform.payer(session)
+    row = platform.install_key(session)
     if row is not None and (row.provider or None) == provider:
         return row
     return None

@@ -263,7 +263,7 @@ export function ModelSelect({ value, onChange, info, registry, primary, provider
           </option>)}
         </optgroup>)}
       {[...unpaidGroups.entries()].map(([name, models]) =>
-        <optgroup key={`unpaid-${name}`} label={`${labelOf(name)} — no credential on this project`}>
+        <optgroup key={`unpaid-${name}`} label={`${labelOf(name)} — not paid here`}>
           {models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
         </optgroup>)}
       <option value="__other">Another model, by name…</option>

@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { get, getText, patch, post, put, ResultsView, SeatWork } from "../../api";
+import { get, getText, patch, post, ResultsView, SeatWork } from "../../api";
 import { TaskChain } from "../../chain";
 import { WhatTheyDid } from "../../did";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
-import { CredentialPicker } from "../../llmCredentials";
 import { firstName, ProjectCtx } from "../../projectCtx";
-import { ModelSelect, providerOf, useModels, useProviders } from "../../providers";
+import { isClass, ModelSelect, providerOf, useModels, useProviders } from "../../providers";
 import { clip, fmtAgo } from "../../ui";
 import { Avatar, plainStatus } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
@@ -115,22 +114,19 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
   const [harness, setHarness] = useState(work.overrides?.harness ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const credentials = ctx.dash.credentials ?? [];
+  const credentials = [...(ctx.dash.credentials ?? []),
+    ...(ctx.dash.install_payer ? [ctx.dash.install_payer] : [])];
   const paid = credentials.map((c) => c.provider);
   const billing = credentials.find((c) => c.billing)?.provider ?? catalog?.default_provider;
   const role = work.role_seat;
-  // A model on a provider nothing here pays: the server would refuse it (R5).
-  // The door to pay that provider takes the place of Save, so the refusal is
-  // met before it happens rather than answered by it.
+  // A model on a provider nothing pays here: the server would refuse it (R5).
+  // The door to the app's own provider takes the place of Save, so the refusal
+  // is met before it happens rather than answered by it.
   const modelProvider = model && paid.length > 0 ? providerOf(model, catalog, registry, "") : "";
   const unpaidProvider = modelProvider && !paid.includes(modelProvider) ? modelProvider : null;
   const sellerLabel = unpaidProvider
     ? registry.find((p) => p.name === unpaidProvider)?.label ?? unpaidProvider : "";
   const paidNames = credentials.map((c) => c.label).join(", ");
-  // The credential picked for the un-paid provider the model names, while the
-  // door to pay it is open.
-  const [pick, setPick] = useState("");
-  const [connecting, setConnecting] = useState(false);
   const harnessLabel = (h: string | null | undefined) =>
     h ? harnesses.find((x) => x.name === h)?.label ?? h : "whatever the paying credential runs on";
 
@@ -140,16 +136,14 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
         <ModelSelect value={model} onChange={setModel} info={catalog} registry={registry}
           primary={billing} providersShown={paid.length ? paid : undefined}
           unpaidShown={paid.length ? registry.map((p) => p.name).filter((n) => !paid.includes(n)) : undefined}
-          qualified={paid.length > 1} disabled={busy || connecting}
-          empty={`The role's — ${role?.model ?? "the default"}`} />
+          qualified={paid.length > 1} disabled={busy}
+          empty={`The role's — ${role?.model && !isClass(role.model) ? role.model : "the app's model"}`} />
       </label>
       {unpaidProvider && (
         <div className="seat-door">
           <p>This project pays <b>{paidNames}</b>. <b>{model}</b> is a {sellerLabel} model.
-            Connect a credential to run {name} on it.</p>
-          <CredentialPicker provider={unpaidProvider} value={pick}
-            onChange={(id) => setPick(id)} label={`Credential for ${sellerLabel}`}
-            disabled={connecting} />
+            To run a seat on it, make {sellerLabel} the app&apos;s provider — or pick a
+            model of a provider it pays.</p>
         </div>
       )}
       <label className="field">Effort
@@ -173,29 +167,10 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
       <div className="reason-acts">
         {unpaidProvider ? (
           <>
-            <button className="small primary" disabled={connecting || !pick}
-              onClick={async () => {
-                setConnecting(true);
-                setError(null);
-                try {
-                  // Pay the provider this project does not pay, then move the
-                  // seat: one motion. The doors refuse as they always do.
-                  await put(`/admin/projects/${ctx.projectId}/credentials/${unpaidProvider}`,
-                    { credential_id: pick });
-                  await patch(`/admin/agents/${agentId}/seat`,
-                    { model: model || null, effort: effort || null, harness: harness || null });
-                  ctx.reload();
-                  ctx.reloadOrg();
-                  onDone();
-                } catch (e) {
-                  setError((e as Error).message);
-                  ctx.reload();
-                } finally {
-                  setConnecting(false);
-                }
-              }}>
-              Connect {sellerLabel} &amp; save
-            </button>
+            <Link className="btnlink small primary"
+              to="/settings?section=providers" target="_blank" rel="noreferrer">
+              Change the app&apos;s provider
+            </Link>
             <button className="small" onClick={onDone}>Cancel</button>
           </>
         ) : (

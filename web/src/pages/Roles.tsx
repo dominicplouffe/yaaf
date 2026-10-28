@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { get, post, RoleSummary } from "../api";
-import { isClass, modelLabel, ModelSelect, parseRef, useModels, useProviders } from "../providers";
+import { isClass, modelLabel, useModels } from "../providers";
 import { CATEGORIES, DOMAINS, canDo, depthOf } from "../roles";
 import { clip, downloadCsv, ExportCsv } from "../ui";
 
@@ -83,7 +84,6 @@ export default function Roles() {
   // written into this page — the next one arrives without editing it.
   const [harnesses, setHarnesses] = useState<{ name: string; label: string }[]>([]);
   const catalog = useModels();
-  const registry = useProviders();
   function refresh() {
     get<RoleSummary[]>("/admin/roles").then(setRoles).catch((e: Error) => setError(e.message));
   }
@@ -271,7 +271,8 @@ export default function Roles() {
                 {role.description ? clip(role.description, 110) : <span className="help">no description yet</span>}
               </p>
               <div className="pill-row" style={{ marginTop: 8 }}>
-                <span className="chip accent">{shortModel(role.model)}</span>
+                <span className="chip accent">{isClass(role.model) && role.model === "@balanced"
+                  ? "the app's model" : shortModel(role.model)}</span>
                 {role.effort && <span className="chip">{role.effort} effort</span>}
                 {role.tools
                   .filter((tool) => tool !== "egress_unrestricted")
@@ -404,9 +405,11 @@ export default function Roles() {
             <div className="row">
               <div>
                 <label className="field">Model</label>
-                <ModelSelect value={editing.model} info={catalog} registry={registry}
-                  primary={catalog?.default_provider}
-                  onChange={(model) => setEditing({ ...editing, model })} />
+                <p className="help" style={{ margin: 0 }}>
+                  The app&apos;s — a role says how hard it thinks (effort); what it thinks on
+                  is the install&apos;s default, changed under{" "}
+                  <Link to="/settings?section=models">Settings → Models</Link>.
+                </p>
               </div>
               <div>
                 <label className="field">Effort</label>
@@ -433,19 +436,9 @@ export default function Roles() {
               </div>
             </div>
             <p className="help">
-              {isClass(editing.model)
-                ? <>A class is the role saying how much model it needs; each project&apos;s
-                    provider says whose. On a project paid by{" "}
-                    {registry.find((p) => p.name === catalog?.default_provider)?.label ?? "the default provider"}{" "}
-                    this runs on{" "}
-                    <code>{catalog?.lineups[parseRef(editing.model).provider
-                      ?? catalog.default_provider]?.[parseRef(editing.model).cls ?? ""] ?? "nothing yet"}</code>.
-                    Its effort runs at the nearest setting the model has at or above this one.</>
-                : <>A pinned model runs whatever pays the project — its provider must be paid
-                    too — and its effort must be one the model takes.</>}{" "}
+              The effort is how hard the model thinks — every role&apos;s charter keeps it.
               The harness is what drives the model in the sandbox. It changes how a run is
-              driven, never what it may do — every rule is the server&apos;s, on every harness;
-              naming one ties the role to the providers that harness serves.
+              driven, never what it may do — every rule is the server&apos;s, on every harness.
             </p>
           </div>
 

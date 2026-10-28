@@ -288,6 +288,10 @@ WITHHELD = {
         "an administrator's decision, made on the Models screen.",
     "PUT /admin/settings/models/default-provider":
         "where every unpaid project's classes resolve is install-wide; not a drafter's.",
+    "PUT /admin/settings/models/app-model":
+        "the model every role-less seat resolves to is install-wide; not a drafter's.",
+    "PUT /admin/settings/models/app-harness":
+        "the harness every role-less seat resolves to is install-wide; not a drafter's.",
     "PUT /admin/settings/models/ceiling":
         "concurrency per provider is the install's rate-limit budget, shared by every "
         "project on it.",

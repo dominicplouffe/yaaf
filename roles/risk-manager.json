@@ -7,7 +7,6 @@
     "markets"
   ],
   "description": "The desk's brake: exposure, concentration, correlation, drawdown and liquidity limits. Reviews every recommendation before it reaches the chairman and is expected to say no.",
-  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

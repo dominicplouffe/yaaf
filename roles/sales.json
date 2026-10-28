@@ -7,7 +7,6 @@
     "general"
   ],
   "description": "Works qualified conversations to a close: follow-ups, objections, proposals, payment links.",
-  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

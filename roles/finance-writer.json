@@ -7,7 +7,6 @@
     "markets"
   ],
   "description": "Turns the desk's research into prose a reader finishes: briefs, newsletters, memos. Every number traced to the analyst's file, every claim compliance-clean.",
-  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

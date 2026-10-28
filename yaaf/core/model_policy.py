@@ -188,9 +188,9 @@ def context(session: Session, project: Project | None = None, *,
                                                      fallback=fallback).items():
             modes[name] = (project.billing_mode if secret.id == project.billing_secret_id
                            else secret.llm_mode or "api_key")
-        # The install's own credential also pays its provider here (PLAN-09):
+        # The install's own key also pays its provider here (PLAN-09):
         # a project that never assigned a key still runs, on the app's.
-        payer = platform.payer(session)
+        payer = platform.install_key(session)
         if payer is not None and payer.provider not in modes:
             modes[payer.provider or DEFAULT_PROVIDER] = payer.llm_mode or "api_key"
     if provider is None:

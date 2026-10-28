@@ -684,6 +684,28 @@ def project_flags(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
+def _install_payer_view(session, project) -> dict | None:
+    """The install's own credential when it pays a provider the project's rows
+    do not (PLAN-09): one row in the dashboard's credential list, marked
+    install, so the seat picker offers the app's provider without pretending
+    the project holds the key."""
+    from yaaf.core import platform
+    from yaaf.core.llm_credentials import bills
+    from yaaf.server.api.admin import provider_credentials_view
+
+    payer = platform.install_key(session)
+    if payer is None or payer.provider is None:
+        return None
+    held_providers = {row["provider"] for row in provider_credentials_view(session, project)}
+    if payer.provider in held_providers:
+        return None
+    seller = PROVIDERS.get(payer.provider)
+    return {"provider": payer.provider,
+            "label": seller.label if seller else payer.provider,
+            "credential_id": payer.id, "name": payer.name, "bills": bills(payer),
+            "billing": False, "install": True}
+
+
 @router.get("/projects/{project_id}", dependencies=[authority.READ])
 def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     from yaaf.server.api.admin import fallback_view, provider_credentials_view
@@ -804,6 +826,9 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         # Every credential the project pays with, by provider — the billing
         # one first. Never a value.
         "credentials": provider_credentials_view(session, project),
+        # The install's own credential, when it pays a provider the project's
+        # rows do not (PLAN-09): what the seat picker offers as "paid here".
+        "install_payer": _install_payer_view(session, project),
         # Where class seats go while the billing credential's provider fails,
         # and whether they are there now.
         "fallback": fallback_view(session, project),
