@@ -35,6 +35,11 @@ class ModelContext:
     modes: Mapping[str, str] = field(default_factory=dict)
     #: Whether the install has a web search backend (R2's honour half).
     platform_search: bool = False
+    #: The install's own defaults (PLAN-09): what a seat runs on when neither
+    #: it nor its role names a model or a harness. The model defaults to the
+    #: shipped class, so an install that never chose behaves as it always has.
+    app_model: str = catalog.DEFAULT_MODEL
+    app_harness: str | None = None
 
     def resolve(self, ref: str | None) -> str | None:
         return catalog.resolve(ref, self.provider, self.lineups)
@@ -91,10 +96,10 @@ def seat_for(agent, role_version, runtime: str | None = None, *,
     run stays attributed to what actually ran.
 
     The harness resolves like the model beside it: the seat's own override,
-    then the role's, then the default of the credential kind that pays the
-    seat's provider on this project."""
-    ref = agent.model_override or (role_version.model if role_version
-                                   else catalog.DEFAULT_MODEL)
+    then the role's, then the install's default, then the default of the
+    credential kind that pays the seat's provider on this project."""
+    ref = agent.model_override or (role_version.model if role_version and role_version.model
+                                   else context.app_model)
     effort = agent.effort_override or (role_version.effort if role_version
                                        else catalog.DEFAULT_EFFORT)
     named, cls = catalog.parse(ref)
@@ -107,6 +112,7 @@ def seat_for(agent, role_version, runtime: str | None = None, *,
         provider = catalog.provider_of(model)
     chosen = (getattr(agent, "harness_override", None)
               or (getattr(role_version, "harness", None) if role_version else None)
+              or context.app_harness
               or providers.provider(provider).default_harness(context.modes.get(provider)))
     harness = effective_harness(chosen, runtime)
     found = HARNESSES.get(harness)
