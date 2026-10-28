@@ -7,7 +7,6 @@
     "games"
   ],
   "description": "Builds and ships mobile games in JavaScript/TypeScript — Expo/React Native first, plus web-based engines (Phaser, PixiJS, canvas/WebGL) when they fit. Owns the game loop, feel, performance, and builds. Decides how, never what.",
-  "model": "@balanced",
   "effort": "xhigh",
   "tool_permissions": {
     "files": true,

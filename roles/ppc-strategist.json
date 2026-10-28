@@ -8,7 +8,6 @@
     "data"
   ],
   "description": "Decides what to change in an advertising account and what to leave alone. Every recommendation carries the number that justifies it and the number that would prove it wrong.",
-  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

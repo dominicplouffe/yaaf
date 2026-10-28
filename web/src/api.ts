@@ -479,6 +479,11 @@ export interface Dashboard {
   /** What pays each provider, the billing credential first. Never a value. */
   credentials?: { provider: string; label: string; credential_id: string; name: string;
                   bills: string; billing: boolean }[];
+  /** The install's own credential, when it pays a provider the project's rows
+      do not: the app's provider, offered to seats without pretending the
+      project holds the key. Never a value. */
+  install_payer?: { provider: string; label: string; credential_id: string; name: string;
+                    bills: string; billing: boolean; install: boolean } | null;
   /** Where class seats move while the billing credential's provider is
       failing, and whether they are there now. */
   fallback?: FallbackView;

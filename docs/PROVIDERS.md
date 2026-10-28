@@ -38,41 +38,36 @@ name the decision in yaaf's vocabulary and let the provider translate.
 
 ## The design
 
-### 1. A role names a class of model, not a model
+### 1. The app has a model; a role says how hard to think
 
-> **A role says how much model it needs. The project says whose.**
+> **The install runs on one provider. Every seat runs a model of that
+> provider's — the app's default, or one the seat names for itself.**
 
-```
-@frontier   the most capable model the provider sells
-@balanced   the one you would run all day
-@fast       cheap and quick: triage, formatting, lookups
-```
+The app's provider is the platform credential — the key the Founder already
+runs on, named in Settings → Providers. A project holds no key of its own; its
+budget is bookkeeping against the app's, and anything a project does not pay,
+the app's key does. Settings → Models names the app's default model and
+harness; a seat can still override either (the Change dialog on its page), and
+a role says how hard its seat thinks — the effort — never which model.
 
 A model reference (`RoleVersion.model`, `Agent.model_override`, a draft's
 `model_overrides`, the Founder's model) is one of:
 
 | Reference | Means |
 |---|---|
-| `claude-sonnet-5-5`, `gpt-6.1-sol` | that model — pinned, whatever pays the project |
+| `claude-sonnet-5-5`, `gpt-6.1-sol` | that model — pinned, paid by the app's key |
 | `openrouter/qwen/qwen3-coder`, `custom/llama3.1:8b` | a model the catalog does not list, named with its provider |
-| `@balanced` | the project's primary provider's balanced model |
-| `openai/@balanced` | OpenAI's balanced model, whatever the project's primary provider is |
+| `@balanced` | the app's provider's balanced model |
+| `openai/@balanced` | OpenAI's balanced model, wherever it is paid |
 
-**The project's primary provider is the provider its billing credential
-pays.** A project with no credential yet (a draft) resolves against the
-install's default provider (Settings → Models), which is Anthropic until an
-administrator says otherwise. Swap the billing credential from Anthropic to
-OpenAI and every class seat moves with it — which is what "switch this project
-to OpenAI" means. A pinned model does not move: pinning is the chairman saying
-*this* model, and R5 then asks for its provider to be paid too.
-
-Each provider ships a **lineup** — `{frontier, balanced, fast}` → model — and
-an install overrides any of it in Settings → Models. A provider yaaf ships no
-lineup for (the long tail, whose lineups move monthly) has its lineup set by
-the administrator, usually by picking from the provider's own live model list
-(§8). A class seat on a provider with no model for that class is refused at
-every door with that sentence and the place to fix it; it never falls through
-to some other model.
+**The class references above are the legacy of the one-provider-per-project
+era** and are no longer offered anywhere; a role carrying the shipped default
+class has no opinion, and the app's default decides. Classes still resolve —
+against the install's default provider, through each provider's **lineup**
+(`{frontier, balanced, fast}` → model, overridable in Settings → Models) — so
+an install that has run since before this rule behaves exactly as it always
+has. A pinned model does not move: pinning is the chairman saying *this*
+model, and the doors then ask for its provider to be paid.
 
 `stakes: high` lifts a producing seat to `@frontier` of the provider it is
 already on — the class rank replaces the old per-provider `craft_model`, and

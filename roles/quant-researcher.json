@@ -8,7 +8,6 @@
     "data"
   ],
   "description": "Tests whether a market claim survives data: hypothesis, point-in-time data, costs, walk-forward, and an honest null result when there is nothing there.",
-  "model": "@balanced",
   "effort": "xhigh",
   "tool_permissions": {
     "files": true,

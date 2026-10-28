@@ -7,7 +7,6 @@
     "education"
   ],
   "description": "Teaches one person one subject: builds the curriculum, writes exercises with worked answers, marks honestly, and changes the plan based on what they actually got wrong.",
-  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

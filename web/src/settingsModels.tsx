@@ -13,7 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { get, post, put } from "./api";
 import { CheckChip, CheckRow, fmtUsd } from "./providerCheck";
-import { forgetModels, useModels } from "./providers";
+import { forgetModels, ModelSelect, useModels, useProviders } from "./providers";
 import { FIX_LINK, useReadiness } from "./readiness";
 import { fmtAgo } from "./ui";
 import { EmptyState } from "./ui/kit";
@@ -31,6 +31,7 @@ interface UpkeepRun {
 }
 interface ModelsSettings {
   default_provider: string; lineups: LineupRow[]; ceilings: Record<string, number>;
+  app_model: string; app_harness: string | null;
   upkeep?: { enabled: boolean; last: UpkeepRun | null };
 }
 type Saved = ModelsSettings & { unrunnable?: string[] };
@@ -188,11 +189,28 @@ export function ModelsSection() {
   const [nonce, setNonce] = useState(0);
   const [scoreboard, setScoreboard] = useState<CheckRow[] | null>(null);
   const catalog = useModels(nonce);
+  const registry = useProviders();
   const { data: readiness } = useReadiness(nonce);
+  const [appModel, setAppModel] = useState("");
+  const [appHarness, setAppHarness] = useState("");
+  const [harnesses, setHarnesses] = useState<{ name: string; label: string }[]>([]);
+  const [appBusy, setAppBusy] = useState(false);
   useEffect(() => {
-    get<ModelsSettings>("/admin/settings/models").then(setData).catch((e) => setError(e.message));
+    get<ModelsSettings>("/admin/settings/models").then((said) => {
+      setData(said); setAppModel(said.app_model ?? ""); setAppHarness(said.app_harness ?? "");
+    }).catch((e) => setError(e.message));
     get<CheckRow[]>("/admin/settings/provider-checks").then(setScoreboard).catch(() => setScoreboard([]));
+    get<{ name: string; label: string }[]>("/admin/harnesses")
+      .then(setHarnesses).catch(() => setHarnesses([]));
   }, []);
+  async function saveApp() {
+    setAppBusy(true); setError("");
+    try {
+      saved(await put<Saved>("/admin/settings/models/app-model", { model: appModel || null }));
+      await put<Saved>("/admin/settings/models/app-harness", { harness: appHarness || null })
+        .catch(() => undefined);
+    } catch (e) { setError((e as Error).message); } finally { setAppBusy(false); }
+  }
   const saved = useCallback((said: Saved) => {
     setData(said); setStranded(said.unrunnable ?? []); setNonce((n) => n + 1);
   }, []);
@@ -217,6 +235,29 @@ export function ModelsSection() {
     {stranded.length > 0 && <div className="notice-box" role="alert">
       <b>That change leaves seats unable to run:</b>
       <ul>{stranded.map((line) => <li key={line}>{line}</li>)}</ul></div>}
+
+    <div className="card">
+      <h3 style={{ marginTop: 0 }}>The app&apos;s model</h3>
+      <p className="help">What a seat runs on when neither it nor its role names a model — the
+        role&apos;s charter is the effort, and the app&apos;s model is the default beneath it.
+        Empty goes back to the shipped class, which resolves on the install&apos;s provider.</p>
+      <div className="hrow" style={{ alignItems: "end", gap: 12 }}>
+        <label className="field" style={{ maxWidth: 460, flex: 1 }}>Default model
+          <ModelSelect value={appModel} onChange={setAppModel} info={catalog} registry={registry}
+            providersShown={(readiness?.providers ?? []).map((p) => p.provider)}
+            empty="The shipped class (the install's provider resolves it)"
+            disabled={appBusy} />
+        </label>
+        <label className="field" style={{ maxWidth: 280 }}>Default harness
+          <select value={appHarness} disabled={appBusy} onChange={(e) => setAppHarness(e.target.value)}>
+            <option value="">The paying credential&apos;s</option>
+            {harnesses.map((h) => <option key={h.name} value={h.name}>{h.label}</option>)}
+          </select>
+        </label>
+        <button className="primary" disabled={appBusy} onClick={saveApp}
+          style={{ minHeight: 34 }}>Save</button>
+      </div>
+    </div>
 
     <div className="card">
       <label className="field" style={{ maxWidth: 360, marginTop: 0 }}>Default provider

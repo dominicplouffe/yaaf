@@ -7,7 +7,6 @@
     "markets"
   ],
   "description": "The CEO role for markets work: owns the mandate, the research agenda, and the kill decisions. The only agent that speaks to the chairman and the only one that creates top-level tasks. Recommends; never trades.",
-  "model": "@frontier",
   "effort": "high",
   "tool_permissions": {
     "files": true,

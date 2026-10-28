@@ -7,7 +7,6 @@
     "markets"
   ],
   "description": "Rates, inflation, growth, currencies, commodities and central banks. Turns the macro picture into what it implies for the desk's holdings, with the forecast record kept honest.",
-  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

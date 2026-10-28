@@ -68,11 +68,11 @@ Three things to know before anything else:
 - **Any model, per person.** Anthropic, OpenAI, Google, Azure OpenAI, AWS
   Bedrock, Vertex AI, Mistral, xAI, DeepSeek, Groq, Together, Fireworks,
   Cerebras, Cohere, NVIDIA, Hugging Face, Z.ai, Qwen, Moonshot, OpenRouter, a
-  local Ollama or LM Studio, or any OpenAI-compatible endpoint. Roles name a
-  class of model — frontier, balanced, fast — so the same team runs on whichever
-  provider pays for it, and each seat on the org chart can still run a different
-  one. The chart says which, and what each person has cost this month. See
-  [PROVIDERS.md](docs/PROVIDERS.md).
+  local Ollama or LM Studio, or any OpenAI-compatible endpoint. The app runs on
+  one provider — your key, named once in Settings — and every seat runs a model
+  of that provider's: the app's default, or one the seat names for itself. A
+  role says how hard its seat thinks, the chart says which model each person
+  runs and what they have cost. See [PROVIDERS.md](docs/PROVIDERS.md).
 - **Your data, through MCP.** The project reads the systems you connect as MCP
   data sources, scoped per role, and the whole cockpit is itself an MCP server —
   so the record of what your team did is yours to query from any client.

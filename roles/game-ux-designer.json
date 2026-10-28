@@ -7,7 +7,6 @@
     "games"
   ],
   "description": "Deep experience critiquing and designing mobile game UX: onboarding, controls, HUD, menus, monetization flows, juice. Audits what exists and delivers implementable specs for what should change.",
-  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

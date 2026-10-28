@@ -98,8 +98,13 @@ def seat_for(agent, role_version, runtime: str | None = None, *,
     The harness resolves like the model beside it: the seat's own override,
     then the role's, then the install's default, then the default of the
     credential kind that pays the seat's provider on this project."""
-    ref = agent.model_override or (role_version.model if role_version and role_version.model
-                                   else context.app_model)
+    # A role carrying the shipped default class has no opinion (PLAN-09): the
+    # install's default decides, so a role that never named a model follows
+    # the app's. One moved by hand keeps its pin.
+    role_model = role_version.model if role_version else None
+    if role_model == catalog.DEFAULT_MODEL:
+        role_model = None
+    ref = agent.model_override or role_model or context.app_model
     effort = agent.effort_override or (role_version.effort if role_version
                                        else catalog.DEFAULT_EFFORT)
     named, cls = catalog.parse(ref)

@@ -7,7 +7,6 @@
     "general"
   ],
   "description": "Kills recommendations nobody can actually carry out. Asks what the human would click, and refuses anything that has no answer.",
-  "model": "@balanced",
   "effort": "medium",
   "tool_permissions": {
     "files": true,

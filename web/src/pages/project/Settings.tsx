@@ -1483,6 +1483,13 @@ export default function Settings({
       <Section on={section === "money"}>
       <h2>How agents pay for their models</h2>
       <div className="card">
+        {dash.install_payer && (
+          <p className="help" style={{ marginTop: 0 }}>
+            The app itself runs on <b>{dash.install_payer.label}</b> — its key pays anything
+            this project does not. That is the app&apos;s provider, changed under{" "}
+            <Link to="/settings?section=providers">Settings → Providers</Link>.
+          </p>
+        )}
         <p className="help" style={{ marginTop: 0 }}>
           Every agent run calls a model, and that call needs a credential. Currently:{" "}
           {billingReady ? (

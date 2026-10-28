@@ -201,8 +201,10 @@ def test_both_doors_to_the_platform_key_are_the_same_key(client):
 
 
 def test_the_platform_key_never_becomes_a_projects_billing_credential(client):
-    """The rule, asserted where it would break: a project with no key of its
-    own runs on nothing, however well-configured the platform is."""
+    """The boundary that survives the one-provider model (PLAN-09): the
+    platform's own key pays a project that holds no key of its own, but it is
+    never the project's billing credential — never attached to the project,
+    never reachable as a project secret, never grantable to a role."""
     from yaaf.runner.daemon import _billing_env
 
     client.put("/admin/settings/anthropic",
@@ -212,7 +214,10 @@ def test_the_platform_key_never_becomes_a_projects_billing_credential(client):
     with db_session() as session:
         row = session.get(Project, project["id"])
         assert row.billing_secret_id is None
-        assert _billing_env(session, row) == {}
+        # The install's own key pays the keyless project's runs — but as the
+        # install's, read through the payer, never written onto the project.
+        env = _billing_env(session, row)
+        assert env.get("ANTHROPIC_API_KEY") == API_KEY
 
         # It is not reachable as a project secret either, and no role can be
         # granted it — the credential is billing-kind with no scopes.

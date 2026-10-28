@@ -7,7 +7,6 @@
     "general"
   ],
   "description": "Writes marketing blog posts that earn attention from real readers: researched, sourced, publishable prose aimed at a specific search intent — and publishes to WordPress as drafts for the chairman to approve. Measured by external response, never word count.",
-  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,

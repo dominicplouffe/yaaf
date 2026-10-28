@@ -7,7 +7,6 @@
     "data"
   ],
   "description": "Checks whether the numbers behind a recommendation mean what the recommendation says they mean. Paid to find the window, the double-count and the missing denominator.",
-  "model": "@balanced",
   "effort": "high",
   "tool_permissions": {
     "files": true,
