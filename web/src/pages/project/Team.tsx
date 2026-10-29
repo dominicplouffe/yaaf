@@ -431,11 +431,10 @@ function StoodDown({ ctx }: { ctx: ProjectCtx }) {
 }
 
 function SeatTable({ ctx }: { ctx: ProjectCtx }) {
-  // The project's own unit: a subscription project is metered in tokens, and a
-  // dollar column of dashes would read as "nobody spent anything".
-  const usdMode = ctx.dash.billing_mode === "api_key";
+  // The project's one meter is tokens (PLAN-10): every seat's spend shows in
+  // the unit the wall counts, whatever unit its credential bills in.
   const spent = (t: Seat["today"]) => !t ? 0
-    : usdMode ? t.usd : t.tokens_in + t.tokens_out + t.cache_creation + t.cache_read;
+    : t.tokens_in + t.tokens_out + t.cache_creation + t.cache_read;
   const rows = [...ctx.seats].sort(
     (a, b) => STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state));
   return (
@@ -453,7 +452,7 @@ function SeatTable({ ctx }: { ctx: ProjectCtx }) {
               <td><SeatPill state={s.state} />{s.dormant && <> <span className="chip warn">{s.dormant}</span></>}</td>
               <td className="doing-cell">{s.doing}</td>
               <td className="num">{s.today?.runs ?? 0}</td>
-              <td className="num">{spent(s.today) ? fmtUnit(spent(s.today), usdMode ? "usd" : "tokens") : "—"}</td>
+              <td className="num">{spent(s.today) ? fmtUnit(spent(s.today), "tokens") : "—"}</td>
             </tr>
           ))}
         </tbody>

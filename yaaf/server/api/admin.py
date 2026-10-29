@@ -885,9 +885,9 @@ class ProjectCreate(BaseModel):
     ceo_effort_override: str | None = Field(default=None, pattern=_EFFORT_PATTERN)
     ceo_harness_override: str | None = None
     # What pays each provider the billing credential does not, by provider:
-    # {"deepseek": "<credential id>"}. One per provider, every one metered in
-    # the billing credential's unit (R4); a seat on a provider with none is
-    # refused (R5) — docs/RUNTIMES.md, M3.
+    # {"deepseek": "<credential id>"}. One per provider, whatever unit each
+    # bills in — every provider's runs count tokens against the one cap
+    # (PLAN-10); a seat on a provider with none is refused (R5).
     credentials: dict[str, str] = Field(default_factory=dict)
     # The credential class seats move to while the billing one's provider is
     # failing (yaaf.core.breakers) — held to the fallback door's rules.
@@ -947,10 +947,11 @@ def attach_provider_credential(session: Session, project: Project, provider_name
                                credential_id: str) -> ProjectLlmCredential:
     """Pay `provider_name` with this credential on this project. Refused for a
     credential of another provider, for the provider the billing credential
-    already pays, and for a credential metered in another unit than the
-    project's (R4: one project, one meter — two units cannot share one cap,
-    and an exchange rate between them would be an invented number)."""
-    from yaaf.core.llm_credentials import assigned_credential, bills
+    already pays, and for a second credential on a provider (one provider, one
+    credential). The unit the credential bills in is irrelevant: every
+    provider's runs count tokens against the project's one token cap (PLAN-10),
+    and dollars are the cost shown, priced by the feed."""
+    from yaaf.core.llm_credentials import assigned_credential
 
     seller = runtime_providers.PROVIDERS.get(provider_name)
     if seller is None:
@@ -969,11 +970,6 @@ def attach_provider_credential(session: Session, project: Project, provider_name
             raise HTTPException(status_code=422, detail=(
                 f"this project already pays {seller.label} with its billing credential "
                 f"'{billing.name}' — change that instead"))
-    if (secret.llm_mode or "api_key") != project.billing_mode:
-        raise HTTPException(status_code=422, detail=(
-            f"one project, one meter: this project's budget is kept in "
-            f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'}, and "
-            f"'{secret.name}' is a {bills(secret)} — pick one metered the same way"))
     fallback = session.get(Secret, project.fallback_secret_id) \
         if project.fallback_secret_id else None
     if fallback is not None and fallback.id != secret.id and \
@@ -996,37 +992,15 @@ def attach_provider_credential(session: Session, project: Project, provider_name
 
 def _settle_provider_credentials(session: Session, project: Project) -> None:
     """After the billing credential moved: a row for the provider it now pays
-    is shadowed by it, so it goes; and every row left must still meter in the
-    project's unit (R4) — the money moved, and the other credentials did not
-    move with it."""
-    from yaaf.core.llm_credentials import bills
-
+    is shadowed by it, so it goes. Every row left keeps paying its provider —
+    all of them count tokens against the project's one cap (PLAN-10), whatever
+    unit each credential bills in."""
     billing = session.get(Secret, project.billing_secret_id) if project.billing_secret_id else None
-    fallback = session.get(Secret, project.fallback_secret_id) \
-        if project.fallback_secret_id else None
-    if fallback is not None and (fallback.llm_mode or "api_key") != project.billing_mode:
-        # The same rule the fallback door holds, held again when the money
-        # moves: a fallback in dollars on a budget kept in tokens would spend
-        # what no cap can stop.
-        raise HTTPException(status_code=422, detail=(
-            f"one project, one meter: the fallback '{fallback.name}' is a {bills(fallback)}, "
-            f"and this would keep the budget in "
-            f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'} — remove or "
-            "change the fallback first"))
     for row in session.scalars(select(ProjectLlmCredential).where(
             ProjectLlmCredential.project_id == project.id)).all():
         if billing is not None and row.provider == (billing.provider
                                                     or runtime_providers.DEFAULT_PROVIDER):
             session.delete(row)
-            continue
-        secret = session.get(Secret, row.secret_id)
-        if secret is not None and (secret.llm_mode or "api_key") != project.billing_mode:
-            raise HTTPException(status_code=422, detail=(
-                f"one project, one meter: '{secret.name}' pays "
-                f"{runtime_providers.provider(row.provider).label} as a {bills(secret)}, and "
-                f"this would keep the budget in "
-                f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'} — remove "
-                f"it from the project first"))
     session.flush()
 
 
@@ -1126,7 +1100,7 @@ def apply_fallback(session: Session, project: Project, credential_id: str) -> No
     """Name `credential_id` the project's fallback, or refuse with why: the
     door's rules, shared with project creation and every importer."""
     from yaaf.core import project_credentials
-    from yaaf.core.llm_credentials import assigned_credential, bills
+    from yaaf.core.llm_credentials import assigned_credential
     from yaaf.runtimes.seats import seat_for
     from yaaf.server.contextpack import role_version_for
     from yaaf.server.seat_checks import seat_problem
@@ -1144,11 +1118,6 @@ def apply_fallback(session: Session, project: Project, credential_id: str) -> No
             f"'{secret.name}' pays {runtime_providers.provider(provider_name).label}, the "
             "provider the billing credential already pays — a fallback on the same provider "
             "fails with it. Pick another provider's credential"))
-    if (secret.llm_mode or "api_key") != project.billing_mode:
-        raise HTTPException(status_code=422, detail=(
-            f"one project, one meter: this project's budget is kept in "
-            f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'}, and "
-            f"'{secret.name}' is a {bills(secret)} — pick one metered the same way"))
     paying = project_credentials.held(session, project, fallback=False).get(provider_name)
     if paying is not None and paying.id != secret.id:
         raise HTTPException(status_code=422, detail=(

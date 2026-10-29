@@ -327,7 +327,7 @@ Claude credentials" any more.
 A provider outage used to stop every project on it: each run failed
 transiently, was retried, failed again, and the work stood still until a
 person re-pointed billing by hand. A project can now name a **fallback
-credential** — another provider's, metered the same way (R4) — and the runs
+credential** — another provider's — and the runs
 themselves are the signal (yaaf/core/breakers.py):
 
 - three transient failures in a row on a credential open its breaker;
@@ -341,8 +341,8 @@ themselves are the signal (yaaf/core/breakers.py):
 What never moves: a seat pinned to a model, or a class named with its
 provider (`openai/@fast`) — somebody chose that provider on purpose. A dead
 key is not an outage (`auth` stays the three-strikes pause's). The fallback
-door refuses a fallback on the same provider (it fails with it), one metered
-in another unit, and one any class seat could not run on — resolved, priced,
+door refuses a fallback on the same provider (it fails with it) and one any
+class seat could not run on — resolved, priced,
 able to do what its role grants — because a fallback found wanting during an
 outage is no fallback; the health checklist re-asks that question every day.
 The chairman is told after the fact (a record, or an alarm when there was
@@ -351,9 +351,8 @@ nothing to move to); the move itself already happened, by state.
 The fallback pays only while seats are moved onto it — held always, it would
 also pay any seat pinned to its provider, which nobody named it for — and a
 project pays each provider with one credential, so the fallback and a
-"pays this provider too" credential cannot disagree about who pays. It is
-held to one meter when the billing credential moves as well as when it is
-named. It travels wherever its siblings do: a new project's body, a setup
+"pays this provider too" credential cannot disagree about who pays. It
+travels wherever its siblings do: a new project's body, a setup
 file (by name), a clone, the MCP `create_project` and `project_configure`
 tools, the CLI's import and the Founder's drafts.
 
@@ -380,10 +379,10 @@ they ran on; role versions stay immutable.
 | lineups, default provider, search backend, provider ceilings | platform settings; absent means the shipped defaults |
 
 **What deliberately did not move: `Project.billing_secret_id`.** A
-from-scratch design still has a primary credential — the one that sets the
-project's meter (R4) and names its primary provider (§1) — and that is what
-this column is. It is also a public contract: MCP drafts, export bundles and
-setup files all carry it by that name. Renaming it would change three hundred
+from-scratch design still has a primary credential — the one that
+names its primary provider (§1) and keeps the public contract — and that is
+what this column is. It is also carried by that name through MCP drafts,
+export bundles and setup files. Renaming it would change three hundred
 lines and every client for no behaviour a chairman could see; the semantics,
 which are what was Claude-shaped, did move.
 
