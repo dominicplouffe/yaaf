@@ -6,7 +6,7 @@ import { WhatTheyDid } from "../../did";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { CredentialPicker } from "../../llmCredentials";
 import { firstName, ProjectCtx } from "../../projectCtx";
-import { isClass, ModelSelect, providerOf, useModels, useProviders } from "../../providers";
+import { isClass, ModelSelect, providerOf, resolveRef, useModels, useProviders } from "../../providers";
 import { clip, fmtAgo } from "../../ui";
 import { Avatar, plainStatus } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
@@ -137,6 +137,8 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
   // (R3): the shipped price list usually has one, and importing it is the
   // same audited step as Settings → Model prices, offered where it is needed.
   const [unpriced, setUnpriced] = useState(false);
+  // A class is priced as the model it resolves to — the model the door names.
+  const priceable = (billing ? resolveRef(model, billing, catalog) : null) ?? model;
   const harnessLabel = (h: string | null | undefined) =>
     h ? harnesses.find((x) => x.name === h)?.label ?? h : "whatever the paying credential runs on";
 
@@ -171,10 +173,10 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
     setError(null);
     try {
       const said = await post<{ applied: string[] }>("/admin/settings/model-prices/import",
-        { source: "snapshot", models: [model], apply: true });
-      if (!said.applied.includes(model)) {
-        setError(`The price list shipped with yaaf has no price for ${model} — set one under ` +
-          "Settings → Model prices, then save again.");
+        { source: "snapshot", models: [priceable], apply: true });
+      if (!said.applied.includes(priceable)) {
+        setError(`The price list shipped with yaaf has no price for ${priceable} — set one ` +
+          "under Settings → Model prices, then save again.");
         return;
       }
       setUnpriced(false);
@@ -208,7 +210,7 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
       )}
       {unpriced && (
         <div className="seat-door">
-          <p><b>{model}</b> has no price on this install, so its runs could not be costed.
+          <p><b>{priceable}</b> has no price on this install, so its runs could not be costed.
             The price list shipped with yaaf has one — importing it is recorded like any
             price you set under <Link to="/settings?section=prices" target="_blank"
             rel="noreferrer">Settings → Model prices</Link>.</p>

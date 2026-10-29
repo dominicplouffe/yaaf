@@ -2307,7 +2307,8 @@ def ledger(project_id: str, limit: int = 100, session: Session = Depends(db)) ->
 
 @router.get("/projects/{project_id}/spend", dependencies=[authority.READ])
 def spend(project_id: str, group_by: str = "model", days: int = 30,
-          window: str = "days", session: Session = Depends(db)) -> dict:
+          window: str = "days", kind: str | None = None,
+          session: Session = Depends(db)) -> dict:
     """Spend rollup, summed from the ledger.
 
     The ledger is where spend is counted. The budget meter reads it, the
@@ -2326,7 +2327,8 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
     subscription project contributes tokens only; clients switch display on
     billing_mode exactly as the budget meter does. `window=month` matches the
     meter's month-to-date; the default rolling window is for cards that stand
-    on their own.
+    on their own. `kind` keeps one ledger kind — `model_usage` is what keys
+    billed, without the real-world purchases a run made.
     """
     if group_by not in ("model", "provider", "team", "agent", "kind"):
         raise HTTPException(status_code=400,
@@ -2346,6 +2348,7 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
                 # Revenue is money coming IN — the same exclusion the meter and
                 # janitor.month_to_date apply, for the same reason.
                 LedgerEntry.kind != LedgerKind.REVENUE,
+                *([LedgerEntry.kind == kind] if kind else []),
             )
         ).scalars()
     )

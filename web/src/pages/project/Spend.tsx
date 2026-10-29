@@ -160,7 +160,8 @@ export function SpendByTeam({ projectId, usdMode, compact }: {
     Nothing renders until one has. */
 function DollarsBilled({ projectId }: { projectId: string }) {
   const { data } = usePoll(
-    () => get<SpendReport>(`/observe/projects/${projectId}/spend?group_by=provider&window=month`),
+    () => get<SpendReport>(
+      `/observe/projects/${projectId}/spend?group_by=provider&window=month&kind=model_usage`),
     30000,
   );
   const billed = (data?.rows ?? []).filter((r) => r.usd > 0).sort((a, b) => b.usd - a.usd);

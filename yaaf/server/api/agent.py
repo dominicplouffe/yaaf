@@ -1267,12 +1267,13 @@ def book_chat_usage(
     from yaaf.server.budget import counted
 
     count = counted(session, ctx.project, provider=ctx.run.provider, model=ctx.run.model,
-                    billed_usd=body.cost_usd, tokens_in=body.tokens_in,
-                    tokens_out=body.tokens_out, cache_creation=body.cache_creation_tokens,
+                    billed_usd=body.cost_usd, paid=ctx.run.paid_in,
+                    tokens_in=body.tokens_in, tokens_out=body.tokens_out,
+                    cache_creation=body.cache_creation_tokens,
                     cache_read=body.cache_read_tokens)
-    if count.bill is not None:
-        ctx.run.cost_usd = (ctx.run.cost_usd or 0.0) + count.bill
-    usd = count.ledger_usd
+    usd = count.usd
+    if usd is not None:
+        ctx.run.cost_usd = (ctx.run.cost_usd or 0.0) + usd
     if (body.tokens_in or body.tokens_out or body.cache_creation_tokens
             or body.cache_read_tokens or usd):
         session.add(LedgerEntry(

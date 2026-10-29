@@ -33,6 +33,16 @@ def unpaid(who: str, model: str, paid: list[str]) -> str:
             f"too with one of its credentials")
 
 
+def _bills_in_tokens(credential: tuple[str, str]) -> bool:
+    """Whether a seat's (provider, mode) is a kind metered in tokens. A
+    provider this install does not have is not ours to judge here."""
+    from yaaf.runtimes.providers import PROVIDERS
+
+    provider_name, mode = credential
+    found = PROVIDERS.get(provider_name)
+    return found is not None and found.kind(mode).meter == "tokens"
+
+
 def seat_problem(session: Session, project: Project, agents: list[Agent], *,
                  chat: bool = True, context=None, fallback: bool | None = None) -> str | None:
     """The first seat of `agents` that could not run on this project, named,
@@ -65,6 +75,15 @@ def seat_problem(session: Session, project: Project, agents: list[Agent], *,
             return unpaid(agent.name, seat.model,
                           sorted(project_credentials.held(session, project,
                                                           fallback=fallback)))
+        if credential is not None and pays and project.billing_mode == "api_key" \
+                and _bills_in_tokens(credential) and not prices.covered(session, seat.model):
+            # R3, for a budget kept in dollars: a subscription's runs move no
+            # dollars and are counted at their catalog price (budget.counted),
+            # so a model with none would be a seat the dollar wall cannot see.
+            return (f"{agent.name}: {seat.model} has no price on this install, and this "
+                    f"project's budget is in dollars — a subscription's runs on it are "
+                    f"counted at their catalog price. Import or set one in Settings → "
+                    f"Model prices")
         problem = refusal(seat.harness, seat.model,
                           role_version.tool_permissions if role_version else {},
                           credential, priced=prices.covered(session, seat.model),

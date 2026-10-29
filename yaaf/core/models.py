@@ -1921,6 +1921,13 @@ class Run(Base):
     # recorded — all of which were the Agent SDK on Anthropic.
     provider: Mapped[str | None] = mapped_column(String(32))
     harness: Mapped[str | None] = mapped_column(String(32))
+    # How the credential that paid this run bills — "usd" | "tokens" — pinned
+    # at lease beside the provider. Finalize must not ask who pays *now*: a
+    # failover closing, or the billing credential moving, mid-run would book
+    # the run to a payer that never paid it (yaaf.server.budget.counted).
+    # NULL on runs from before it was recorded, which read it from the
+    # project's billing mode as they always did.
+    paid_in: Mapped[str | None] = mapped_column(String(8))
     # How a failed run failed, as its harness classified it: "auth" |
     # "transient" | "fatal". Kept on the row because the credential-failure
     # pause reads the last three runs, not just this one.

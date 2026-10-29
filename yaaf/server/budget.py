@@ -72,54 +72,84 @@ def hard_stop_of(project: Project, cons: ConstitutionDoc) -> float:
     return budget * max(1.0, cons.hard_stop_multiple)
 
 
+def paid_in(session: Session, project: Project, provider: str | None) -> str | None:
+    """How the credential paying `provider` on this project bills — "usd" or
+    "tokens" — or None when nothing names one: no provider, no credential, or
+    a provider this install does not have (a row a newer release wrote, then
+    rolled back — refused at the lease, and never worth failing a booking
+    over). The lease pins it on the run (`Run.paid_in`); finalize reads that."""
+    from yaaf.core import project_credentials
+    from yaaf.runtimes.providers import PROVIDERS
+
+    payer = project_credentials.seat_credential(session, project, provider) \
+        if provider else None
+    if payer is None or payer[0] not in PROVIDERS:
+        return None
+    return PROVIDERS[payer[0]].kind(payer[1]).meter
+
+
 class Counted(NamedTuple):
     """One model call as its project's meter counts it."""
-    #: What the credential billed in dollars — None when no dollars moved.
-    bill: float | None
-    #: The dollars its ledger row carries, which the dollar meter sums.
-    ledger_usd: float | None
-    #: Said on the ledger row when the count is not the bill.
+    #: The dollars this call costs the project's budget — what `Run.cost_usd`
+    #: and its ledger row both carry, so every reader that sums either agrees
+    #: with the wall. None when no dollars are counted (a token budget's
+    #: subscription calls).
+    usd: float | None
+    #: Said on the ledger row when the count is not a bill.
     note: str
+    #: Whether the credential that paid billed dollars.
     paid_in_usd: bool
 
 
 def counted(session: Session, project: Project, *, provider: str | None, model: str | None,
-            billed_usd: float | None, tokens_in: int = 0, tokens_out: int = 0,
+            billed_usd: float | None, priced_usd: float | None = None,
+            paid: str | None = None, tokens_in: int = 0, tokens_out: int = 0,
             cache_creation: int = 0, cache_read: int = 0) -> Counted:
     """One model call as this project's meter counts it.
 
     The credential that paid the call decides whether dollars moved — not the
     project's billing mode, because a project may pay two providers two ways
-    (a Claude subscription for the team, a DeepSeek key for the CEO). An API
-    key's call books its real bill. A subscription's call moves no dollars: on
-    a project whose budget is tokens, its tokens are the count; on one whose
-    budget is dollars, it is counted at its catalog price — the run's own
-    price, never an exchange rate — or the dollar meter would not see it at all.
-    Every run already carries its tokens, so the token meter needs nothing."""
-    from yaaf.core import prices, project_credentials
-    from yaaf.runtimes import providers as runtime_providers
+    (a Claude subscription for the team, a DeepSeek key for the CEO). `paid`
+    is how that credential bills, as the lease pinned it; without it (a row
+    from before it was pinned) it is asked now, and without an answer the
+    billing mode decides, as it always did.
 
-    payer = project_credentials.seat_credential(session, project, provider) \
-        if provider else None
-    if payer is not None:
-        paid_in_usd = runtime_providers.provider(payer[0]).kind(payer[1]).meter == "usd"
-    else:
-        # No credential named (an older row, a mock): the billing mode, as before.
-        paid_in_usd = project.billing_mode == "api_key"
+    An API key's call books its real bill. A subscription's call moves no
+    dollars: on a project whose budget is tokens, its tokens are the count; on
+    one whose budget is dollars, it is counted at its catalog price — the run's
+    own price (`priced_usd`, as the sandbox priced it from the install's row),
+    never an exchange rate — or the dollar meter would not see it at all. The
+    seat doors refuse a subscription seat on a dollar budget whose model has no
+    price (seat_checks), so that last case always has one."""
+    paid = paid or paid_in(session, project, provider)
+    paid_in_usd = paid == "usd" if paid else project.billing_mode == "api_key"
     if paid_in_usd:
-        return Counted(billed_usd, billed_usd, "", True)
+        return Counted(billed_usd, "", True)
     if project.billing_mode != "api_key":
-        return Counted(None, None, " (subscription: tokens only)", False)
+        return Counted(None, " (subscription: tokens only)", False)
+    at_catalog = priced_usd if priced_usd is not None else _at_catalog(
+        session, model, tokens_in=tokens_in, tokens_out=tokens_out,
+        cache_creation=cache_creation, cache_read=cache_read)
+    if at_catalog is not None:
+        return Counted(at_catalog, " (subscription, counted at its catalog price)", False)
+    log.warning("a subscription call on %s's dollar budget has no price for %s; "
+                "counted at the harness's own figure", project.slug, model)
+    return Counted(billed_usd, " (subscription, counted at the harness's reported price)",
+                   False)
+
+
+def _at_catalog(session: Session, model: str | None, *, tokens_in: int, tokens_out: int,
+                cache_creation: int, cache_read: int) -> float | None:
+    """A call priced from the install's row for its model, for a harness that
+    did not price it itself. Cache writes at the 5-minute rate: the 1-hour
+    split is the sandbox's to report, and it reports `priced_usd` when it can."""
+    from yaaf.core import prices
+
     price = prices.price(session, model) if model else None
-    if price is not None:
-        at_catalog = (tokens_in * price.input + tokens_out * price.output
-                      + cache_read * price.cache_read
-                      + cache_creation * price.cache_write_5m) / 1_000_000
-        return Counted(None, at_catalog, " (subscription, counted at its catalog price)", False)
-    # No price on the install: the harness's own list-price figure, which the
-    # CLI harnesses report even on a subscription.
-    return Counted(None, billed_usd,
-                   " (subscription, counted at the harness's reported price)", False)
+    if price is None:
+        return None
+    return (tokens_in * price.input + tokens_out * price.output
+            + cache_read * price.cache_read + cache_creation * price.cache_write_5m) / 1_000_000
 
 
 def spend_breakdown(session: Session, project_id: str, since) -> dict:
@@ -192,6 +222,13 @@ def record_overrun(session: Session, project: Project, cons: ConstitutionDoc,
     """
     budget, unit = budget_of(project, cons)
     existing = open_overrun(session, project.id)
+    if existing is not None and existing.unit != unit:
+        # Opened in the other unit — #81 kept dollar budgets in tokens for a
+        # day. Dollars written into a token row would be a figure in no unit;
+        # the row keeps what it recorded, and the CEO still owes its account.
+        log.warning("overrun %s was opened in %s; not updating it with %s",
+                    existing.id, existing.unit, unit)
+        return None
     if existing is not None:
         existing.final_spent = spent
         existing.breakdown = spend_breakdown(session, project.id, existing.period)

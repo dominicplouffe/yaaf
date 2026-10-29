@@ -312,6 +312,10 @@ def _pin_seat(session: Session, run: Run, job: RunJob, seat) -> None:
                        "context": prices.context_window(session, seat.model)}
     run.model, run.effort = seat.model, seat.effort
     run.provider, run.harness = seat.provider, seat.harness
+    # How the credential paying this seat bills, while it is the one paying:
+    # what finalize books the run by, whatever pays by then.
+    project = session.get(Project, run.project_id)
+    run.paid_in = budget.paid_in(session, project, seat.provider) if project else None
 
 
 def _dial(seat, row, seller) -> bool:
@@ -747,18 +751,19 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         run.tokens_out = result.tokens_out
         run.cache_creation_tokens = result.cache_creation_tokens
         run.cache_read_tokens = result.cache_read_tokens
-        # Tokens always; dollars only when dollars move — and the credential
-        # that paid this run says whether they did, not the project's mode: a
-        # project paid by a Claude subscription can run its CEO on a DeepSeek
-        # key (yaaf.server.budget.counted).
+        # Tokens always; dollars as the credential that paid this run bills —
+        # pinned at lease (`run.paid_in`), not the project's mode: a project
+        # paid by a Claude subscription can run its CEO on a DeepSeek key
+        # (yaaf.server.budget.counted).
         project = session.get(Project, job.project_id)
         count = budget.counted(
             session, project, provider=job.provider, model=job.model,
-            billed_usd=result.cost_usd, tokens_in=result.tokens_in,
-            tokens_out=result.tokens_out, cache_creation=result.cache_creation_tokens,
+            billed_usd=result.cost_usd, priced_usd=result.priced_usd, paid=run.paid_in,
+            tokens_in=result.tokens_in, tokens_out=result.tokens_out,
+            cache_creation=result.cache_creation_tokens,
             cache_read=result.cache_read_tokens) if project is not None else None
-        run.cost_usd = count.bill if count else result.cost_usd
-        run.priced_usd = result.priced_usd if count is None or count.paid_in_usd else None
+        run.cost_usd = count.usd if count else result.cost_usd
+        run.priced_usd = result.priced_usd if count is None or count.usd is not None else None
         run.trace_path = _stash_trace(job) or result.trace_path
         run.context_path = _stash_context(job)
         _clear_staged_inputs(job)
@@ -805,7 +810,7 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
                     # reading be the reason a finished run fails to book.
                     log.exception("could not file the plan reading for run %s", run.id)
 
-        ledger_usd = count.ledger_usd if count else run.cost_usd
+        ledger_usd = run.cost_usd
         if (result.tokens_in or result.tokens_out or result.cache_creation_tokens
                 or result.cache_read_tokens or ledger_usd):
             session.add(

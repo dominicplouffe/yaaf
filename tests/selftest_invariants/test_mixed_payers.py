@@ -164,38 +164,49 @@ def _claude_plan_on_a_dollar_project(client, **constitution) -> dict:
                     **({"constitution": constitution} if constitution else {}))
 
 
-def _finish(project: dict, *, provider: str, model: str, usd: float | None,
-            tokens_out: int) -> str:
+def _finish(project: dict, *, provider: str, model: str, billed: float | None,
+            tokens_out: int, priced: float | None = None) -> str:
+    """A run finalized as its harness would report it: `billed` is the figure
+    the harness gave, `priced` the sandbox's own catalog pricing of it."""
     run_id, _ = live_token(project["id"], project["ceo_agent_id"])
     job = RunJob(run_id=run_id, project_id=project["id"], agent_id=project["ceo_agent_id"],
                  kind="agent_run", trigger={}, task_id=None, attempt=1)
     job.provider, job.model, job.harness = provider, model, "claude_agent_sdk"
-    daemon.finalize(job, RunResult(ok=True, tokens_out=tokens_out, cost_usd=usd,
-                                   priced_usd=usd))
+    daemon.finalize(job, RunResult(ok=True, tokens_out=tokens_out, cost_usd=billed,
+                                   priced_usd=priced))
     return run_id
 
 
 def test_a_subscriptions_run_on_a_dollar_budget_is_counted_at_its_catalog_price(client):
+    """Not the harness's list-price figure, and the run row says the same as
+    its ledger row — every reader that sums either agrees with the wall."""
     project = _claude_plan_on_a_dollar_project(client)
     run_id = _finish(project, provider="anthropic", model="claude-sonnet-5-5",
-                     usd=9.99, tokens_out=100_000)
-    with db_session() as session:
-        assert session.get(Run, run_id).cost_usd is None, "a subscription bills no dollars"
-    (row,) = _ledger(project["id"])
-    # Sonnet's catalog output price, not the harness's list-price figure.
+                     billed=9.99, tokens_out=100_000)
     with db_session() as session:
         from yaaf.core import prices
 
         price = prices.price(session, "claude-sonnet-5-5")
-    assert row.usd == round(100_000 * price.output / 1_000_000, 10)
+        cost = session.get(Run, run_id).cost_usd
+    (row,) = _ledger(project["id"])
+    assert row.usd == cost == 100_000 * price.output / 1_000_000
     assert "catalog price" in (row.note or "")
+
+
+def test_the_sandboxs_own_pricing_is_preferred_to_repricing_by_hand(client):
+    """It knows the 1-hour cache writes and the web searches; a ledger row
+    rebuilt from token counts does not."""
+    project = _claude_plan_on_a_dollar_project(client)
+    _finish(project, provider="anthropic", model="claude-sonnet-5-5", billed=9.99,
+            priced=0.123, tokens_out=100_000)
+    assert [r.usd for r in _ledger(project["id"])] == [0.123]
 
 
 def test_the_hard_stop_sees_a_subscriptions_runs_on_a_dollar_budget(client):
     """Before, these runs booked nothing, and a dollar wall could not stop them."""
     project = _claude_plan_on_a_dollar_project(
         client, monthly_usd_cap=0.5, hard_stop_multiple=1.0)
-    _finish(project, provider="anthropic", model="claude-sonnet-5-5", usd=None,
+    _finish(project, provider="anthropic", model="claude-sonnet-5-5", billed=None,
             tokens_out=100_000)
     with db_session() as session:
         p = session.get(Project, project["id"])
@@ -243,3 +254,94 @@ def test_an_unpriced_model_is_priced_in_place_and_the_move_completes(client):
     assert imported["applied"] == ["deepseek-reasoner"]
     moved = client.patch(ceo, headers=ADMIN, json={"model": "deepseek-reasoner"})
     assert moved.status_code == 200, moved.text
+
+
+# ── what the review of this change found ────────────────────────────────────────
+
+
+def test_who_paid_is_pinned_at_lease_not_asked_at_finalize(client):
+    """A failover that closes, or a billing credential moved, while a run is
+    in flight must not book it to a payer that never paid it."""
+    from yaaf.core.models import ProjectLlmCredential
+
+    project = _deepseek_ceo(client)
+    job = _ceo_job(project)
+    with db_session() as session:
+        assert session.get(Run, job.run_id).paid_in == "usd"
+        # Whatever paid DeepSeek is gone by the time the run finishes.
+        session.query(ProjectLlmCredential).filter_by(project_id=project["id"]).delete()
+    execute_job(job, backend=_Bills(0.05))
+    with db_session() as session:
+        assert session.get(Run, job.run_id).cost_usd == 0.05
+
+
+def test_a_provider_this_install_does_not_have_never_fails_a_booking(client):
+    """A row a newer release wrote, then rolled back: the lease refuses to
+    inject it; booking must not raise over it either."""
+    from yaaf.server.budget import counted, paid_in
+
+    project = make_project(client, billing_mode="subscription")
+    with db_session() as session:
+        p = session.get(Project, project["id"])
+        assert paid_in(session, p, "not-a-provider") is None
+        count = counted(session, p, provider="not-a-provider", model="x", billed_usd=0.2,
+                        tokens_out=10)
+    assert count.usd is None, "read by the billing mode, as before"
+
+
+def test_an_unpriced_subscription_seat_is_refused_on_a_dollar_budget(client):
+    """Its runs would be counted at a catalog price that does not exist, so
+    the dollar wall could not see them. Refused at the door, in the words the
+    seat dialog's price door listens for."""
+    make_project(client, start=False)
+    assert _role(client, "coder", model="gpt-5.5", is_ceo_role=True,
+                 tool_permissions={"files": True, "bash": False, "web": False}
+                 ).status_code == 200
+    claude = _id(_credential(client, "Claude key"))
+    login = _id(_credential(client, "ChatGPT login", provider="openai", mode="subscription",
+                            value='{"tokens": {"access_token": "placeholder"}}'))
+    refused = client.post("/admin/projects", headers=ADMIN, json={
+        "slug": "unpriced-plan", "name": "Unpriced", "goal": "Prove the framework works.",
+        "chairman_email": "chair@example.com", "ceo_role_slug": "coder", "ceo_name": "CEO",
+        "billing_secret_id": claude, "credentials": {"openai": login}, "teams": []})
+    assert refused.status_code == 422, refused.text
+    assert "gpt-5.5 has no price on this install" in refused.text
+    assert "budget is in dollars" in refused.text
+
+
+def test_the_dollars_keys_billed_leave_out_real_world_purchases(client):
+    """The Spend page's "also billed in dollars" line reads model usage only:
+    a purchase the CEO made is money, but not a key's bill."""
+    from yaaf.core import ids
+
+    project = _deepseek_ceo(client)
+    job = _ceo_job(project)
+    execute_job(job, backend=_Bills(0.05))
+    with db_session() as session:
+        session.add(LedgerEntry(id=ids.new_id(ids.LEDGER), project_id=project["id"],
+                                kind="external_spend", usd=50.0, run_id=job.run_id,
+                                note="a real-world purchase"))
+    billed = client.get(f"/observe/projects/{project['id']}/spend?group_by=provider"
+                        "&window=month&kind=model_usage", headers=ADMIN).json()
+    assert [(r["label"], r["usd"]) for r in billed["rows"]] == [("DeepSeek", 0.05)]
+
+
+def test_an_overrun_opened_in_the_other_unit_is_not_written_in_this_one(client):
+    """#81 kept dollar budgets in tokens for a day; an overrun it opened must
+    not get dollars written into its token figures."""
+    from yaaf.core import ids
+    from yaaf.core.models import BudgetOverrun
+    from yaaf.server.budget import month_start, record_overrun
+
+    project = make_project(client, billing_mode="api_key")
+    with db_session() as session:
+        session.add(BudgetOverrun(id=ids.new_id(ids.OVERRUN), project_id=project["id"],
+                                  period=month_start(), unit="tokens", budget=30_000_000,
+                                  spent_at_crossing=31_000_000, final_spent=31_000_000,
+                                  breakdown={}))
+    with db_session() as session:
+        p = session.get(Project, project["id"])
+        record_overrun(session, p, effective(session, p.id), 4.2)
+    with db_session() as session:
+        row = session.query(BudgetOverrun).filter_by(project_id=project["id"]).one()
+        assert (row.unit, row.final_spent) == ("tokens", 31_000_000)
