@@ -43,9 +43,10 @@ Moonshot's or Alibaba's China region is used). Each credential's form says
 where its key comes from, and **Check** asks the provider itself whether it
 answers to it.
 
-**The app's provider runs every project.** The install's own key — the one the
-Founder runs on — pays anything a project does not. A role says how hard its
-seat thinks; the app's model is the default beneath it, and the shipped role
+**Each seat runs the model it names; the app supplies the default.** The
+install's own key — the one the Founder runs on — pays a provider a project
+does not. A role says how hard its seat thinks; the app's model is the default
+beneath it, and the shipped role
 library runs on an OpenAI key, a Gemini key or a DeepSeek key with no seat
 moved by hand ([PROVIDERS.md](PROVIDERS.md)). Legacy class refs — `@frontier`,
 `@balanced`, `@fast` — still resolve per provider. Settings → Models shows and

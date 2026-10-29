@@ -1262,11 +1262,17 @@ def book_chat_usage(
     ctx.run.tokens_out += body.tokens_out
     ctx.run.cache_creation_tokens += body.cache_creation_tokens
     ctx.run.cache_read_tokens += body.cache_read_tokens
-    # Tokens always; dollars only when dollars move (see runner.finalize).
-    subscription = ctx.project.billing_mode == "subscription"
-    usd = None if subscription else body.cost_usd
-    if usd is not None:
-        ctx.run.cost_usd = (ctx.run.cost_usd or 0.0) + usd
+    # Tokens always; dollars only when dollars move — the credential that pays
+    # the CEO's seat says whether they did (see runner.finalize).
+    from yaaf.server.budget import counted
+
+    count = counted(session, ctx.project, provider=ctx.run.provider, model=ctx.run.model,
+                    billed_usd=body.cost_usd, tokens_in=body.tokens_in,
+                    tokens_out=body.tokens_out, cache_creation=body.cache_creation_tokens,
+                    cache_read=body.cache_read_tokens)
+    if count.bill is not None:
+        ctx.run.cost_usd = (ctx.run.cost_usd or 0.0) + count.bill
+    usd = count.ledger_usd
     if (body.tokens_in or body.tokens_out or body.cache_creation_tokens
             or body.cache_read_tokens or usd):
         session.add(LedgerEntry(
@@ -1279,7 +1285,7 @@ def book_chat_usage(
             cache_read_tokens=body.cache_read_tokens,
             usd=usd,
             run_id=ctx.run.id,
-            note="chat_session turn" + (" (subscription: tokens only)" if subscription else ""),
+            note="chat_session turn" + count.note,
         ))
     return {"ok": True}
 

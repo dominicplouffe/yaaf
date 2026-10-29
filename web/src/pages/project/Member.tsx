@@ -133,14 +133,65 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
   // The credential picked for the un-paid provider the model names, while the
   // door to pay it is open.
   const [pick, setPick] = useState("");
-  const [connecting, setConnecting] = useState(false);
+  // Set when the door refused the model for having no price on this install
+  // (R3): the shipped price list usually has one, and importing it is the
+  // same audited step as Settings → Model prices, offered where it is needed.
+  const [unpriced, setUnpriced] = useState(false);
   const harnessLabel = (h: string | null | undefined) =>
     h ? harnesses.find((x) => x.name === h)?.label ?? h : "whatever the paying credential runs on";
+
+  /** Pay the model's provider if this project does not, then move the seat —
+      one motion. The doors refuse as they always do; a refusal for want of a
+      price opens the price door instead of ending in a sentence. */
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      if (unpaidProvider) {
+        await put(`/admin/projects/${ctx.projectId}/credentials/${unpaidProvider}`,
+          { credential_id: pick });
+      }
+      await patch(`/admin/agents/${agentId}/seat`,
+        { model: model || null, effort: effort || null, harness: harness || null });
+      ctx.reload();
+      ctx.reloadOrg();
+      onDone();
+    } catch (e) {
+      const message = (e as Error).message;
+      if (message.includes("has no price on this install")) setUnpriced(true);
+      else setError(message);
+      ctx.reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importPriceAndSave() {
+    setBusy(true);
+    setError(null);
+    try {
+      const said = await post<{ applied: string[] }>("/admin/settings/model-prices/import",
+        { source: "snapshot", models: [model], apply: true });
+      if (!said.applied.includes(model)) {
+        setError(`The price list shipped with yaaf has no price for ${model} — set one under ` +
+          "Settings → Model prices, then save again.");
+        return;
+      }
+      setUnpriced(false);
+    } catch (e) {
+      setError((e as Error).message);
+      return;
+    } finally {
+      setBusy(false);
+    }
+    await save();
+  }
 
   return (
     <div className="addform">
       <label className="field">Model
-        <ModelSelect value={model} onChange={setModel} info={catalog} registry={registry}
+        <ModelSelect value={model} onChange={(next) => { setModel(next); setUnpriced(false); }}
+          info={catalog} registry={registry}
           primary={billing} providersShown={paid.length ? paid : undefined}
           unpaidShown={paid.length ? registry.map((p) => p.name).filter((n) => !paid.includes(n)) : undefined}
           qualified={paid.length > 1} disabled={busy}
@@ -152,7 +203,15 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
             Connect a credential to run {name} on it.</p>
           <CredentialPicker provider={unpaidProvider} value={pick}
             onChange={(id) => setPick(id)} label={`Credential for ${sellerLabel}`}
-            disabled={connecting} />
+            disabled={busy} />
+        </div>
+      )}
+      {unpriced && (
+        <div className="seat-door">
+          <p><b>{model}</b> has no price on this install, so its runs could not be costed.
+            The price list shipped with yaaf has one — importing it is recorded like any
+            price you set under <Link to="/settings?section=prices" target="_blank"
+            rel="noreferrer">Settings → Model prices</Link>.</p>
         </div>
       )}
       <label className="field">Effort
@@ -174,56 +233,17 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
         finishes on what it has — the change takes effect from {name}&apos;s next run.
       </p>
       <div className="reason-acts">
-        {unpaidProvider ? (
-          <>
-            <button className="small primary" disabled={connecting || !pick}
-              onClick={async () => {
-                setConnecting(true);
-                setError(null);
-                try {
-                  // Pay the provider this project does not pay, then move the
-                  // seat: one motion. The doors refuse as they always do.
-                  await put(`/admin/projects/${ctx.projectId}/credentials/${unpaidProvider}`,
-                    { credential_id: pick });
-                  await patch(`/admin/agents/${agentId}/seat`,
-                    { model: model || null, effort: effort || null, harness: harness || null });
-                  ctx.reload();
-                  ctx.reloadOrg();
-                  onDone();
-                } catch (e) {
-                  setError((e as Error).message);
-                  ctx.reload();
-                } finally {
-                  setConnecting(false);
-                }
-              }}>
-              Connect {sellerLabel} &amp; save
-            </button>
-            <button className="small" onClick={onDone}>Cancel</button>
-            <Link className="muted" style={{ fontSize: 12 }}
-              to="/settings?section=providers" target="_blank" rel="noreferrer">
-              or make {sellerLabel} the app&apos;s provider
-            </Link>
-          </>
+        {unpriced ? (
+          <button className="small primary" disabled={busy} onClick={importPriceAndSave}>
+            Import its price &amp; save
+          </button>
         ) : (
-          <>
-            <button className="small primary" disabled={busy} onClick={async () => {
-              setBusy(true);
-              setError(null);
-              try {
-                await patch(`/admin/agents/${agentId}/seat`,
-                  { model: model || null, effort: effort || null, harness: harness || null });
-                ctx.reloadOrg();
-                onDone();
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}>Save</button>
-            <button className="small" disabled={busy} onClick={onDone}>Cancel</button>
-          </>
+          <button className="small primary" disabled={busy || (!!unpaidProvider && !pick)}
+            onClick={save}>
+            {unpaidProvider ? <>Connect {sellerLabel} &amp; save</> : "Save"}
+          </button>
         )}
+        <button className="small" disabled={busy} onClick={onDone}>Cancel</button>
       </div>
       {error && <div className="help" style={{ color: "var(--critical)" }}>{error}</div>}
     </div>

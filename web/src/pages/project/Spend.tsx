@@ -154,6 +154,27 @@ export function SpendByTeam({ projectId, usdMode, compact }: {
   );
 }
 
+/** The dollars a token-metered project's other keys billed this month. A
+    project paid by a subscription can run a seat on an API key — a DeepSeek
+    CEO — and that seat's runs move real money the token meter does not show.
+    Nothing renders until one has. */
+function DollarsBilled({ projectId }: { projectId: string }) {
+  const { data } = usePoll(
+    () => get<SpendReport>(`/observe/projects/${projectId}/spend?group_by=provider&window=month`),
+    30000,
+  );
+  const billed = (data?.rows ?? []).filter((r) => r.usd > 0).sort((a, b) => b.usd - a.usd);
+  if (billed.length === 0) return null;
+  const total = billed.reduce((sum, r) => sum + r.usd, 0);
+  return (
+    <p className="help" style={{ margin: "var(--s3) 0 0" }}>
+      Also billed in dollars this month, by keys outside the subscription:{" "}
+      <b>{fmtUsd(total)}</b> — {billed.map((r) => `${r.label} ${fmtUsd(r.usd)}`).join(", ")}.
+      Those runs count against the cap by their tokens.
+    </p>
+  );
+}
+
 export default function Spend({ ctx }: { ctx: ProjectCtx }) {
   const { dash, projectId } = ctx;
   const usdMode = dash.billing_mode === "api_key";
@@ -184,6 +205,7 @@ export default function Spend({ ctx }: { ctx: ProjectCtx }) {
               <b>{usdMode ? fmtUsd(dash.spend_24h) : "—"}</b>
               <em>{dash.evidence_24h} thing{dash.evidence_24h === 1 ? "" : "s"} verified outside</em></div>
           </div>
+          {!usdMode && <DollarsBilled projectId={projectId} />}
           {daysOfHistory >= 3 ? (
             <SpendBars ledger={ledger ?? []} usdMode={usdMode} />
           ) : (

@@ -38,26 +38,30 @@ name the decision in yaaf's vocabulary and let the provider translate.
 
 ## The design
 
-### 1. The app has a model; a role says how hard to think
+### 1. Each seat names its model; the app supplies the default
 
-> **The install runs on one provider. Every seat runs a model of that
-> provider's — the app's default, or one the seat names for itself.**
+> **A seat runs the model it names, on that model's provider. The app's
+> default fills in for a seat that names none.**
 
-The app's provider is the platform credential — the key the Founder already
-runs on, named in Settings → Providers. A project holds no key of its own; its
-budget is bookkeeping against the app's, and anything a project does not pay,
-the app's key does. Settings → Models names the app's default model and
-harness; a seat can still override either (the Change dialog on its page), and
-a role says how hard its seat thinks — the effort — never which model.
+The app's default provider is the platform credential — the key the Founder,
+the goal grader and the provider checks run on, named in Settings → Providers.
+Settings → Models names the app's default model and harness, which a seat
+runs on when neither it nor its role names one. A project pays whichever
+providers its seats run on: its billing credential, plus one credential per
+other provider — attached from the seat's own Change dialog, in the same press
+that moves the seat (or under Settings → Money). The app's key pays a
+provider the project does not, and never becomes the project's billing
+credential. A role says how hard its seat thinks — the effort — and may pin a
+model; the seat can override model, effort and harness.
 
 A model reference (`RoleVersion.model`, `Agent.model_override`, a draft's
 `model_overrides`, the Founder's model) is one of:
 
 | Reference | Means |
 |---|---|
-| `claude-sonnet-5-5`, `gpt-6.1-sol` | that model — pinned, paid by the app's key |
+| `claude-sonnet-5-5`, `gpt-6.1-sol` | that model — pinned, paid by the project's credential for its provider |
 | `openrouter/qwen/qwen3-coder`, `custom/llama3.1:8b` | a model the catalog does not list, named with its provider |
-| `@balanced` | the app's provider's balanced model |
+| `@balanced` | the balanced model of the project's billing provider |
 | `openai/@balanced` | OpenAI's balanced model, wherever it is paid |
 
 **The class references above are the legacy of the one-provider-per-project
@@ -380,7 +384,7 @@ they ran on; role versions stay immutable.
 
 **What deliberately did not move: `Project.billing_secret_id`.** A
 from-scratch design still has a primary credential — the one that
-names its primary provider (§1) and keeps the public contract — and that is
+sets the project's meter (R4) and names its primary provider (§1) — and that is
 what this column is. It is also carried by that name through MCP drafts,
 export bundles and setup files. Renaming it would change three hundred
 lines and every client for no behaviour a chairman could see; the semantics,

@@ -8,7 +8,8 @@ door, attacked here:
 - R3 — a model with no price is refused on a harness that meters by price, and
   an install's own price (Settings → Model prices) is what lifts the refusal;
 - R2 — a role granting `web` is refused on a provider that cannot search;
-- R4 — one project, one meter: no credential metered in another unit;
+- R4 — one project, one meter: a credential billed in another unit joins it,
+  and its runs are counted in the project's unit (test_mixed_payers.py);
 - R5 — no seat on a provider the project holds no credential for.
 
 And the done-when: a Claude seat and a DeepSeek seat on one project, both
@@ -228,13 +229,13 @@ def test_a_project_with_a_seat_nobody_pays_does_not_start(client, critic):
     assert seats and "no DeepSeek credential" in seats[0]["detail"]
 
 
-# ── R4, replaced: one token meter for every credential ─────────────────────────
+# ── R4: one project, one meter — whoever pays each run ──────────────────────────
 
 
 def test_a_key_billed_in_usd_joins_a_token_metered_project(client, critic):
-    """PLAN-10: the unit a credential bills in is irrelevant — every
-    provider's runs count tokens against the project's one token cap, and
-    dollars are the cost shown."""
+    """R4 keeps one meter per project and no longer refuses a second unit:
+    every run is counted in the project's unit at its own price
+    (test_mixed_payers.py has the arithmetic)."""
     plan = _id(_credential(client, "Claude plan", mode="subscription"))
     deepseek = _id(_credential(client, "DeepSeek key", provider="deepseek"))
     made = client.post("/admin/projects", headers=ADMIN, json=_body(
@@ -255,31 +256,6 @@ def test_the_money_can_move_to_another_unit_under_a_second_provider(client, crit
     assert moved.status_code == 200, moved.text
     with db_session() as session:
         assert session.get(Project, project["id"]).billing_secret_id == plan
-
-
-def test_a_usd_metered_projects_wall_derives_tokens_from_the_price_feed(client, critic):
-    """PLAN-10's migration: a project whose billing is an API key and whose
-    token cap nobody chose gets its token wall derived from the USD cap at the
-    price feed's own rate — the feed's, never an invented constant."""
-    from yaaf.core.constitution import effective
-    from yaaf.server import budget as budget_lib
-
-    imported = client.post("/admin/settings/model-prices/import", headers=ADMIN,
-                           json={"source": "snapshot", "apply": True})
-    assert imported.status_code == 200, imported.text
-    claude = _id(_credential(client, "Claude key"))
-    deepseek = _id(_credential(client, "DeepSeek key", provider="deepseek"))
-    project = client.post("/admin/projects", headers=ADMIN, json=_body(
-        "usd-legacy", billing_secret_id=claude, credentials={"deepseek": deepseek}))
-    assert project.status_code == 200, project.text
-    project = project.json()
-    with db_session() as session:
-        row = session.get(Project, project["id"])
-        cons = effective(session, row.id)
-        budget, unit = budget_lib.budget_of(row, cons, session)
-    assert unit == "tokens"
-    # Derived from the USD cap at the feed's prices — not the shipped 200M.
-    assert budget > 0 and budget < 200_000_000
 
 
 @pytest.mark.parametrize("which", ["wrong-provider", "billing-provider"])

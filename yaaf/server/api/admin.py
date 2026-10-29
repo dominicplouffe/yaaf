@@ -886,8 +886,9 @@ class ProjectCreate(BaseModel):
     ceo_harness_override: str | None = None
     # What pays each provider the billing credential does not, by provider:
     # {"deepseek": "<credential id>"}. One per provider, whatever unit each
-    # bills in — every provider's runs count tokens against the one cap
-    # (PLAN-10); a seat on a provider with none is refused (R5).
+    # bills in — each run is counted in the project's own unit at its own
+    # price (R4, yaaf.server.budget.counted); a seat on a provider with none
+    # is refused (R5).
     credentials: dict[str, str] = Field(default_factory=dict)
     # The credential class seats move to while the billing one's provider is
     # failing (yaaf.core.breakers) — held to the fallback door's rules.
@@ -948,9 +949,10 @@ def attach_provider_credential(session: Session, project: Project, provider_name
     """Pay `provider_name` with this credential on this project. Refused for a
     credential of another provider, for the provider the billing credential
     already pays, and for a second credential on a provider (one provider, one
-    credential). The unit the credential bills in is irrelevant: every
-    provider's runs count tokens against the project's one token cap (PLAN-10),
-    and dollars are the cost shown, priced by the feed."""
+    credential). The unit the credential bills in is no door: each of its
+    runs is counted in the project's own unit at that run's own price — an API
+    key's real bill, or a subscription's tokens, or on a dollar budget its
+    catalog price (R4, yaaf.server.budget.counted)."""
     from yaaf.core.llm_credentials import assigned_credential
 
     seller = runtime_providers.PROVIDERS.get(provider_name)
@@ -992,9 +994,9 @@ def attach_provider_credential(session: Session, project: Project, provider_name
 
 def _settle_provider_credentials(session: Session, project: Project) -> None:
     """After the billing credential moved: a row for the provider it now pays
-    is shadowed by it, so it goes. Every row left keeps paying its provider —
-    all of them count tokens against the project's one cap (PLAN-10), whatever
-    unit each credential bills in."""
+    is shadowed by it, so it goes. Every row left keeps paying its provider,
+    whatever unit it bills in: its runs are counted in the project's unit at
+    their own price (R4, yaaf.server.budget.counted)."""
     billing = session.get(Secret, project.billing_secret_id) if project.billing_secret_id else None
     for row in session.scalars(select(ProjectLlmCredential).where(
             ProjectLlmCredential.project_id == project.id)).all():

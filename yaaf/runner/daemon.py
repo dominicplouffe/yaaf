@@ -59,7 +59,7 @@ from yaaf.runtimes.providers import (
 )
 from yaaf.runtimes.providers import spec as provider_spec
 from yaaf.runtimes.seats import effective_harness, seat_for
-from yaaf.server import policy
+from yaaf.server import budget, policy
 from yaaf.server.contextpack import build_context_pack, build_system_prompt, role_version_for
 from yaaf.server.dispatcher import MODEL_RUN_KINDS, NON_WORK_RUN_KINDS
 
@@ -747,14 +747,18 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         run.tokens_out = result.tokens_out
         run.cache_creation_tokens = result.cache_creation_tokens
         run.cache_read_tokens = result.cache_read_tokens
-        # Tokens always; dollars only when dollars move. Subscription runs are
-        # a rate limit, not a bill — booking the SDK's list-price figure would
-        # distort every budget decision (the budget gate for subscription
-        # projects runs on monthly_token_cap instead).
+        # Tokens always; dollars only when dollars move — and the credential
+        # that paid this run says whether they did, not the project's mode: a
+        # project paid by a Claude subscription can run its CEO on a DeepSeek
+        # key (yaaf.server.budget.counted).
         project = session.get(Project, job.project_id)
-        subscription = project is not None and project.billing_mode == "subscription"
-        run.cost_usd = None if subscription else result.cost_usd
-        run.priced_usd = None if subscription else result.priced_usd
+        count = budget.counted(
+            session, project, provider=job.provider, model=job.model,
+            billed_usd=result.cost_usd, tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out, cache_creation=result.cache_creation_tokens,
+            cache_read=result.cache_read_tokens) if project is not None else None
+        run.cost_usd = count.bill if count else result.cost_usd
+        run.priced_usd = result.priced_usd if count is None or count.paid_in_usd else None
         run.trace_path = _stash_trace(job) or result.trace_path
         run.context_path = _stash_context(job)
         _clear_staged_inputs(job)
@@ -801,8 +805,9 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
                     # reading be the reason a finished run fails to book.
                     log.exception("could not file the plan reading for run %s", run.id)
 
+        ledger_usd = count.ledger_usd if count else run.cost_usd
         if (result.tokens_in or result.tokens_out or result.cache_creation_tokens
-                or result.cache_read_tokens or run.cost_usd):
+                or result.cache_read_tokens or ledger_usd):
             session.add(
                 LedgerEntry(
                     id=ids.new_id(ids.LEDGER),
@@ -812,10 +817,9 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
                     tokens_out=result.tokens_out,
                     cache_creation_tokens=result.cache_creation_tokens,
                     cache_read_tokens=result.cache_read_tokens,
-                    usd=run.cost_usd,
+                    usd=ledger_usd,
                     run_id=run.id,
-                    note=f"{run.kind} {run.status}"
-                    + (" (subscription: tokens only)" if subscription else ""),
+                    note=f"{run.kind} {run.status}" + (count.note if count else ""),
                 )
             )
 
