@@ -57,17 +57,68 @@ def month_start(now=None):
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
-def budget_of(project: Project, cons: ConstitutionDoc) -> tuple[float, str]:
-    """The plan, in the unit this project actually bills in."""
-    if project.billing_mode == "api_key":
-        return float(cons.monthly_usd_cap), "USD"
+def budget_of(project: Project, cons: ConstitutionDoc,
+              session: Session | None = None) -> tuple[float, str]:
+    """The plan, always in tokens (PLAN-10): every provider's runs count
+    tokens against the one cap, whatever unit its credential bills in. A
+    project that still meters USD — its billing is an API key and its token
+    cap is the shipped default — gets its token cap derived from the USD cap
+    at the price feed's own rate for its provider's models; the rate is the
+    feed's, never an invented constant."""
+    if project.billing_mode == "api_key" and cons.monthly_token_cap == _SHIPPED_TOKEN_CAP \
+            and session is not None:
+        derived = _derive_token_cap(session, project, cons)
+        if derived is not None:
+            return float(derived), "tokens"
     return float(cons.monthly_token_cap), "tokens"
 
 
-def hard_stop_of(project: Project, cons: ConstitutionDoc) -> float:
+#: The constitution's shipped token cap: the number that means "nobody chose",
+#: for a project that metered USD before tokens became the one meter.
+_SHIPPED_TOKEN_CAP = 200_000_000
+
+
+def usd_to_tokens_rate(session: Session, project: Project) -> float | None:
+    """Tokens one dollar buys on the project's billing provider, at the price
+    feed's own prices: the median output price across the provider's priced
+    models. None when the feed has nothing to say — the rate is the feed's,
+    never an invented constant."""
+    from yaaf.core import prices
+    from yaaf.core.models import Secret
+    from yaaf.runtimes.providers import DEFAULT_PROVIDER
+
+    billing = session.get(Secret, project.billing_secret_id) \
+        if project.billing_secret_id else None
+    provider = (billing.provider if billing else None) or DEFAULT_PROVIDER
+    rows = [row for row in prices.table(session) if row["provider"] == provider]
+    if not rows:
+        rows = prices.table(session)
+    outputs = []
+    for row in rows:
+        price_row = row.get("own") or row.get("shipped")
+        if price_row and price_row.get("output"):
+            outputs.append(price_row["output"])
+    if not outputs:
+        return None
+    per_token = sorted(outputs)[len(outputs) // 2]
+    return 1.0 / per_token
+
+
+def _derive_token_cap(session: Session, project: Project, cons: ConstitutionDoc) -> int | None:
+    """The USD cap in tokens, at the price feed's rate: the median output
+    price across the provider's priced models gives tokens per dollar. None
+    when the feed has nothing for that provider — the shipped cap stands."""
+    rate = usd_to_tokens_rate(session, project)
+    if rate is None:
+        return None
+    return max(1, int(cons.monthly_usd_cap * rate))
+
+
+def hard_stop_of(project: Project, cons: ConstitutionDoc,
+                 session: Session | None = None) -> float:
     """The wall. Never below the budget — a multiple under 1 would put the wall
     inside the plan, which is the state this module exists to end."""
-    budget, _ = budget_of(project, cons)
+    budget, _ = budget_of(project, cons, session)
     return budget * max(1.0, cons.hard_stop_multiple)
 
 

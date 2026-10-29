@@ -1502,10 +1502,10 @@ export default function Settings({
             <strong>none connected</strong>
           )}
           . Monthly safety cap:{" "}
-          {dash.billing_mode === "subscription"
-            ? `${Number(dash.constitution["monthly_token_cap"]).toLocaleString()} tokens`
-            : `$${Number(dash.constitution["monthly_usd_cap"]).toLocaleString()}`}{" "}
-          — the plan. The platform pauses the project by itself at{" "}
+          <strong>{Number(dash.constitution["monthly_token_cap"]).toLocaleString()} tokens</strong>{" "}
+          — the plan, whatever unit each credential bills in; every provider&apos;s runs
+          count tokens against it, and dollars are the cost shown on the spend screens.
+          The platform pauses the project by itself at{" "}
           {Number(dash.constitution["hard_stop_multiple"] ?? 3)}× that, the hard stop.
         </p>
         <CredentialPicker value={billingCredentialId} onChange={id => setBillingCredentialId(id)} disabled={busy} />

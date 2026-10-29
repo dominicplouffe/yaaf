@@ -1706,8 +1706,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 {labelOf(parseRef(seatModel).provider ?? billingProvider)} has no model set for
                 that class — choose another, or set one on its card under Settings → Providers.</p>}
               {effective && dollars && pricedModel(effective) === false && <p className="help">
-                {effective} has no price on this install, and a seat metered in dollars
-                needs one: import or set it under <Link to="/settings?section=prices" target="_blank"
+                {effective} has no price on this install — its runs could not be costed.
+                Import or set it under <Link to="/settings?section=prices" target="_blank"
                 rel="noreferrer">Settings → Model prices ↗</Link> first.</p>}
               {unmodelled.length > 0 && <p className="notice-box">
                 {unmodelled.slice(0, 4).map((s) => s.who).join(", ")}

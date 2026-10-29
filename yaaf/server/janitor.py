@@ -1376,10 +1376,10 @@ def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
         "velocity": velocity,
         "commitment": commitment_block,
         "budget": {
-            "unit": "USD" if project.billing_mode == "api_key" else "tokens",
-            "spent_mtd": usd if project.billing_mode == "api_key" else tokens,
-            "cap": (cons.monthly_usd_cap if project.billing_mode == "api_key"
-                    else cons.monthly_token_cap),
+            "unit": "tokens",
+            "spent_mtd": tokens,
+            "usd_mtd": usd,
+            "cap": cons.monthly_token_cap,
         },
         "scope": {
             "open": len([r for r in scope if r.status in policy.OPEN_REQUIREMENT_STATUSES]),
@@ -2401,11 +2401,19 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
     from yaaf.server import flags as flag_lib
 
     usd, tokens = month_to_date(session, project.id)
-    budget, unit = budget_lib.budget_of(project, cons)
-    spent = usd if project.billing_mode == "api_key" else float(tokens)
+    budget, unit = budget_lib.budget_of(project, cons, session)
+    # A project that billed USD counts its wall in the same tokens its cap was
+    # converted into — dollars at the feed's rate — so external spend (real
+    # money, no tokens) still trips the wall exactly as it always did. One
+    # metered in tokens counts tokens alone, as it always did.
+    if project.billing_mode == "api_key":
+        rate = budget_lib.usd_to_tokens_rate(session, project)
+        spent = usd * rate if rate else float(tokens)
+    else:
+        spent = float(tokens)
     if budget <= 0:
         return
-    hard_stop = budget_lib.hard_stop_of(project, cons)
+    hard_stop = budget_lib.hard_stop_of(project, cons, session)
 
     if spent >= hard_stop:
         project.status = ProjectStatus.PAUSED

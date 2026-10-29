@@ -228,18 +228,23 @@ def test_a_project_with_a_seat_nobody_pays_does_not_start(client, critic):
     assert seats and "no DeepSeek credential" in seats[0]["detail"]
 
 
-# ── R4: one project, one meter ──────────────────────────────────────────────────
+# ── R4, replaced: one token meter for every credential ─────────────────────────
 
 
-def test_a_credential_metered_in_another_unit_cannot_join_a_project(client, critic):
+def test_a_key_billed_in_usd_joins_a_token_metered_project(client, critic):
+    """PLAN-10: the unit a credential bills in is irrelevant — every
+    provider's runs count tokens against the project's one token cap, and
+    dollars are the cost shown."""
     plan = _id(_credential(client, "Claude plan", mode="subscription"))
     deepseek = _id(_credential(client, "DeepSeek key", provider="deepseek"))
-    refused = client.post("/admin/projects", headers=ADMIN, json=_body(
+    made = client.post("/admin/projects", headers=ADMIN, json=_body(
         "two-units", billing_secret_id=plan, credentials={"deepseek": deepseek}))
-    assert refused.status_code == 422 and "one project, one meter" in refused.text
+    assert made.status_code == 200, made.text
+    dash = client.get(f"/observe/projects/{made.json()['id']}", headers=ADMIN).json()
+    assert [c["provider"] for c in dash["credentials"]] == ["anthropic", "deepseek"]
 
 
-def test_the_money_cannot_move_to_another_unit_under_a_second_provider(client, critic):
+def test_the_money_can_move_to_another_unit_under_a_second_provider(client, critic):
     claude = _id(_credential(client, "Claude key"))
     plan = _id(_credential(client, "Claude plan", mode="subscription"))
     deepseek = _id(_credential(client, "DeepSeek key", provider="deepseek"))
@@ -247,9 +252,34 @@ def test_the_money_cannot_move_to_another_unit_under_a_second_provider(client, c
         "meter-moves", billing_secret_id=claude, credentials={"deepseek": deepseek})).json()
     moved = client.patch(f"/admin/projects/{project['id']}", headers=ADMIN,
                          json={"billing_secret_id": plan})
-    assert moved.status_code == 422 and "one project, one meter" in moved.text
+    assert moved.status_code == 200, moved.text
     with db_session() as session:
-        assert session.get(Project, project["id"]).billing_secret_id == claude
+        assert session.get(Project, project["id"]).billing_secret_id == plan
+
+
+def test_a_usd_metered_projects_wall_derives_tokens_from_the_price_feed(client, critic):
+    """PLAN-10's migration: a project whose billing is an API key and whose
+    token cap nobody chose gets its token wall derived from the USD cap at the
+    price feed's own rate — the feed's, never an invented constant."""
+    from yaaf.core.constitution import effective
+    from yaaf.server import budget as budget_lib
+
+    imported = client.post("/admin/settings/model-prices/import", headers=ADMIN,
+                           json={"source": "snapshot", "apply": True})
+    assert imported.status_code == 200, imported.text
+    claude = _id(_credential(client, "Claude key"))
+    deepseek = _id(_credential(client, "DeepSeek key", provider="deepseek"))
+    project = client.post("/admin/projects", headers=ADMIN, json=_body(
+        "usd-legacy", billing_secret_id=claude, credentials={"deepseek": deepseek}))
+    assert project.status_code == 200, project.text
+    project = project.json()
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        cons = effective(session, row.id)
+        budget, unit = budget_lib.budget_of(row, cons, session)
+    assert unit == "tokens"
+    # Derived from the USD cap at the feed's prices — not the shipped 200M.
+    assert budget > 0 and budget < 200_000_000
 
 
 @pytest.mark.parametrize("which", ["wrong-provider", "billing-provider"])

@@ -1486,8 +1486,8 @@ export function ProviderCredentials({ projectId, disabled = false, fallbackId = 
     <h3>Other providers</h3>
     <p className="help">A seat pinned to another provider&apos;s model — or to a class of
       another provider, like <code>openai/@fast</code> — pays with that provider&apos;s
-      credential. Each is metered in the same unit as the billing credential, against the
-      same cap.</p>
+      credential. Every provider&apos;s runs count tokens against the project&apos;s one
+      monthly cap; dollars are the cost shown on the spend screens.</p>
     {error && <p className="error" role="alert">{error}</p>}
     {others.length === 0 ? <p className="muted">No other provider is paid on this project.</p>
       : <ul>{others.map((h) => <li key={h.provider}>

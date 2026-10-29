@@ -186,11 +186,13 @@ def test_a_fallback_on_the_same_provider_fails_with_it_and_is_refused(world):
     assert refused.status_code == 422 and "fails with it" in refused.text
 
 
-def test_a_fallback_metered_in_another_unit_is_refused(world):
+def test_a_fallback_metered_in_another_unit_is_accepted(world):
+    """PLAN-10: the unit a fallback bills in is irrelevant — every provider's
+    runs count tokens against the project's one cap."""
     plan = _credential(world["client"], "Claude plan", "anthropic",
                        "sk-ant-oat01-failover-placeholder", mode="subscription")
-    refused = _fallback(world, plan)
-    assert refused.status_code == 422 and "one project, one meter" in refused.text
+    moved = _fallback(world, plan)
+    assert moved.status_code == 200, moved.text
 
 
 def test_a_fallback_whose_seats_could_not_run_there_is_refused_at_the_door(world):
@@ -224,17 +226,22 @@ def test_only_someone_who_can_steer_the_project_sets_its_fallback(world):
     assert agent.status_code in (401, 403), "an agent re-pointed its own project's money"
 
 
-def test_moving_billing_to_another_meter_is_refused_while_the_fallback_keeps_the_old_one(
+def test_moving_billing_to_another_unit_is_accepted_while_the_fallback_stays(
         world):
-    """One project, one meter (R4), held again when the money moves: a
-    fallback in dollars on a budget now kept in tokens would spend what no
-    cap can stop — the door refused it, and the billing change must too."""
+    """PLAN-10: the money can move to another unit — every provider's runs
+    count tokens against the one cap, the fallback included. The pinned
+    OpenAI seat moves to the class first, which is the door that always
+    guarded such a move (R5 refuses a seat whose provider nothing pays)."""
     assert _fallback(world, world["gemini"]).status_code == 200
+    moved_seat = world["client"].patch(
+        f"/admin/agents/{world['agents']['Rex']}/seat",
+        headers=ADMIN, json={"model": "@balanced"})
+    assert moved_seat.status_code == 200, moved_seat.text
     plan = _credential(world["client"], "Claude plan", "anthropic",
                        "sk-ant-oat01-failover-meter-placeholder", mode="subscription")
-    refused = world["client"].patch(f"/admin/projects/{world['project']['id']}",
-                                    headers=ADMIN, json={"billing_secret_id": plan})
-    assert refused.status_code == 422 and "the fallback 'Gemini'" in refused.text
+    moved = world["client"].patch(f"/admin/projects/{world['project']['id']}",
+                                  headers=ADMIN, json={"billing_secret_id": plan})
+    assert moved.status_code == 200, moved.text
 
 
 def test_the_fallback_pays_nothing_until_it_is_in_use(world):
