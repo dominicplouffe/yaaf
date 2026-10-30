@@ -21,6 +21,7 @@ start cold. The record they share is the boardroom. So:
 
 from __future__ import annotations
 
+import contextlib
 import pathlib
 import re
 
@@ -428,10 +429,8 @@ def test_the_chat_reply_names_every_line_its_turn_was_given(monkeypatch):
                         lambda *a: posted.append(a) or True)
     state = {"backlog": [], "last_seen": "msg_old", "history": [], "attempts": {},
              "turns_ok": 0}
-    try:
+    with contextlib.suppress(Stop):
         asyncio.run(chat_entry._serve(Conversation(), "chan", state))
-    except Stop:
-        pass
     assert posted == [("chan", "Got both.", ["msg_note", "msg_hi"])]
 
 

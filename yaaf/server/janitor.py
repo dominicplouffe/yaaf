@@ -1343,6 +1343,8 @@ def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
     now = utcnow()
     velocity = project_velocity(session, project.id)
     usd, tokens = month_to_date(session, project.id)
+    from yaaf.server import budget as budget_lib
+    cap, cap_unit = budget_lib.budget_of(project, cons)
     scope = policy.scope_requirements(session, project.id)
     since = prior.opened_at if prior is not None else project.created_at
 
@@ -1376,10 +1378,13 @@ def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
         "velocity": velocity,
         "commitment": commitment_block,
         "budget": {
-            "unit": "tokens",
-            "spent_mtd": tokens,
-            "usd_mtd": usd,
-            "cap": cons.monthly_token_cap,
+            "unit": cap_unit,
+            "spent_mtd": usd if cap_unit == "USD" else tokens,
+            "cap": cap,
+            # The dollars keys billed this month, whatever the unit: a token
+            # budget's API-key seat (a DeepSeek CEO) moves real money too, and a
+            # frozen review that left it out would disagree with the Spend page.
+            "usd_mtd": round(float(usd), 4),
         },
         "scope": {
             "open": len([r for r in scope if r.status in policy.OPEN_REQUIREMENT_STATUSES]),
@@ -1746,12 +1751,17 @@ def _harvest_reaped_usage(session: Session, project: Project, run: Run) -> bool:
     run.tokens_out = int(data.get("tokens_out", 0) or 0)
     run.cache_creation_tokens = int(data.get("cache_creation_tokens", 0) or 0)
     run.cache_read_tokens = int(data.get("cache_read_tokens", 0) or 0)
-    # Subscription projects meter in tokens; booking the SDK's list price there
-    # would distort a budget that is not denominated in dollars. Same rule the
-    # runner applies at finalize.
-    subscription = project.billing_mode == "subscription"
-    run.cost_usd = None if subscription else data.get("cost_usd")
-    run.priced_usd = None if subscription else data.get("priced_usd")
+    # The credential that paid the run says whether dollars moved — the same
+    # rule the runner applies at finalize (yaaf.server.budget.counted).
+    from yaaf.server.budget import counted
+
+    count = counted(session, project, provider=run.provider, model=run.model,
+                    billed_usd=data.get("cost_usd"), priced_usd=data.get("priced_usd"),
+                    paid=run.paid_in, tokens_in=run.tokens_in, tokens_out=run.tokens_out,
+                    cache_creation=run.cache_creation_tokens,
+                    cache_read=run.cache_read_tokens)
+    run.cost_usd = count.usd
+    run.priced_usd = data.get("priced_usd") if count.usd is not None else None
 
     total = (run.tokens_in + run.tokens_out
              + run.cache_creation_tokens + run.cache_read_tokens)
@@ -1769,7 +1779,7 @@ def _harvest_reaped_usage(session: Session, project: Project, run: Run) -> bool:
             cache_read_tokens=run.cache_read_tokens,
             usd=run.cost_usd,
             run_id=run.id,
-            note=f"{run.kind} reaped (usage recovered from checkpoint)",
+            note=f"{run.kind} reaped (usage recovered from checkpoint)" + count.note,
         )
     )
     log.info("recovered %s tokens from reaped run %s", total, run.id)
@@ -2401,19 +2411,11 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
     from yaaf.server import flags as flag_lib
 
     usd, tokens = month_to_date(session, project.id)
-    budget, unit = budget_lib.budget_of(project, cons, session)
-    # A project that billed USD counts its wall in the same tokens its cap was
-    # converted into — dollars at the feed's rate — so external spend (real
-    # money, no tokens) still trips the wall exactly as it always did. One
-    # metered in tokens counts tokens alone, as it always did.
-    if project.billing_mode == "api_key":
-        rate = budget_lib.usd_to_tokens_rate(session, project)
-        spent = usd * rate if rate else float(tokens)
-    else:
-        spent = float(tokens)
+    budget, unit = budget_lib.budget_of(project, cons)
+    spent = usd if project.billing_mode == "api_key" else float(tokens)
     if budget <= 0:
         return
-    hard_stop = budget_lib.hard_stop_of(project, cons, session)
+    hard_stop = budget_lib.hard_stop_of(project, cons)
 
     if spent >= hard_stop:
         project.status = ProjectStatus.PAUSED

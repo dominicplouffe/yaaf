@@ -9,10 +9,10 @@ screen, every door and every wire reads this file; none names a provider
 
 A credential kind is one way to pay a provider. Two names carry the meter for
 every provider: a kind billed in dollars is `api_key`, a kind metered in tokens
-is `subscription`, whatever the vendor calls it. `Project.billing_mode` says
-how the billing credential bills — the project's *meter* is tokens for every
-provider (PLAN-10), and the mode chooses the billing credential's kind only.
-Which harness a seat runs on by default is the kind's:
+is `subscription`, whatever the vendor calls it. `Project.billing_mode` is read
+as the project's meter in a dozen places, and one project has one meter (R4) —
+so the mode *is* the meter, and a second provider is a second row here, never
+a third mode everywhere. Which harness a seat runs on by default is the kind's:
 an OpenAI API key runs on yaaf's own loop, a ChatGPT login can only pay the
 Codex CLI.
 

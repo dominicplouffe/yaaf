@@ -207,7 +207,8 @@ def receipt(session: Session, project: Project) -> dict:
     days = max((utcnow() - project.created_at).days, 0)
     caveats = [TOKENS_CAVEAT]
     if project.billing_mode != "api_key":
-        caveats.append("billed against a subscription, so no dollar figure is meaningful")
+        caveats.append("billed against a subscription: dollars appear only for runs an API "
+                       "key paid")
     if not requirements:
         caveats.append("no requirements were ever accepted, so nothing here was verified")
 
@@ -252,7 +253,12 @@ def _pair(left: list[str], right: list[str]) -> list[str]:
 
 
 def _money(usd: float, billing: str) -> str:
-    return f"${usd:,.2f}" if billing == "api_key" else "(subscription)"
+    # A subscription project still prints the dollars another provider's API
+    # key billed it (a DeepSeek CEO beside a Claude plan) — real money, booked
+    # as such. Only a subscription's own runs carry no dollar figure.
+    if billing == "api_key" or usd:
+        return f"${usd:,.2f}"
+    return "(subscription)"
 
 
 def render(data: dict) -> str:

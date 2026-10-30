@@ -1130,7 +1130,7 @@ def put_app_model(body: AppModelIn, session: Session = Depends(db)) -> dict:
     """Name the model a seat runs on when neither it nor its role names one
     (PLAN-09). The seats the choice would now refuse are named in the answer
     rather than discovered at 3am."""
-    from yaaf.core import model_policy, platform
+    from yaaf.core import platform
     from yaaf.runtimes import catalog
     from yaaf.server.api.admin import _audit
 
@@ -1155,9 +1155,9 @@ class AppHarnessIn(BaseModel):
 def put_app_harness(body: AppHarnessIn, session: Session = Depends(db)) -> dict:
     """Name the harness a seat runs on when neither it nor its role names one
     (PLAN-09)."""
-    from yaaf.core import model_policy, platform
-    from yaaf.server.api.admin import _audit
+    from yaaf.core import platform
     from yaaf.runtimes.harnesses import canonical
+    from yaaf.server.api.admin import _audit
 
     value = canonical((body.harness or "").strip() or None)
     platform.set_setting(session, platform.APP_HARNESS, value or "")

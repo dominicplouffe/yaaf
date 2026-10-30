@@ -187,8 +187,9 @@ def test_a_fallback_on_the_same_provider_fails_with_it_and_is_refused(world):
 
 
 def test_a_fallback_metered_in_another_unit_is_accepted(world):
-    """PLAN-10: the unit a fallback bills in is irrelevant — every provider's
-    runs count tokens against the project's one cap."""
+    """R4 no longer refuses a second unit: a fallback billed in tokens backs
+    up a dollar budget, its runs counted there at their catalog price
+    (yaaf.server.budget.counted; test_mixed_payers.py has the arithmetic)."""
     plan = _credential(world["client"], "Claude plan", "anthropic",
                        "sk-ant-oat01-failover-placeholder", mode="subscription")
     moved = _fallback(world, plan)
@@ -228,8 +229,9 @@ def test_only_someone_who_can_steer_the_project_sets_its_fallback(world):
 
 def test_moving_billing_to_another_unit_is_accepted_while_the_fallback_stays(
         world):
-    """PLAN-10: the money can move to another unit — every provider's runs
-    count tokens against the one cap, the fallback included. The pinned
+    """The billing credential may move to the other unit with the fallback in
+    place: the project's meter becomes the new billing unit, and every run is
+    counted in it at its own price, the fallback's included. The pinned
     OpenAI seat moves to the class first, which is the door that always
     guarded such a move (R5 refuses a seat whose provider nothing pays)."""
     assert _fallback(world, world["gemini"]).status_code == 200
