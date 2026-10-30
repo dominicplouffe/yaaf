@@ -248,8 +248,10 @@ tool.
 
 An install may configure one **search backend** (Settings → Web search):
 Brave Search, Tavily, Exa, Serper, or a self-hosted SearXNG, with its key and
-its price per query — or from the seat dialog, which offers the same setup
-when a move is refused for want of one, and tests the key before the seat moves.
+its price per query — or from the seat dialog, which asks the server what a
+move needs before Save (`POST /admin/agents/{id}/seat/check`), offers this
+setup beside the credential and the price it may also need, and tests the key
+before the seat moves.
 Then:
 
 - `yaaf_loop` searches on the provider's own wire where it has a server tool

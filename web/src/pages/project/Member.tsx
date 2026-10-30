@@ -96,9 +96,25 @@ function PauseAction({ ctx, agentId, name, paused }: {
 
     The role is the team's charter and changes for everyone on it; this is the
     one seat. Each choice can be put back to "the role's", which is the only
-    way an override ever goes away — the server refuses a seat that cannot run
-    (a provider the project does not pay, an effort the model does not take)
-    with the same sentence every other door gives. */
+    way an override ever goes away.
+
+    The server is asked what the move would need as the choice changes
+    (`/seat/check`), and every answer it has a door for is open before Save: a
+    credential for a provider the project does not pay (R5), the model's price
+    from the list shipped with yaaf (R3), the install's web search for a role
+    that browses on a provider that cannot (R2), an effort from the model's own
+    ladder (R6). Save meets them all, in that order, then moves the seat — one
+    motion, rather than one refusal per click. */
+interface SeatCheck {
+  problems: { kind: string; text: string }[];
+  efforts: string[];
+  effort_fit: string | null;
+}
+
+/** The kinds of problem the dialog can answer in place. Anything else is the
+    server's sentence, and Save stays shut until the choice changes. */
+const SEAT_DOORS = new Set(["payer", "price", "search", "effort"]);
+
 function SeatEditor({ ctx, agentId, name, work, onDone }: {
   ctx: ProjectCtx; agentId: string; name: string; work: Partial<SeatWork>; onDone: () => void;
 }) {
@@ -120,40 +136,77 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
   const paid = credentials.map((c) => c.provider);
   const billing = credentials.find((c) => c.billing)?.provider ?? catalog?.default_provider;
   const role = work.role_seat;
-  // A model on a provider nothing pays here: the server would refuse it (R5).
-  // The door to pay that provider takes the place of Save, so the refusal is
-  // met before it happens rather than answered by it. Paying is per project;
-  // the app's provider is only the default a project that pays nothing falls
-  // back on.
   const modelProvider = model && paid.length > 0 ? providerOf(model, catalog, registry, "") : "";
   const unpaidProvider = modelProvider && !paid.includes(modelProvider) ? modelProvider : null;
   const sellerLabel = unpaidProvider
     ? registry.find((p) => p.name === unpaidProvider)?.label ?? unpaidProvider : "";
   const paidNames = credentials.map((c) => c.label).join(", ");
-  // The credential picked for the un-paid provider the model names, while the
-  // door to pay it is open.
+  // The credential picked for the un-paid provider, while its door is open.
   const [pick, setPick] = useState("");
-  // Set when the door refused the model for having no price on this install
-  // (R3): the shipped price list usually has one, and importing it is the
-  // same audited step as Settings → Model prices, offered where it is needed.
-  const [unpriced, setUnpriced] = useState(false);
-  // Set when the door refused the model because its role grants the web and
-  // neither its harness nor its provider can search (R2) — DeepSeek's API, for
-  // one. The install's search backend is the fix, offered where it is needed:
-  // the same step as Settings → Web search, tested before the seat moves.
-  const [searchless, setSearchless] = useState<SearchSettings | null>(null);
-  const [searchWith, setSearchWith] = useState("");
-  const [searchKey, setSearchKey] = useState("");
-  const [searchUrl, setSearchUrl] = useState("");
-  const searchBackend = searchless?.backends.find((b) => b.name === searchWith);
   // A class is priced as the model it resolves to — the model the door names.
   const priceable = (billing ? resolveRef(model, billing, catalog) : null) ?? model;
   const harnessLabel = (h: string | null | undefined) =>
     h ? harnesses.find((x) => x.name === h)?.label ?? h : "whatever the paying credential runs on";
 
-  /** Pay the model's provider if this project does not, then move the seat —
-      one motion. The doors refuse as they always do; a refusal for want of a
-      price opens the price door instead of ending in a sentence. */
+  // What the move would need, asked again whenever the choice changes.
+  const [check, setCheck] = useState<SeatCheck | null>(null);
+  useEffect(() => {
+    let live = true;
+    post<SeatCheck>(`/admin/agents/${agentId}/seat/check`,
+      { model: model || null, effort: effort || null, harness: harness || null })
+      .then((found) => { if (live) setCheck(found); })
+      .catch(() => { if (live) setCheck(null); });
+    return () => { live = false; };
+  }, [agentId, model, effort, harness]);
+  const kinds = new Set((check?.problems ?? []).map((p) => p.kind));
+  const needsPrice = kinds.has("price");
+  const needsSearch = kinds.has("search");
+  // An effort the model does not take is put on the nearest rung it does —
+  // never lower while a higher one exists — in plain view, where it can be
+  // changed: chosen for the person, not hidden from them.
+  const fit = kinds.has("effort") ? check?.effort_fit ?? null : null;
+  useEffect(() => {
+    if (fit) setEffort(fit);
+  }, [fit]);
+
+  // The install's search backends, read once a move needs one. Someone who
+  // may not configure the install is shown the refusal instead.
+  const [search, setSearch] = useState<SearchSettings | null>(null);
+  const [searchDenied, setSearchDenied] = useState(false);
+  const [searchWith, setSearchWith] = useState("");
+  const [searchKey, setSearchKey] = useState("");
+  const [searchUrl, setSearchUrl] = useState("");
+  useEffect(() => {
+    if (!needsSearch || search || searchDenied) return;
+    get<SearchSettings>("/admin/settings/web-search").then((found) => {
+      const first = found.configured?.backend ?? found.backends[0]?.name ?? "";
+      setSearchWith(first);
+      setSearchUrl(found.backends.find((b) => b.name === first)?.base_url ?? "");
+      setSearch(found);
+    }).catch(() => setSearchDenied(true));
+  }, [needsSearch, search, searchDenied]);
+  const searchBackend = search?.backends.find((b) => b.name === searchWith);
+  const searchReady = !!searchBackend
+    && (!searchBackend.key || !!searchKey.trim()
+      || (search?.configured?.backend === searchWith && !!search.configured.has_key))
+    && (!!searchBackend.base_url || !!searchUrl.trim());
+
+  // What no door here answers: said as the server says it, and Save waits.
+  const blocking = (check?.problems ?? []).filter((p) =>
+    !SEAT_DOORS.has(p.kind) || (p.kind === "payer" && !unpaidProvider)
+    || (p.kind === "search" && searchDenied)
+    || (p.kind === "effort" && !check?.effort_fit));
+  const steps = [
+    unpaidProvider && `connect ${sellerLabel}`,
+    needsPrice && "import its price",
+    needsSearch && "turn on web search",
+  ].filter(Boolean) as string[];
+  const label = steps.length
+    ? `${steps.join(", ").replace(/^./, (c) => c.toUpperCase())} & save` : "Save";
+
+  /** Every door the move needs, in order, then the move. A step that fails
+      stops there with its reason; what it already did stays done and is
+      harmless — a credential paid, a price imported, search turned on. */
   async function save() {
     setBusy(true);
     setError(null);
@@ -162,87 +215,40 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
         await put(`/admin/projects/${ctx.projectId}/credentials/${unpaidProvider}`,
           { credential_id: pick });
       }
+      if (needsPrice) {
+        const said = await post<{ applied: string[] }>("/admin/settings/model-prices/import",
+          { source: "snapshot", models: [priceable], apply: true });
+        if (!said.applied.includes(priceable)) {
+          throw new Error(`The price list shipped with yaaf has no price for ${priceable} — ` +
+            "set one under Settings → Model prices, then save again.");
+        }
+      }
+      if (needsSearch) {
+        await put("/admin/settings/web-search", {
+          backend: searchWith, key: searchKey.trim() || null,
+          base_url: searchUrl.trim() || null, price_usd: null });
+        // One real query: a key that does not work fails here, in front of
+        // the person who pasted it, not in the seat's first run.
+        const said = await post<{ ok: boolean; detail: string }>("/admin/settings/web-search/test");
+        if (!said.ok) throw new Error(said.detail);
+      }
       await patch(`/admin/agents/${agentId}/seat`,
         { model: model || null, effort: effort || null, harness: harness || null });
       ctx.reload();
       ctx.reloadOrg();
       onDone();
     } catch (e) {
-      const message = (e as Error).message;
-      if (message.includes("has no price on this install")) setUnpriced(true);
-      else if (message.includes("cannot search the web")) await openSearchDoor(message);
-      else setError(message);
+      setError((e as Error).message);
       ctx.reload();
     } finally {
       setBusy(false);
     }
   }
 
-  async function importPriceAndSave() {
-    setBusy(true);
-    setError(null);
-    try {
-      const said = await post<{ applied: string[] }>("/admin/settings/model-prices/import",
-        { source: "snapshot", models: [priceable], apply: true });
-      if (!said.applied.includes(priceable)) {
-        setError(`The price list shipped with yaaf has no price for ${priceable} — set one ` +
-          "under Settings → Model prices, then save again.");
-        return;
-      }
-      setUnpriced(false);
-    } catch (e) {
-      setError((e as Error).message);
-      return;
-    } finally {
-      setBusy(false);
-    }
-    await save();
-  }
-
-  /** The backends this install can search with — read only when a seat is
-      refused for want of one. Someone who may not configure the install sees
-      the refusal itself. */
-  async function openSearchDoor(refusal: string) {
-    try {
-      const found = await get<SearchSettings>("/admin/settings/web-search");
-      const first = found.configured?.backend ?? found.backends[0]?.name ?? "";
-      setSearchWith(first);
-      setSearchUrl(found.backends.find((b) => b.name === first)?.base_url ?? "");
-      setSearchless(found);
-    } catch {
-      setError(refusal);
-    }
-  }
-
-  async function connectSearchAndSave() {
-    setBusy(true);
-    setError(null);
-    try {
-      await put("/admin/settings/web-search", {
-        backend: searchWith, key: searchKey.trim() || null, base_url: searchUrl.trim() || null,
-        price_usd: null });
-      // One real query: a key that does not work fails here, in front of the
-      // person who pasted it, not in the seat's first run.
-      const said = await post<{ ok: boolean; detail: string }>("/admin/settings/web-search/test");
-      if (!said.ok) {
-        setError(said.detail);
-        return;
-      }
-      setSearchless(null);
-      setSearchKey("");
-    } catch (e) {
-      setError((e as Error).message);
-      return;
-    } finally {
-      setBusy(false);
-    }
-    await save();
-  }
-
   return (
     <div className="addform">
       <label className="field">Model
-        <ModelSelect value={model} onChange={(next) => { setModel(next); setUnpriced(false); setSearchless(null); }}
+        <ModelSelect value={model} onChange={setModel}
           info={catalog} registry={registry}
           primary={billing} providersShown={paid.length ? paid : undefined}
           unpaidShown={paid.length ? registry.map((p) => p.name).filter((n) => !paid.includes(n)) : undefined}
@@ -258,15 +264,15 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
             disabled={busy} />
         </div>
       )}
-      {unpriced && (
+      {needsPrice && (
         <div className="seat-door">
           <p><b>{priceable}</b> has no price on this install, so its runs could not be costed.
-            The price list shipped with yaaf has one — importing it is recorded like any
-            price you set under <Link to="/settings?section=prices" target="_blank"
+            Saving imports it from the price list shipped with yaaf, recorded like any price
+            you set under <Link to="/settings?section=prices" target="_blank"
             rel="noreferrer">Settings → Model prices</Link>.</p>
         </div>
       )}
-      {searchless && (
+      {needsSearch && search && (
         <div className="seat-door">
           <p>{name}&apos;s role uses the web, and <b>{model}</b>&apos;s provider cannot search it.
             Connect a search service once and every seat like this one searches through it —
@@ -274,9 +280,9 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
           <label className="field">Search with
             <select value={searchWith} disabled={busy} onChange={(e) => {
               setSearchWith(e.target.value);
-              setSearchUrl(searchless.backends.find((b) => b.name === e.target.value)?.base_url ?? "");
+              setSearchUrl(search.backends.find((b) => b.name === e.target.value)?.base_url ?? "");
             }}>
-              {searchless.backends.map((b) => <option key={b.name} value={b.name}>{b.label}</option>)}
+              {search.backends.map((b) => <option key={b.name} value={b.name}>{b.label}</option>)}
             </select>
           </label>
           {searchBackend && !searchBackend.base_url && (
@@ -286,8 +292,8 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
             </label>
           )}
           {searchBackend?.key && (
-            <label className="field">{searchless.configured?.backend === searchWith
-              && searchless.configured.has_key ? "API key — blank keeps the current one" : "API key"}
+            <label className="field">{search.configured?.backend === searchWith
+              && search.configured.has_key ? "API key — blank keeps the current one" : "API key"}
               <SecretInput value={searchKey} onChange={setSearchKey} disabled={busy} />
             </label>
           )}
@@ -301,39 +307,37 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
       <label className="field">Effort
         <select value={effort} disabled={busy} onChange={(e) => setEffort(e.target.value)}>
           <option value="">The role&apos;s — {role?.effort ?? "the default"}</option>
-          {(catalog?.efforts ?? ["low", "medium", "high", "xhigh", "max"]).map((level) => (
+          {(check?.efforts ?? catalog?.efforts ?? ["low", "medium", "high", "xhigh", "max"]).map((level) => (
             <option key={level} value={level}>{level}</option>
           ))}
         </select>
       </label>
+      {check && model && check.efforts.length < (catalog?.efforts?.length ?? 5) && (
+        <p className="help">{model} takes {check.efforts.join(" or ")}
+          {effort ? <> — {name} will run at <b>{effort}</b>.</> : "."}</p>
+      )}
       <label className="field">Harness
         <select value={harness} disabled={busy} onChange={(e) => setHarness(e.target.value)}>
           <option value="">The role&apos;s — {harnessLabel(role?.harness)}</option>
           {harnesses.map((h) => <option key={h.name} value={h.name}>{h.label}</option>)}
         </select>
       </label>
+      {blocking.length > 0 && (
+        <div className="notice-box" role="alert">
+          <b>{name} cannot run on this yet:</b>
+          <ul>{blocking.map((p) => <li key={p.text}>{p.text}</li>)}</ul>
+        </div>
+      )}
       <p className="help">
         Only {name} changes; the rest of the team stays on the role. A run in flight
         finishes on what it has — the change takes effect from {name}&apos;s next run.
       </p>
       <div className="reason-acts">
-        {searchless ? (
-          <button className="small primary" onClick={connectSearchAndSave}
-            disabled={busy || (!!searchBackend?.key && !searchKey.trim()
-              && !(searchless.configured?.backend === searchWith && searchless.configured.has_key))
-              || (!!searchBackend && !searchBackend.base_url && !searchUrl.trim())}>
-            Turn on web search &amp; save
-          </button>
-        ) : unpriced ? (
-          <button className="small primary" disabled={busy} onClick={importPriceAndSave}>
-            Import its price &amp; save
-          </button>
-        ) : (
-          <button className="small primary" disabled={busy || (!!unpaidProvider && !pick)}
-            onClick={save}>
-            {unpaidProvider ? <>Connect {sellerLabel} &amp; save</> : "Save"}
-          </button>
-        )}
+        <button className="small primary" onClick={save}
+          disabled={busy || blocking.length > 0 || (!!unpaidProvider && !pick)
+            || (needsSearch && !searchReady)}>
+          {label}
+        </button>
         <button className="small" disabled={busy} onClick={onDone}>Cancel</button>
       </div>
       {error && <div className="help" style={{ color: "var(--critical)" }}>{error}</div>}

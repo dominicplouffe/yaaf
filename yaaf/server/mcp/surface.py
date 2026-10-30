@@ -288,6 +288,8 @@ WITHHELD = {
         "an administrator's decision, made on the Models screen.",
     "PUT /admin/settings/models/default-provider":
         "where every unpaid project's classes resolve is install-wide; not a drafter's.",
+    "POST /admin/agents/{agent_id}/seat/check":
+        "the seat dialog's dry run; set_seat answers with the same refusal when it is made.",
     "PUT /admin/settings/models/app-model":
         "the model every role-less seat resolves to is install-wide; not a drafter's.",
     "PUT /admin/settings/models/app-harness":
