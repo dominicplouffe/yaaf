@@ -1729,3 +1729,12 @@ export interface ReviewRow {
 }
 
 export interface ReviewsView { open: ReviewRow | null; history: ReviewRow[] }
+
+/** The install's own web search (Settings → Web search): the backend a seat
+    searches with when neither its harness nor its provider can. */
+export interface SearchBackend { name: string; label: string; base_url: string | null;
+  suggested_usd: number; key: boolean; console_url: string | null }
+export interface SearchSettings {
+  configured: { backend: string; label: string; base_url: string; price_usd: number; has_key: boolean } | null;
+  backends: SearchBackend[];
+}

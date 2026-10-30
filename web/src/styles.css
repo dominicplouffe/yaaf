@@ -2686,7 +2686,8 @@ button.onode:hover { background: var(--surface); border-color: var(--border-stro
 .seat-door p { margin: 0; font-size: 13px; color: var(--ink-2); }
 .seat-door b { color: var(--ink); }
 .reason-form { display: flex; flex-direction: column; gap: 6px; }
-.reason-acts { display: flex; gap: 6px; }
+.reason-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.reason-acts > button { flex: none; max-width: 100%; white-space: normal; text-align: left; }
 .seat-table { width: 100%; }
 .seat-table tr.clickable { cursor: pointer; }
 .seat-table tr.clickable:hover td { background: var(--hover); }

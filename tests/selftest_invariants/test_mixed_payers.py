@@ -11,6 +11,7 @@ key, from the CEO's own page. Each test below is one sentence of what he sees:
 - the other way round, a subscription's runs on a dollar budget are counted at
   their catalog price, so the hard stop still sees them;
 - a seat that names no model runs on the app's model.
+- a role that uses the web searches through the install's backend there.
 
 Each run is counted in its project's own unit at that run's own price. No
 exchange rate between tokens and dollars is ever invented: cache reads swing
@@ -254,6 +255,126 @@ def test_an_unpriced_model_is_priced_in_place_and_the_move_completes(client):
     assert imported["applied"] == ["deepseek-reasoner"]
     moved = client.patch(ceo, headers=ADMIN, json={"model": "deepseek-reasoner"})
     assert moved.status_code == 200, moved.text
+
+
+# ── the CEO role yaaf ships, which uses the web ─────────────────────────────────
+
+
+def test_a_web_role_moved_onto_deepseek_searches_through_the_installs_backend(client):
+    """The test CEO above grants no web; the shipped one does, as 37 of the 40
+    shipped roles do, and DeepSeek's API cannot search. The move is refused
+    for want of a search backend (R2) — the seat dialog's search door
+    configures one, as Settings → Web search would, and saves again — and
+    the CEO's next run carries that backend's key, nothing more."""
+    import json
+    import pathlib
+
+    from yaaf.runner.daemon import _search_env
+
+    _install(client)
+    shipped = json.loads((pathlib.Path(__file__).parents[2] / "roles" / "ceo.json").read_text())
+    assert shipped["tool_permissions"]["web"]
+    assert client.post("/admin/roles", headers=ADMIN, json=shipped).status_code == 200
+    plan = _id(_credential(client, "Claude plan", mode="subscription"))
+    deepseek = _id(_credential(client, "DeepSeek API", provider="deepseek"))
+    project = _project(client, "searching", billing_secret_id=plan)
+    ceo = f"/admin/agents/{project['ceo_agent_id']}/seat"
+    assert client.put(f"/admin/projects/{project['id']}/credentials/deepseek", headers=ADMIN,
+                      json={"credential_id": deepseek}).status_code == 200
+    refused = client.patch(ceo, headers=ADMIN, json={"model": "deepseek-reasoner"})
+    assert refused.status_code == 422 and "cannot search the web" in refused.text
+
+    assert client.put("/admin/settings/web-search", headers=ADMIN,
+                      json={"backend": "brave", "key": "brave-key"}).status_code == 200
+    moved = client.patch(ceo, headers=ADMIN, json={"model": "deepseek-reasoner"})
+    assert moved.status_code == 200, moved.text
+    job = _ceo_job(project)
+    assert (job.model, job.provider) == ("deepseek-reasoner", "deepseek")
+    with db_session() as session:
+        env = _search_env(session, job)
+    assert env["YAAF_SEARCH_KEY"] == "brave-key"
+
+
+# ── every problem a move has, before it is made ────────────────────────────────
+
+
+def test_the_seat_dialog_hears_every_problem_a_move_has_at_once(client):
+    """The first move onto DeepSeek on a fresh install needs three things — a
+    DeepSeek credential, a price, a search backend — and the door refuses one
+    at a time. The dialog's dry run names all three before Save, each with
+    the kind a door can answer, and changes nothing."""
+    import json
+    import pathlib
+
+    make_project(client, start=False)
+    shipped = json.loads((pathlib.Path(__file__).parents[2] / "roles" / "ceo.json").read_text())
+    assert client.post("/admin/roles", headers=ADMIN, json=shipped).status_code == 200
+    plan = _id(_credential(client, "Claude plan", mode="subscription"))
+    project = _project(client, "dry-run", billing_secret_id=plan)
+    check = client.post(f"/admin/agents/{project['ceo_agent_id']}/seat/check", headers=ADMIN,
+                        json={"model": "deepseek-reasoner", "effort": None, "harness": None})
+    assert check.status_code == 200, check.text
+    assert {p["kind"] for p in check.json()["problems"]} == {"payer", "price", "search"}
+    seat = client.get(f"/observe/projects/{project['id']}/org", headers=ADMIN)
+    assert "deepseek-reasoner" not in seat.text
+
+
+def test_a_model_with_a_shorter_effort_ladder_says_which_efforts_it_takes(client):
+    """Gemini's flash models take low or high. A seat whose role runs at
+    medium is told so, with the ladder, so the dialog offers those efforts
+    rather than a refusal; at one of them the move is made."""
+    _install(client)
+    plan = _id(_credential(client, "Claude plan", mode="subscription"))
+    gemini = _id(_credential(client, "Gemini API", provider="google"))
+    project = _project(client, "ladder", billing_secret_id=plan)
+    assert client.put(f"/admin/projects/{project['id']}/credentials/google", headers=ADMIN,
+                      json={"credential_id": gemini}).status_code == 200
+    seat = f"/admin/agents/{project['ceo_agent_id']}/seat"
+    check = client.post(f"{seat}/check", headers=ADMIN, json={
+        "model": "gemini-3-flash-preview", "effort": "medium", "harness": None}).json()
+    assert [p["kind"] for p in check["problems"]] == ["effort"]
+    assert (check["efforts"], check["effort_fit"]) == (["low", "high"], "high")
+    moved = client.patch(seat, headers=ADMIN,
+                         json={"model": "gemini-3-flash-preview", "effort": "high"})
+    assert moved.status_code == 200, moved.text
+
+
+def test_every_shipped_role_moves_onto_every_model_from_the_seat_dialog():
+    """The invariant behind the four walls of 10/27–30: whatever role, model
+    and way of paying, every problem a move can meet is one the seat dialog
+    has a door for — a credential, a price, a search backend, an effort from
+    the ladder it is shown — and once those are met nothing is left. A new
+    rule, a new role or a new model that breaks this fails here, not on the
+    chairman's screen. (The payer's door is the project's, outside these
+    rules; `test_the_seat_dialog_hears_every_problem_a_move_has_at_once`.)"""
+    import json
+    import pathlib
+
+    from yaaf.runtimes import catalog, providers
+    from yaaf.runtimes.seats import efforts, problems
+
+    doors = {"price", "search", "effort"}
+    roles = [json.loads(path.read_text()) for path in
+             sorted((pathlib.Path(__file__).parents[2] / "roles").glob("*.json"))]
+    walls = []
+    for model in catalog.MODELS:
+        provider = catalog.provider_of(model.id)
+        for kind in providers.provider(provider).kinds:
+            payer = (provider, kind.mode)
+            for role in roles:
+                grants = role.get("tool_permissions") or {}
+                effort = role.get("effort") or catalog.DEFAULT_EFFORT
+                ceo = role.get("is_ceo_role", False)
+                met = problems(None, model.id, grants, payer, priced=False, effort=effort,
+                               converses=ceo)
+                walls += [(role["slug"], model.id, kind.mode, p.text) for p in met
+                          if p.kind not in doors]
+                ladder = efforts(None, model.id, payer)
+                after = problems(None, model.id, grants, payer, priced=True,
+                                 effort=effort if effort in ladder else catalog.rung(effort, ladder),
+                                 converses=ceo, platform_search=True)
+                walls += [(role["slug"], model.id, kind.mode, p.text) for p in after]
+    assert walls == []
 
 
 # ── what the review of this change found ────────────────────────────────────────

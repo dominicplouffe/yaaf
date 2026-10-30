@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 from yaaf.runtimes import catalog, providers
 from yaaf.runtimes.harnesses import HARNESSES, LEGACY_RUNTIME, canonical
@@ -188,11 +189,71 @@ def refusal(harness: str | None, model: str, tool_permissions: dict | None,
     return None if any(p is None for p in problems) else problems[0]
 
 
+class Problem(NamedTuple):
+    """One reason a seat cannot run. `kind` is the rule's, so a door can
+    offer the fix for it without reading the sentence: "payer" (R5),
+    "price" (R3), "search" and "withhold" (R2), "effort" (R6),
+    "conversation" (R7), "credential" (R1), "harness", "unmodelled" (R8)."""
+
+    kind: str
+    text: str
+
+
 def _refusal(harness: str | None, model: str, tool_permissions: dict | None,
              credential: tuple[str | None, str | None] | None = None,
              priced: bool | None = None, effort: str | None = None,
              converses: bool = False, *, pinned: bool = True,
              platform_search: bool = False) -> str | None:
+    """The first of `problems`, or None."""
+    first = next(_problems(harness, model, tool_permissions, credential, priced, effort,
+                           converses, pinned=pinned, platform_search=platform_search), None)
+    return first.text if first else None
+
+
+def problems(harness: str | None, model: str, tool_permissions: dict | None,
+             credential: tuple[str | None, str | None] | None = None,
+             priced: bool | None = None, effort: str | None = None,
+             converses: bool = False, *, pinned: bool = True,
+             platform_search: bool = False) -> list[Problem]:
+    """Every reason this seat cannot run, not only the first: the seat
+    dialog meets them all in one motion, rather than one per Save (`refusal`
+    with a credential named, for each). With neither a harness nor a
+    credential named, the fewest any way of paying its provider leaves."""
+    if harness or credential is not None or catalog.is_class(model):
+        return list(_problems(harness, model, tool_permissions, credential, priced, effort,
+                              converses, pinned=pinned, platform_search=platform_search))
+    provider = catalog.provider_of(model)
+    return min((list(_problems(None, model, tool_permissions, (provider, kind.mode), priced,
+                               effort, converses, pinned=pinned,
+                               platform_search=platform_search))
+                for kind in providers.provider(provider).kinds), key=len)
+
+
+def efforts(harness: str | None, model: str,
+            credential: tuple[str | None, str | None] | None = None) -> tuple[str, ...]:
+    """The efforts a seat pinned to `model` on this harness can take (R6):
+    the harness's dial and the model's own ladder, both. A harness with no
+    dial, or one this install does not have, says nothing against any."""
+    if catalog.is_class(model):
+        return catalog.EFFORTS
+    seller = providers.provider(catalog.provider_of(model))
+    found = HARNESSES.get(canonical(harness) or seller.default_harness(
+        credential[1] if credential else None))
+    allowed = catalog.EFFORTS
+    if found is not None and found.efforts:
+        allowed = tuple(e for e in allowed if e in found.efforts)
+    row = catalog.model(model)
+    if row is not None and row.efforts is not None and found is not None \
+            and found.efforts != ():
+        allowed = tuple(e for e in allowed if e in row.efforts)
+    return allowed
+
+
+def _problems(harness: str | None, model: str, tool_permissions: dict | None,
+              credential: tuple[str | None, str | None] | None = None,
+              priced: bool | None = None, effort: str | None = None,
+              converses: bool = False, *, pinned: bool = True,
+              platform_search: bool = False):
     """Why a seat on `harness` running `model` under these grants cannot run,
     paying with `credential` — (provider, mode), when one is known — or None
     when it can. `model` is concrete, or a class named with its provider when
@@ -207,30 +268,36 @@ def _refusal(harness: str | None, model: str, tool_permissions: dict | None,
     if catalog.is_class(model):
         # R8 — a class with no model on its provider is refused, never filled
         # in with some other model.
-        return unmodelled(model)
+        yield Problem("unmodelled", unmodelled(model))
+        return
     provider = catalog.provider_of(model)
     seller = providers.provider(provider)
     name = canonical(harness) or seller.default_harness(credential[1] if credential else None)
     found = HARNESSES.get(name)
     if found is None or found.family == "mock":
         options = ", ".join(h.name for h in choosable())
-        return f"unknown harness '{name}' — a seat runs on one of: {options}"
+        yield Problem("harness", f"unknown harness '{name}' — a seat runs on one of: {options}")
+        return
     if found.providers and provider not in found.providers:
-        return (f"{found.label} cannot run {model}: it serves "
-                f"{', '.join(found.providers)} models, and {model} is {provider}'s")
+        yield Problem("harness",
+                      f"{found.label} cannot run {model}: it serves "
+                      f"{', '.join(found.providers)} models, and {model} is {provider}'s")
+        return
     # R7 — the chairman waits on the CEO's seat in real time, turn after
     # turn; a harness that cannot resume a session cannot answer him.
     if converses and not found.conversation:
-        return (f"{found.label} cannot hold the boardroom conversation, and this seat "
-                f"is the CEO's — run the CEO on a harness that can, or turn the "
-                f"boardroom chat off for this project")
+        yield Problem("conversation",
+                      f"{found.label} cannot hold the boardroom conversation, and this seat "
+                      f"is the CEO's — run the CEO on a harness that can, or turn the "
+                      f"boardroom chat off for this project")
     # R2 — a grant the harness cannot take away. Widening a role because the
     # transport is clumsy is exactly what a pinned role version exists to stop.
     unwithholdable = sorted(_withheld(tool_permissions) - set(found.withholds))
     if unwithholdable:
         grant = unwithholdable[0]
-        return (f"{found.label} cannot run without {grant}, and this role does not "
-                f"grant it — grant {grant} on the role, or run this seat on another harness")
+        yield Problem("withhold",
+                      f"{found.label} cannot run without {grant}, and this role does not "
+                      f"grant it — grant {grant} on the role, or run this seat on another harness")
     # R2, the other way round — a grant the harness cannot honour. The web is
     # fetch and search, and search is the harness's own, the provider's wire
     # (yaaf's loop), the platform's search backend, or nobody's: a seat with
@@ -242,9 +309,10 @@ def _refusal(harness: str | None, model: str, tool_permissions: dict | None,
                     or (found.search == "platform" and platform_search))
         if not searches:
             where = f" on {seller.label}" if found.search == "loop" else ""
-            return (f"{found.label} cannot search the web{where}, and this role grants web — "
-                    f"configure a web search backend (Settings → Web search), run this seat "
-                    f"on a harness or a provider that searches, or leave web off the role")
+            yield Problem("search",
+                          f"{found.label} cannot search the web{where}, and this role grants web — "
+                          f"configure a web search backend (Settings → Web search), run this seat "
+                          f"on a harness or a provider that searches, or leave web off the role")
     # R6 — an effort outside yaaf's ladder is a typo wherever it is. On a
     # pinned model one the harness cannot express, or the model does not
     # take, is refused: never mapped silently, in either direction — "max"
@@ -252,35 +320,39 @@ def _refusal(harness: str | None, model: str, tool_permissions: dict | None,
     # way round dearer. A class seat was written for no model in particular,
     # so it runs at its model's published rung instead (`catalog.rung`).
     if effort and effort not in catalog.EFFORTS:
-        return f"no effort '{effort}' — an effort is one of {', '.join(catalog.EFFORTS)}"
+        yield Problem("effort",
+                      f"no effort '{effort}' — an effort is one of {', '.join(catalog.EFFORTS)}")
     # Only where the harness has a dial at all: one that sends no effort
     # (OpenCode, `efforts=()`) cannot run a seat cheaper or dearer than it was
     # hired at. `None` is a harness whose models' own ladders govern.
-    if effort and pinned and found.efforts != ():
-        if found.efforts and effort not in found.efforts:
-            return (f"{found.label} has no effort '{effort}' — it takes "
-                    f"{', '.join(found.efforts)}")
+    elif effort and pinned and found.efforts != ():
         row = catalog.model(model)
-        if row is not None and row.efforts is not None and effort not in row.efforts:
-            return (f"{model} takes the efforts {', '.join(row.efforts)} — not '{effort}'; "
-                    f"pick one of those for this seat")
+        if found.efforts and effort not in found.efforts:
+            yield Problem("effort",
+                          f"{found.label} has no effort '{effort}' — it takes "
+                          f"{', '.join(found.efforts)}")
+        elif row is not None and row.efforts is not None and effort not in row.efforts:
+            yield Problem("effort",
+                          f"{model} takes the efforts {', '.join(row.efforts)} — not '{effort}'; "
+                          f"pick one of those for this seat")
     # R3 — a model the harness would have to price, with no price to price it
     # by. A run nobody can price is a run the budget cannot stop. Only under a
     # dollar meter: a credential metered in tokens is stopped in tokens.
     if priced is None:
         priced = catalog.price(model) is not None or seller.reports_cost
     if found.cost == "priced" and not priced and _meters_usd(found, provider, credential):
-        return (f"{found.label} prices every run, and {model} has no price on this "
-                f"install — import or set one in Settings → Model prices, or run this "
-                f"seat on a harness that reports its own cost")
+        yield Problem("price",
+                      f"{found.label} prices every run, and {model} has no price on this "
+                      f"install — import or set one in Settings → Model prices, or run this "
+                      f"seat on a harness that reports its own cost")
     # R1 — a credential the harness cannot authenticate with.
     if credential is not None and found.accepts:
         cred_provider, mode = credential
         kind = providers.provider(cred_provider).kind(mode)
         if f"{cred_provider or providers.DEFAULT_PROVIDER}:{kind.mode}" not in found.accepts:
-            return (f"{found.label} cannot pay with a {kind.bills.split(',')[0]} — "
-                    f"assign a credential it accepts, or run this seat on another harness")
-    return None
+            yield Problem("credential",
+                          f"{found.label} cannot pay with a {kind.bills.split(',')[0]} — "
+                          f"assign a credential it accepts, or run this seat on another harness")
 
 
 def class_role_refusal(harness: str | None, tool_permissions: dict | None,

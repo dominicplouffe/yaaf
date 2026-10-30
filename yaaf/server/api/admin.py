@@ -4184,6 +4184,39 @@ def set_agent_seat(agent_id: str, body: AgentSeat, session: Session = Depends(db
     return {"id": agent.id, "name": agent.name, **now}
 
 
+@router.post("/agents/{agent_id}/seat/check", dependencies=[authority.STEER])
+def check_agent_seat(agent_id: str, body: AgentSeat, session: Session = Depends(db)) -> dict:
+    """What `set_agent_seat` would say to this move, said before it is made —
+    every problem, not only the first, and the efforts the seat could take.
+    The seat dialog asks as the choice changes, so the credential, the price
+    and the search backend a move needs are all in view before Save, and Save
+    is one motion. Nothing is changed."""
+    from yaaf.server.seat_checks import seat_problems
+
+    agent = session.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="unknown agent")
+    named = body.model_fields_set
+    model = (body.model or "").strip() or None
+    if "model" in named and model and (bad := catalog.valid_ref(model)):
+        return {"problems": [{"kind": "model", "text": bad}], "efforts": list(catalog.EFFORTS),
+                "effort_fit": None}
+    was = (agent.model_override, agent.effort_override, agent.harness_override)
+    with session.no_autoflush:
+        try:
+            if "model" in named:
+                agent.model_override = model
+            if "effort" in named:
+                agent.effort_override = body.effort
+            if "harness" in named:
+                agent.harness_override = canonical_harness((body.harness or "").strip() or None)
+            found = seat_problems(session, _get_project(session, agent.project_id), agent)
+        finally:
+            agent.model_override, agent.effort_override, agent.harness_override = was
+    return {"problems": [p._asdict() for p in found.problems], "efforts": list(found.efforts),
+            "effort_fit": found.fit}
+
+
 class NeedFulfillIn(BaseModel):
     secret_name: str = Field(min_length=2, max_length=120)
     value: str = Field(min_length=1)
