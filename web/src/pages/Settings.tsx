@@ -19,7 +19,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { del, get, post, put, UserRow } from "../api";
+import { del, get, post, put, SearchSettings, UserRow } from "../api";
 import { PasswordCard, SessionsCard, TokensCard } from "../account";
 import { Credential, ModelPrices } from "../llmCredentials";
 import { useMe } from "../me";
@@ -516,13 +516,6 @@ function SlackCard({
 }
 
 // ── web search: the install's own backend ───────────────────────────────────────
-
-interface SearchBackend { name: string; label: string; base_url: string | null;
-  suggested_usd: number; key: boolean; console_url: string | null }
-interface SearchSettings {
-  configured: { backend: string; label: string; base_url: string; price_usd: number; has_key: boolean } | null;
-  backends: SearchBackend[];
-}
 
 function WebSearchSection({ reload: reloadRail }: { reload: () => void }) {
   const [data, setData] = useState<SearchSettings | null>(null);

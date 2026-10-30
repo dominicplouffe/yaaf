@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { get, getText, patch, post, put, ResultsView, SeatWork } from "../../api";
+import { get, getText, patch, post, put, ResultsView, SearchSettings, SeatWork } from "../../api";
 import { TaskChain } from "../../chain";
 import { WhatTheyDid } from "../../did";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { CredentialPicker } from "../../llmCredentials";
 import { firstName, ProjectCtx } from "../../projectCtx";
 import { isClass, ModelSelect, providerOf, resolveRef, useModels, useProviders } from "../../providers";
-import { clip, fmtAgo } from "../../ui";
+import { clip, fmtAgo, SecretInput } from "../../ui";
 import { Avatar, plainStatus } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
 import { heldFor, wokeFor } from "../../ui/team";
@@ -137,6 +137,15 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
   // (R3): the shipped price list usually has one, and importing it is the
   // same audited step as Settings → Model prices, offered where it is needed.
   const [unpriced, setUnpriced] = useState(false);
+  // Set when the door refused the model because its role grants the web and
+  // neither its harness nor its provider can search (R2) — DeepSeek's API, for
+  // one. The install's search backend is the fix, offered where it is needed:
+  // the same step as Settings → Web search, tested before the seat moves.
+  const [searchless, setSearchless] = useState<SearchSettings | null>(null);
+  const [searchWith, setSearchWith] = useState("");
+  const [searchKey, setSearchKey] = useState("");
+  const [searchUrl, setSearchUrl] = useState("");
+  const searchBackend = searchless?.backends.find((b) => b.name === searchWith);
   // A class is priced as the model it resolves to — the model the door names.
   const priceable = (billing ? resolveRef(model, billing, catalog) : null) ?? model;
   const harnessLabel = (h: string | null | undefined) =>
@@ -161,6 +170,7 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
     } catch (e) {
       const message = (e as Error).message;
       if (message.includes("has no price on this install")) setUnpriced(true);
+      else if (message.includes("cannot search the web")) await openSearchDoor(message);
       else setError(message);
       ctx.reload();
     } finally {
@@ -189,10 +199,50 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
     await save();
   }
 
+  /** The backends this install can search with — read only when a seat is
+      refused for want of one. Someone who may not configure the install sees
+      the refusal itself. */
+  async function openSearchDoor(refusal: string) {
+    try {
+      const found = await get<SearchSettings>("/admin/settings/web-search");
+      const first = found.configured?.backend ?? found.backends[0]?.name ?? "";
+      setSearchWith(first);
+      setSearchUrl(found.backends.find((b) => b.name === first)?.base_url ?? "");
+      setSearchless(found);
+    } catch {
+      setError(refusal);
+    }
+  }
+
+  async function connectSearchAndSave() {
+    setBusy(true);
+    setError(null);
+    try {
+      await put("/admin/settings/web-search", {
+        backend: searchWith, key: searchKey.trim() || null, base_url: searchUrl.trim() || null,
+        price_usd: null });
+      // One real query: a key that does not work fails here, in front of the
+      // person who pasted it, not in the seat's first run.
+      const said = await post<{ ok: boolean; detail: string }>("/admin/settings/web-search/test");
+      if (!said.ok) {
+        setError(said.detail);
+        return;
+      }
+      setSearchless(null);
+      setSearchKey("");
+    } catch (e) {
+      setError((e as Error).message);
+      return;
+    } finally {
+      setBusy(false);
+    }
+    await save();
+  }
+
   return (
     <div className="addform">
       <label className="field">Model
-        <ModelSelect value={model} onChange={(next) => { setModel(next); setUnpriced(false); }}
+        <ModelSelect value={model} onChange={(next) => { setModel(next); setUnpriced(false); setSearchless(null); }}
           info={catalog} registry={registry}
           primary={billing} providersShown={paid.length ? paid : undefined}
           unpaidShown={paid.length ? registry.map((p) => p.name).filter((n) => !paid.includes(n)) : undefined}
@@ -216,6 +266,38 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
             rel="noreferrer">Settings → Model prices</Link>.</p>
         </div>
       )}
+      {searchless && (
+        <div className="seat-door">
+          <p>{name}&apos;s role uses the web, and <b>{model}</b>&apos;s provider cannot search it.
+            Connect a search service once and every seat like this one searches through it —
+            each query is billed into the run that made it.</p>
+          <label className="field">Search with
+            <select value={searchWith} disabled={busy} onChange={(e) => {
+              setSearchWith(e.target.value);
+              setSearchUrl(searchless.backends.find((b) => b.name === e.target.value)?.base_url ?? "");
+            }}>
+              {searchless.backends.map((b) => <option key={b.name} value={b.name}>{b.label}</option>)}
+            </select>
+          </label>
+          {searchBackend && !searchBackend.base_url && (
+            <label className="field">Address
+              <input value={searchUrl} disabled={busy} placeholder="http://searxng:8080"
+                onChange={(e) => setSearchUrl(e.target.value)} />
+            </label>
+          )}
+          {searchBackend?.key && (
+            <label className="field">{searchless.configured?.backend === searchWith
+              && searchless.configured.has_key ? "API key — blank keeps the current one" : "API key"}
+              <SecretInput value={searchKey} onChange={setSearchKey} disabled={busy} />
+            </label>
+          )}
+          <p className="help">
+            {searchBackend && `About $${searchBackend.suggested_usd} a query. `}
+            {searchBackend?.console_url && <a href={searchBackend.console_url} target="_blank"
+              rel="noreferrer">Get a {searchBackend.label} key ↗</a>}
+          </p>
+        </div>
+      )}
       <label className="field">Effort
         <select value={effort} disabled={busy} onChange={(e) => setEffort(e.target.value)}>
           <option value="">The role&apos;s — {role?.effort ?? "the default"}</option>
@@ -235,7 +317,14 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
         finishes on what it has — the change takes effect from {name}&apos;s next run.
       </p>
       <div className="reason-acts">
-        {unpriced ? (
+        {searchless ? (
+          <button className="small primary" onClick={connectSearchAndSave}
+            disabled={busy || (!!searchBackend?.key && !searchKey.trim()
+              && !(searchless.configured?.backend === searchWith && searchless.configured.has_key))
+              || (!!searchBackend && !searchBackend.base_url && !searchUrl.trim())}>
+            Turn on web search &amp; save
+          </button>
+        ) : unpriced ? (
           <button className="small primary" disabled={busy} onClick={importPriceAndSave}>
             Import its price &amp; save
           </button>

@@ -71,6 +71,8 @@ APIs. For every other provider — and OpenCode — a role granted `web` needs t
 install's web search backend (**Settings → Web search**: Brave, Tavily, Exa,
 Serper, Perplexity or a self-hosted SearXNG, with its key and its price per
 query). Each query is billed into the run at that price, under the run's cap.
+Moving a seat onto such a provider from its page offers the same setup in place —
+pick a backend, paste its key, and it is tested before the seat moves.
 
 A value of the wrong shape for its kind is **refused while you're still
 looking at the screen** — otherwise every future run fails with a baffling
