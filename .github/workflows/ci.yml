@@ -71,6 +71,23 @@ jobs:
       - run: pip install ruff
       - run: ruff check .
 
+  # The sandbox runs its files on its base image's python3, not on the 3.12 the
+  # suite runs on. Import each one there, in that base — read off the
+  # Dockerfile, so a base bump moves this check with it. The image build runs
+  # the same check, so a deploy cannot ship what this would have caught.
+  sandbox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          set -euo pipefail
+          base="$(grep -m1 -oP '^FROM \K\S+' deploy/sandbox/Dockerfile)"
+          docker run --rm -v "$PWD":/src:ro "$base" bash -euc '
+            apt-get update -qq && apt-get install -y -qq python3 python3-venv >/dev/null
+            python3 -m venv /tmp/venv
+            /tmp/venv/bin/pip install -q claude-agent-sdk "anthropic>=1.13,<2" httpx "mcp<2"
+            /tmp/venv/bin/python /src/deploy/sandbox/check_entries.py --dockerfile /src'
+
   # Postgres only. SQLite is what a contributor's checkout runs and what the
   # fire drill runs, but it cannot exercise the things a deployment depends on
   # — FOR UPDATE SKIP LOCKED, JSONB, LISTEN/NOTIFY, TIMESTAMPTZ, or the ALTER
