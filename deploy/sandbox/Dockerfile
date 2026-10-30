@@ -88,5 +88,11 @@ COPY yaaf/runner/codex_cli_entry.py /opt/yaaf/codex_cli_entry.py
 COPY yaaf/runner/opencode_cli_entry.py /opt/yaaf/opencode_cli_entry.py
 # The Gemini CLI harness; it starts yaaf_tools.py for the yaaf tools too.
 COPY yaaf/runner/gemini_cli_entry.py /opt/yaaf/gemini_cli_entry.py
+# Load every file above on the interpreter that will run it. The control plane
+# is 3.12 and this base's python3 is 3.11: a line legal on one and not the
+# other passed every test and killed every yaaf_loop seat in production. A
+# build that would ship that now fails here instead (deploy/sandbox/check_entries.py).
+COPY deploy/sandbox/check_entries.py /tmp/check_entries.py
+RUN /opt/venv/bin/python /tmp/check_entries.py /opt/yaaf && rm -rf /tmp/check_entries.py /opt/yaaf/__pycache__
 USER agent
 WORKDIR /workspace

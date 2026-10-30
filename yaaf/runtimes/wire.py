@@ -966,9 +966,9 @@ async def call(endpoint: Endpoint, model: str, system: str, transcript: list[Tur
     silence tolerated — on a streamed wire between lines, on another for the
     whole reply."""
     if not endpoint.base_url:
-        raise WireError(0, {"error": {"message": f"no address for {endpoint.name or 'this '
-                                                 'provider'}: its credential carries one"}},
-                        "fatal")
+        who = endpoint.name or "this provider"
+        raise WireError(0, {"error": {"message": f"no address for {who}: its credential "
+                                                 "carries one"}}, "fatal")
     async with httpx.AsyncClient(transport=transport or TRANSPORT,
                                  timeout=_timeout(read_timeout)) as http:
         if endpoint.protocol == "openai_chat":
