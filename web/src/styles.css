@@ -255,6 +255,34 @@ kbd {
 .sb-switch-row .sb-switch { margin-bottom: 0; width: auto; flex: 1; min-width: 0; gap: 7px; padding: 8px 6px 8px 8px; }
 .sb-switch-row .sb-switch > svg { width: 12px; height: 12px; flex: none; }
 .sb-switch-row .sb-switch-t > span { white-space: nowrap; overflow: hidden; }
+.sb-switch.open { border-color: var(--border-strong); background: var(--surface); }
+
+/* The project switcher: the card's own dropdown, fixed under it. */
+.psw { position: fixed; z-index: 55; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: var(--e2); animation: modal-in 0.08s ease-out; }
+.psw-find { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border);
+  color: var(--muted); }
+.psw-find input { flex: 1; min-width: 0; border: 0; background: transparent; box-shadow: none; padding: 3px 0;
+  font-size: var(--t-small); color: var(--ink); }
+.psw-find input:focus { outline: none; box-shadow: none; }
+.psw-list { flex: 1 1 auto; min-height: 0; max-height: 360px; overflow-y: auto; padding: 4px; }
+.psw-it { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: var(--radius-sm);
+  cursor: pointer; }
+.psw-it.on { background: var(--hover-strong); }
+.psw-t { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.psw-t b { font-size: 13.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.psw-t > span { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 5px; font-weight: 500; }
+.psw-t .warn { color: var(--warning); }
+.psw-t .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.psw-t .dot.run { background: var(--good); }
+.psw-check { color: var(--accent); flex: none; }
+.psw-empty { padding: 14px 10px; color: var(--muted); font-size: var(--t-small); }
+.psw-foot { padding: 4px; border-top: 1px solid var(--border); }
+.psw-foot button { width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: 9px;
+  min-height: 0; padding: 7px 8px; border: 0; border-radius: var(--radius-sm); background: none;
+  color: var(--ink-2); font-size: var(--t-small); font-weight: 500; text-align: left; }
+.psw-foot button:hover, .psw-foot button:focus-visible { background: var(--hover-strong); color: var(--ink); border: 0; }
 .sb-gear {
   flex: none; display: grid; place-items: center; width: 30px; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface); color: var(--muted);

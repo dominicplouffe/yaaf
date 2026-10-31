@@ -1,10 +1,11 @@
-import { ReactNode, useEffect, useLayoutEffect, useState } from "react";
+import { ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { DeskProject } from "./api";
 import { useDesk } from "./desk";
 import { useMe } from "./me";
 import { CommandPalette, Cheatsheet, useShortcuts } from "./palette";
 import { OfferHost } from "./precedent";
+import { ProjectSwitcher, statusWord as statusWordOf } from "./projectSwitcher";
 import { UndoHost } from "./undo";
 import { firstName, useProjectFrame } from "./projectCtx";
 import { DETAIL_TABS, PROJECT_PAGES, placeOf, SETTINGS_PAGE } from "./nav";
@@ -78,10 +79,10 @@ function useCurrentProject(projects: DeskProject[]): { id: string; name: string;
 
 /** The project half of the sidebar: who it is, how it is, and its pages. */
 function ProjectNav({
-  project, onSwitch, onNavigate,
+  project, projects, onNavigate,
 }: {
   project: { id: string; name: string; status: string };
-  onSwitch: () => void;
+  projects: DeskProject[];
   onNavigate: () => void;
 }) {
   const frame = useProjectFrame();
@@ -119,15 +120,23 @@ function ProjectNav({
   const lastLabel = lastTab ? placeOf(`details/${lastTab}`)?.label : null;
   const setup = ctx?.setup?.open ? ctx.setup : null;
   const settingsOn = location.pathname.startsWith(`${base}/settings`);
-  const statusWord = project.status === "running" ? "Running" : project.status === "paused" ? "Paused"
-    : project.status === "draft" ? "Not started" : project.status;
+  const statusWord = statusWordOf(project.status);
+  const row = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [switching, setSwitching] = useState(false);
+  const closeSwitcher = useCallback((refocus: boolean) => {
+    setSwitching(false);
+    if (refocus) trigger.current?.focus();
+  }, []);
 
   return (
     <>
       <div className="sb-head">Project</div>
-      <div className="sb-switch-row">
-        <button className="sb-switch" onClick={onSwitch}
-          title={`${project.name} · ${statusWord}${needs > 0 ? ` · ${needs} need you` : ""}. Switch project (⌘K)`}>
+      <div className="sb-switch-row" ref={row}>
+        <button className={`sb-switch${switching ? " open" : ""}`} ref={trigger}
+          onClick={() => setSwitching((v) => !v)}
+          aria-haspopup="dialog" aria-expanded={switching}
+          title={`${project.name} · ${statusWord}${needs > 0 ? ` · ${needs} need you` : ""}. Switch project`}>
           <Avatar name={project.name} team={project.name} size="sm" />
           <span className="sb-switch-t">
             <b>{project.name}</b>
@@ -153,6 +162,10 @@ function ProjectNav({
           <Icon name="gear" size={15} />
         </Link>
       </div>
+      {switching && (
+        <ProjectSwitcher anchor={row} trigger={trigger} projects={projects} currentId={project.id}
+          onClose={closeSwitcher} onNavigate={onNavigate} />
+      )}
       {PROJECT_PAGES.map((p) => (
         <NavItem
           key={p.path}
@@ -311,7 +324,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const { data, mine } = useDesk();
   const navigate = useNavigate();
   const location = useLocation();
-  const [palette, setPalette] = useState<{ open: boolean; query: string }>({ open: false, query: "" });
+  const [palette, setPalette] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const projects = data?.projects ?? [];
@@ -321,7 +334,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
   useShortcuts({
     projectId: current?.id ?? null,
-    openPalette: () => setPalette({ open: true, query: "" }),
+    openPalette: () => setPalette(true),
     openCheatsheet: () => setSheet(true),
     navigate,
   });
@@ -361,7 +374,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <Icon name="help" size={16} />
           </button>
         </div>
-        <button className="sb-search" onClick={() => setPalette({ open: true, query: "" })}>
+        <button className="sb-search" onClick={() => setPalette(true)}>
           <Icon name="search" size={15} />
           <span className="grow">Search or jump to…</span>
           <kbd>⌘K</kbd>
@@ -377,8 +390,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <NavItem to="/projects" icon="grid" label="Projects" end onClick={close}
             aside={projects.length ? <span className="sb-aside">{projects.length}</span> : undefined} />
           {current && (
-            <ProjectNav project={current} onNavigate={close}
-              onSwitch={() => setPalette({ open: true, query: "project " })} />
+            <ProjectNav project={current} projects={projects} onNavigate={close} />
           )}
           <LiveNow />
           <div className="sb-head">Workspace</div>
@@ -408,7 +420,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <Crumbs />
           <span className="grow" />
           <Freshness />
-          <button className="sb-icon tb-search" onClick={() => setPalette({ open: true, query: "" })}
+          <button className="sb-icon tb-search" onClick={() => setPalette(true)}
             aria-label="Search">
             <Icon name="search" size={16} />
           </button>
@@ -417,12 +429,11 @@ export function Shell({ children }: { children: ReactNode }) {
         <OfferHost />
         <UndoHost />
       </div>
-      {palette.open && (
+      {palette && (
         <CommandPalette
-          initialQuery={palette.query}
           projects={projects}
           currentProjectId={current?.id ?? null}
-          onClose={() => setPalette({ open: false, query: "" })}
+          onClose={() => setPalette(false)}
           openCheatsheet={() => setSheet(true)}
           signOut={() => void signOut()}
         />

@@ -30,7 +30,7 @@ always shows the same four things in the same order:
 | **Home** | The landing page: one sentence on whether anything needs you, the decisions themselves, every project side by side, and what happened while you were away. |
 | **Inbox** | Everything that needs you, across every project — and everything worth knowing that doesn't. The badge counts only the first. |
 | **Projects** | Your portfolio — one comparable row per project. |
-| **The project you are in** | A switcher (status, and how many things on it need you) with a **gear** beside it for the project's Settings, then that project's five pages: Inbox, Team, Chat, Results, Details — and under them your pins. |
+| **The project you are in** | A switcher (status, and how many things on it need you) with a **gear** beside it for the project's Settings, then that project's five pages: Inbox, Team, Chat, Results, Details — and under them your pins. Clicking the switcher opens a list of your projects right under it — the one you are in ticked, each with its status or how many things on it need you — with a field to narrow it, **All projects** and **New project**. Pages, people and actions are ⌘K's, not the switcher's. |
 
 **Pins.** The pages under the five — Deliverables, Runs, a Settings section,
 even one file — are a level down, which is the right depth for a page you open
@@ -64,7 +64,8 @@ phone the sidebar folds into a drawer behind the menu button.
 **Search and shortcuts.** **⌘K** (or **Ctrl+K**, or **/** on any page without
 a search box of its own) opens a palette
 that finds any page, project or person and runs the few app-wide actions
-(theme, shortcuts, sign out). Inside a project it goes one level further than
+(theme, shortcuts, sign out). Results are ranked by how well they match what
+you typed — a name that starts with it before one that only mentions it. Inside a project it goes one level further than
 the sidebar: the places you were in last, your pins, every Settings section and
 Activity view by name, the setup chores by what you want done (**Add a secret
 or variable**, **Connect a data source**, **Set the budget**, **Invite someone
@@ -738,7 +739,10 @@ used to be answered by reading two lists with different shapes.
   JSON Lines as records, an image as a picture, a PDF in the browser's own
   viewer, and anything else as text with line numbers. Source is a toggle, not
   the only option. **←** and **→** walk the filtered list without leaving it;
-  **Esc** closes; **/** puts you back in the search box.
+  **Esc** closes; **/** puts you back in the search box. A deliverable named
+  in the chat ("Deliverable published: …") opens in the same reader over the
+  chat, so reading it does not lose your place in the conversation; **Open in
+  Deliverables** goes to it in this list.
 - **It never lies about its own edges.** Past the listing cap the newest files
   are the ones kept, and the screen says how many are not shown.
 
