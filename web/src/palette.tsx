@@ -156,6 +156,54 @@ function useCommands({
   }, [projects, currentProjectId, navigate, openCheatsheet, signOut, ctx, pins, here]);
 }
 
+/** How well an entry answers what was typed: 0 for not at all, and higher
+    the more it is the thing asked for. Every word has to be found; a word in
+    the label counts far more than one in the entry's extra words, and the
+    start of the label more than its middle.
+
+    The group's own heading is not searched. It once was, so typing "project"
+    matched every Settings section (they sit under "Project settings") ahead of
+    any project — results ordered by where they happen to be filed rather than
+    by how well they match, which is not how any search box behaves. */
+function score(c: { label: string; words?: string }, words: string[], whole: string): number {
+  const label = c.label.toLowerCase();
+  const extra = (c.words ?? "").toLowerCase();
+  let total = label === whole ? 1000 : label.startsWith(whole) ? 300 : 0;
+  for (const w of words) {
+    const at = label.indexOf(w);
+    if (at === 0) total += 60;
+    else if (at > 0 && !/[\p{L}\p{N}]/u.test(label[at - 1])) total += 40;
+    else if (at > 0) total += 20;
+    else if (extra.includes(w)) total += 4;
+    else return 0;
+  }
+  return total;
+}
+
+/** What was typed, matched and ranked. Groups come in the order of their best
+    match and entries by how well they match within each — so the project you
+    named comes first, not after every page that mentions the word. With
+    nothing typed, everything in its usual order. */
+function rank(commands: Command[], query: string): Command[] {
+  const whole = query.trim().toLowerCase();
+  const words = whole.split(/\s+/).filter(Boolean);
+  if (!words.length) return commands;
+  const scored = commands
+    .map((c, i) => ({ c, i, s: score(c, words, whole) }))
+    .filter((x) => x.s > 0);
+  const best = new Map<string, number>();
+  const first = new Map<string, number>();
+  for (const x of scored) {
+    best.set(x.c.group, Math.max(best.get(x.c.group) ?? 0, x.s));
+    if (!first.has(x.c.group)) first.set(x.c.group, x.i);
+  }
+  return scored
+    .sort((a, b) => a.c.group === b.c.group
+      ? b.s - a.s || a.i - b.i
+      : best.get(b.c.group)! - best.get(a.c.group)! || first.get(a.c.group)! - first.get(b.c.group)!)
+    .map((x) => x.c);
+}
+
 interface FileHit { id: string; name: string; dir: string; state: string }
 
 /** Deliverables whose name matches what is typed, from the same index the
@@ -182,9 +230,8 @@ function useFileSearch(projectId: string | null, query: string, navigate: Naviga
 }
 
 export function CommandPalette({
-  initialQuery, projects, currentProjectId, onClose, openCheatsheet, signOut,
+  projects, currentProjectId, onClose, openCheatsheet, signOut,
 }: {
-  initialQuery: string;
   projects: DeskProject[];
   currentProjectId: string | null;
   onClose: () => void;
@@ -192,20 +239,19 @@ export function CommandPalette({
   signOut: () => void;
 }) {
   const navigate = useNavigate();
-  const [query, setQuery] = useState(initialQuery);
+  const [query, setQuery] = useState("");
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const commands = useCommands({ projects, currentProjectId, navigate, openCheatsheet, signOut });
 
-  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const files = useFileSearch(currentProjectId, query, navigate);
-  const matched = commands.filter((c) => {
-    const hay = `${c.group} ${c.label} ${c.words ?? ""}`.toLowerCase();
-    return words.every((w) => hay.includes(w));
-  });
-  // Files sit with the places, before projects, people and actions.
-  const cut = matched.findIndex((c) => c.group === "Projects" || c.group === "People" || c.group === "Actions");
-  const shown = cut < 0 ? [...matched, ...files] : [...matched.slice(0, cut), ...files, ...matched.slice(cut)];
+  // Files sit with the places, before projects, people and actions, and are
+  // ranked with everything else. The server matched them on their name, so a
+  // file always counts as found even when it matched on its folder instead.
+  const cut = commands.findIndex((c) => c.group === "Projects" || c.group === "People" || c.group === "Actions");
+  const all = cut < 0 ? [...commands, ...files] : [...commands.slice(0, cut), ...files, ...commands.slice(cut)];
+  const found = new Set(files);
+  const shown = rank(all.map((c) => (found.has(c) ? { ...c, words: `${c.words ?? ""} ${query}` } : c)), query);
   const pick = Math.min(sel, Math.max(0, shown.length - 1));
 
   useEffect(() => {

@@ -13,6 +13,7 @@ import {
   RunRow,
 } from "../../api";
 import { WhatTheyDid } from "../../did";
+import { DeliverableReader } from "./Deliverables";
 import { fmtWhen, usePoll } from "../../hooks";
 import Markdown from "../../Markdown";
 import {
@@ -118,6 +119,16 @@ const MessageBubble = memo(function MessageBubble(
   );
 });
 
+/** The file a link in a message points at, when it is one of this project's
+    deliverables: the "Deliverable published" line links to
+    `#/projects/<id>/deliverables?open=<key>`, and a message can carry the
+    same under `details/`. */
+function deliverableIn(href: string | null, projectId: string): string | null {
+  const m = href?.match(/^#\/projects\/([^/?#]+)\/(?:details\/)?deliverables\?(.*)$/);
+  if (!m || decodeURIComponent(m[1]) !== projectId) return null;
+  return new URLSearchParams(m[2]).get("open");
+}
+
 /** The chat stays sacred — the only speaking channel. The rail beside it is
     read-only context: what the CEO is doing, what needs a decision, and the
     bets on the table. It adds no new speaking channel, so the asymmetry
@@ -132,6 +143,9 @@ export default function Boardroom({ projectId, dash, org }: {
   const ceoFirst = ceoName.split(" ")[0];
   const ceoTitle = org?.ceo?.role_name ?? "Chief Executive";
   const [channelId, setChannelId] = useState<string | null>(null);
+  // The deliverable opened from a link in the chat, read over the chat.
+  const [reading, setReading] = useState<string | null>(null);
+  const stopReading = useCallback(() => setReading(null), []);
   // A screen that sends you here to ask about something it is showing hands
   // over the sentence, already quoting it, for you to edit or throw away.
   // Router state rather than a query parameter on purpose: the text is long,
@@ -479,7 +493,19 @@ export default function Boardroom({ projectId, dash, org }: {
             </div>
           ) : null}
           <div className="chat-wrap">
-          <div className="chat" ref={chatRef} onScroll={onScroll}>
+          <div className="chat" ref={chatRef} onScroll={onScroll}
+            onClick={(e) => {
+              // A deliverable named in the chat opens over the chat, the way a
+              // file in any chat app does, instead of taking the reader to
+              // another page and losing their place in the conversation.
+              // A modified click is still the browser's: a new tab, a window.
+              if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              const a = (e.target as HTMLElement).closest("a");
+              const key = a ? deliverableIn(a.getAttribute("href"), projectId) : null;
+              if (!key) return;
+              e.preventDefault();
+              setReading(key);
+            }}>
             {/* Older messages load themselves as the reader arrives at them —
                 the sentinel below is what the observer watches. It is a real
                 button so that a keyboard or screen reader gets the same
@@ -682,6 +708,7 @@ export default function Boardroom({ projectId, dash, org }: {
           )}
         </div>
       </div>
+      {reading && <DeliverableReader projectId={projectId} id={reading} onClose={stopReading} />}
     </>
   );
 }
