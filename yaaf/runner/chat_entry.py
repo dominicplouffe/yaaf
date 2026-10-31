@@ -73,9 +73,14 @@ MAX_CLIENT_REBUILDS = 5
 SDK_ENTRY = "sandbox_entry.py"
 CHAT_ENTRY = os.environ.get("YAAF_CHAT_ENTRY") or SDK_ENTRY
 #: Answered turns before a driver's conversation is re-primed from the
-#: boardroom. yaaf's loop compacts nothing, so its transcript would otherwise
-#: grow until a provider refused it; a CLI's session file grows the same way.
+#: boardroom: the backstop for a CLI, whose session grows out of sight.
 TURNS_PER_CONVERSATION = 25
+#: The share of the model's window past which a driver that can say how full
+#: it is (yaaf's loop) is re-primed from the boardroom instead. The
+#: boardroom is the conversation's record, so starting over from it is exact
+#: and free; a summary of a chat is neither. Half the window is left for the
+#: next turn's own work: its fresh state, its tool calls and their output.
+REPRIME_AT = 0.5
 
 
 def _log(text: str) -> None:
@@ -99,6 +104,24 @@ def _boardroom_channel() -> tuple[int, tuple[str, int] | None]:
         if channel.get("kind") == "boardroom":
             return 200, (str(channel["id"]), int(channel.get("unread", 0)))
     return 200, None
+
+
+def _unseen(messages: list[dict], last_seen: str | None) -> list[dict]:
+    """The messages after the last one this session read; all of them when
+    that one has scrolled out of the page."""
+    ids = [m["id"] for m in messages]
+    return messages[ids.index(last_seen) + 1:] if last_seen in ids else messages
+
+
+def _primer(messages: list[dict], state: dict) -> list[dict]:
+    """What a rebuilt conversation is primed with: the boardroom minus every
+    chairman line this session still owes an answer — its backlog, and what
+    arrived since its last read. Those reach the model once, as what the
+    chairman just said. Primed as history too, they arrived under "do not
+    re-answer it" and as the question in the same prompt."""
+    owed = {m["id"] for m in state["backlog"]}
+    owed |= {m["id"] for m in _unseen(messages, state["last_seen"]) if m.get("from_user")}
+    return [m for m in messages if m["id"] not in owed]
 
 
 def _split_backlog(messages: list[dict], unread: int) -> tuple[list[dict], list[dict]]:
@@ -343,7 +366,14 @@ class DriverConversation:
         return kind == "transient" or (kind is None and base._looks_transient(exc))
 
     def spent(self) -> bool:
-        return self.turns >= TURNS_PER_CONVERSATION
+        """Time to start over from the boardroom. Between turns, never a
+        summary: a chat's memory is the boardroom's record, and yaaf's loop
+        summarising one put its oldest question back in front of the model
+        on every compaction. The loop's summary stays for what it is for —
+        one turn's own work outgrowing the window mid-turn."""
+        fullness = self.driver.fullness()
+        return self.turns >= TURNS_PER_CONVERSATION or \
+            (fullness is not None and fullness >= REPRIME_AT)
 
 
 @contextlib.asynccontextmanager
@@ -441,10 +471,7 @@ async def _serve(conversation, channel_id: str, state: dict) -> int | None:
             transient_since = None
             delay = TRANSIENT_BACKOFF_START_S
 
-            seen_ids = [m["id"] for m in messages]
-            start = seen_ids.index(state["last_seen"]) + 1 \
-                if state["last_seen"] in seen_ids else 0
-            fresh = [m for m in messages[start:] if m.get("from_user")]
+            fresh = [m for m in _unseen(messages, state["last_seen"]) if m.get("from_user")]
             if messages:
                 state["last_seen"] = messages[-1]["id"]
             if not fresh:
@@ -518,8 +545,7 @@ async def _serve(conversation, channel_id: str, state: dict) -> int | None:
         # Anything the chairman sent while we were composing is picked up
         # on the next poll — immediately, not next tick.
         if conversation.spent():
-            _log("conversation re-primed from the boardroom after "
-                 f"{TURNS_PER_CONVERSATION} turns")
+            _log("conversation re-primed from the boardroom")
             return None
 
 
@@ -573,7 +599,7 @@ async def main() -> int:
         # turn re-primes with the transcript.
         _, messages = _read_messages(channel_id)
         if messages:
-            state["history"] = messages
+            state["history"] = _primer(messages, state)
         await asyncio.sleep(POLL_S)
 
 

@@ -181,7 +181,10 @@ from the shipped snapshot; `model_prices.context_window`) and, past 80% of it,
 first replaces old tool output with a line saying what it was — the call and
 its pairing stay, since every provider refuses a result without its call —
 then, if that is not enough, has the model summarise the history onto the
-original prompt, billed as the call it is. A provider's own refusal for length
+request being answered (a run's task; in the boardroom, the chairman's latest
+line, never the session's first), billed as the call it is. Between turns a
+conversation is never summarised: past half the window it starts over from
+the boardroom, which is its record. A provider's own refusal for length
 (the wire's `context` kind) triggers the same, so a model with no known
 window is covered too. A history that will not fit even summarised ends the
 run, naming the reason, rather than looping.

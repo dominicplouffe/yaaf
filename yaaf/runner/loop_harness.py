@@ -476,6 +476,13 @@ class LoopDriver:
         #: call's prompt and reply), and the characters added since.
         self.measured = 0
         self.unmeasured_chars = 0
+        #: The words this attempt exists to answer: a run's task, or the
+        #: chairman's latest line in a conversation (chat_entry). A summary
+        #: is written on top of it, so it must be the live request and not
+        #: merely the transcript's first turn. A conversation's first turn is
+        #: its oldest question, and a CEO compacted onto that one answered it
+        #: again on every compaction, whatever the chairman had just asked.
+        self.request = ""
 
     def budget(self, remaining_usd: float) -> None:
         self.max_usd = remaining_usd
@@ -592,6 +599,13 @@ class LoopDriver:
     def _crowded(self) -> bool:
         return bool(self.window) and self._size() > self.window * COMPACT_AT
 
+    def fullness(self) -> float | None:
+        """The share of the model's window the transcript holds, or None
+        where the window is unknown. A conversation reads it between turns
+        (chat_entry), to start over from its own record before this loop
+        would have to summarise one."""
+        return self._size() / self.window if self.window else None
+
     def _elide(self) -> int:
         """Old tool output replaced by a line saying what it was. The calls
         and their pairing stay — every provider refuses a tool call left
@@ -640,7 +654,7 @@ class LoopDriver:
 
     async def _summarise(self, room: float | None):
         """The history replaced by the model's own summary of it, on the
-        original prompt. Billed as the call it is."""
+        request this attempt is answering. Billed as the call it is."""
         max_tokens = SUMMARY_MAX_TOKENS
         if room is not None and self.price is not None and self.price["output"] > 0:
             max_tokens = max(1, min(max_tokens, int(room / self.price["output"] * 1_000_000)))
@@ -673,10 +687,9 @@ class LoopDriver:
         yield self._bill(reply.usage, "compaction")
         if not reply.turn.text.strip():
             raise ContextExhausted("the model returned no summary to compact the history to")
-        first = next((t.text for t in self.transcript if t.role == "user" and t.text), "")
         self.transcript = [Turn("user", text=(
-            f"{first}\n\n---\n[Context compacted: the conversation so far was summarised to fit "
-            f"the model's context window. Your summary of it:]\n\n{reply.turn.text.strip()}\n\n"
+            f"{self.request}\n\n---\n[Context compacted: the conversation so far was summarised "
+            f"to fit the model's context window. Your summary of it:]\n\n{reply.turn.text.strip()}\n\n"
             "Continue the work from here."))]
         self.measured, self.unmeasured_chars = 0, 0
 
@@ -719,10 +732,12 @@ class LoopDriver:
         # of its own.
         if resume is None or not self.transcript:
             self.transcript = [Turn("user", text=prompt)]
+            self.request = prompt
         elif self.transcript[-1].role == "assistant" and not self.transcript[-1].calls:
             self.transcript.append(Turn("user", text=prompt))
             self.unmeasured_chars += len(prompt)
             self.calls = 0
+            self.request = prompt
         yield base.Session(base.RUN_ID)
         specs = [ToolSpec(t.name, t.description, t.input_schema) for t in self.tools.values()]
         spent = 0.0

@@ -208,8 +208,9 @@ class _ScriptedDriver:
     """A driver whose every attempt is one turn of a script, recording the
     prompt and the session it was asked to resume."""
 
-    def __init__(self, base, turns: list[str]):
+    def __init__(self, base, turns: list[str], fullness: float | None = None):
         self.base, self.turns, self.attempts = base, turns, []
+        self._fullness = fullness
 
     async def attempt(self, prompt, resume=None):
         self.attempts.append({"prompt": prompt, "resume": resume})
@@ -220,6 +221,9 @@ class _ScriptedDriver:
 
     def error_kind(self, exc):
         return None
+
+    def fullness(self):
+        return self._fullness
 
 
 def test_a_driver_holds_the_boardroom_one_resumed_attempt_per_turn(monkeypatch, tmp_path):
@@ -258,18 +262,15 @@ def test_a_driver_holds_the_boardroom_one_resumed_attempt_per_turn(monkeypatch, 
         (40, 100, 0.002), (40, 100, 0.002)]
 
 
-def test_yaafs_loop_carries_the_conversation_in_its_transcript(monkeypatch):
-    """The loop resumes nothing on disk: its transcript is the session. A
-    finished reply followed by the chairman's next word is a new turn on the
-    same transcript — not the interrupted call made again."""
-    price = {"input": 0.28, "output": 0.42, "cache_read": 0.028, "cache_write_5m": 0.0,
-             "cache_write_1h": 0.0, "web_search": 0.01}
-    chat_entry = _chat_entry(
-        monkeypatch, entry="openai_compatible_entry.py", YAAF_MODEL="deepseek-chat",
-        YAAF_PRICE=json.dumps(price), DEEPSEEK_API_KEY="sk-test",
-        YAAF_PROVIDER=json.dumps({"name": "deepseek", "protocol": "openai_chat",
-                                  "base_url": "https://api.deepseek.com/v1",
-                                  "key_env": "DEEPSEEK_API_KEY"}))
+PRICE = {"input": 0.28, "output": 0.42, "cache_read": 0.028, "cache_write_5m": 0.0,
+         "cache_write_1h": 0.0, "web_search": 0.01}
+DEEPSEEK = {"name": "deepseek", "protocol": "openai_chat",
+            "base_url": "https://api.deepseek.com/v1", "key_env": "DEEPSEEK_API_KEY"}
+
+
+def _loop_modules(monkeypatch, chat_entry):
+    """yaaf's loop and its wire client, as the image stages them beside the
+    chat entry, with the platform and the toolbox stubbed out."""
     import yaaf.runner.loop_harness as loop_module
 
     monkeypatch.setitem(sys.modules, "loop_harness", importlib.reload(loop_module))
@@ -279,22 +280,37 @@ def test_yaafs_loop_carries_the_conversation_in_its_transcript(monkeypatch):
     monkeypatch.setattr(chat_entry.base, "_call", lambda *a, **k: {"status": 200, "body": {}})
     monkeypatch.setattr(chat_entry.base, "_builtin_tools", lambda: [])
     monkeypatch.setattr(chat_entry.base, "_external_mcp_servers", lambda: {})
+    return sys.modules["loop_harness"], api
+
+
+def _streamed(reply: str, prompt_tokens: int = 100) -> httpx.Response:
+    """One finished reply on the OpenAI chat shape, as DeepSeek streams it."""
+    lines = [{"choices": [{"index": 0, "delta": {"content": reply}}]},
+             {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+             {"choices": [], "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 5}}]
+    body = "".join(f"data: {json.dumps(line)}\n\n" for line in lines) + "data: [DONE]\n\n"
+    return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                          content=body.encode())
+
+
+def test_yaafs_loop_carries_the_conversation_in_its_transcript(monkeypatch):
+    """The loop resumes nothing on disk: its transcript is the session. A
+    finished reply followed by the chairman's next word is a new turn on the
+    same transcript — not the interrupted call made again."""
+    chat_entry = _chat_entry(
+        monkeypatch, entry="openai_compatible_entry.py", YAAF_MODEL="deepseek-chat",
+        YAAF_PRICE=json.dumps(PRICE), DEEPSEEK_API_KEY="sk-test",
+        YAAF_PROVIDER=json.dumps(DEEPSEEK))
+    loop, api = _loop_modules(monkeypatch, chat_entry)
     sent: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         sent.append(json.loads(request.content))
-        reply = ["Two shipped.", "Friday."][len(sent) - 1]
-        lines = [{"choices": [{"index": 0, "delta": {"content": reply}}]},
-                 {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
-                 {"choices": [], "usage": {"prompt_tokens": 100, "completion_tokens": 5}}]
-        body = "".join(f"data: {json.dumps(line)}\n\n" for line in lines) + "data: [DONE]\n\n"
-        return httpx.Response(200, headers={"content-type": "text/event-stream"},
-                              content=body.encode())
+        return _streamed(["Two shipped.", "Friday."][len(sent) - 1])
 
     client = api.WireClient(model="deepseek-chat", spec=chat_entry.base.PROVIDER, effort=None,
                             web_search=False, transport=httpx.MockTransport(handler))
-    conversation = chat_entry.DriverConversation(
-        sys.modules["loop_harness"].LoopDriver(client, "You are the CEO."))
+    conversation = chat_entry.DriverConversation(loop.LoopDriver(client, "You are the CEO."))
 
     async def talk():
         return [await conversation.turn("chan", "How many shipped?"),
@@ -304,6 +320,92 @@ def test_yaafs_loop_carries_the_conversation_in_its_transcript(monkeypatch):
     assert [(m["role"], m["content"]) for m in sent[1]["messages"][1:]] == [
         ("user", "How many shipped?"), ("assistant", "Two shipped."),
         ("user", "And the third?")]
+
+
+# ── a long conversation stays on what the chairman just said ──────────────────
+#
+# Seen live on 10/31: a DeepSeek CEO's session opened on "when was post 2070
+# written?". Each turn re-read ~10k tokens of state, so yaaf's loop filled its
+# window every few turns and summarised — on the transcript's FIRST turn. The
+# chairman asked about the post he had commissioned and was told about 2070,
+# three times in an hour, and one instruction of his was never acted on.
+
+
+def test_a_conversation_compacted_mid_turn_answers_the_latest_words(monkeypatch):
+    """The loop's summary is written on the request being answered — in a
+    conversation the chairman's latest line, never the session's first."""
+    chat_entry = _chat_entry(
+        monkeypatch, entry="openai_compatible_entry.py", YAAF_MODEL="deepseek-chat",
+        YAAF_PRICE=json.dumps(PRICE), DEEPSEEK_API_KEY="sk-test",
+        YAAF_PROVIDER=json.dumps(DEEPSEEK))
+    loop, api = _loop_modules(monkeypatch, chat_entry)
+    monkeypatch.setattr(chat_entry.base, "MODEL_FLAGS", {"context": 1_000})
+    sent: list[dict] = []
+    # The first reply fills the window, so the next turn is summarised before
+    # it is answered: the summary call, then the answer on top of it.
+    script = [("Oct 26.", 900), ("The chairman asked about 2070; now he asks about 2111.", 50),
+              ("2111 is live.", 300)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return _streamed(*script[len(sent) - 1])
+
+    client = api.WireClient(model="deepseek-chat", spec=chat_entry.base.PROVIDER, effort=None,
+                            web_search=False, transport=httpx.MockTransport(handler))
+    conversation = chat_entry.DriverConversation(loop.LoopDriver(client, "You are the CEO."))
+
+    async def talk():
+        first = await conversation.turn("chan", "When was post 2070 written?")
+        assert conversation.spent(), "a conversation this full starts over from the boardroom"
+        return [first, await conversation.turn("chan", "Is the Claude Code post live?")]
+
+    assert asyncio.run(talk()) == ["Oct 26.", "2111 is live."]
+    [answered] = [m["content"] for m in sent[2]["messages"] if m["role"] == "user"]
+    assert answered.startswith("Is the Claude Code post live?")
+    assert "When was post 2070 written?" not in answered
+
+
+def test_a_reprimed_conversation_hears_each_line_once(monkeypatch, tmp_path):
+    """A driver that fills up starts over from the boardroom, primed with
+    the record — its own last reply included — and a line the chairman sent
+    in the gap arrives once, as what he just said: never also in the history
+    it is told not to re-answer."""
+    chat_entry = _chat_entry(monkeypatch, entry="scripted_entry.py")
+    monkeypatch.setattr(chat_entry, "POLL_S", 0)
+    drivers = [_ScriptedDriver(chat_entry.base, ["Two shipped."], fullness=0.9),
+               _ScriptedDriver(chat_entry.base, ["Friday."], fullness=0.1)]
+    made = iter(drivers)
+    monkeypatch.setitem(sys.modules, "scripted_entry", types.SimpleNamespace(
+        make_driver=lambda system, path: next(made)))
+    posted: list[str] = []
+    messages = [{"id": "m0", "from_user": "u1", "body": "How many shipped?"}]
+
+    def call(method, path, payload=None, params=None):
+        if method == "GET" and path == "/agent/messages":
+            return {"status": 401, "body": {}} if len(posted) >= 2 \
+                else {"status": 200, "body": list(messages)}
+        if method == "POST" and path == "/agent/messages":
+            posted.append(payload["body"])
+            messages.append({"id": f"r{len(posted)}", "from_agent": "ceo",
+                             "body": payload["body"]})
+            if len(posted) == 1:
+                messages.append({"id": "m1", "from_user": "u1", "body": "And the third?"})
+        if path == "/agent/channels":
+            return {"status": 200, "body": [{"id": "chan", "kind": "boardroom", "unread": 1}]}
+        return {"status": 200, "body": {}}
+
+    (tmp_path / "system_prompt.txt").write_text("You are the CEO.")
+    monkeypatch.setattr(chat_entry.base, "STAGING", tmp_path)
+    monkeypatch.setattr(chat_entry.base, "_call", call)
+
+    assert asyncio.run(chat_entry.main()) == 0
+    assert posted == ["Two shipped.", "Friday."]
+    [primed] = drivers[1].attempts
+    assert primed["resume"] is None, "a re-prime is a new conversation, not a resumed one"
+    history, said = primed["prompt"].split("The chairman just said:")
+    assert "Chairman: How many shipped?" in history and "You (CEO): Two shipped." in history
+    assert "And the third?" not in history
+    assert said.strip() == "Chairman [m1]: And the third?"
 
 
 # ── the Founder and the grader, on the platform key, whatever its provider ─────
