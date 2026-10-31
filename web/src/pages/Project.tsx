@@ -300,9 +300,20 @@ function pageHead(path: string, ctx: ProjectCtx): { title: string; lede?: string
 
 /** An old address, kept working: everything after the old prefix lands in
     the same place under the new one. */
-function Moved({ to }: { to: string }) {
-  const { "*": rest = "" } = useParams();
+function Moved({ to, deep }: {
+  to: string;
+  /** The old route ends in `/*`, so what follows it is carried along. */
+  deep?: boolean;
+}) {
+  // `*` is only this route's own when the route has a splat. Without one,
+  // useParams hands back the *parent's* — `/projects/:id/*` — whose value is
+  // the old page's own name, so `/deliverables?open=…` went to
+  // `details/deliverables/deliverables`, which Details does not have, and it
+  // fell back to the Roadmap. Every "Deliverable published" link in the chat
+  // and in the daily letter landed there instead of on the file.
+  const { "*": splat = "" } = useParams();
   const { search } = useLocation();
+  const rest = deep ? splat : "";
   return <Navigate to={`${rest ? `${to}/${rest}` : to}${search}`} replace />;
 }
 
@@ -377,13 +388,13 @@ export default function ProjectPage() {
         <Route path="deliverables" element={<Moved to={`${base}/details/deliverables`} />} />
         <Route path="spend" element={<Moved to={`${base}/details/spend`} />} />
         <Route path="reviews" element={<Moved to={`${base}/details/reviews`} />} />
-        <Route path="activity/*" element={<Moved to={`${base}/details/activity`} />} />
+        <Route path="activity/*" element={<Moved to={`${base}/details/activity`} deep />} />
         <Route path="boardroom" element={<Navigate to={`${base}/chat`} replace />} />
         <Route path="progress" element={<Navigate to={`${base}/details/roadmap`} replace />} />
         <Route path="progress/board" element={<Navigate to={`${base}/details/tasks`} replace />} />
         <Route path="progress/proof" element={<Navigate to={`${base}/details/activity/evidence`} replace />} />
         <Route path="progress/review" element={<Navigate to={`${base}/details/reviews`} replace />} />
-        <Route path="records/*" element={<Moved to={`${base}/details/activity`} />} />
+        <Route path="records/*" element={<Moved to={`${base}/details/activity`} deep />} />
         <Route path="plan" element={<Navigate to={`${base}/details/roadmap`} replace />} />
         <Route path="work" element={<Navigate to={`${base}/details/tasks`} replace />} />
         <Route path="board" element={<Navigate to={`${base}/details/tasks`} replace />} />

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { PinButton } from "../../shortcuts";
 import { ApiError, get } from "../../api";
 import Markdown from "../../Markdown";
@@ -593,6 +593,30 @@ interface Loaded {
   shownBytes?: number;
 }
 
+/** A file's bytes, fetched and told apart: drawn by the browser (image, PDF),
+    binary (a NUL byte in the head, whatever the extension claimed), or text. */
+async function readEntry(entry: Entry): Promise<Loaded> {
+  const blob = await fetchBytes(entry.url);
+  const buffer = await blob.arrayBuffer();
+  if (entry.kind === "image" || entry.kind === "pdf") {
+    const mime = entry.kind === "pdf" ? "application/pdf" : IMAGE_MIME[entry.ext];
+    return {
+      entry, kind: entry.kind, blob,
+      objectUrl: URL.createObjectURL(new Blob([buffer], { type: mime })),
+    };
+  }
+  const head = new Uint8Array(buffer.slice(0, 8192));
+  if (head.includes(0)) return { entry, kind: "binary", blob };
+  const shown = Math.min(buffer.byteLength, TEXT_LIMIT);
+  return {
+    entry,
+    kind: entry.kind === "binary" ? "text" : entry.kind,
+    blob,
+    text: new TextDecoder().decode(new Uint8Array(buffer, 0, shown)),
+    shownBytes: shown < buffer.byteLength ? shown : undefined,
+  };
+}
+
 function PreviewBody(
   { loaded, asSource, wrap }: { loaded: Loaded; asSource: boolean; wrap: boolean },
 ) {
@@ -685,7 +709,7 @@ function ImageView({ url, name }: { url?: string; name: string }) {
     still walking that list. Reading twenty files used to be twenty round trips
     through a table you had to find your place in again each time. */
 function Preview({
-  loaded, position, total, busy, onStep, onClose, onDownload, projectId,
+  loaded, position, total, busy, onStep, onClose, onDownload, projectId, onOpenList,
 }: {
   projectId: string;
   loaded: Loaded;
@@ -695,6 +719,8 @@ function Preview({
   onStep: (delta: number) => void;
   onClose: () => void;
   onDownload: () => void;
+  /** Opened from outside the list (the chat): a door to the file in it. */
+  onOpenList?: () => void;
 }) {
   const [asSource, setAsSource] = useState(false);
   const [wrap, setWrap] = useState(false);
@@ -760,13 +786,13 @@ function Preview({
               )}
             </div>
           </div>
-          <div className="reader-nav">
-            <button className="small" onClick={() => onStep(-1)} disabled={total < 2}
-                    aria-label="Previous file">‹</button>
-            <span>{fmtCount(position + 1)} of {fmtCount(total)}</span>
-            <button className="small" onClick={() => onStep(1)} disabled={total < 2}
-                    aria-label="Next file">›</button>
-          </div>
+          {total > 1 && (
+            <div className="reader-nav">
+              <button className="small" onClick={() => onStep(-1)} aria-label="Previous file">‹</button>
+              <span>{fmtCount(position + 1)} of {fmtCount(total)}</span>
+              <button className="small" onClick={() => onStep(1)} aria-label="Next file">›</button>
+            </div>
+          )}
         </div>
         <div className="reader-tools">
           {toggle && loaded.text !== undefined && (
@@ -786,11 +812,14 @@ function Preview({
             </span>
           )}
           <div className="spacer" />
-          <span className="help">← → to walk the list · Esc to close</span>
+          <span className="help">{total > 1 ? "← → to walk the list · Esc to close" : "Esc to close"}</span>
           {/* A file you keep reopening — the model, the running draft — can
               sit in the sidebar under this project, one click from anywhere. */}
           <PinButton projectId={projectId} only label={entry.name.slice(0, 80)}
             to={`details/deliverables?open=${encodeURIComponent(entry.id)}`} />
+          {onOpenList && (
+            <button className="small" onClick={onOpenList}>Open in Deliverables</button>
+          )}
           <button className="small" onClick={onDownload}>↓ Download</button>
           <button className="small" onClick={onClose}>close</button>
         </div>
@@ -799,6 +828,84 @@ function Preview({
         </div>
       </div>
     </div>
+  );
+}
+
+/** One deliverable, opened in place from somewhere that is not this page —
+    the chat's "Deliverable published" line — so reading it does not mean
+    leaving the conversation. The same reader as the list's, without the list
+    to walk; "Open in Deliverables" goes to the file among its neighbours. */
+export function DeliverableReader({ projectId, id, onClose }: {
+  projectId: string;
+  /** A storage key, or a working file's `w:<path>` — whatever `?open=` takes. */
+  id: string;
+  onClose: () => void;
+}) {
+  const navigate = useNavigate();
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    let url: string | undefined;
+    get<{ entry: FileRow }>(
+      `/observe/projects/${projectId}/files/browse/entry?tz=${encodeURIComponent(TZ)}&id=${encodeURIComponent(id)}`,
+    )
+      .then((found) => readEntry(toEntry(found.entry, projectId)))
+      .then((next) => {
+        url = next.objectUrl;
+        if (live) setLoaded(next);
+        else if (url) URL.revokeObjectURL(url);
+      })
+      .catch((e: Error) => {
+        if (live) {
+          setError(e instanceof ApiError && e.status === 404
+            ? "That file is no longer published." : e.message);
+        }
+      });
+    return () => {
+      live = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [projectId, id]);
+
+  // Esc closes while it is still loading, too.
+  useEffect(() => {
+    if (loaded) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [loaded, onClose]);
+
+  const step = useCallback(() => {}, []);
+  if (!loaded) {
+    return (
+      <div className="modal-back" onClick={onClose}>
+        <div className="modal" role="dialog" aria-modal="true" aria-label="Deliverable"
+          onClick={(e) => e.stopPropagation()}>
+          {error ? <div className="error">{error}</div> : <p className="subtitle">Opening…</p>}
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+            <button className="small" onClick={onClose}>close</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <Preview
+      projectId={projectId}
+      loaded={loaded}
+      position={0}
+      total={1}
+      busy={false}
+      onStep={step}
+      onClose={onClose}
+      onDownload={() => download(loaded.blob, loaded.entry.name)}
+      onOpenList={() => {
+        onClose();
+        navigate(`/projects/${projectId}/details/deliverables?open=${encodeURIComponent(id)}`);
+      }}
+    />
   );
 }
 
@@ -1059,31 +1166,12 @@ export default function Deliverables({ projectId }: { projectId: string }) {
     setPreviewError(null);
     setOpening(entry.id);
     try {
-      const blob = await fetchBytes(entry.url);
-      const buffer = await blob.arrayBuffer();
-      if (mine !== ticket.current) return;
-      if (entry.kind === "image" || entry.kind === "pdf") {
-        const mime = entry.kind === "pdf" ? "application/pdf" : IMAGE_MIME[entry.ext];
-        setLoaded({
-          entry, kind: entry.kind, blob,
-          objectUrl: URL.createObjectURL(new Blob([buffer], { type: mime })),
-        });
+      const next = await readEntry(entry);
+      if (mine !== ticket.current) {
+        if (next.objectUrl) URL.revokeObjectURL(next.objectUrl);
         return;
       }
-      // A NUL byte in the head means binary, whatever the extension claimed.
-      const head = new Uint8Array(buffer.slice(0, 8192));
-      if (head.includes(0)) {
-        setLoaded({ entry, kind: "binary", blob });
-        return;
-      }
-      const shown = Math.min(buffer.byteLength, TEXT_LIMIT);
-      setLoaded({
-        entry,
-        kind: entry.kind === "binary" ? "text" : entry.kind,
-        blob,
-        text: new TextDecoder().decode(new Uint8Array(buffer, 0, shown)),
-        shownBytes: shown < buffer.byteLength ? shown : undefined,
-      });
+      setLoaded(next);
     } catch (e) {
       if (mine !== ticket.current) return;
       setPreviewError(`${entry.name}: ${(e as Error).message}`);
