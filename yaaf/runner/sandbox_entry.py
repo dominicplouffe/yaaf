@@ -2448,6 +2448,10 @@ class SdkDriver:
     def budget(self, remaining_usd: float) -> None:
         self.options.max_budget_usd = remaining_usd
 
+    def fullness(self) -> float | None:
+        """Unknown: the CLI under the SDK holds and compacts its own context."""
+        return None
+
     async def attempt(self, prompt: str, resume: str | None = None):
         if resume:
             self.options.resume = resume
@@ -2548,6 +2552,10 @@ class CliDriver:
 
     def budget(self, remaining_usd: float) -> None:
         self.max_usd = remaining_usd
+
+    def fullness(self) -> float | None:
+        """Unknown: a CLI holds and compacts its own session, out of sight."""
+        return None
 
     async def attempt(self, prompt: str, resume: str | None = None):
         self.last_error_result = None

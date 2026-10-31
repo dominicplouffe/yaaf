@@ -911,7 +911,9 @@ What M4 found on the way — each now configured against, with a test:
       attempt per turn resumed from the last (`chat_entry.DriverConversation`):
       a CLI by its session id, yaaf's loop by continuing its transcript when
       the last reply finished. A driver's conversation is re-primed from the
-      boardroom every 25 turns, because the loop compacts nothing
+      boardroom every 25 turns (a CLI's session grows out of sight), and
+      yaaf's loop's as soon as it fills half its model's window: between
+      turns the boardroom is the record, not a summary of it
 - [x] The Founder and the goal grader on any provider, still on the platform
       key and never a project's. The platform credential names its provider
       (and, for a custom server, its address); the Founder's model is held to

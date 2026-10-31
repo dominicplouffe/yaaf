@@ -33,7 +33,9 @@ from yaaf.server.slack.socket import chairman_text
 
 def _chat_entry(monkeypatch):
     """chat_entry as the image lays it out: both entrypoints in one directory,
-    so `sandbox_entry` is importable by bare name."""
+    so `sandbox_entry` is importable by bare name. Reloaded, on the SDK's own
+    entry: a test elsewhere that reloads it onto another harness's driver
+    leaves that driver in the module for whichever test imports it next."""
     import importlib
     import sys
 
@@ -41,10 +43,13 @@ def _chat_entry(monkeypatch):
     monkeypatch.setenv("YAAF_API_TOKEN", "test-token")
     monkeypatch.setenv("YAAF_RUN_ID", "run_test")
     monkeypatch.setenv("YAAF_TOOL_PERMISSIONS", "{}")
+    monkeypatch.delenv("YAAF_CHAT_ENTRY", raising=False)
     import yaaf.runner.sandbox_entry as sandbox_entry_module
 
     sys.modules["sandbox_entry"] = importlib.reload(sandbox_entry_module)
-    return importlib.import_module("yaaf.runner.chat_entry")
+    import yaaf.runner.chat_entry as chat_entry_module
+
+    return importlib.reload(chat_entry_module)
 
 
 def _ceo_id(project: dict) -> str:
