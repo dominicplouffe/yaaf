@@ -165,20 +165,33 @@ into a screenshot.
 
 ## Home — "anything for me, across everything?"
 
-One sentence answers it — how many things need you, across how many projects,
-when the soonest decides itself, and how many runs are in flight — and the page
-then shows the decisions themselves (the first five, each with its button), a
-card per project (status, one sentence on how it is doing, runs in flight,
-spend against the cap, how many things on it need you), and **While you were away**: one line
-per project that moved, from the same briefing your morning mail carries.
+Five seconds, four answers, in this order:
 
-The sentence on each card is the project's one-line status — finished,
-stopped, cannot run, paused, failing (its last three runs died), late, at
-risk, decisions waiting, busy with nothing to show (twenty or more paid runs in
+- **One line** counting each state: how many decisions need you, how many
+  projects are stopped, at risk, on track, idle or delivered.
+- **Needs you**: the decisions themselves, soonest consequence first, each with
+  what happens if you do nothing and its verb on the row (**Approve $75**,
+  **Accept 3 outcomes…**, **Complete & write receipt…**), beside **Since you
+  looked** — one line per project that moved, from the same briefing your
+  morning mail carries.
+- **Projects**, one comparable row each: its state chip, its one-line status,
+  its outcomes as a row of dots (one per requirement, or per bet on an Explore
+  project — verified, in work, waiting on you, not started; outcomes, never
+  tasks), its next date (the promised date and the platform's projection, a
+  bet's kill date or the window's close — never a guessed one; "No date yet"
+  when there is none), and a money meter that draws spent, the plan and the
+  hard stop on one bar.
+
+The sentence on each row is the project's one-line status — finished,
+stopped, cannot run, paused, failing (its last three runs died), finished and
+waiting for your sign-off, late, at risk, decisions waiting, busy with nothing to show (twenty or more paid runs in
 a week, from a project at least a week old, with nothing finished, met,
 published or proven), gone quiet, on track — decided once on the server,
 so the Projects page, the project's Inbox, `yaaf projects`, `yaaf status`
-and Claude's `desk` and `project` say exactly the same thing.
+and Claude's `desk` and `project` say exactly the same thing. The state chip
+beside a project's name, everywhere it appears — Home, Projects, the project
+header and the sidebar switcher — is that same verdict in a word (Needs you · 2,
+Can't run, At risk, On track, Delivered…), not the raw Running/Paused status.
 
 It replaced the Desk as the first screen. The Desk answered "what needs me?"
 very well and nothing else, so a chairman with four healthy projects opened the
@@ -461,16 +474,30 @@ its own absence is clutter. See [project shapes](#project-shapes) below.
 
 <img src="screenshots/cockpit-overview.png" alt="A project's Inbox: the header with its status and a one-line scoreboard, then the three things waiting on the chairman on this project with the selected one opened, and below it the CEO's latest word, what the CEO is watching, the calendar and setup and health">
 
-**The header** says what kind of project this is (its shape, the date it is due,
-how much the CEO decides on its own, your role on it), its name and status, the
-project's one-line status (the same sentence as Home, with a link to the page
-that fixes it when something is wrong), the goal (the full brief one click
-away), and the controls: **Start**, **Pause the team**, **Stop**, and
-**Message** the CEO. Under it, one line keeps score: on track or not, how many
-must-be-true things are true (or bets in play, on an Explore project), how many
-results have been delivered, what this month has cost against the cap, and
-runs today. When the projection lands past the promised date, a banner says
-so in days, with your two levers: cut scope, or move the date.
+**The header** carries the project's name and state chip, its one-line status
+(with a link to the page that fixes it when something is wrong), and one line
+of facts: its shape, the date it promised, how much the CEO decides on its
+own, your role, **Setup · n to go** while setup is unfinished, and **Read the
+brief**. **Message** the CEO is the one button; **Start**, **Pause the
+team…**, **Settings** and **Stop for good…** are behind **⋯**, because they
+are rare and consequential. When the projection lands past the promised date,
+a banner says so in days, with your two levers: cut scope, or move the date.
+
+Under it, in the order you need it:
+
+1. **Inbox** — this project's rows of the one Inbox, with their buttons. With
+   nothing to decide it shrinks to a line.
+2. **Where it stands** — the outcomes against the promise: one axis from the
+   day it started through today and the platform's projection to the promised
+   date, and under it every requirement by stage as a dot (verified, in work,
+   waiting on you, not started), each stage marked settled, in work or waiting
+   on you. Explore projects list their bets and kill dates instead.
+3. **Since you looked · Next · Money** — what changed (from the briefing), the
+   next dated events, and the month's spend on a meter that marks the plan and
+   the hard stop, with what the pace says about the month.
+4. **Latest results**, each with its seal (Verified, Judged, Agent's word). A
+   delivery whose outcomes were verified without a published file says so.
+5. The CEO's last word, what it is **Watching**, and **Setup & health**.
 
 ### Finishing setup
 
@@ -612,18 +639,20 @@ The same conversation is reachable from Slack — see
 
 <img src="screenshots/results.png" alt="Results: each published deliverable with who made it and who checked it — verified by YAAF, read by Juno — and the selected one's evidence: the check, the goal-to-requirement-to-task chain, and what the run that made it did">
 
-One row per published deliverable (its newest version), newest first: who made
-it, and who or what looked at it before it reached you, in the platform's words
-— **verified by YAAF** (the platform ran the check and it passed), **read by**
-a named reviewer (with what they said), **met by judgement** (an observable
-nobody's script can check), or **not checked**. A judgement is never shown as a
-verification. The counts across the top say how much of the shelf is which.
+One row per published deliverable (its newest version), newest first, each
+with a **seal** for how far it can be trusted — three levels, never merged into
+a score: **Verified** (the platform ran the check and it passed), **Judged** (a
+named reviewer read it, or it was met by judgement — an observable no script
+can check), or **Agent's word** (nothing outside the agent checked it). The
+counts across the top say how much of the shelf is which.
 
-Pick a row for its evidence: who made it, every check, what it was **for** —
-the chain from the project's goal through the requirement to the task — what
-it cost to make (and how many of those runs failed), and **What they did to
-make it**. **Open it** reads the file in Details › Deliverables; **Wrong
-because…** sends your reason to the CEO in Chat.
+Pick a row for **Why you can trust it**: every check, platform first; who made
+it and what it cost (and how many of those runs failed); and the requirements
+it serves. A verified result says what verification does not cover — that it
+is what you wanted is still yours to judge. **Open file** reads it in Details ›
+Deliverables; **Wrong because…** sends your reason to the CEO in Chat. A
+delivered project with nothing published says how many outcomes were verified
+and links to where the checks ran.
 
 Drafts and working files are not here. They are in **Details › Deliverables**,
 the full file explorer.
@@ -639,13 +668,18 @@ one you open every day, and Details reopens on the tab you used last.
 
 The page that answers "when will this be done, and how would you know?"
 
-- **The commitment banner.** When the platform's projection lands past the
-  promised date the banner says so in days, new scope freezes for the CEO
-  (existing work continues), and your two levers are right there: cut a
-  requirement, or move the date with a written reason.
-- **The numbers.** Scope, estimated runs, days at the daily run cap, measured
-  pace per week, waste (dead runs, with the worst offender named), and how many
-  runs the remaining budget actually buys.
+- **One sentence first.** Where the promise stands, in words, with its basis:
+  "On course for Dec 3 – 9, promised Dec 11. Projection from the pace of the
+  last 3 weeks and of the last 12 (2 and 4 settled)". With too little settled
+  to measure a pace it says "Too early to project" and gives no date. At risk,
+  past the date, proposed but not signed, delivered — each has its own
+  sentence. When the projection lands past the promised date, new scope freezes
+  for the CEO (existing work continues), and your two levers sit with the
+  sentence: cut a requirement, or move the date with a written reason.
+- **Three facts** in one quiet line under the chart — settled, in work, and
+  what is waiting on you. **More numbers**, folded at the bottom, keeps the
+  rest: the work it should take, the best case, the measured pace, spend that
+  bought nothing, overhead, and what the remaining budget buys.
 - **The burn-up.** Requirements settled true against scope, with the committed
   date and the projected date as marks you can compare at a glance. **Deliver
   projects only** — work that comes round again has no line to burn up, so an
@@ -655,8 +689,10 @@ The page that answers "when will this be done, and how would you know?"
   settled inside one day — the same facts are stated as numbers rather than
   drawn as a line through one point.
 - **Stages and dependencies.** One toggle over the same data: stages in order,
-  or the dependency graph with the server-computed critical path. Work in a
-  stage beyond the open one is refused until the open one settles.
+  or the dependency graph with the server-computed critical path. Each stage
+  says whether it is settled, in work, not started or proposed; work in a stage
+  behind an unsettled one is refused until that one settles, and the stage says
+  so only when it is true.
 - **Each requirement** carries its status, its acceptance test, runs actual
   against estimated, what it has cost, and its failures. Your buttons live per
   row: accept, cut, reopen, restage, reestimate.
@@ -755,15 +791,16 @@ used to be answered by reading two lists with different shapes.
 
 <img src="screenshots/activity.png" alt="Details › Activity › Everything: every run, message and decision newest first, filterable by kind, person and window, each action saying on whose authority it happened, with View run and Export CSV">
 
-**Everything** is the default: one list of every message, run, decision and
-piece of proof, newest first, grouped by day. Filter it by kind — Messages,
-Runs, **Your decisions**, **What the CEO decided**, **By your rules**, Proof —
-by person, and by window (today, 7, 30 or 90 days); the filters live in the
-address, so "Ada's runs this week" is a link. Every action says **on whose
-authority** it happened: your decision, a rule you set (quoting your number —
-"up to 4 teams", "decline after 7 days"), a verb your autonomy setting handed
-the CEO, or what woke a run. **View run** opens that run; **Export CSV**
-downloads the lines you are looking at.
+One row of views. **What happened** is the default — the briefing, because
+"what did I miss?" is what this page is opened with. **Everything** is one list
+of every message, run, decision and piece of proof, newest first, grouped by
+day; **Show** narrows it to **Your decisions**, **What the CEO decided** or
+**By your rules**, beside person and window (today, 7, 30 or 90 days). The
+filters live in the address, so "Ada's runs this week" is a link. Every action
+says **on whose authority** it happened: your decision, a rule you set
+(quoting your number — "up to 4 teams", "decline after 7 days"), a verb your
+autonomy setting handed the CEO, or what woke a run. **View run** opens that
+run; **Export CSV** downloads the lines you are looking at.
 
 The other views ask the same question one subject at a time:
 

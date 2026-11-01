@@ -7,6 +7,17 @@
 | ![Project page today](before/b-project.png) | ![Project Brief](after/brief.png) |
 | ![Home today](before/b-home.png) | ![Home](after/home.png) |
 
+> **Status: built.** Everything below is in the app, and `built/` holds screenshots of the
+> real thing, taken from `seed/seed_demo.py`'s demo: [Home](built/home.png) ·
+> [a project with decisions](built/project-decisions.png) · [a finished project](built/project-finished.png) ·
+> [a spend decision](built/inbox-spend.png) · [scope, accepted in place](built/inbox-scope.png) ·
+> [Roadmap](built/roadmap.png) · [Results](built/results.png) · [Activity](built/activity.png) ·
+> [Projects](built/projects.png) · [phone](built/phone-project.png) · [dark](built/project-dark.png).
+> Where the build differs from the mockups: the project page keeps the name **Inbox** (the
+> proposed rename to "Brief" would collide with the goal, which is already called the brief);
+> approvals state the CEO's recommendation from the case it filed rather than from a new field;
+> and email links open the signed-in Inbox row — they never decide anything by being opened.
+
 **In one line:** YAAF already knows almost everything a chairman needs. The interface shows it in several competing forms. The proposal adds **one state per project** (a server-derived ladder), **one decision card** for every kind, **the path to the promise drawn honestly**, and **a trust seal on every result**. Navigation is kept, and no capability is removed.
 
 **Overall today: 5.0 / 10.** Navigation 7.5 · decision cards 7.0 · trust model 6.5 · interaction 6.0 · visual polish 5.5 · coherence 4.5 · clarity of state 3.5 · economy of words 3.0.

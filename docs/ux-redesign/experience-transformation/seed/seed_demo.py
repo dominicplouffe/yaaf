@@ -19,6 +19,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[4]
 OUT = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/yaaf-demo")
+if (OUT / "yaaf.db").exists():
+    # Seeding twice collides on every slug (409); start from an empty directory.
+    sys.exit(f"{OUT / 'yaaf.db'} already exists — point this at a new, empty directory.")
 OUT.mkdir(parents=True, exist_ok=True)
 os.environ.update({
     "YAAF_DATABASE_URL": f"sqlite:///{OUT}/yaaf.db",
@@ -141,7 +144,10 @@ def main() -> None:
 
     def behave(api, job) -> str:
         summary = crew.dispatch(api, job, scope_project=True, holds=frozenset())
-        if job.context_pack["you"]["kind"] == "ceo" and not filed["done"]:
+        # On the supervised filings project, where nothing answers for the
+        # chairman — so the two decisions stay waiting for a person to see.
+        if (job.context_pack["you"]["kind"] == "ceo" and not filed["done"]
+                and job.context_pack["project"]["name"] == "Read The Filings"):
             filed["done"] = True
             file_sample_decisions(api)
         return summary
