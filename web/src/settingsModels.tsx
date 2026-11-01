@@ -17,6 +17,7 @@ import { forgetModels, ModelSelect, useModels, useProviders } from "./providers"
 import { FIX_LINK, useReadiness } from "./readiness";
 import { fmtAgo } from "./ui";
 import { EmptyState } from "./ui/kit";
+import { Lede, Why } from "./settingsCopy";
 
 interface LineupCellInfo {
   model: string | null; shipped: string | null; source: "install" | "shipped" | null;
@@ -124,10 +125,10 @@ function UpkeepCard({ upkeep, onSaved }: { upkeep: ModelsSettings["upkeep"]; onS
         onChange={(e) => toggle(e.target.checked)} />
       Keep models and prices current
     </label>
-    <p className="help">Once a day: re-read each key&apos;s model list, so a seat on a model the
-      provider retired is named on its project&apos;s health checklist before it fails, and refresh
-      prices that came from the price feed. Prices you typed, and the vendor-checked ones shipped
-      with yaaf, are never touched.</p>
+    <p className="help">Once a day: re-read each key&apos;s model list and refresh feed prices.
+      Prices you typed, and the vendor-checked ones shipped with yaaf, are never touched.</p>
+    <Why>Re-reading the lists means a seat on a model the provider retired is named on its
+      project&apos;s health checklist before it fails.</Why>
     {last ? <div className="upkeep-last">
       <p><b>Last ran {fmtAgo(last.at)}.</b>{" "}
         {keys.length === 0 ? "No key to read." : `Read ${keys.length - failed.length} of ${keys.length} key${keys.length === 1 ? "" : "s"}.`}{" "}
@@ -148,9 +149,8 @@ function UpkeepCard({ upkeep, onSaved }: { upkeep: ModelsSettings["upkeep"]; onS
 function CompareModels({ rows, labelOf }: { rows: CheckRow[] | null; labelOf: (p: string) => string }) {
   if (rows === null) return <div className="card muted">Loading…</div>;
   if (!rows.length) return <EmptyState icon="chart" title="No model has been checked yet.">
-      Run a check from a provider&apos;s card under <Link to="/settings?section=providers">Providers</Link>.
-      It grades each class&apos;s model on short probes and five small agent tasks, and the results line
-      up here side by side — the evidence a lineup is picked from.
+      Run a check from a provider&apos;s card under <Link to="/settings?section=providers">Providers</Link>;
+      the graded results line up here side by side.
     </EmptyState>;
   const probes = (r: CheckRow) => {
     const graded = r.outcomes.filter((o) => o.kind === "probe" && o.ok !== null);
@@ -226,11 +226,12 @@ export function ModelsSection() {
   const others = data.lineups.filter((r) => !connected.has(r.provider));
   return <>
     <h2 style={{ marginTop: 0 }}>Models</h2>
-    <p className="help">A role names a class of model — <b>Frontier</b>, <b>Balanced</b> or{" "}
-      <b>Fast</b> — and the provider a project pays says whose model that is. A provider with
-      nothing set for a class refuses that class&apos;s seats rather than quietly running another
-      vendor&apos;s model. Each connected provider&apos;s lineup is changed on its card under{" "}
-      <Link to="/settings?section=providers">Providers</Link>.</p>
+    <Lede>What each class — <b>Frontier</b>, <b>Balanced</b>, <b>Fast</b> — runs on. Each
+      provider&apos;s lineup is changed on its card under{" "}
+      <Link to="/settings?section=providers">Providers</Link>.</Lede>
+    <Why>A role names a class of model, and the provider a project pays says whose model that
+      is. A provider with nothing set for a class refuses that class&apos;s seats rather than
+      quietly running another vendor&apos;s model.</Why>
     {error && <p className="error" role="alert">{error}</p>}
     {stranded.length > 0 && <div className="notice-box" role="alert">
       <b>That change leaves seats unable to run:</b>
@@ -238,9 +239,10 @@ export function ModelsSection() {
 
     <div className="card">
       <h3 style={{ marginTop: 0 }}>The app&apos;s model</h3>
-      <p className="help">What a seat runs on when neither it nor its role names a model — the
-        role&apos;s charter is the effort, and the app&apos;s model is the default beneath it.
-        Empty goes back to the shipped class, which resolves on the install&apos;s provider.</p>
+      <p className="help">What a seat runs on when neither it nor its role names a model.</p>
+      <Why>The role&apos;s charter is the effort, and the app&apos;s model is the default
+        beneath it. Empty goes back to the shipped class, which resolves on the install&apos;s
+        provider.</Why>
       <div className="hrow" style={{ alignItems: "end", gap: 12 }}>
         <label className="field" style={{ maxWidth: 460, flex: 1 }}>Default model
           <ModelSelect value={appModel} onChange={setAppModel} info={catalog} registry={registry}

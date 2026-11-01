@@ -25,6 +25,7 @@ import {
 } from "../datasource";
 import { TeamSwitches } from "../grants";
 import { CeoPicker, HirePanel, needsOf, roughMonthly } from "../roles";
+import { Why as SharedWhy } from "../settingsCopy";
 import { clip, CredentialValue, SecretInput } from "../ui";
 import type { FounderStatus, PresetCard } from "./StartProject";
 
@@ -84,12 +85,7 @@ export function nameFromGoal(goal: string): string {
     reading four; the paragraphs are all still here, folded beside the line
     they explain. */
 export function Why({ label = "Why?", children }: { label?: string; children: ReactNode }) {
-  return (
-    <details className="np-why">
-      <summary>{label}</summary>
-      <div className="np-why-body">{children}</div>
-    </details>
-  );
+  return <SharedWhy label={label} className="np-why">{children}</SharedWhy>;
 }
 
 /** What each card in a row does, in full — the words the cards used to carry

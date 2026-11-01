@@ -16,6 +16,7 @@ import { fmtWhen } from "./hooks";
 import { useMe } from "./me";
 import { CopyField } from "./ui";
 import { Badge, Btn, Person } from "./ui/kit";
+import { Lede, Why } from "./settingsCopy";
 
 /** A link just made, and who it is for. */
 interface FreshLink {
@@ -123,10 +124,13 @@ function InviteForm({ onInvited }: { onInvited: (link: FreshLink | null, note: s
         They help run this box, too
       </label>
       <p className="help" style={{ marginTop: 0 }}>
-        An admin invites people, holds the platform&apos;s settings and credentials, and can
-        read every project — but decides nothing on a project they do not chair. Most people
-        are not admins: they found their own projects, or are added to someone else&apos;s.
+        An admin holds the box&apos;s settings and credentials and reads every project, but
+        decides nothing on a project they do not chair.
       </p>
+      <Why>
+        An admin also invites people. Most people are not admins: they found their own
+        projects, or are added to someone else&apos;s.
+      </Why>
       {error && <div className="error">{error}</div>}
       <div className="actions" style={{ marginTop: "var(--s2)" }}>
         <Btn kind="primary" type="submit" disabled={!email.trim()} busy={busy}>
@@ -202,12 +206,15 @@ export function People({
 
   return (
     <>
-      <p className="help" style={{ marginTop: 0 }}>
-        Everyone with an account on this box. Inviting somebody makes their account and a
-        one-time link for them to choose a password; adding them to a project is that
-        project&apos;s chairman&apos;s decision, made in the project&apos;s Settings → People.
+      <Lede>
+        Everyone with an account on this box.
         {waiting > 0 && ` ${waiting} ${waiting === 1 ? "person has" : "people have"} not followed their link yet.`}
-      </p>
+      </Lede>
+      <Why>
+        Inviting somebody makes their account and a one-time link for them to choose a
+        password; adding them to a project is that project&apos;s chairman&apos;s decision,
+        made in the project&apos;s Settings → People.
+      </Why>
 
       {link && <LinkBox link={link} onDone={() => setLink(null)} />}
       {note && <div className={note.ok ? "notice-box" : "error"}>{note.text}</div>}

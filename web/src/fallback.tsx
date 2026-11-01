@@ -16,6 +16,7 @@ import type { Credential } from "./llmCredentials";
 import { DEFAULT_PROVIDER, useProviders } from "./providers";
 import { FIX_LINK } from "./readiness";
 import { fmtAgo, fmtSoon } from "./ui";
+import { Why } from "./settingsCopy";
 
 export function breakerSentence(b: BreakerState | null): string | null {
   if (!b) return null;
@@ -137,16 +138,16 @@ export function FallbackCard({ projectId, dash, disabled, onChanged }: {
   const breaker = breakerSentence(view?.breaker ?? null);
   return <div className="fallback" aria-label="Fallback credential">
     <h3>Fallback credential <span className="help">optional</span></h3>
-    <p className="help">If {billingLabel} keeps failing, class seats move here until it recovers;
-      seats pinned to a model wait. It must be another provider&apos;s credential, metered the same
-      way as the billing one, with a model for every class this project&apos;s seats name.</p>
+    <p className="help">If {billingLabel} keeps failing, class seats move here until it recovers.</p>
+    <Why>Seats pinned to a model wait instead. It must be another provider&apos;s credential,
+      metered the same way as the billing one, with a model for every class this
+      project&apos;s seats name.</Why>
     {view?.active && <div className="strip serious" role="status">
       <div className="grow"><b>Failover is on: class seats are running on {named(view.name, labelOf(view.provider))}.</b>
         <div className="sb">{breaker ?? "The breaker moves them back once the billing provider answers again."}</div></div>
     </div>}
     {!view?.active && breaker && <p className="breaker">{breaker}</p>}
-    {!billing ? <p className="help">Attach a billing credential first — a fallback is what the
-      class seats move to when it fails.</p> : <>
+    {!billing ? <p className="help">Attach a billing credential first.</p> : <>
       <div className="fallback-pick">
         <label className="field">Move class seats to
           <FallbackPicker value={pick} disabled={disabled || busy}

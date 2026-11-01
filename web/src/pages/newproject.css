@@ -4,23 +4,9 @@
    choosing between two cards read four. A card now carries its name and one
    line; the paragraph sits under "Why?" beside it, one click away. */
 
-.np-why { margin: var(--s1) 0 0; }
-.np-why > summary {
-  display: inline-block; list-style: none; cursor: pointer;
-  font-size: var(--t-small); color: var(--accent);
-}
-.np-why > summary::-webkit-details-marker { display: none; }
-.np-why[open] > summary { color: var(--muted); }
-.np-why-body {
-  margin-top: var(--s1); max-width: 68ch; line-height: 1.5;
-  font-size: var(--t-small); color: var(--ink-2);
-}
-.np-why-body p { margin: 0 0 var(--s2); }
-.np-why-body p:last-child { margin-bottom: 0; }
-.np-why-body dl { margin: 0; }
-.np-why-body dt { font-weight: 600; color: var(--ink); }
-.np-why-body dd { margin: 0 0 var(--s2); }
-.np-why-body dd em { display: block; color: var(--muted); }
+/* The fold itself is the shared one (settingsCopy's Why); here it is only
+   placed, under the line it explains rather than tucked into a lede. */
+.s-why.np-why { margin: var(--s1) 0 0; }
 
 /* A label and its "Why?" on one line, when there is room. */
 .np-head { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; }
@@ -67,4 +53,4 @@ button.np-card.on { background: rgba(var(--accent-rgb), 0.09); border-color: var
 .startpick.np-two { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); max-width: 720px; }
 .startpick.np-two .startcard { gap: 6px; align-items: flex-start; }
 .startpick + .np-why { margin-top: var(--s2); }
-.startnote > .np-why { display: inline-block; margin: 0 0 0 6px; }
+.startnote > .np-why { display: inline-block; margin: 0; }

@@ -1,0 +1,80 @@
+/* ── the role library: one line per role ─────────────────────────────────
+   The page used to open on thirty-eight cards of reference text — a clipped
+   description, three permission chips and a usage sentence each — so the
+   names, which are what a reader scans for, were a fifth of what was on
+   screen. Now a role is a row: its name, its purpose in one line, and only
+   the facts that set it apart. The role itself opens under its row. */
+
+.rl-lede {
+  color: var(--ink-2); font-size: var(--t-body);
+  margin: var(--s1) 0 var(--s4); max-width: 80ch;
+}
+.rl-why {
+  margin-top: var(--s2); padding: var(--s2) var(--s3);
+  border-left: 2px solid var(--accent); background: var(--surface-2);
+  border-radius: var(--radius-sm); font-size: var(--t-small); color: var(--ink-2);
+}
+.rl-why p { margin: 0; }
+.rl-why p + p { margin-top: var(--s2); }
+
+/* Header and rows share one template so the columns cannot drift apart. */
+.rl-head, .rl-row {
+  display: grid; gap: var(--s3); align-items: baseline;
+  grid-template-columns: minmax(250px, 1.5fr) minmax(0, 2fr) 76px 108px 28px;
+}
+.rl-list {
+  margin-top: var(--s2); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.rl-head {
+  padding: var(--s2) var(--s4); font-size: var(--t-micro); font-weight: 600;
+  color: var(--muted); background: var(--surface-2);
+  border-bottom: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0;
+}
+.rl-group {
+  display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap;
+  margin: 0; padding: var(--s3) var(--s4) var(--s2);
+  font-size: var(--t-small); font-weight: 650; color: var(--ink);
+  border-bottom: 1px solid var(--grid);
+}
+.rl-group .cnt {
+  font-size: var(--t-micro); font-weight: 600; color: var(--ink-2);
+  background: var(--surface-2); border: 1px solid var(--grid);
+  border-radius: 999px; padding: 0 var(--s2);
+}
+.rl-group .rl-line { font-weight: 400; color: var(--muted); font-size: var(--t-micro); }
+section + section .rl-group { border-top: 1px solid var(--border); }
+
+.rl-row {
+  width: 100%; padding: var(--s2) var(--s4); margin: 0;
+  font: inherit; font-size: var(--t-small); font-weight: 400; text-align: left; color: var(--ink);
+  justify-content: stretch; background: transparent; border: 0; border-bottom: 1px solid var(--grid); border-radius: 0;
+  cursor: pointer;
+}
+.rl-row:hover:not(:disabled) { background: var(--hover); border-color: var(--grid); }
+.rl-row.on { background: rgba(var(--accent-rgb), 0.09); }
+.rl-name { display: flex; align-items: baseline; gap: var(--s1) var(--s2); flex-wrap: wrap; min-width: 0; }
+.rl-name b { font-weight: 600; }
+.rl-what {
+  color: var(--ink-2); min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rl-depth { color: var(--ink-2); }
+.rl-use { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; color: var(--ink-2); }
+.rl-ver { color: var(--muted); font-size: var(--t-micro); text-align: right; }
+.rl-dim { color: var(--muted); }
+
+/* The role, opened in place under its row. */
+.rl-open { padding: var(--s3) var(--s4); border-bottom: 1px solid var(--grid); background: var(--surface-2); }
+.rl-open .rl-editor { margin: 0; }
+.rl-editor { margin: var(--s3) 0; scroll-margin-top: var(--s9); }
+
+@media (max-width: 760px) {
+  .rl-head { display: none; }
+  .rl-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--s1); }
+  .rl-name { grid-column: 1; }
+  .rl-ver { grid-column: 2; grid-row: 1; }
+  .rl-what { grid-column: 1 / -1; white-space: normal; }
+  .rl-depth, .rl-use { grid-column: auto; font-size: var(--t-micro); }
+  .rl-open { padding: var(--s2); }
+}

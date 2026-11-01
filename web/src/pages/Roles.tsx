@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { RefObject, useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { get, post, RoleSummary } from "../api";
-import { isClass, modelLabel, useModels } from "../providers";
-import { CATEGORIES, DOMAINS, canDo, depthOf } from "../roles";
-import { clip, downloadCsv, ExportCsv } from "../ui";
+import { modelLabel, ModelsInfo, useModels } from "../providers";
+import { CATEGORIES, DOMAINS, canDo, depthOf, effortWord, needsOf, purposeOf } from "../roles";
+import { downloadCsv, ExportCsv } from "../ui";
+import "./roles-copy.css";
 
 interface RoleDetail {
   slug: string;
@@ -25,13 +26,6 @@ interface RoleDetail {
   // are preserved verbatim on save (the proxy generator reads this dict too).
   tool_permissions: Record<string, unknown>;
   secret_scopes: string[];
-}
-
-
-/** A role's model as a chip says it: "Balanced" for a class — the provider is the
-    project's to decide — and the model's own name for a pinned one. */
-function shortModel(model: string | null): string {
-  return model ? modelLabel(model) : "—";
 }
 
 const EMPTY: RoleDetail = {
@@ -59,9 +53,8 @@ const PERMISSIONS = [
     key: "data_processing",
     label: "Data processing",
     help:
-      "Aggregate data with code instead of by reading it: python3 with pandas and " +
-      "duckdb, over files fetched into the workspace. Grants a shell, like Bash — " +
-      "kept separate so a role's reason for having one is legible.",
+      "Python with pandas and duckdb, to aggregate data rather than read it. " +
+      "Grants a shell, like Bash — kept separate so the reason is legible.",
   },
   {
     key: "bash",
@@ -71,6 +64,304 @@ const PERMISSIONS = [
   { key: "web", label: "Web", help: "Fetch and search the open web." },
 ] as const;
 
+/** The model a role thinks on, as a person says it. The default class is the
+    install's own choice, so it is named as that rather than as a class. */
+function modelWords(model: string | null): string {
+  if (!model || model === "@balanced") return "the app's model";
+  return modelLabel(model);
+}
+
+/** One role as one line: who it is, what it is for, and the few facts that
+    tell it apart from its neighbours. Everything else is the role itself,
+    which opens under the row. */
+function RoleRow({ role, open, onOpen }: {
+  role: RoleSummary; open: boolean; onOpen: (slug: string) => void;
+}) {
+  const depth = depthOf(role.model, role.effort);
+  const behind = role.usage.filter((u) => u.behind ?? u.pinned_version < role.latest_version).length;
+  const projects = new Set(role.usage.map((u) => u.project_name)).size;
+  const teams = role.usage.length;
+  const code = (role.tools ?? []).includes("bash");
+  const openWeb = (role.tools ?? []).includes("egress_unrestricted");
+  return (
+    <button type="button" className={`rl-row${open ? " on" : ""}`} aria-expanded={open}
+      onClick={() => onOpen(role.slug)} title={role.description || undefined}>
+      <span className="rl-name">
+        <b>{role.name}</b>
+        {role.is_ceo_role && <span className="chip accent">CEO seat</span>}
+        {code && <span className="chip" title="Can run shell commands">Code</span>}
+        {/* The one permission whose blast radius is the whole internet reads
+            as a warning, not a chip. */}
+        {openWeb && <span className="chip warn">Open web</span>}
+        {needsOf(role.secret_scopes ?? []).map((n) => (
+          <span className="chip warn" key={n.scope} title={`Needs ${n.words}`}>{n.short}</span>
+        ))}
+      </span>
+      <span className="rl-what">
+        {role.description ? purposeOf(role.description) : <span className="rl-dim">No description yet</span>}
+      </span>
+      <span className="rl-depth"
+        title={`${depth.band}: ${modelWords(role.model)}, ${effortWord(role.effort)} effort`}>
+        {depth.band}
+      </span>
+      <span className="rl-use"
+        title={role.is_ceo_role ? "Chosen when a project starts — every project runs one CEO"
+          : teams ? `Runs ${teams} team${teams === 1 ? "" : "s"} in ${projects} project${projects === 1 ? "" : "s"}`
+            : "Not on any team yet"}>
+        {role.is_ceo_role ? "Per project"
+          : teams ? `${teams} team${teams === 1 ? "" : "s"}` : <span className="rl-dim">—</span>}
+        {behind > 0 && <span className="chip warn">{behind} behind</span>}
+      </span>
+      <span className="rl-ver">v{role.latest_version}</span>
+    </button>
+  );
+}
+
+/** A role, opened: every field it has, editable. Saving makes a new version. */
+function RoleEditor({ editing, setEditing, onSave, onClose, saved, usage, harnesses, catalog, formRef }: {
+  editing: RoleDetail;
+  setEditing: (next: RoleDetail) => void;
+  onSave: (e: React.FormEvent) => void;
+  onClose: () => void;
+  saved: string | null;
+  /** The edit's blast radius: who runs this role, on which version. */
+  usage: RoleSummary["usage"];
+  harnesses: { name: string; label: string }[];
+  catalog: ModelsInfo | null;
+  formRef: RefObject<HTMLFormElement>;
+}) {
+  const perms = editing.tool_permissions ?? {};
+  return (
+    <form className="card rl-editor" onSubmit={onSave} ref={formRef}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <strong style={{ fontSize: "var(--t-body)" }}>
+          {editing.version > 0 ? `${editing.name} — v${editing.version}` : "New role"}
+        </strong>
+        <div className="spacer" />
+        <button type="button" className="small" onClick={onClose}>Close</button>
+      </div>
+
+      <div className="fs" style={{ borderTop: "none", paddingTop: 6 }}>
+        <div className="fs-h">Identity</div>
+        <div className="row">
+          <div>
+            <label className="field">ID — lowercase letters and dashes</label>
+            <input
+              value={editing.slug}
+              disabled={editing.version > 0}
+              pattern="[a-z0-9\-]{2,64}"
+              onChange={(e) => setEditing({ ...editing, slug: e.target.value })}
+              required
+            />
+          </div>
+          <div>
+            <label className="field">Name</label>
+            <input
+              value={editing.name}
+              onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+              required
+            />
+          </div>
+          <div>
+            <label className="field">Kind</label>
+            <select
+              value={editing.is_ceo_role ? "ceo" : "worker"}
+              onChange={(e) => setEditing({ ...editing, is_ceo_role: e.target.value === "ceo" })}
+            >
+              <option value="worker">Team role</option>
+              <option value="ceo">CEO seat</option>
+            </select>
+          </div>
+        </div>
+        {/* Where this role sits on the hiring desk. Changing it refiles the
+            role for everyone immediately — it lives on the role, not the
+            version, so no team goes behind and no prompt moves. */}
+        <div className="row">
+          <div>
+            <label className="field">Category</label>
+            <select
+              value={editing.category ?? ""}
+              onChange={(e) => setEditing({ ...editing, category: e.target.value || null })}
+            >
+              <option value="">Uncategorised</option>
+              {CATEGORIES.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="field">Works on</label>
+            <div className="pill-row" style={{ marginTop: 8 }}>
+              {DOMAINS.map((d) => (
+                <label key={d.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    style={{ width: "auto" }}
+                    checked={(editing.domains ?? []).includes(d.id)}
+                    onChange={() => setEditing({
+                      ...editing,
+                      domains: (editing.domains ?? []).includes(d.id)
+                        ? editing.domains.filter((x) => x !== d.id)
+                        : [...(editing.domains ?? []), d.id],
+                    })}
+                  />
+                  {d.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+        <label className="field">Description — its first sentence is the line in the list</label>
+        <input
+          value={editing.description}
+          onChange={(e) => setEditing({ ...editing, description: e.target.value })}
+          required
+        />
+      </div>
+
+      <div className="fs">
+        <div className="fs-h">Brain</div>
+        <div className="row">
+          <div>
+            <label className="field">Model</label>
+            <p className="help" style={{ margin: 0 }}>
+              {editing.model === "@balanced"
+                ? <>The app&apos;s — set in <Link to="/settings?section=models">Settings → Models</Link>.</>
+                : <>{modelWords(editing.model)}, pinned by this role.</>}
+            </p>
+          </div>
+          <div>
+            <label className="field">Effort</label>
+            <select
+              value={editing.effort}
+              onChange={(e) => setEditing({ ...editing, effort: e.target.value })}
+            >
+              {(catalog?.efforts ?? ["low", "medium", "high", "xhigh", "max"]).map((level) => (
+                <option key={level} value={level}>{effortWord(level)}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="field">Harness</label>
+            <select
+              value={editing.harness ?? ""}
+              onChange={(e) => setEditing({ ...editing, harness: e.target.value || null })}
+            >
+              <option value="">Default — the paying credential&apos;s</option>
+              {harnesses.map((h) => (
+                <option key={h.name} value={h.name}>{h.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <p className="help">
+          The harness changes how a run is driven, never what it may do.
+        </p>
+      </div>
+
+      <div className="fs">
+        <div className="fs-h">Craft</div>
+        <label className="field">System prompt</label>
+        <textarea
+          style={{ minHeight: 220 }}
+          value={editing.system_prompt}
+          onChange={(e) => setEditing({ ...editing, system_prompt: e.target.value })}
+          required
+        />
+      </div>
+
+      <div className="fs">
+        <div className="fs-h">Sandbox walls</div>
+        <label className="field">Tool permissions</label>
+        <div>
+          {PERMISSIONS.map((perm) => {
+            // Bash already includes the shell data processing asks for, so
+            // say so rather than leaving a tick that appears to do nothing.
+            const covered = perm.key === "data_processing" && !!perms["bash"];
+            return (
+              <label key={perm.key} style={{ display: "block", marginBottom: 8, fontWeight: "normal" }}>
+                <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    style={{ width: "auto" }}
+                    checked={!!perms[perm.key] || covered}
+                    disabled={covered}
+                    onChange={(e) =>
+                      setEditing({
+                        ...editing,
+                        tool_permissions: { ...perms, [perm.key]: e.target.checked },
+                      })
+                    }
+                  />
+                  {perm.label}
+                </span>
+                <span className="help" style={{ marginLeft: 22 }}>
+                  {covered ? "already granted by Bash." : perm.help}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        <p className="help" style={{ margin: "4px 0 0" }}>
+          MCP servers belong to each project, not to a role: the project&apos;s Settings → Data sources.
+        </p>
+        <label className="field">Secrets it may receive — comma-separated names</label>
+        <input
+          value={editing.secret_scopes.join(", ")}
+          onChange={(e) =>
+            setEditing({
+              ...editing,
+              secret_scopes: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
+            })
+          }
+        />
+      </div>
+
+      {usage.length > 0 && (
+        <div className="fs">
+          <div className="fs-h">Who feels this edit</div>
+          <table style={{ maxWidth: 560 }}>
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Team</th>
+                <th className="num">Pinned</th>
+              </tr>
+            </thead>
+            <tbody>
+              {usage.map((u) => (
+                <tr key={`${u.project_name}/${u.team_name}`}>
+                  <td>{u.project_name}</td>
+                  <td>{u.team_name}</td>
+                  <td className="num">
+                    v{u.pinned_version}
+                    {(u.behind ?? u.pinned_version < editing.version) && (
+                      <span className="chip warn" style={{ marginLeft: 6 }}>behind</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {saved && <div className="notice-box">{saved}</div>}
+      <div className="actions">
+        <span className="help">
+          {editing.version > 0
+            ? "Running teams keep their version until they adopt this one on their Team page."
+            : "New roles can be hired the moment they're created."}
+        </span>
+        <div className="spacer" />
+        <button className="primary">
+          {editing.version > 0 ? `Save as v${editing.version + 1}` : "Create role"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export default function Roles() {
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [editing, setEditing] = useState<RoleDetail | null>(null);
@@ -78,6 +369,8 @@ export default function Roles() {
   const [query, setQuery] = useState("");
   const [domain, setDomain] = useState("all");
   const [saved, setSaved] = useState<string | null>(null);
+  const [why, setWhy] = useState(false);
+  const [params, setParams] = useSearchParams();
   const formRef = useRef<HTMLFormElement>(null);
 
   // The harnesses a seat may run on, from the registry rather than a list
@@ -93,25 +386,39 @@ export default function Roles() {
       .then(setHarnesses)
       .catch(() => setHarnesses([]));
   }, []);
+  // A person's page links here with ?role=, so "their role" opens on arrival.
+  const linked = params.get("role");
+  useEffect(() => {
+    if (linked && editing?.slug !== linked) void openRole(linked);
+  }, [linked]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (editing) formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [editing?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function openRole(slug: string) {
     setSaved(null);
+    if (editing?.slug === slug) {
+      close();
+      return;
+    }
     try {
       const detail = await get<RoleDetail>(`/admin/roles/${slug}`);
       // Roles never own MCP servers (data sources are per-project); a stale
       // key from imported data must not round-trip into a save refusal.
       delete detail.tool_permissions["mcp_servers"];
-      setEditing(detail);
       // Egress scoping was removed with the allowlist proxy (docs/AUTONOMY.md);
       // stale keys from old role data must not round-trip as false promises.
       delete detail.tool_permissions["egress_allow"];
       delete detail.tool_permissions["egress_ports"];
+      setEditing(detail);
     } catch (e) {
       setError((e as Error).message);
     }
+  }
+
+  function close() {
+    setEditing(null);
+    if (params.has("role")) setParams({}, { replace: true });
   }
 
   async function save(e: React.FormEvent) {
@@ -183,9 +490,14 @@ export default function Roles() {
     );
   }
 
-  const perms = editing?.tool_permissions ?? {};
-  // The edit's blast radius, for the panel inside the editor.
-  const editingUsage = editing ? roles.find((r) => r.slug === editing.slug)?.usage ?? [] : [];
+  const editor = editing && (
+    <RoleEditor
+      editing={editing} setEditing={setEditing} onSave={save} onClose={close} saved={saved}
+      usage={roles.find((r) => r.slug === editing.slug)?.usage ?? []}
+      harnesses={harnesses} catalog={catalog} formRef={formRef}
+    />
+  );
+  const isNew = editing !== null && editing.version === 0;
 
   return (
     <>
@@ -202,18 +514,33 @@ export default function Roles() {
           + New role
         </button>
       </div>
-      <p className="subtitle">
-        Versioned role templates — a role is a craft: its instructions, its brain, and the sandbox
-        walls around it. Saving creates a new version; teams keep the version they pinned until you
-        adopt the newer one (the project's Overview flags the drift and offers “adopt latest
-        role version”).
-      </p>
+      <div className="rl-lede">
+        <span>Every role a project can hire. Edits save as a new version; running teams keep theirs.</span>{" "}
+        <button type="button" className="linkish inline" aria-expanded={why} onClick={() => setWhy(!why)}>
+          {why ? "Hide" : "Why?"}
+        </button>
+        {why && (
+          <div className="rl-why">
+            <p>
+              A role is a craft: its instructions, how deeply it thinks, and the sandbox walls
+              around it. Saving one creates a new version. Teams keep the version they were hired
+              on, so nothing running changes underneath them, until somebody adopts the newer one
+              on that project&apos;s Team page.
+            </p>
+            <p>
+              <b>Depth</b> is the model and the effort in one word: Light, Standard, Thorough or
+              Deepest, cheapest first. <b>Code</b> means the role may run shell commands. Click a
+              role for its full description, system prompt and permissions.
+            </p>
+          </div>
+        )}
+      </div>
       {error && <div className="error">{error}</div>}
 
       <div className="hire-tools">
         <div className="hire-search">
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search roles — name, what they do, or slug"
+            placeholder="Search roles — name or what they do"
             aria-label="Search roles" />
         </div>
         <div className="pills" role="group" aria-label="What a role works on">
@@ -231,6 +558,8 @@ export default function Roles() {
         <ExportCsv onClick={exportLibrary} />
       </div>
 
+      {isNew && editor}
+
       {visible.length === 0 && (
         <p className="help">
           {roles.length === 0
@@ -240,317 +569,29 @@ export default function Roles() {
         </p>
       )}
 
-      {groups.map((group) => (
-      <div key={group.id || group.name}>
-      <h2 className="zone">
-        {group.name}
-        <span className="cnt">{group.rows.length}</span>
-        <span style={{ fontFamily: "inherit", letterSpacing: 0, textTransform: "none",
-          fontWeight: 400 }}>{group.line}</span>
-      </h2>
-      <div className="role-grid">
-        {group.rows.map((role) => {
-          const behind = role.usage.filter((u) => u.behind ?? u.pinned_version < role.latest_version).length;
-          const projects = new Set(role.usage.map((u) => u.project_name)).size;
-          return (
-            <div
-              className="card clickable"
-              key={role.slug}
-              onClick={() => openRole(role.slug)}
-              onKeyDown={(e) => e.key === "Enter" && openRole(role.slug)}
-              tabIndex={0}
-              role="button"
-            >
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                <strong>{role.name}</strong>
-                {role.is_ceo_role && <span className="badge accent">CEO</span>}
-                <div className="spacer" />
-                <span className="chip">v{role.latest_version}</span>
-              </div>
-              <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.5 }}>
-                {role.description ? clip(role.description, 110) : <span className="help">no description yet</span>}
-              </p>
-              <div className="pill-row" style={{ marginTop: 8 }}>
-                <span className="chip accent">{isClass(role.model) && role.model === "@balanced"
-                  ? "the app's model" : shortModel(role.model)}</span>
-                {role.effort && <span className="chip">{role.effort} effort</span>}
-                {role.tools
-                  .filter((tool) => tool !== "egress_unrestricted")
-                  .map((tool) => (
-                    <span key={tool} className="chip">{tool}</span>
-                  ))}
-                {/* Not a tool like the others — the one permission whose blast
-                    radius is the whole internet reads as a warning, not a chip. */}
-                {role.tools.includes("egress_unrestricted") && (
-                  <span className="chip warn">open web</span>
-                )}
-              </div>
-              <div className="help" style={{ marginTop: 8 }}>
-                {role.is_ceo_role ? (
-                  "assigned at project creation — every project runs one CEO"
-                ) : role.usage.length === 0 ? (
-                  "not running on any team yet"
-                ) : (
-                  <>
-                    runs {role.usage.length} team{role.usage.length === 1 ? "" : "s"} in {projects}{" "}
-                    project{projects === 1 ? "" : "s"}
-                    {behind > 0 && (
-                      <>
-                        {" "}· <span className="chip warn">{behind} on older versions</span>
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      </div>
-      ))}
-
-      {editing && (
-        <form className="card" onSubmit={save} ref={formRef} style={{ marginTop: 18 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <strong style={{ fontSize: 15 }}>
-              {editing.version > 0 ? `${editing.name} — v${editing.version}` : "New role"}
-            </strong>
-            <div className="spacer" />
-            <button type="button" className="small" onClick={() => setEditing(null)}>
-              Close
-            </button>
+      {groups.length > 0 && (
+        <div className="rl-list">
+          <div className="rl-head" aria-hidden="true">
+            <span>Role</span><span>What it does</span><span>Depth</span><span>In use</span><span />
           </div>
-
-          <div className="fs" style={{ borderTop: "none", paddingTop: 6 }}>
-            <div className="fs-h">Identity</div>
-            <div className="row">
-              <div>
-                <label className="field">Slug</label>
-                <input
-                  value={editing.slug}
-                  disabled={editing.version > 0}
-                  pattern="[a-z0-9\-]{2,64}"
-                  onChange={(e) => setEditing({ ...editing, slug: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <label className="field">Name</label>
-                <input
-                  value={editing.name}
-                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <label className="field">Kind</label>
-                <select
-                  value={editing.is_ceo_role ? "ceo" : "worker"}
-                  onChange={(e) => setEditing({ ...editing, is_ceo_role: e.target.value === "ceo" })}
-                >
-                  <option value="worker">worker role</option>
-                  <option value="ceo">CEO role</option>
-                </select>
-              </div>
-            </div>
-            {/* Where this role sits on the hiring desk. Changing it refiles the
-                role for everyone immediately — it lives on the role, not the
-                version, so no team goes behind and no prompt moves. */}
-            <div className="row">
-              <div>
-                <label className="field">Aisle — where a chairman finds it when hiring</label>
-                <select
-                  value={editing.category ?? ""}
-                  onChange={(e) => setEditing({
-                    ...editing, category: e.target.value || null })}
-                >
-                  <option value="">Uncategorised — shown at the bottom of the list</option>
-                  {CATEGORIES.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name} — {c.line.toLowerCase()}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="field">Works on — a filter, not a folder</label>
-                <div className="pill-row" style={{ marginTop: 8 }}>
-                  {DOMAINS.map((d) => (
-                    <label key={d.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      <input
-                        type="checkbox"
-                        style={{ width: "auto" }}
-                        checked={(editing.domains ?? []).includes(d.id)}
-                        onChange={() => setEditing({
-                          ...editing,
-                          domains: (editing.domains ?? []).includes(d.id)
-                            ? editing.domains.filter((x) => x !== d.id)
-                            : [...(editing.domains ?? []), d.id],
-                        })}
-                      />
-                      {d.label}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <label className="field">Description (one line, shown in pickers and on the cards above)</label>
-            <input
-              value={editing.description}
-              onChange={(e) => setEditing({ ...editing, description: e.target.value })}
-              required
-            />
-          </div>
-
-          <div className="fs">
-            <div className="fs-h">Brain</div>
-            <div className="row">
-              <div>
-                <label className="field">Model</label>
-                <p className="help" style={{ margin: 0 }}>
-                  The app&apos;s — a role says how hard it thinks (effort); what it thinks on
-                  is the install&apos;s default, changed under{" "}
-                  <Link to="/settings?section=models">Settings → Models</Link>.
-                </p>
-              </div>
-              <div>
-                <label className="field">Effort</label>
-                <select
-                  value={editing.effort}
-                  onChange={(e) => setEditing({ ...editing, effort: e.target.value })}
-                >
-                  {(catalog?.efforts ?? ["low", "medium", "high", "xhigh", "max"]).map((level) => (
-                    <option key={level}>{level}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="field">Harness</label>
-                <select
-                  value={editing.harness ?? ""}
-                  onChange={(e) => setEditing({ ...editing, harness: e.target.value || null })}
-                >
-                  <option value="">Default — whatever the paying credential runs on</option>
-                  {harnesses.map((h) => (
-                    <option key={h.name} value={h.name}>{h.label}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <p className="help">
-              The effort is how hard the model thinks — every role&apos;s charter keeps it.
-              The harness is what drives the model in the sandbox. It changes how a run is
-              driven, never what it may do — every rule is the server&apos;s, on every harness.
-            </p>
-          </div>
-
-          <div className="fs">
-            <div className="fs-h">Craft</div>
-            <label className="field">System prompt — the role's craft and discipline</label>
-            <textarea
-              style={{ minHeight: 220 }}
-              value={editing.system_prompt}
-              onChange={(e) => setEditing({ ...editing, system_prompt: e.target.value })}
-              required
-            />
-          </div>
-
-          <div className="fs">
-            <div className="fs-h">Sandbox walls</div>
-            <label className="field">Tool permissions</label>
-            <div>
-              {PERMISSIONS.map((perm) => {
-                // Bash already includes the shell data processing asks for, so
-                // say so rather than leaving a tick that appears to do nothing.
-                const covered = perm.key === "data_processing" && !!perms["bash"];
+          {groups.map((group) => (
+            <section key={group.id || group.name} aria-label={group.name}>
+              <h2 className="rl-group">
+                {group.name}<span className="cnt">{group.rows.length}</span>
+                <span className="rl-line">{group.line}</span>
+              </h2>
+              {group.rows.map((role) => {
+                const open = !isNew && editing?.slug === role.slug;
                 return (
-                  <label
-                    key={perm.key}
-                    style={{ display: "block", marginBottom: 8, fontWeight: "normal" }}
-                  >
-                    <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      <input
-                        type="checkbox"
-                        style={{ width: "auto" }}
-                        checked={!!perms[perm.key] || covered}
-                        disabled={covered}
-                        onChange={(e) =>
-                          setEditing({
-                            ...editing,
-                            tool_permissions: { ...perms, [perm.key]: e.target.checked },
-                          })
-                        }
-                      />
-                      {perm.label}
-                    </span>
-                    <span className="help" style={{ marginLeft: 22 }}>
-                      {covered ? "already granted by Bash." : perm.help}
-                    </span>
-                  </label>
+                  <div key={role.slug}>
+                    <RoleRow role={role} open={open} onOpen={openRole} />
+                    {open && <div className="rl-open">{editor}</div>}
+                  </div>
                 );
               })}
-            </div>
-            <p className="help" style={{ margin: "4px 0 0" }}>
-              Looking for MCP servers? Data sources live on each project (Settings → Data
-              sources) and are assigned to roles there — one form wires the URL, secrets and
-              grants together. Roles never carry their own servers.
-            </p>
-            <label className="field">Secret scopes (comma-separated names this role may receive)</label>
-            <input
-              value={editing.secret_scopes.join(", ")}
-              onChange={(e) =>
-                setEditing({
-                  ...editing,
-                  secret_scopes: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
-                })
-              }
-            />
-          </div>
-
-          {editingUsage.length > 0 && (
-            <div className="fs">
-              <div className="fs-h">Where it runs — who feels this edit</div>
-              <table style={{ maxWidth: 560 }}>
-                <thead>
-                  <tr>
-                    <th>Project</th>
-                    <th>Team</th>
-                    <th className="num">Pinned</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {editingUsage.map((u) => (
-                    <tr key={`${u.project_name}/${u.team_name}`}>
-                      <td>{u.project_name}</td>
-                      <td>{u.team_name}</td>
-                      <td className="num">
-                        v{u.pinned_version}
-                        {(u.behind ?? u.pinned_version < editing.version) && (
-                          <span className="chip warn" style={{ marginLeft: 6 }}>behind</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className="help" style={{ margin: "6px 0 0" }}>
-                Saving never touches these teams — each keeps its pinned version until you adopt
-                the new one from that project's Overview.
-              </p>
-            </div>
-          )}
-
-          {saved && <div className="notice-box">{saved}</div>}
-          <div className="actions">
-            <span className="help">
-              {editing.version > 0
-                ? "Saving creates a new version; nothing changes for running teams until adopted."
-                : "New roles are available to teams the moment they're created."}
-            </span>
-            <div className="spacer" />
-            <button className="primary">
-              {editing.version > 0 ? `Save as v${editing.version + 1}` : "Create role"}
-            </button>
-          </div>
-        </form>
+            </section>
+          ))}
+        </div>
       )}
     </>
   );

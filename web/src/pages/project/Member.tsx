@@ -6,7 +6,8 @@ import { WhatTheyDid } from "../../did";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { CredentialPicker } from "../../llmCredentials";
 import { firstName, ProjectCtx } from "../../projectCtx";
-import { isClass, ModelSelect, providerOf, resolveRef, useModels, useProviders } from "../../providers";
+import { isClass, modelLabel, ModelSelect, providerOf, resolveRef, useModels, useProviders } from "../../providers";
+import { effortWord } from "../../roles";
 import { clip, fmtAgo, SecretInput } from "../../ui";
 import { Avatar, plainStatus } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
@@ -253,7 +254,7 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
           primary={billing} providersShown={paid.length ? paid : undefined}
           unpaidShown={paid.length ? registry.map((p) => p.name).filter((n) => !paid.includes(n)) : undefined}
           qualified={paid.length > 1} disabled={busy}
-          empty={`The role's — ${role?.model && !isClass(role.model) ? role.model : "the app's model"}`} />
+          empty={`The role's — ${role?.model && !isClass(role.model) ? modelLabel(role.model) : "the app's model"}`} />
       </label>
       {unpaidProvider && (
         <div className="seat-door">
@@ -306,15 +307,15 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
       )}
       <label className="field">Effort
         <select value={effort} disabled={busy} onChange={(e) => setEffort(e.target.value)}>
-          <option value="">The role&apos;s — {role?.effort ?? "the default"}</option>
+          <option value="">The role&apos;s — {role?.effort ? effortWord(role.effort) : "the default"}</option>
           {(check?.efforts ?? catalog?.efforts ?? ["low", "medium", "high", "xhigh", "max"]).map((level) => (
-            <option key={level} value={level}>{level}</option>
+            <option key={level} value={level}>{effortWord(level)}</option>
           ))}
         </select>
       </label>
       {check && model && check.efforts.length < (catalog?.efforts?.length ?? 5) && (
-        <p className="help">{model} takes {check.efforts.join(" or ")}
-          {effort ? <> — {name} will run at <b>{effort}</b>.</> : "."}</p>
+        <p className="help">{modelLabel(model)} takes {check.efforts.map(effortWord).join(" or ")}
+          {effort ? <> — {name} will run at <b>{effortWord(effort)}</b>.</> : "."}</p>
       )}
       <label className="field">Harness
         <select value={harness} disabled={busy} onChange={(e) => setHarness(e.target.value)}>
@@ -328,10 +329,7 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
           <ul>{blocking.map((p) => <li key={p.text}>{p.text}</li>)}</ul>
         </div>
       )}
-      <p className="help">
-        Only {name} changes; the rest of the team stays on the role. A run in flight
-        finishes on what it has — the change takes effect from {name}&apos;s next run.
-      </p>
+      <p className="help">Only {name} changes, from their next run.</p>
       <div className="reason-acts">
         <button className="small primary" onClick={save}
           disabled={busy || blocking.length > 0 || (!!unpaidProvider && !pick)
@@ -390,6 +388,9 @@ export default function Member({ ctx }: { ctx: ProjectCtx }) {
     ? (ctx.org?.teams ?? []).filter((x) => x.running).map((x) => x.agents.find((a) => a.id === x.lead_agent_id)?.name ?? x.name)
     : seat.lead && team ? team.agents.filter((a) => a.id !== seat.id && a.status !== "stood_down").map((a) => a.name) : [];
   const where = seat.ceo ? "Runs the project" : seat.lead ? `Leads ${seat.team}` : `On ${seat.team}`;
+  const roleSlug = seat.ceo ? ctx.org?.ceo?.role_slug : team?.role_slug;
+  const roleName = seat.ceo ? (ctx.org?.ceo?.role_name ?? "Chief Executive")
+    : `${team?.role_name ?? seat.title}${team?.role_version ? ` v${team.role_version}` : ""}`;
 
   return (
     <>
@@ -458,7 +459,7 @@ export default function Member({ ctx }: { ctx: ProjectCtx }) {
 
           <section className="card">
             <h2 className="eyebrow-h">Next</h2>
-            {next.length === 0 ? <p className="help">Nothing else in hand. {ceo} hands out the next piece of work.</p> : (
+            {next.length === 0 ? <p className="help">Nothing else in hand.</p> : (
               <ul className="drawer-list">
                 {next.slice(0, 6).map((x) => (
                   <li key={x.id}>
@@ -511,8 +512,9 @@ export default function Member({ ctx }: { ctx: ProjectCtx }) {
             <h2 className="eyebrow-h">How {seat.name} works</h2>
             <dl className="kv">
               <dt>Role</dt>
-              <dd>{seat.ceo ? (ctx.org?.ceo?.role_name ?? "Chief Executive")
-                : `${team?.role_name ?? seat.title}${team?.role_version ? ` v${team.role_version}` : ""}`}
+              <dd>{roleSlug
+                ? <Link to={`/roles?role=${encodeURIComponent(roleSlug)}`}>{roleName}</Link>
+                : roleName}
                 {team && team.role_latest_version && team.role_version && team.role_latest_version > team.role_version
                   ? ` · v${team.role_latest_version} available` : ""}</dd>
               {work?.model && (
@@ -520,7 +522,7 @@ export default function Member({ ctx }: { ctx: ProjectCtx }) {
                   <dt>Model</dt>
                   <dd>{work.model}{work.provider
                     ? ` · ${registry.find((p) => p.name === work.provider)?.label ?? work.provider}`
-                    : ""}{work.effort ? ` · ${work.effort} effort` : ""}
+                    : ""}{work.effort ? ` · ${effortWord(work.effort)} effort` : ""}
                     {work.overrides && Object.values(work.overrides).some(Boolean) && (
                       <span className="help"> · set for {seat.name}, not the role</span>
                     )}
@@ -535,16 +537,12 @@ export default function Member({ ctx }: { ctx: ProjectCtx }) {
                   <dd>{fmtUsd(work.month_usd ?? 0)}{work.month_share ? ` · ${Math.round(work.month_share * 100)}% of the project` : ""}</dd>
                 </>
               )}
-              <dt>Talks to you</dt>
-              <dd>{seat.ceo ? "Yes — in the chat." : `No. You reach ${seat.name} through ${ceo}.`}</dd>
               {live && (
                 <>
                   <dt>Wakes</dt>
                   <dd>{live.wakes_last_hour} of {live.wake_cap} wakes used this hour</dd>
                 </>
               )}
-              <dt>Its role definition</dt>
-              <dd><Link to="/roles">Open the role library →</Link></dd>
             </dl>
           </section>
 

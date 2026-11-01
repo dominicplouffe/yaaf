@@ -104,8 +104,8 @@ function AddMember({ projectId, onAdded }: { projectId: string; onAdded: (said: 
         </div>
       </div>
       <p className="help">
-        They need an account on this box first. If they do not have one, whoever runs the box
-        invites them from Settings → People.
+        They need an account on this box first — whoever runs it invites them from Settings →
+        People.
       </p>
       {error && <div className="error">{error}</div>}
     </form>
@@ -158,10 +158,9 @@ function HandTheChair({
     <>
       <h3>Hand the chair to somebody else</h3>
       {breakGlass && (
-        <p className="help" style={{ marginTop: 0 }}>
-          You are seeing this because you run the box, not because you chair this project.
-          It is the way out for a project whose chairman has left or cannot be reached — use
-          it for that, and nothing else. It is recorded under your name.
+        <p className="help" style={{ marginTop: 0, color: "var(--warning)" }}>
+          You see this because you run the box. Use it only when the chairman has left or
+          cannot be reached — it is recorded under your name.
         </p>
       )}
       <div className="row" style={{ alignItems: "flex-end" }}>

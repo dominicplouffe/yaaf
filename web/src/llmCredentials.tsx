@@ -21,6 +21,7 @@ import { del, get, post, put } from "./api";
 import { CredentialForm, SavedCredential } from "./credentialForm";
 import { DEFAULT_PROVIDER, useProviders } from "./providers";
 import { ConfirmModal, fmtAgo, fmtSoon } from "./ui";
+import { Lede, Why } from "./settingsCopy";
 
 export type { ProviderInfo } from "./providers";
 export { providers, useProviders } from "./providers";
@@ -315,11 +316,11 @@ export function LlmCredentials({ onChanged, onAdd, title = "LLM credentials", no
     <div className="llm-header">
       <div>
         <h2>{title}</h2>
-        <p className="help">What projects pay their model calls with — one per provider a
-          project&apos;s seats run on. Values are encrypted at rest and
-          never shown back — rotate one rather than reading it. A credential a project ever
-          named cannot be deleted; <b>hide</b> it instead and it leaves every menu without
-          leaving the record.</p>
+        <p className="help">What projects pay their model calls with. Values are never shown
+          back — rotate one rather than reading it.</p>
+        <Why>One per provider a project&apos;s seats run on. Values are encrypted at rest. A
+          credential a project ever named cannot be deleted; <b>hide</b> it instead and it
+          leaves every menu without leaving the record.</Why>
       </div>
       <button type="button" className={onAdd ? "" : "primary"} disabled={busy || editing !== null}
               onClick={() => onAdd ? onAdd() : edit("new")}>Add credential</button>
@@ -1019,13 +1020,15 @@ export function PlanMeter({ credentialId, mode, title = "Subscription plan", met
         {check}
       </div>
       <p className="help" style={{ marginBottom: 0 }}>
-        Anthropic's own meter for this subscription — the same numbers as <code>/usage</code> in
-        Claude Code. The SDK reports them on every agent run, so the meter moves as this
-        credential is used; <strong>Check now</strong> asks Anthropic directly, which is how to
-        get a number on a credential that has gone quiet, and it says what came back either
-        way. Every project on it draws from the same windows. Shown here, not enforced here:
-        the monthly cap is yaaf's separate limit.
+        Anthropic&apos;s own meter for this subscription, shared by every project on it. Shown
+        here, not enforced: the monthly cap is yaaf&apos;s separate limit.
       </p>
+      <Why>
+        The same numbers as <code>/usage</code> in Claude Code. The SDK reports them on every
+        agent run, so the meter moves as this credential is used; <strong>Check now</strong> asks
+        Anthropic directly, which is how to get a number on a credential that has gone quiet,
+        and it says what came back either way.
+      </Why>
     </div>
   );
 }
@@ -1258,17 +1261,20 @@ export function ModelPrices() {
 
   return <section className="card" aria-label="Model prices">
     <h2 style={{ marginTop: 0 }}>Model prices</h2>
-    <p className="help">USD per million tokens. A seat on a harness that meters its own runs
-      — yaaf&apos;s loop on any provider&apos;s API, or a CLI yaaf prices — needs its model
-      priced here or in the shipped list, or it is refused. yaaf ships only the prices it
-      could check against the vendor&apos;s own list; import the rest from the price feed
-      below, or type them. Your price wins over the shipped one. Name a model the list does
-      not know with its provider first: <code>openrouter/qwen/qwen3-coder</code>,{" "}
-      <code>groq/llama-4-maverick</code>. OpenRouter states each call&apos;s cost, so its
-      models need no price at all; a local server&apos;s price is usually zero.</p>
-    <p className="help"><b>Context window</b> is how many tokens the model reads at once. yaaf&apos;s
-      own loop compacts a seat&apos;s history before it would overflow; without a figure it
-      waits for the provider to refuse a call for length, which costs that call.</p>
+    <Lede>USD per million tokens. A seat whose model has no price here or in the shipped list
+      is refused.</Lede>
+    <Why>
+      <p>That applies to a seat on a harness that meters its own runs — yaaf&apos;s loop on any
+        provider&apos;s API, or a CLI yaaf prices. yaaf ships only the prices it could check
+        against the vendor&apos;s own list; import the rest from the price feed below, or type
+        them. Your price wins over the shipped one. Name a model the list does not know with its
+        provider first: <code>openrouter/qwen/qwen3-coder</code>,{" "}
+        <code>groq/llama-4-maverick</code>. OpenRouter states each call&apos;s cost, so its
+        models need no price at all; a local server&apos;s price is usually zero.</p>
+      <p><b>Context window</b> is how many tokens the model reads at once. yaaf&apos;s own loop
+        compacts a seat&apos;s history before it would overflow; without a figure it waits for
+        the provider to refuse a call for length, which costs that call.</p>
+    </Why>
     {error && <p className="error" role="alert">{error}</p>}
     {note && <p className="notice-box" role="status">{note}</p>}
     <ImportPrices onApplied={reload} />
@@ -1317,9 +1323,9 @@ export function ModelPrices() {
               onChange={(e) => setDraft({ ...draft, context_window: e.target.value })} /></label>
         </div>
         {windowBad && <p className="help warn">A context window is a whole number of tokens, 1,000 or more.</p>}
-        <p className="help">A changed price becomes the install&apos;s own, typed by hand. A
-          changed context window alone leaves the price as it was. Clear the window box to go
-          back to the imported or shipped figure.</p>
+        <p className="help">Clear the window box to go back to the imported or shipped figure.</p>
+        <Why>A changed price becomes the install&apos;s own, typed by hand. A changed context
+          window alone leaves the price as it was.</Why>
         <div className="actions"><button className="primary"
           disabled={!draft.model.trim() || draft.input === "" || draft.output === "" || windowBad}>
           Save price</button>
@@ -1484,12 +1490,14 @@ export function ProviderCredentials({ projectId, disabled = false, fallbackId = 
 
   return <div aria-label="Other providers">
     <h3>Other providers</h3>
-    <p className="help">A seat pinned to another provider&apos;s model — or to a class of
-      another provider, like <code>openai/@fast</code> — pays with that provider&apos;s
-      credential, whatever unit it bills in. Its runs count against the same cap, in the
-      billing credential&apos;s unit — a subscription&apos;s runs on a dollar budget at their
-      catalog price, an API key&apos;s runs on a token budget by their tokens, and their real
-      dollars on the spend screens either way.</p>
+    <p className="help">Seats on another provider&apos;s model pay with that provider&apos;s
+      credential, against this project&apos;s same cap.</p>
+    <Why>A seat pinned to another provider&apos;s model — or to a class of another provider,
+      like <code>openai/@fast</code> — pays with that provider&apos;s credential, whatever unit
+      it bills in. Its runs count against the same cap, in the billing credential&apos;s unit —
+      a subscription&apos;s runs on a dollar budget at their catalog price, an API key&apos;s
+      runs on a token budget by their tokens, and their real dollars on the spend screens
+      either way.</Why>
     {error && <p className="error" role="alert">{error}</p>}
     {others.length === 0 ? <p className="muted">No other provider is paid on this project.</p>
       : <ul>{others.map((h) => <li key={h.provider}>

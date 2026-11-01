@@ -26,6 +26,7 @@ import { FIX_LINK, IssueList, ProviderReadiness, StatusBadge, useReadiness } fro
 import { ConfirmModal, fmtAgo } from "./ui";
 import { EmptyState } from "./ui/kit";
 import { Icon } from "./ui/Icon";
+import { Why } from "./settingsCopy";
 
 const CRED = "/admin/settings/llm-credentials";
 
@@ -73,10 +74,10 @@ export function ProvidersSection({ onChanged }: { onChanged?: () => void }) {
     <div className="llm-header">
       <div>
         <h2>Providers</h2>
-        <p className="help">Who sells the tokens your projects run on. A role names a class —
-          Frontier, Balanced or Fast — and the provider a project pays says whose model that is.
-          Each card below says whether that provider can run seats and, where it cannot, what
-          fixes it. Keys are encrypted at rest and never shown back.</p>
+        <p className="help">Who sells the tokens your projects run on. Each card says whether
+          it can run seats, and what fixes it.</p>
+        <Why>A role names a class — Frontier, Balanced or Fast — and the provider a project
+          pays says whose model that is. Keys are encrypted at rest and never shown back.</Why>
       </div>
       <button type="button" className="primary" onClick={openConnect}>Connect a provider</button>
     </div>
@@ -87,16 +88,16 @@ export function ProvidersSection({ onChanged }: { onChanged?: () => void }) {
       <ul>{stranded.map((line) => <li key={line}>{line}</li>)}</ul></div>}
     {otherDefault && <div className="strip" style={{ marginBottom: 14 }}>
       <div className="grow"><b>The default provider, {defaultLabel}, has no key here.</b>
-        <div className="sb">A project that pays nobody yet, and the Founder before it has a key,
-          resolve their classes on the default. Make one of yours the default from its card.</div></div>
+        <div className="sb">Make one of yours the default from its card.</div>
+        <Why>A project that pays nobody yet, and the Founder before it has a key, resolve their
+          classes on the default.</Why></div>
     </div>}
 
     {!data && !error && <div className="card muted">Loading…</div>}
     {data && providers.length === 0 && <EmptyState icon="plus" title="No provider is connected yet."
         foot={<button type="button" className="primary" onClick={openConnect}>Connect a provider</button>}>
-        Projects need one to run: pick who sells the tokens — Anthropic, OpenAI, DeepSeek, a cloud,
-        or a model server on your own network — paste its key, and yaaf tests it and tells you
-        what else, if anything, stands between it and a running project.
+        Projects need one to run. Paste a key — Anthropic, OpenAI, DeepSeek, a cloud, or a model
+        server on your network — and yaaf tests it.
       </EmptyState>}
 
     {providers.map((p) => <ProviderCard key={p.provider} p={p} creds={creds} registry={registry}
@@ -107,8 +108,8 @@ export function ProvidersSection({ onChanged }: { onChanged?: () => void }) {
       on these cards. They are on the hidden shelf below, one press from coming back.</p>}
 
     {creds.length > 0 && <details className="all-creds" open={params.has("show") || undefined}>
-      <summary><b>LLM credentials</b> — every key in one list, hidden ones included: rename,
-        rotate, hide in bulk, restore</summary>
+      <summary><b>LLM credentials</b> — every key, hidden ones included: rename, rotate, hide,
+        restore</summary>
       <LlmCredentials title="Every credential" onAdd={openConnect} onChanged={refresh} nonce={nonce} />
     </details>}
 

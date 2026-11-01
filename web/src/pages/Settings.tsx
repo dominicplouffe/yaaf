@@ -32,6 +32,7 @@ import {
 import { providerStatus, Readiness, READINESS } from "../readiness";
 import { ModelsSection } from "../settingsModels";
 import { SecretInput } from "../ui";
+import { Lede, splitLead, Why } from "../settingsCopy";
 
 interface PlatformSettings {
   configured: boolean;
@@ -172,11 +173,13 @@ function ModelCard({
   }
 
   const sellerLabel = sellers.find((p) => p.name === settings.provider)?.label ?? settings.provider;
+  // The server's note says what the key is for, then why it is safe; the
+  // first leads and the second folds.
+  const [noteLead, noteRest] = splitLead(settings.note ?? "");
   return (
     <div className="card">
-      <p className="help" style={{ marginTop: 0 }}>
-        {settings.note}
-      </p>
+      <Lede>{noteLead}</Lede>
+      <Why>{noteRest}</Why>
       <p className="help">
         {settings.configured && settings.source?.source === "llm_credential" ? (
           <>
@@ -194,8 +197,7 @@ function ModelCard({
         ) : (
           <>
             <span className="badge warn">not set</span> the Founder cannot run. Everything
-            else works: the New Project form, the fire drill, and every project&apos;s own
-            agents, which pay with their own keys.
+            else works — projects pay with their own keys.
           </>
         )}
       </p>
@@ -225,12 +227,12 @@ function ModelCard({
       <KeyInput kind={kind} value={value} onChange={setValue} disabled={busy}
         placeholder={seller?.local ? "Leave blank — it takes no key" : undefined} />
       <KeyHelp provider={seller} kind={kind} />
-      <p className="help">
+      <Why>
         The Founder runs on this provider&apos;s own API — or, for a Claude subscription, on
         the Claude Code CLI — with the model below. Unless you name one, that is the
         provider&apos;s Frontier model. Pasting a key where another kind belongs is refused
         here rather than failing on your first message.
-      </p>
+      </Why>
 
       <div className="actions">
         <button
@@ -347,12 +349,12 @@ function SlackCard({
 
   return (
     <div className="card">
-      <p className="help" style={{ marginTop: 0 }}>
-        One workspace, every project. Store the tokens here and a new project needs
-        nothing but its channels — which yaaf creates for you and names back. A project
-        can still override any of this field by field in its own Settings, and switch
-        Slack off entirely without unwiring anyone else.
-      </p>
+      <Lede>One Slack workspace for every project; each project needs only its channels.</Lede>
+      <Why>
+        Store the tokens here and a new project needs nothing but its channels — which yaaf
+        creates for you and names back. A project can still override any of this field by
+        field in its own Settings, and switch Slack off entirely without unwiring anyone else.
+      </Why>
       <p className="help">
         {connected ? (
           <>
@@ -422,11 +424,13 @@ function SlackCard({
       <p className="help">
         Rooms are named <code>{`${prefix.trim() || "{project slug}"}-boardroom`}</code>,{" "}
         <code>{`${prefix.trim() || "{project slug}"}-leadership`}</code> and one per team.
-        A blank prefix uses each project&apos;s slug, which is the only name guaranteed
-        not to collide between two projects.
-        {visibility === "private" && " Private rooms are invisible until somebody is "
-          + "invited — yaaf invites your Slack member ID as it creates each one, so set it above."}
+        {visibility === "private" && " Private rooms are invisible until you are invited — "
+          + "set your member ID above so yaaf can invite you."}
       </p>
+      <Why>
+        A blank prefix uses each project&apos;s slug, which is the only name guaranteed not to
+        collide between two projects. yaaf invites your Slack member ID as it creates each room.
+      </Why>
 
       <label className="field" style={{ display: "flex", gap: 6, alignItems: "center" }}>
         <input type="checkbox" checked={autoCreate} disabled={busy}
@@ -435,14 +439,17 @@ function SlackCard({
         Create a new project&apos;s boardroom automatically
       </label>
       <p className="help">
+        The boardroom is where you talk to the CEO. Other rooms wait for &ldquo;Create missing
+        channels&rdquo; in each project.
+      </p>
+      <Why>
         On, creating a project makes its <b>boardroom</b> on the spot and tells you the
-        name — the one room every project has, and the one you talk to the CEO in. Off, it
-        makes nothing. Either way leadership and the team rooms wait behind
+        name. Off, it makes nothing. Either way leadership and the team rooms wait behind
         &ldquo;Create missing channels&rdquo; in the project&apos;s own Settings →
         Integrations → Slack, so a new project never costs your workspace half a dozen
         channels nobody has spoken in yet. Nothing is ever created twice: a name Slack
         already holds is adopted, not duplicated.
-      </p>
+      </Why>
 
       <div className="actions">
         <button
@@ -504,13 +511,12 @@ function SlackCard({
         )}
       </div>
       <Flash note={note} />
-      <p className="help">
-        To chat from Slack: in the Slack app, enable <b>Socket Mode</b> (Settings → Socket
-        Mode), create an app-level token with <code>connections:write</code>, paste it
-        above, and subscribe the bot to <code>message.channels</code>. Your messages in a
-        project&apos;s mapped boardroom reach its CEO instantly and the replies mirror
-        back — no public URL, no tunnel.
-      </p>
+      <Why label="Chatting from Slack">
+        In the Slack app, enable <b>Socket Mode</b> (Settings → Socket Mode), create an
+        app-level token with <code>connections:write</code>, paste it above, and subscribe the
+        bot to <code>message.channels</code>. Your messages in a project&apos;s mapped boardroom
+        reach its CEO instantly and the replies mirror back — no public URL, no tunnel.
+      </Why>
     </div>
   );
 }
@@ -548,11 +554,12 @@ function WebSearchSection({ reload: reloadRail }: { reload: () => void }) {
   const sameBackend = current?.backend === backend;
   return <>
     <h2 style={{ marginTop: 0 }}>Web search</h2>
-    <p className="help">A role granted the web is promised search. Claude, GPT and Gemini
-      search on their own APIs; most other providers — and the OpenCode CLI — do not, and a
-      web role on one of them is refused until this install has a search backend of its own.
-      Every query is billed into the run at the price below, under its cap, and the key never
-      reaches an agent&apos;s shell.</p>
+    <Lede>Web search for roles on providers that cannot search on their own. Each query is
+      billed into the run at the price below.</Lede>
+    <Why>A role granted the web is promised search. Claude, GPT and Gemini search on their own
+      APIs; most other providers — and the OpenCode CLI — do not, and a web role on one of them
+      is refused until this install has a search backend of its own. Queries count under the
+      run&apos;s cap, and the key never reaches an agent&apos;s shell.</Why>
     <div className="card">
       <p className="help" style={{ marginTop: 0 }}>{current
         ? <><span className="badge good">configured</span> {current.label}, ${current.price_usd} a query.</>
@@ -722,20 +729,12 @@ export default function Settings() {
     <>
       <h1>Settings</h1>
       <p className="subtitle">
-        {admin ? (
-          <>
-            What is true above every project. A project&apos;s own rules — its budget, its
-            constitution, who it hires, who may decide on it — live in that project, because
-            they bind that project. The credentials and connections every project draws on,
-            and the people who may sign in at all, live here.
-          </>
-        ) : (
-          <>
-            Your own account. A project&apos;s rules — its budget, its constitution, who may
-            decide on it — live in that project&apos;s own Settings. The box&apos;s settings
-            belong to whoever runs it.
-          </>
-        )}
+        {/* A project's own rules — its budget, its constitution, who it hires,
+            who may decide on it — live in that project, because they bind that
+            project. This page holds what every project draws on. */}
+        {admin
+          ? "What every project draws on: providers, models, connections and people. Each project's own rules live in that project."
+          : "Your own account. A project's rules live in that project's own Settings."}
       </p>
       {error && platform && <div className="error">{error}</div>}
       <div className="settings-lay">
