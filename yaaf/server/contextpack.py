@@ -1636,6 +1636,10 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                        "not_done or dropped, with a note — and `done` against a "
                        "requirement the platform holds open is refused."
                        if (review.numbers.get("prior") or {}).get("plan") else "")
+                    + (" Write for the chairman in plain English: every sentence under "
+                       f"{plain.MAX_SENTENCE_WORDS} words, and `done` — the paragraph he reads "
+                       f"first — under {plain.MAX_MESSAGE_WORDS} words. The platform refuses "
+                       "longer.")
                 ),
             }
             # He said something back on the meeting. The thread rides along

@@ -772,7 +772,8 @@ async def t_review_narrative(args):
     "resolve on Explore. `ask`: {\"kind\": \"proceed\"|\"change\", \"levers\": "
     "[{\"kind\": cut|add|reword|move_date|raise_budget|accept_slip, \"detail\"}], "
     "\"why\"} — proceed means nothing needs him; change names the levers you want pulled "
-    "and why. The chairman reads this at the meeting, and " + FOR_HIM + ". His decisions "
+    "and why. The chairman reads this at the meeting, and " + FOR_HIM + ". Every sentence "
+    "under 30 words, and `done` under 150 words; the platform refuses longer. His decisions "
     "come back to you as notices with his reasons, and your `next` list is on the record "
     "for the next meeting.",
     _schema({"done": str, "variance": dict, "next": list, "goal_effect": str, "ask": dict},

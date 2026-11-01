@@ -918,3 +918,26 @@ def test_a_daily_operate_rhythm_keeps_the_interval(client):
     run_review_tick(project)
     with db_session() as session:
         assert session.query(Review).filter_by(project_id=project["id"]).count() == 1
+
+
+def test_the_report_is_held_to_the_boardroom_s_plain_english(client):
+    """#88 held the old filing to the boardroom's measure — no sentence over
+    30 words, the paragraph he reads first under 150. The report is read the
+    same way, so it is measured the same way, field by field."""
+    from tests.selftest_invariants.test_plain_to_chairman import REVIEW_RECOMMENDED
+
+    project, token, key = _scoped(client, "plain-report")
+    body = _report(key)
+    body["done"] = REVIEW_RECOMMENDED   # 119 words, with a 40-word sentence
+    refused = client.post("/agent/review_report", json=body, headers=bearer(token))
+    assert refused.status_code == 422, refused.text
+    assert "In `done`: A 40-word sentence" in refused.json()["error"]
+
+    body = _report(key)
+    body["variance"]["largest_cause"] = (
+        "The Google Ads account was suspended on Oct 29 for a landing-page policy flag "
+        "and nine runs died retrying the appeal before the platform stopped them which "
+        "moved the projection from Oct 31 to Nov 2 on those nine runs alone.")
+    refused = client.post("/agent/review_report", json=body, headers=bearer(token))
+    assert refused.status_code == 422
+    assert "In `variance.largest_cause`" in refused.json()["error"]

@@ -82,7 +82,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import asks as ask_lib
-from yaaf.server import briefing, metrics, policy, staffing
+from yaaf.server import briefing, metrics, plain, policy, staffing
 from yaaf.server.notify import (
     Attention,
     boardroom_line,
@@ -1552,7 +1552,10 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
         "SINGLE largest cause by name, and what you recommend he cut or move. "
         "This wake may spend the governance reserve — the narrative is why the "
         "reserve exists. The platform's numbers are in your pack; do not restate "
-        "them, explain them.",
+        "them, explain them. "
+        f"Write both fields for the chairman in plain English: every sentence under "
+        f"{plain.MAX_SENTENCE_WORDS} words, and `recommended` — the paragraph he reads "
+        f"first — under {plain.MAX_MESSAGE_WORDS} words. The platform refuses longer.",
     )
     log.info("opened review #%s for %s", number, project.slug)
     return review

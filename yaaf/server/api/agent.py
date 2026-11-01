@@ -2156,6 +2156,12 @@ def file_review_narrative(
             "with the chairman now — his decisions arrive as notices.",
             status_code=409,
         )
+    # He reads both: `recommended` is the paragraph the Review tab leads with,
+    # so it is held to a boardroom message's limits; the narrative is the
+    # reasoning behind a fold, so it may run longer but not in run-on
+    # sentences. Same measure as the boardroom (`yaaf.server.plain`).
+    policy.check_plain_parts({"narrative": body.narrative})
+    policy.check_plain_message("recommended", body.recommended)
     review.narrative = body.narrative.strip()
     review.recommended = (body.recommended or "").strip() or None
     review.narrative_run_id = ctx.run.id
@@ -2393,6 +2399,21 @@ def file_review_report(
             status_code=422,
         )
     _check_last_plan(review, body)
+    # He reads every part of this cold. `done` is the paragraph the screen
+    # leads with, so it is held to a boardroom message's limits; the rest may
+    # run longer but not in run-on sentences — the same measure as the
+    # boardroom (`yaaf.server.plain`), carried over with the old filing's.
+    policy.check_plain_message("done", body.done)
+    policy.check_plain_parts({
+        "variance.what": body.variance.what,
+        "variance.largest_cause": body.variance.largest_cause,
+        "goal_effect": body.goal_effect,
+        "ask.why": body.ask.why,
+        **{f"next[{i}].what": item.what for i, item in enumerate(body.next)},
+        **{f"ask.levers[{i}].detail": lever.detail
+           for i, lever in enumerate(body.ask.levers)},
+        **{f"last_plan[{i}].note": o.note for i, o in enumerate(body.last_plan)},
+    })
 
     report = body.model_dump(mode="json")
     report["next"] = [

@@ -171,3 +171,49 @@ def test_a_question_to_him_is_measured_too(client):
     assert "In `body`: A 112-word sentence" in response.json()["error"]
     ask["body"] = "Should I publish Tuesday's post on Monday instead?"
     assert client.post("/agent/asks", json=ask, headers=bearer(token)).status_code == 200
+
+
+# ── the review he takes ─────────────────────────────────────────────────────────
+
+#: Verbatim from review #1's "What your CEO says it will do": 119 words, under
+#: the total, but with a 40-word and a 39-word sentence.
+REVIEW_RECOMMENDED = (
+    "Cut no scope: every open item is a channel test, and we have no proof from any "
+    "channel yet. Move the finish-line promise from today to the platform's own "
+    "projection of 2 November, and treat 7 November — the first day the cold send may "
+    "legally and sensibly go out — as the date that actually matters for a first "
+    "customer. If the Google Ads account turns out to be blocked this morning, I would "
+    "leave its remaining budget unspent rather than chase another workaround, and put "
+    "the effort into the 7 November send and the 9 November newsletter slot. I would "
+    "also stop adding seats: the work left is execution, and eight of our twelve seats "
+    "are stood down already."
+)
+
+REVIEW_PLAIN = (
+    "Keep all the work. None of our channels has shown results yet, so there is nothing "
+    "to cut. Move the finish date from today to 2 November. The date that matters is 7 "
+    "November, the first day the cold emails can go out. If Google Ads is blocked this "
+    "morning, I will leave its budget unspent. I will hire no one else."
+)
+
+
+def test_a_review_recommendation_is_held_to_a_boardroom_message(client):
+    from tests.selftest_invariants.test_reviews import ceo_token, deliver_project, open_review
+
+    project = deliver_project(client, slug="plain-review")
+    open_review(project)
+    token = ceo_token(project)
+    narrative = "Pace fell because the ad account was blocked for three days. Nothing else moved."
+    refused = client.post("/agent/review_narrative", headers=bearer(token), json={
+        "narrative": narrative, "recommended": REVIEW_RECOMMENDED})
+    assert refused.status_code == 422
+    assert "In `recommended`: A 40-word sentence" in refused.json()["error"]
+
+    long_why = client.post("/agent/review_narrative", headers=bearer(token), json={
+        "narrative": COLD.split("\n\n")[0], "recommended": REVIEW_PLAIN})
+    assert long_why.status_code == 422
+    assert "In `narrative`: A 112-word sentence" in long_why.json()["error"]
+
+    filed = client.post("/agent/review_narrative", headers=bearer(token), json={
+        "narrative": narrative, "recommended": REVIEW_PLAIN})
+    assert filed.status_code == 200, filed.text
