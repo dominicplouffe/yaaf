@@ -1605,22 +1605,72 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                                  Review.status == ReviewStatus.OPEN)
         ).scalar_one_or_none()
         if review is not None:
+            serves = (
+                "a live bet, by id" if project.mode == ProjectMode.EXPLORE
+                else "an open requirement, by key"
+                + (", or `cycle`" if project.mode == ProjectMode.OPERATE else "")
+            )
             pack["review"] = {
                 "number": review.number,
                 "opened_at": review.opened_at.isoformat(),
                 "numbers": review.numbers,
+                # What was done, from the record. The platform composed it at
+                # open; the CEO explains it and is told not to restate it.
+                "record": review.record,
                 "narrative_filed": review.narrative is not None,
                 "note": (
                     "The meeting is with the chairman now; his decisions arrive "
                     "as notices." if review.narrative is not None else
-                    "File your variance narrative with review_narrative: what "
-                    "moved against the plan, the SINGLE largest cause by name, "
-                    "and what you recommend cutting or moving. Explain the "
-                    "numbers above — do not restate them. Every sentence under "
-                    f"{plain.MAX_SENTENCE_WORDS} words, and `recommended` under "
-                    f"{plain.MAX_MESSAGE_WORDS} words; the platform refuses longer."
+                    "File your status report with review_report. `record` above "
+                    "is what was done — do not restate it, explain it: `done` is "
+                    "what the period bought the goal; `variance` is what moved "
+                    "against the plan and its SINGLE largest cause, named by what "
+                    "it is; `next` is what you will do next period, each item "
+                    f"serving {serves}, with a date; `goal_effect` is one sentence "
+                    "on how that moves the goal; `ask` is `proceed` if nothing "
+                    "needs him, or `change` naming the levers you want pulled and "
+                    "why. Every section is required."
+                    + (" `numbers.prior.plan` is what you said you would do last "
+                       "meeting with the platform's mark beside each item: "
+                       "`last_plan` gives one line per item — done, partly, "
+                       "not_done or dropped, with a note — and `done` against a "
+                       "requirement the platform holds open is refused."
+                       if (review.numbers.get("prior") or {}).get("plan") else "")
+                    + (" Write for the chairman in plain English: every sentence under "
+                       f"{plain.MAX_SENTENCE_WORDS} words, and `done` — the paragraph he reads "
+                       f"first — under {plain.MAX_MESSAGE_WORDS} words. The platform refuses "
+                       "longer.")
                 ),
             }
+            # He said something back on the meeting. The thread rides along
+            # with who said what, and how many of your answers this meeting
+            # may still take on the reserve.
+            from yaaf.server.dispatcher import review_thread_state
+
+            thread = review_thread_state(session, project, review)
+            if thread is not None:
+                left = max(cons.review_replies - thread["ceo_replies"], 0)
+                pack["review"]["thread"] = {
+                    "thread_id": thread["thread_id"],
+                    "channel_id": thread["channel_id"],
+                    "messages": [
+                        {"from": "you" if m.sender_agent_id else "chairman",
+                         "body": m.body, "at": m.created_at.isoformat()}
+                        for m in thread["messages"]
+                    ],
+                    "reserve_replies_left": left,
+                    "note": (
+                        ("The chairman's last word on this meeting is unanswered. "
+                         if thread["unanswered"] else "")
+                        + "Answer on the meeting itself: message_post with this "
+                        "channel_id and thread_id. THREE SENTENCES, as always. "
+                        + (f"{left} more answer(s) on this meeting may spend the "
+                           "governance reserve; after that an answer waits for an "
+                           "ordinary wake." if left else
+                           "This meeting's reserve answers are spent; further "
+                           "answers wait for an ordinary wake.")
+                    ),
+                }
 
         # The promise, if one exists. The projection and status are read-only
         # facts here — the enforcement (scope freeze) lives in policy, and the

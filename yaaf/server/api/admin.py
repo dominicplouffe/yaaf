@@ -5689,6 +5689,38 @@ def reword_requirement(
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
+def _lever_effect_basis(session: Session, project: Project) -> dict:
+    """What a lever can visibly move: the projected finish, the open scope,
+    and the monthly cap. Read before and after the pull, so the decision
+    carries what it changed on the record and not only what was pressed."""
+    from yaaf.core.constitution import effective
+    from yaaf.server import budget as budget_lib
+    from yaaf.server.velocity import commitment_projection
+
+    cons = effective(session, project.id)
+    projected = None
+    if policy.live_commitment(session, project.id) is not None:
+        projection = commitment_projection(session, project, cons)
+        projected = (projection["projected_done_at"].date().isoformat()
+                     if projection.get("known") else None)
+    cap, unit = budget_lib.budget_of(project, cons)
+    open_scope = len([r for r in policy.scope_requirements(session, project.id)
+                      if r.status in policy.OPEN_REQUIREMENT_STATUSES])
+    return {"projected": projected, "open": open_scope, "cap": cap, "unit": unit}
+
+
+def _lever_effect(before: dict, after: dict) -> str | None:
+    parts: list[str] = []
+    if before["projected"] != after["projected"]:
+        parts.append(f"projected finish {before['projected'] or '—'} → "
+                     f"{after['projected'] or '—'}")
+    if before["open"] != after["open"]:
+        parts.append(f"{before['open']} → {after['open']} requirements open")
+    if before["cap"] != after["cap"]:
+        parts.append(f"monthly cap {before['cap']:,.0f} → {after['cap']:,.0f} {after['unit']}")
+    return "; ".join(parts) or None
+
+
 class ReviewLeverIn(BaseModel):
     kind: str = Field(pattern="^(cut|add|reword|move_date|raise_budget|accept_slip)$")
     reason: str = Field(min_length=5, max_length=4000)
@@ -5730,6 +5762,7 @@ def pull_review_lever(
                    "the place for new decisions.",
         )
     project = _get_project(session, review.project_id)
+    before = _lever_effect_basis(session, project)
 
     if body.kind == "cut":
         _lever_needs(body, "requirement_id")
@@ -5782,9 +5815,12 @@ def pull_review_lever(
             "frozen. This is him choosing lateness over churn — deliver.",
         )
 
+    session.flush()
+    effect = _lever_effect(before, _lever_effect_basis(session, project))
     review.decisions = [*(review.decisions or []),
                         {"kind": body.kind, "reason": body.reason,
-                         "detail": detail, "at": utcnow().isoformat()}]
+                         "detail": detail, "effect": effect,
+                         "at": utcnow().isoformat()}]
     _audit(session, project.id, "review.lever", "review", review.id,
            {"number": review.number, "kind": body.kind, "detail": detail})
     return {"review": review.number, "recorded": detail,
@@ -5819,6 +5855,50 @@ def close_review(
             "decisions": decisions}
 
 
+class ReviewSay(BaseModel):
+    body: str = Field(min_length=1, max_length=20_000)
+
+
+@router.post("/reviews/{review_id}/say", dependencies=[authority.STEER])
+def say_on_review(review_id: str, body: ReviewSay, session: Session = Depends(db)) -> dict:
+    """Say something back on the open meeting. It is a boardroom message —
+    the same room, the same CEO wake — kept in one thread per meeting so the
+    meeting's record is a thread and not the whole room, and so the reserve
+    replies it may spend have an edge. The CEO answers in the thread; up to
+    `review_replies` of its answers ride the governance reserve."""
+    review = session.get(Review, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="unknown review")
+    if review.status != ReviewStatus.OPEN:
+        raise HTTPException(
+            status_code=409,
+            detail=f"review #{review.number} is {review.status}; say it in the boardroom, "
+                   "or at the next meeting.",
+        )
+    project = _get_project(session, review.project_id)
+    channel = session.execute(
+        select(Channel).where(Channel.project_id == project.id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalar_one()
+    message = Message(
+        id=ids.new_id(ids.MESSAGE),
+        project_id=project.id,
+        channel_id=channel.id,
+        sender_user_id=_decider(project),
+        thread_id=review.thread_id,
+        body=body.body,
+        created_at=utcnow(),
+    )
+    session.add(message)
+    if review.thread_id is None:
+        review.thread_id = message.id
+    notify(session, WAKE_CHANNEL, project.id)
+    unread.mark_boardroom_read(session, project, message.created_at)
+    _audit(session, project.id, "review.say", "review", review.id,
+           {"number": review.number, "message_id": message.id})
+    return {"id": message.id, "thread_id": review.thread_id}
+
+
 def finish_review(session: Session, project: Project, review: Review, *,
                   by_user_id: str | None, note: str = "") -> list:
     """Close the meeting and tell the CEO what it decided. One implementation
@@ -5851,7 +5931,9 @@ def finish_review(session: Session, project: Project, review: Review, *,
         session, project.id, NoticeKind.GOAL_CHANGED,
         f"Review #{review.number} is closed. Decisions: {summary}."
         + (f" His closing note: {note[:500]}" if note else "")
-        + " Each will be shown at the next review beside what it bought.",
+        + " Each will be shown at the next review beside what it bought."
+        + (" Your next-period list is on the record; the next meeting opens "
+           "with it, marked item by item." if review.report else ""),
     )
     return decisions
 

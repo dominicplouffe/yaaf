@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Status Meeting</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="A mockup of yaaf's standing review rebuilt as a status meeting: what was done, what it bought, what went wrong, what is next, and the ask — numbers last.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Instrument+Serif&display=swap">
+<style>
+/* Layout: the project's tab strip, then one reading column (max 860px) that runs
+   top to bottom in the order a status meeting is held, with a margin-note rail
+   that appears when "Design notes" is on. Tokens are yaaf's own from
+   web/src/styles.css, so this is the same product, re-ordered. */
+:root {
+  --font: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  --t-micro: 12px; --t-small: 13px; --t-body: 15px; --t-lead: 16px;
+  --t-h3: 17px; --t-h2: 20px; --t-h1: 28px; --t-stat: 30px;
+  --radius: 10px; --radius-sm: 7px;
+  color-scheme: dark;
+  --page: #141312; --surface: #1c1b19; --surface-2: #232120; --sunken: #121110;
+  --ink: #f5f3ee; --ink-2: #b5b1a6; --muted: #9d998e;
+  --border: #2e2c28; --border-strong: #413e38;
+  --accent: #8ca0f0; --accent-rgb: 140, 160, 240; --on-accent: #14161f;
+  --good: #4fc48c; --good-rgb: 79, 196, 140;
+  --warning: #e0ac36; --warning-rgb: 224, 172, 54;
+  --critical: #f0736b; --critical-rgb: 240, 115, 107;
+  --note: #f2c94c; --note-ink: #1a1917;
+  --hover: rgba(255,255,255,0.035);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --page: #faf9f5; --surface: #ffffff; --surface-2: #f7f5ef; --sunken: #f2f0ea;
+    --ink: #1a1917; --ink-2: #56534b; --muted: #666258;
+    --border: #e5e2d9; --border-strong: #d0ccc0;
+    --accent: #3355cc; --accent-rgb: 51, 85, 204; --on-accent: #ffffff;
+    --good: #12704a; --good-rgb: 18, 112, 74;
+    --warning: #8a5a00; --warning-rgb: 138, 90, 0;
+    --critical: #b3261e; --critical-rgb: 179, 38, 30;
+    --note: #ffe27a; --note-ink: #1a1917;
+    --hover: rgba(26,25,23,0.035);
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page: #faf9f5; --surface: #ffffff; --surface-2: #f7f5ef; --sunken: #f2f0ea;
+  --ink: #1a1917; --ink-2: #56534b; --muted: #666258;
+  --border: #e5e2d9; --border-strong: #d0ccc0;
+  --accent: #3355cc; --accent-rgb: 51, 85, 204; --on-accent: #ffffff;
+  --good: #12704a; --good-rgb: 18, 112, 74;
+  --warning: #8a5a00; --warning-rgb: 138, 90, 0;
+  --critical: #b3261e; --critical-rgb: 179, 38, 30;
+  --note: #ffe27a; --note-ink: #1a1917;
+  --hover: rgba(26,25,23,0.035);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--page); color: var(--ink);
+  font: 400 var(--t-body)/1.5 var(--font);
+  padding-block: 0 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+a { color: var(--accent); }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+h1 { font: 400 var(--t-h1)/1.15 var(--font-display); }
+h2 { font: 600 var(--t-h3)/1.3 var(--font); }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.small { font-size: var(--t-small); }
+.micro { font-size: var(--t-micro); }
+.label { font-size: var(--t-micro); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+.mono { font-family: var(--mono); font-size: var(--t-small); }
+.num { font-variant-numeric: tabular-nums; }
+
+/* top bar: the mockup's own controls, not part of the product */
+.bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: var(--t-small); }
+.bar .title { font-family: var(--font-display); font-size: 18px; }
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
+.seg button { font: inherit; background: var(--surface); color: var(--ink-2); border: 0; padding: 5px 11px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border-strong); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.toggle { font: inherit; font-size: var(--t-small); background: transparent; color: var(--ink-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 5px 11px; cursor: pointer; }
+.toggle[aria-pressed="true"] { background: var(--note); color: var(--note-ink); border-color: var(--note); }
+button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* the product's tab strip */
+.tabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid var(--border); margin-top: 6px; }
+.tabs span { padding: 12px 14px; color: var(--ink-2); white-space: nowrap; border-bottom: 2px solid transparent; }
+.tabs span.on { color: var(--ink); border-bottom-color: var(--accent); }
+.pill { display: inline-block; font-size: var(--t-micro); padding: 1px 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--ink-2); margin-left: 6px; vertical-align: 1px; }
+.pill.open::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-right: 5px; vertical-align: 1px; }
+
+/* reading column + note rail */
+.page { display: grid; grid-template-columns: minmax(0, 860px) 0; gap: 24px; justify-content: start; }
+body.notes .page { grid-template-columns: minmax(0, 860px) minmax(220px, 300px); }
+.col { min-width: 0; display: flex; flex-direction: column; gap: 22px; padding-top: 18px; }
+.rail { display: none; }
+body.notes .rail { display: block; padding-top: 18px; }
+.note { background: var(--note); color: var(--note-ink); border-radius: var(--radius-sm); padding: 10px 12px; font-size: var(--t-small); line-height: 1.45; margin-bottom: 12px; }
+.note b { display: block; margin-bottom: 2px; }
+.note-inline { display: none; }
+body.notes .note-inline { display: block; }
+
+.intro { color: var(--ink-2); max-width: 72ch; }
+
+/* the meeting */
+.meeting { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 22px; display: flex; flex-direction: column; gap: 22px; }
+.head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.head .sp { flex: 1; }
+.btn { font: inherit; font-size: var(--t-small); font-weight: 600; padding: 7px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--ink); cursor: pointer; }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.btn.quiet { background: transparent; color: var(--ink-2); }
+
+.headline { font: 400 22px/1.3 var(--font-display); max-width: 60ch; }
+.headline .state { padding: 0 6px; border-radius: 4px; }
+.state.warn { background: rgba(var(--warning-rgb), .18); color: var(--warning); }
+.state.bad { background: rgba(var(--critical-rgb), .18); color: var(--critical); }
+.state.good { background: rgba(var(--good-rgb), .18); color: var(--good); }
+
+section { display: flex; flex-direction: column; gap: 10px; }
+.sec-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.src { font-size: var(--t-micro); text-transform: uppercase; letter-spacing: .06em; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--border); color: var(--muted); }
+.src.record { color: var(--good); border-color: rgba(var(--good-rgb), .4); }
+.src.ceo { color: var(--accent); border-color: rgba(var(--accent-rgb), .4); }
+.prose { max-width: 70ch; }
+
+.record { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.record .cell { background: var(--sunken); border-radius: var(--radius-sm); padding: 10px 12px; min-width: 0; }
+.record .cell .n { font: 600 var(--t-h2)/1.1 var(--font); font-variant-numeric: tabular-nums; }
+.record ul { margin: 6px 0 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: var(--t-small); }
+.record li { display: flex; gap: 8px; min-width: 0; }
+.record li .k { font-family: var(--mono); color: var(--muted); flex: 0 0 auto; }
+.record li .how { color: var(--muted); margin-left: auto; white-space: nowrap; }
+
+table { border-collapse: collapse; width: 100%; font-size: var(--t-small); }
+.twrap { overflow-x: auto; }
+th { text-align: left; font-weight: 600; color: var(--muted); font-size: var(--t-micro); text-transform: uppercase; letter-spacing: .06em; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+.mark { font-weight: 600; white-space: nowrap; }
+.mark.t { color: var(--good); } .mark.o { color: var(--critical); } .mark.c { color: var(--muted); }
+
+.next { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.next li { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: baseline; padding: 8px 10px; background: var(--sunken); border-radius: var(--radius-sm); }
+.next li .k { font-family: var(--mono); font-size: var(--t-small); color: var(--muted); }
+.next li .by { font-size: var(--t-small); color: var(--ink-2); white-space: nowrap; }
+.effect { border-left: 3px solid var(--accent); padding: 4px 12px; color: var(--ink-2); max-width: 70ch; }
+
+.ask { border: 1px solid rgba(var(--accent-rgb), .45); border-radius: var(--radius); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; background: rgba(var(--accent-rgb), .05); }
+.ask .line { font-size: var(--t-lead); }
+.lever-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.lever { font: inherit; font-size: var(--t-small); padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
+.lever.rec { border-color: var(--accent); background: var(--accent); color: var(--on-accent); font-weight: 600; }
+details.more summary { cursor: pointer; color: var(--ink-2); font-size: var(--t-small); }
+.thread { display: flex; flex-direction: column; gap: 8px; }
+.msg { background: var(--surface-2); border-radius: var(--radius-sm); padding: 8px 12px; font-size: var(--t-small); max-width: 70ch; }
+.msg .who { color: var(--muted); margin-right: 6px; }
+.say { display: flex; gap: 8px; }
+.say input { flex: 1; min-width: 0; font: inherit; font-size: var(--t-small); padding: 7px 10px; background: var(--surface); color: var(--ink); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+
+details.numbers summary { cursor: pointer; color: var(--ink-2); font-weight: 600; font-size: var(--t-small); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+.tile { background: var(--sunken); border-radius: var(--radius-sm); padding: 10px 12px; min-width: 0; }
+.tile .v { font: 600 var(--t-h2)/1.1 var(--font); font-variant-numeric: tabular-nums; margin: 4px 0 2px; }
+.tile .s { font-size: var(--t-micro); color: var(--muted); }
+
+.past { display: flex; flex-direction: column; gap: 8px; }
+.past .row { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 14px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; font-size: var(--t-small); }
+.chip { font-size: var(--t-micro); padding: 1px 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--ink-2); }
+
+@media (max-width: 720px) {
+  body.notes .page { grid-template-columns: minmax(0, 1fr); }
+  body.notes .rail { display: none; }
+  .next li { grid-template-columns: 1fr; gap: 2px; }
+  .meeting { padding: 14px; }
+}
+@media (prefers-reduced-motion: no-preference) { .lever, .btn { transition: background 120ms, color 120ms; } }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <span class="title">Status meeting — mockup</span>
+  <span class="muted">project shape:</span>
+  <div class="seg" role="group" aria-label="Project shape">
+    <button id="m-deliver" aria-pressed="true" data-mode="deliver">Deliver</button>
+    <button id="m-operate" aria-pressed="false" data-mode="operate">Operate</button>
+    <button id="m-explore" aria-pressed="false" data-mode="explore">Explore</button>
+  </div>
+  <span class="muted">dial:</span>
+  <div class="seg" role="group" aria-label="Autonomy dial">
+    <button id="d-chair" aria-pressed="true" data-dial="chairman">You decide</button>
+    <button id="d-auto" aria-pressed="false" data-dial="auto">CEO decides</button>
+  </div>
+  <span style="flex:1"></span>
+  <button class="toggle" id="notes-toggle" aria-pressed="false">Design notes</button>
+</div>
+
+<div class="tabs" aria-hidden="true">
+  <span>Roadmap</span><span>Tasks</span><span>Deliverables</span><span>Spend</span>
+  <span class="on">Status<span class="pill open">open</span></span><span>Activity</span>
+</div>
+
+<div class="page">
+<div class="col">
+
+  <p class="intro" id="intro"></p>
+
+  <div class="meeting">
+    <div class="head">
+      <h1 id="h-title">Status meeting #2</h1>
+      <span class="small muted" id="h-when">24 Oct – 31 Oct · opened Oct 31, 05:28 · every 7 days</span>
+      <span class="sp"></span>
+      <button class="btn primary" id="close-btn">Close the meeting</button>
+    </div>
+
+    <p class="headline" id="headline"></p>
+    <div class="note note-inline"><b>The headline is from the record.</b> One sentence the platform composes from the frozen numbers, in the same state words the strip and the Roadmap use. It replaces six tiles as the first thing read.</div>
+
+    <section>
+      <div class="sec-head"><h2>Last week — what was done</h2><span class="src record">from the record</span></div>
+      <div class="record" id="record"></div>
+      <div class="note note-inline"><b>The list is the platform's, not the CEO's.</b> Requirements the platform made true (and how it checked them), deliverables published, spot-checks, runs. It is the briefing's window re-cut to the meeting, at zero tokens. The CEO is told not to restate it.</div>
+      <div class="sec-head" style="margin-top:6px"><h2 style="font-size:var(--t-body)">What it bought us</h2><span class="src ceo">CEO</span></div>
+      <p class="prose" id="done"></p>
+    </section>
+
+    <section>
+      <div class="sec-head"><h2>What it said it would do last week, and what happened</h2><span class="src record">platform marks</span><span class="src ceo">CEO notes</span></div>
+      <div class="twrap"><table>
+        <thead><tr><th>Said it would</th><th>Serves</th><th>Platform says</th><th>CEO says</th></tr></thead>
+        <tbody id="plan"></tbody>
+      </table></div>
+      <div class="note note-inline"><b>Plan versus actual.</b> The levers were already accountable ("shown beside what they bought"). This points the same mechanism at the CEO's own plan. The platform's mark comes first and cannot be argued with; a CEO that says "done" against a requirement the platform holds open is refused, naming the key.</div>
+    </section>
+
+    <section>
+      <div class="sec-head"><h2>What did not go to plan, and why</h2><span class="src ceo">CEO</span></div>
+      <p class="prose" id="variance"></p>
+      <p class="small" id="cause"></p>
+      <div class="note note-inline"><b>Today's whole narrative, demoted to one section.</b> Held to its original brief: what moved against the plan and the single largest cause, named by what it is. "R-29 · 9 dead runs" becomes a sentence a reader can act on.</div>
+    </section>
+
+    <section>
+      <div class="sec-head"><h2 id="next-title">Next week — what it will do</h2><span class="src ceo">CEO</span></div>
+      <ul class="next" id="next"></ul>
+      <p class="effect" id="effect"></p>
+      <div class="note note-inline"><b>A list, because a list can be checked.</b> Each item serves something the platform holds open (a requirement, a bet, the cycle); an item that serves nothing is refused, like a task that serves no requirement. The list is recorded on the meeting and the next one opens with it, above.</div>
+    </section>
+
+    <section class="ask">
+      <div class="sec-head"><h2 id="ask-title">The ask</h2><span class="src ceo">CEO</span></div>
+      <p class="line" id="ask-line"></p>
+      <div class="lever-row" id="lever-row"></div>
+      <details class="more" id="more-levers">
+        <summary id="more-label">Something else</summary>
+        <div class="lever-row" style="margin-top:8px" id="other-levers"></div>
+      </details>
+      <div class="thread">
+        <div class="label">Say something back</div>
+        <div class="msg" id="thread-msg"></div>
+        <div class="say">
+          <input id="say-input" type="text" placeholder="Your words go to the CEO as a message on this meeting. It answers once, on the governance reserve.">
+          <button class="btn" id="say-btn">Send</button>
+        </div>
+      </div>
+      <div class="note note-inline"><b>Where the levers moved to.</b> The six buttons are unchanged mechanically. They sit under the ask, with the CEO's recommended one first and pre-filled from its detail, so agreeing is one press with the reason already written. The thread is bounded: two CEO replies per meeting, each a governance-reserve run.</div>
+    </section>
+
+    <details class="numbers">
+      <summary>The numbers behind this</summary>
+      <div class="tiles" id="tiles"></div>
+      <div class="note note-inline" style="margin-top:10px"><b>Same tiles, last.</b> They are the forecast's inputs and the Spend page's month, not the meeting. Explore shows bets instead of requirements; "Audit coverage 0" reads "0 of 9 closes spot-checked".</div>
+    </details>
+  </div>
+
+  <div>
+    <h2 style="margin-bottom:8px">Past meetings</h2>
+    <div class="past">
+      <div class="row"><b>#1</b><span class="muted">Oct 24, 05:28 → Oct 24, 09:12</span><span class="chip">1 decision</span><span class="muted">Cut scope: cut R-18 — the webinar channel has no audience to test on yet</span></div>
+    </div>
+  </div>
+
+</div>
+
+<aside class="rail" aria-label="Design notes">
+  <div class="note"><b>Why this order</b>What happened → what it bought → what went wrong → what is next → the ask. Numbers last. A reader who does not live in the project can follow it top to bottom.</div>
+  <div class="note"><b>Two sources, labelled</b>Green "from the record" is the platform at zero tokens and cannot be argued with. Blue "CEO" is the filing on the reserve run. The screen always says which is which.</div>
+  <div class="note"><b>Nothing mechanical changes</b>Opened by the janitor regardless of budget. Numbers frozen at open. Levers through the same routes. Green auto-close after 24h, now keyed on the ask being "proceed".</div>
+  <div class="note"><b>The dial</b>Switch "CEO decides" above: the ask becomes "What your CEO decided", the levers fold under Overrule, the thread and Close stay.</div>
+  <div class="note"><b>Naming</b>"Status meeting", tab "Status". Not "weekly": it is <code>review_interval_days</code>, shown as "every 7 days" in the header. The table and routes keep <code>review</code>.</div>
+</aside>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const LEVERS = { cut: "Cut scope", add: "Add scope", reword: "Reword", move_date: "Move the date", raise_budget: "Raise the budget", accept_slip: "Accept the slip" };
+
+  const DATA = {
+    deliver: {
+      title: "Status meeting #2", when: "24 Oct – 31 Oct · opened Oct 31, 05:28 · every 7 days",
+      headline: `<span class="state warn">Behind the promise by two days</span> (Oct 31 → Nov 2). 11 of 15 requirements are true. October spend is <span class="state bad">114% of plan</span>.`,
+      record: [
+        { n: "3", t: "requirements made true", items: [["R-21","Cold-email sequence v2 live","verified"],["R-24","Landing page converts a test signup","verified"],["R-31","Nov 9 newsletter slot booked","judged by you"]] },
+        { n: "2", t: "requirements cut, with reasons", items: [["R-18","Webinar channel — no audience to test on yet",""],["R-26","Reddit AMA — mod refused",""]] },
+        { n: "4", t: "deliverables published", items: [["v2","cold-sequence.md · claims R-21",""],["v1","landing-page/ · claims R-24",""],["v3","icp-list-140.csv",""],["v1","newsletter-draft-nov9.md · claims R-31",""]] },
+        { n: "0 of 9", t: "closes spot-checked", items: [["","9 observable closes drawn against a 20% rate; none landed on you. 48 runs, 9 dead.",""]] },
+      ],
+      done: "The week settled the two cheapest channels and bought us a first real date: the cold sequence is ready and the newsletter slot is booked, so by Nov 9 two channels will have been tried against real people instead of against each other. The cuts were cheap too; neither channel had an audience we could reach this month.",
+      plan: [
+        ["Ship the cold-email sequence v2","R-21","t","true · verified Oct 29","done"],
+        ["Get the Google Ads account unblocked","R-29","o","open · 9 dead runs","not done — the account was suspended Oct 29; see below"],
+        ["Book the Nov 9 newsletter slot","R-31","t","true · judged by you Oct 30","done"],
+        ["Draft the webinar outline","R-18","c","cut Oct 24, by you","dropped — cut at meeting #1"],
+      ],
+      variance: "The date moved because the Ads channel went dark. Everything else landed on the day it was planned for.",
+      cause: "Largest cause: the Google Ads account was suspended on Oct 29 for a landing-page policy flag; nine runs died retrying the appeal before the platform stopped them. The projection moved from Oct 31 to Nov 2 on those nine runs alone.",
+      nextTitle: "Next week — what it will do",
+      next: [
+        ["Send the cold sequence to the 140-name list on the first legal day","R-33","by Nov 7"],
+        ["Publish the Nov 9 newsletter issue","R-31","by Nov 9"],
+        ["Leave the Ads budget unspent unless the account clears by Nov 3","R-29","by Nov 3"],
+        ["Stop adding seats; eight of twelve are stood down already","—","now"],
+      ],
+      effect: "Takes scope to 15 of 15 true by Nov 2 and puts the first real customer contact on Nov 7, which is the date that matters.",
+      ask: { kind: "change", line: `I want one change: <b>accept the slip to Nov 2</b>. Every open item is a channel test and we have no proof from any channel yet; cutting scope now would mean finishing on time with nothing learned.`, rec: "accept_slip", recLabel: "Accept the slip to Nov 2", lineAuto: `Your CEO <b>accepted the slip to Nov 2</b> under the commitment authority you gave it. Every open item is a channel test and we have no proof from any channel yet.` },
+      thread: `<span class="who">You, Oct 31 09:02</span>If Ads is dead, do we need R-29 at all?`,
+      tiles: [["Finish","Nov 2","promised Oct 31 · at risk"],["Scope","11 / 15","true · 2 cut this week"],["Pace","11 a week","4 open · about 0.4 weeks"],["October","114%","512.8M of 450M tokens"],["Spot-checks","0 of 9","none failed · none expired"],["Dead runs","9","all on R-29"]],
+    },
+    operate: {
+      title: "Status meeting #7", when: "Gameweek 10 · 24 Oct – 31 Oct · opened at the cycle roll · weekly",
+      headline: `Cycle 10 closed <span class="state good">8 of 10 met</span>, 2 carried into cycle 11. Pace is holding at 9 a week. October spend is <span class="state good">61% of plan</span>.`,
+      record: [
+        { n: "8 of 10", t: "cycle 10 scope met", items: [["R-02","Gameweek memo published before the deadline","verified"],["R-05","Transfer recommendation with expected points","verified"],["R-07","Captain pick with reasoning","judged by you"],["","…and 5 more","" ]] },
+        { n: "2", t: "carried into cycle 11", items: [["R-09","Injury news folded in within 2h of release",""],["R-11","Chip strategy for the double gameweek",""]] },
+        { n: "3", t: "deliverables published", items: [["v10","gw10-memo.md · claims R-02, R-05, R-07",""],["v10","transfers.csv",""],["v1","chip-plan-draft.md",""]] },
+        { n: "2 of 6", t: "closes spot-checked", items: [["","Both passed. 31 runs, 2 dead.",""]] },
+      ],
+      done: "The memo went out four hours before the deadline for the third week running, and the captain pick returned 18 points. What the cycle bought is the routine: the two carried items are both about speed, not about whether the memo is right.",
+      plan: [
+        ["Publish the GW10 memo before Friday 18:00","R-02","t","true · verified Oct 30","done"],
+        ["Fold injury news in within 2h","R-09","o","open · carried","not done — the news feed source rate-limited us twice"],
+        ["Draft the double-gameweek chip plan","R-11","o","open · carried","partly — draft published, not yet reviewed"],
+      ],
+      variance: "Two carried items, both timing. The memo itself was on plan.",
+      cause: "Largest cause: the injury feed rate-limited the reader on two of five days; the memo shipped without Wednesday's news. The fix is a second source, which is a credential request, not a run.",
+      nextTitle: "Cycle 11 — what it will do",
+      next: [
+        ["Publish the GW11 memo before the Saturday 11:00 deadline","R-02","by Nov 8"],
+        ["Add the second injury feed and close R-09","R-09","by Nov 5"],
+        ["Finish the chip plan for GW12/13","R-11","by Nov 8"],
+      ],
+      effect: "Closes cycle 11 at 10 of 10 if the feed credential is granted by Tuesday; 9 of 10 if not.",
+      ask: { kind: "change", line: `Proceed as above, with one ask that is yours to grant: <b>a credential for the second injury feed</b> (a need request is on your desk). No lever needed.`, rec: null, recLabel: "", lineAuto: `Your CEO is proceeding as above. It has filed a need request for the second injury feed credential; that one is yours regardless of the dial.` },
+      thread: `<span class="who">You, Oct 31 08:40</span>Which feed? I'd rather not pay for two.`,
+      tiles: [["Cycle 10","8 / 10","2 carried"],["Pace","9 a week","holding"],["October","61%","61 of 100 USD"],["Spot-checks","2 of 6","0 failed"],["Dead runs","2","none repeated"],["Next roll","Nov 8","Saturday"]],
+    },
+    explore: {
+      title: "Status meeting #3", when: "24 Oct – 31 Oct · opened Oct 31, 05:28 · every 7 days",
+      headline: `<span class="state good">Two bets alive</span>, one <span class="state warn">killed on schedule</span> this week. 14 pieces of evidence verified, 3 refused. October spend is 48% of plan.`,
+      record: [
+        { n: "2 alive · 1 killed", t: "bets", items: [["H-1","Accountants under 10 staff will pay $49/mo for a close checklist","alive · kill Nov 14"],["H-2","They find it through their software vendor's marketplace","alive · kill Nov 21"],["H-3","They find it through LinkedIn ads","killed Oct 28 · 0 of 40 clicks converted"]] },
+        { n: "14 / 3", t: "evidence verified / refused", items: [["H-1","6 interview transcripts, 2 pricing-page sessions",""],["H-2","4 marketplace listings fetched; 1 refused (snapshot mismatch)",""],["H-3","2 ad reports; 2 refused (self-reported, no source)",""]] },
+        { n: "2", t: "deliverables published", items: [["v3","interview-notes.md",""],["v1","marketplace-scan.csv",""]] },
+        { n: "1 of 4", t: "closes spot-checked", items: [["","Passed. 22 runs, 1 dead.",""]] },
+      ],
+      done: "The week killed the expensive channel cheaply and moved the price question from guess to evidence: four of six interviewees named a number above $49 unprompted. What we learned is that the buyer exists; where they shop is still open.",
+      plan: [
+        ["Run six accountant interviews","H-1","t","6 verified pieces of evidence","done"],
+        ["Spend $200 on LinkedIn to test the ads channel","H-3","c","killed Oct 28","done — and it killed the bet, which is the point"],
+        ["Scan the three vendor marketplaces","H-2","t","4 verified, 1 refused","partly — one listing refused on snapshot mismatch; re-fetching"],
+      ],
+      variance: "Nothing moved against the plan; the one refused piece of evidence is a re-fetch, not a finding.",
+      cause: "Largest cause of spend: the interviews, at 11 runs for six transcripts. Worth it; it is the only evidence that names a price.",
+      nextTitle: "Next week — what it will do",
+      next: [
+        ["Put a $49 pricing page in front of the six interviewees and record who clicks","H-1","by Nov 7"],
+        ["List on the Xero marketplace and measure installs for one week","H-2","by Nov 14"],
+        ["Re-fetch the refused marketplace snapshot","H-2","by Nov 3"],
+      ],
+      effect: "By Nov 14 both live bets either have a number against their kill condition or die on their date. No new bet until one of these resolves.",
+      ask: { kind: "proceed", line: `<b>Proceed as above.</b> Nothing needs you this week. H-3 died on its own kill date and I am not asking to extend it.`, rec: null, recLabel: "", lineAuto: `Your CEO is proceeding as above. H-3 died on its kill date; it did not extend it.` },
+      thread: `<span class="who">You, Oct 31 09:15</span>Did any of the six say what they use today?`,
+      tiles: [["Bets","2 alive","1 killed this week"],["Evidence","14 / 3","verified / refused"],["Next kill date","Nov 14","H-1"],["October","48%","96 of 200 USD"],["Spot-checks","1 of 4","0 failed"],["Dead runs","1",""]],
+    },
+  };
+
+  let mode = "deliver", dial = "chairman";
+
+  function render() {
+    const d = DATA[mode];
+    const auto = dial === "auto";
+    $("intro").textContent = auto
+      ? "Your CEO's status report. You left the decisions to it, so nothing here is waiting on you: read what it did, what it will do next, say anything you want said back, and close it."
+      : "The status meeting: the platform brings the record, the CEO explains what it bought and what is next, and asks for what it needs. Everything you decide is recorded with your reason and shown at the next meeting beside what it bought.";
+    $("h-title").textContent = d.title;
+    $("h-when").textContent = d.when;
+    $("headline").innerHTML = d.headline;
+    $("record").innerHTML = d.record.map((c) => `
+      <div class="cell"><div class="n">${esc(c.n)}</div><div class="small muted">${esc(c.t)}</div>
+        <ul>${c.items.map(([k, s, how]) => `<li>${k ? `<span class="k">${esc(k)}</span>` : ""}<span>${esc(s)}</span>${how ? `<span class="how">${esc(how)}</span>` : ""}</li>`).join("")}</ul></div>`).join("");
+    $("done").textContent = d.done;
+    $("plan").innerHTML = d.plan.map(([w, k, m, ms, c]) =>
+      `<tr><td>${esc(w)}</td><td class="mono">${esc(k)}</td><td class="mark ${m}">${esc(ms)}</td><td>${esc(c)}</td></tr>`).join("");
+    $("variance").textContent = d.variance;
+    $("cause").textContent = d.cause;
+    $("next-title").textContent = d.nextTitle;
+    $("next").innerHTML = d.next.map(([w, k, by]) =>
+      `<li><span>${esc(w)}</span><span class="k">${esc(k)}</span><span class="by">${esc(by)}</span></li>`).join("");
+    $("effect").textContent = "How this moves the goal: " + d.effect;
+
+    $("ask-title").textContent = auto ? "What your CEO decided" : "The ask";
+    $("ask-line").innerHTML = auto ? d.ask.lineAuto : d.ask.line;
+    const row = $("lever-row");
+    const others = $("other-levers");
+    row.innerHTML = ""; others.innerHTML = "";
+    if (!auto && d.ask.rec) {
+      row.innerHTML = `<button class="lever rec">${esc(d.ask.recLabel)}</button><span class="small muted">one press; the CEO's reason is pre-filled, edit it or keep it</span>`;
+    } else if (!auto) {
+      row.innerHTML = `<span class="small muted">No lever recommended. Closing with no changes is itself a recorded decision.</span>`;
+    } else {
+      row.innerHTML = `<span class="small muted">Recorded under the CEO's authority and disclosed here. You can overrule it below.</span>`;
+    }
+    $("more-label").textContent = auto ? "Overrule" : "Something else";
+    others.innerHTML = Object.entries(LEVERS).filter(([k]) => k !== d.ask.rec || auto)
+      .map(([k, l]) => `<button class="lever">${esc(l)}</button>`).join("");
+    $("thread-msg").innerHTML = d.thread;
+    $("tiles").innerHTML = d.tiles.map(([l, v, s]) =>
+      `<div class="tile"><div class="label">${esc(l)}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join("");
+  }
+
+  document.querySelectorAll("[data-mode]").forEach((b) => b.addEventListener("click", () => {
+    mode = b.dataset.mode;
+    document.querySelectorAll("[data-mode]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    render();
+  }));
+  document.querySelectorAll("[data-dial]").forEach((b) => b.addEventListener("click", () => {
+    dial = b.dataset.dial;
+    document.querySelectorAll("[data-dial]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    render();
+  }));
+  const nt = $("notes-toggle");
+  nt.addEventListener("click", () => {
+    const on = nt.getAttribute("aria-pressed") !== "true";
+    nt.setAttribute("aria-pressed", String(on));
+    document.body.classList.toggle("notes", on);
+  });
+  $("say-btn").addEventListener("click", () => {
+    const v = $("say-input").value.trim();
+    if (!v) return;
+    const m = document.createElement("div");
+    m.className = "msg";
+    m.innerHTML = `<span class="who">You, just now</span>${esc(v)}`;
+    $("thread-msg").after(m);
+    $("say-input").value = "";
+  });
+  $("close-btn").addEventListener("click", () => {
+    $("close-btn").textContent = "Closed — no changes recorded";
+    $("close-btn").disabled = true;
+  });
+  render();
+})();
+</script>
+</body>
+</html>

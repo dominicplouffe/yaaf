@@ -72,7 +72,7 @@ or variable**, **Connect a data source**, **Set the budget**, **Invite someone
 to this project**), and any deliverable by its name. **?** lists every shortcut. **g** then a letter
 goes to a page of the project you are in — **g o** its Inbox, **g t** Team, **g c** Chat,
 **g r** Results, **g d** Details, and straight to a Details tab with **g m**
-Roadmap, **g k** Tasks, **g f** Deliverables, **g s** Spend, **g v** Reviews,
+Roadmap, **g k** Tasks, **g f** Deliverables, **g s** Spend, **g v** Status,
 **g a** Activity, **g ,** the project's Settings, and **g 1** to **g 5** your
 pins in sidebar order — and **g i** to the Inbox. No single
 keypress ever decides anything: approving, denying and answering are always a
@@ -697,20 +697,62 @@ forecast grades. Nothing but the platform ever writes `met`.
   more than all the others together.
 - **The last 30 days, in detail** — tokens and runs by model, team or agent.
 
-## Reviews — the standing meeting
+## Status — the status meeting
 
 Opened on schedule by the janitor, with zero tokens, regardless of budget or an
-empty board. A review with nothing on the board is the one you most need. An
-open review shows a banner on the project's Inbox and the Roadmap until you close it.
+empty board — every `review_interval_days` on Deliver and Explore, and at the
+cycle roll on an Operate rhythm of a week or more, because the roll already
+closes the week and a second meeting a day later was the same conversation
+held twice. A meeting with nothing on the board is the one you most need. An
+open meeting shows a banner on the project's Inbox and the Roadmap until you
+close it. (The route is still `/reviews`, and the API and the record keep the
+word *review*; only what you read says *status meeting*.)
 
-- **The platform's numbers**, frozen at open: pace, requirements met since the
-  last review, the commitment's state with promised and projected dates,
-  budget, audit coverage, and the worst offender by dead runs.
-- **The CEO's variance narrative** — why the numbers are what they are, filed
-  on a reserved governance run — and what it recommends.
-- **Your six levers**: cut scope, add scope, reword, move the date, raise the
-  budget, accept the slip. Each is recorded with your reason, disclosed to the
-  CEO, and shown at the *next* review beside what it bought.
+- **One sentence first**, in words, from the frozen facts: *"Behind the promise
+  by two days (Oct 31 → Nov 2). 11 of 15 requirements true, 3 this period. This
+  month's spend is 114% of plan — over it."* An Operate project reads its
+  cycle; an Explore project reads its bets.
+- **What was done since the last meeting, from the record** — requirements
+  the platform made true and *how* it checked them (verified / judged), cuts
+  with the reason given, deliverables published, closes spot-checked, runs
+  and dead runs; a cycle's scorecard on Operate; bets alive, killed and
+  expired on Explore. Composed by the janitor at open and frozen beside the
+  numbers; no agent writes a word of it. Meetings opened before this existed
+  say so rather than showing an invented one.
+- **What it said it would do last meeting, and what happened.** Each item of
+  the previous report's *next period*, with the platform's mark first (true
+  and how it was checked, open with its dead runs, cut; the cycle's close;
+  the bet's state) and the CEO's line second — done, partly, not done,
+  dropped. The platform's column was frozen at open; the CEO's "done" against
+  a requirement the platform holds open was refused at filing. The levers
+  were already shown beside what they bought; this is the same mechanism
+  pointed at the CEO's own plan.
+- **The CEO's status report**, filed on a reserved governance run, in the
+  order a meeting is held: *what it bought us* (meaning on top of the record,
+  not a second list), *what did not go to plan and why* with the single
+  largest cause named by what it is, *next period* as a list where every item
+  serves an open requirement, the cycle or a live bet (an item that serves
+  nothing is refused), one sentence on how that moves the goal, and *the ask*:
+  proceed, or change with the levers it wants. Meetings filed the old way
+  show the free-text narrative instead.
+- **The platform's numbers**, under a fold at the bottom, frozen at open: pace,
+  requirements met since the last review, the commitment's state with
+  promised and projected dates, this month's spend, closes spot-checked out
+  of closes considered, and the requirement with the most dead runs.
+- **The ask, and your answer to it, in one place.** Under the CEO's ask sit
+  the levers it asked for, pre-filled with its reason so agreeing is one
+  press (edit the reason or keep it; it is recorded as yours); the other
+  levers fold under *Something else*. Each pull is recorded with your reason,
+  with **what it moved** on the record (the projected finish, the open scope,
+  the cap — read before and after), disclosed to the CEO, and shown at the
+  *next* review beside what it bought. Under the fully autonomous dial the
+  section reads *What your CEO decided* and the levers fold under *Overrule*.
+- **Say something back.** Your words go to the CEO as a boardroom message,
+  kept in one thread per meeting, and it answers in the thread. Up to
+  `review_replies` of its answers per meeting ride the governance reserve,
+  so they land on a day the ordinary allowance is gone; past that an answer
+  waits for an ordinary wake like any other message. Nothing is refused, and
+  the meeting never waits on the thread: close it whenever you are done.
 
 ## Deliverables — the output
 

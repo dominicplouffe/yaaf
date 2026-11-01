@@ -70,6 +70,8 @@ def _minimal_body(model) -> dict:
     constraints off the model means a route can change its shape freely and
     this still reaches the authority check behind it.
     """
+    from pydantic import BaseModel
+
     body: dict = {}
     for name, field in model.model_fields.items():
         if not field.is_required():
@@ -79,7 +81,18 @@ def _minimal_body(model) -> dict:
                       default=0)
         pattern = next((getattr(m, "pattern", None) for m in field.metadata
                         if getattr(m, "pattern", None)), None)
-        if annotation is str:
+        nested = annotation if isinstance(annotation, type) and issubclass(annotation, BaseModel) \
+            else None
+        item = next((a for a in getattr(annotation, "__args__", ())
+                     if isinstance(a, type) and issubclass(a, BaseModel)), None)
+        if nested is not None:
+            # A sectioned body (the status report) is built section by
+            # section from the same rules, so a route that grows a nested
+            # model stays visible to this test instead of 422-ing before it.
+            body[name] = _minimal_body(nested)
+        elif item is not None:
+            body[name] = [_minimal_body(item)] * max(longest, 1)
+        elif annotation is str:
             # A patterned field cannot be satisfied by padding. Every one of
             # them on this surface is an alternation of literals, so the first
             # alternative is read out of the pattern rather than guessed —

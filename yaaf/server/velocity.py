@@ -195,6 +195,13 @@ def standing_record(session: Session, project_id: str, cycles: int = 12) -> list
     return sorted(out, key=lambda r: r["key"])
 
 
+def runs_since(session: Session, project_id: str, since) -> dict:
+    """The window's runs for a reader outside this module — the review's
+    record — by the same count velocity grades on, so the two cannot differ
+    about what a dead run is."""
+    return _runs_in_window(session, project_id, since)
+
+
 def _runs_in_window(session: Session, project_id: str, since) -> dict:
     """What the window's runs were, and — since the split — what they were FOR.
 

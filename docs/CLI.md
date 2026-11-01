@@ -192,9 +192,10 @@ force**. Either way they carry a written reason, an audit entry, and disclosure
 to the CEO — see [GOVERNANCE.md](GOVERNANCE.md#changing-a-rule).
 
 Scope decisions — accepting a proposed requirement, cutting one, signing or
-moving a delivery date, pulling a review lever — are dashboard actions
-(**Plan** and **Review** tabs) or direct API calls; there is no CLI shorthand,
-because each needs a reason you would want read back at the next review.
+moving a delivery date, pulling a lever at the status meeting — are dashboard
+actions (**Roadmap** and **Status** tabs) or direct API calls; there is no CLI
+shorthand, because each needs a reason you would want read back at the next
+meeting.
 
 ## People
 

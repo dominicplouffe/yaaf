@@ -42,6 +42,7 @@ REACHED = {
     "POST /admin/commitments/{commitment_id}/move": "commitment_decide",
     "POST /admin/reviews/{review_id}/lever": "review_decide",
     "POST /admin/reviews/{review_id}/close": "review_decide",
+    "POST /admin/reviews/{review_id}/say": "review_decide",
     "POST /admin/audit_samples/{sample_id}/decide": "audit_decide",
     "POST /admin/evidence/{evidence_id}/audit": "audit_decide",
     "POST /admin/tasks/{task_id}/audit": "audit_decide",
