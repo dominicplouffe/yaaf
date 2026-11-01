@@ -43,6 +43,7 @@ from yaaf.core.models import (
     LedgerKind,
     Memory,
     Message,
+    Project,
     ProjectMode,
     Recurrence,
     Requirement,
@@ -2169,7 +2170,188 @@ def file_review_narrative(
     return {"review_number": review.number,
             "note": ("Filed. The chairman decides from here — cut, add, reword, "
                      "move the date, raise the budget, or accept the slip. Each "
-                     "decision reaches you as a notice with his reason.")}
+                     "decision reaches you as a notice with his reason. Next time, "
+                     "file a status report with review_report instead: it is what "
+                     "the meeting is built around now.")}
+
+
+# ── the status report: the CEO's half of the meeting, structured ───────────────
+
+#: The six levers, as the chairman's screen names them. An ask that names
+#: anything else is not a lever and is refused.
+REVIEW_LEVERS = {
+    "cut": "Cut scope", "add": "Add scope", "reword": "Reword",
+    "move_date": "Move the date", "raise_budget": "Raise the budget",
+    "accept_slip": "Accept the slip",
+}
+REPORT_NEXT_MAX = 12
+
+
+class ReportVariance(BaseModel):
+    what: str = Field(min_length=10, max_length=4000)
+    largest_cause: str = Field(min_length=10, max_length=600)
+
+
+class ReportNextItem(BaseModel):
+    what: str = Field(min_length=10, max_length=400)
+    serves: str = Field(min_length=1, max_length=40)
+    by: datetime | None = None
+
+
+class ReportLever(BaseModel):
+    kind: str = Field(pattern="^(cut|add|reword|move_date|raise_budget|accept_slip)$")
+    detail: str = Field(min_length=5, max_length=600)
+
+
+class ReportAsk(BaseModel):
+    kind: str = Field(pattern="^(proceed|change)$")
+    levers: list[ReportLever] = Field(default_factory=list)
+    why: str | None = Field(default=None, max_length=2000)
+
+
+class ReviewReportIn(BaseModel):
+    done: str = Field(min_length=30, max_length=1200)
+    variance: ReportVariance
+    next: list[ReportNextItem] = Field(max_length=REPORT_NEXT_MAX)
+    goal_effect: str = Field(min_length=10, max_length=600)
+    ask: ReportAsk
+
+
+def _report_serves(session: Session, project: Project) -> dict[str, str]:
+    """What a `next` item may serve, and what to call it in a refusal: open
+    requirements by key, live bets by id, and the open cycle on Operate. The
+    same rule as "a task that serves no requirement is refused", applied to a
+    plan — a list of things that serve nothing is how a project stays busy
+    without finishing."""
+    allowed: dict[str, str] = {}  # how the CEO may spell it -> how it is recorded
+    if project.mode == ProjectMode.EXPLORE:
+        for h in session.execute(
+            select(Hypothesis).where(Hypothesis.project_id == project.id,
+                                     Hypothesis.status == HypothesisStatus.ACTIVE)
+        ).scalars():
+            allowed[h.id.upper()] = h.id
+    else:
+        for r in policy.scope_requirements(session, project.id):
+            if r.status in policy.OPEN_REQUIREMENT_STATUSES:
+                allowed[r.key.upper()] = r.key
+        if project.mode == ProjectMode.OPERATE and policy.current_cycle(session, project.id):
+            allowed["CYCLE"] = "cycle"
+    return allowed
+
+
+def _render_report(body: ReviewReportIn) -> tuple[str, str | None]:
+    """The free-text pair every older reader of the filing reads — the green
+    rule, the cycle narrative, the closing mail. Rendered from the report so
+    there is one filing, not two that can disagree."""
+    lines = [
+        body.variance.what.strip(),
+        f"Largest cause: {body.variance.largest_cause.strip()}",
+        f"What the period bought: {body.done.strip()}",
+        "Next: " + "; ".join(
+            f"{item.what.strip()} (serves {item.serves}"
+            + (f", by {item.by:%Y-%m-%d}" if item.by else "") + ")"
+            for item in body.next),
+        body.goal_effect.strip(),
+    ]
+    if body.ask.kind == "proceed":
+        return "\n\n".join(lines), None
+    asked = "; ".join(f"{REVIEW_LEVERS[lever.kind]}: {lever.detail.strip()}"
+                      for lever in body.ask.levers)
+    return "\n\n".join(lines), asked + (f" — {body.ask.why.strip()}" if body.ask.why else "")
+
+
+@router.post("/review_report")
+def file_review_report(
+    body: ReviewReportIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """The CEO's status report, into the open review: what the period bought,
+    what moved against the plan, what it will do next, and the ask. The list
+    of what was done is the platform's (`review.record`) and is not accepted
+    here; the CEO explains it. Every section is required, every `next` item
+    must serve something the platform holds open, and the ask names real
+    levers or none — each a refusal, because a report with a hole in it is a
+    meeting the chairman has to hold by himself."""
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "The status report is the CEO's. If you have something for the meeting, "
+            "tell the CEO — your channel for that is a message or a suggestion.",
+            status_code=403,
+        )
+    review = session.execute(
+        select(Review).where(Review.project_id == ctx.project.id,
+                             Review.status == ReviewStatus.OPEN)
+    ).scalar_one_or_none()
+    if review is None:
+        raise Refusal(
+            "No review is open. The janitor opens them on the constitution's "
+            "cadence; you will be woken when one is.",
+            status_code=409,
+        )
+    if review.narrative is not None:
+        raise Refusal(
+            f"Review #{review.number} already has your report. The meeting is "
+            "with the chairman now — his decisions arrive as notices.",
+            status_code=409,
+        )
+    if not body.next:
+        raise Refusal(
+            "`next` is empty. A status report says what the next period will do, "
+            "one item per line, each serving something open. If nothing is left to "
+            "do, say so in `done` and name what settles the project.",
+            status_code=422,
+        )
+    allowed = _report_serves(session, ctx.project)
+    for item in body.next:
+        if item.serves.strip().upper() not in allowed:
+            what = (
+                "a live bet, by id" if ctx.project.mode == ProjectMode.EXPLORE
+                else "an open requirement, by key"
+                + (", or `cycle`" if ctx.project.mode == ProjectMode.OPERATE else "")
+            )
+            raise Refusal(
+                f"`next` item {item.what[:80]!r} serves {item.serves!r}, which is not "
+                f"something this project holds open. Each item must serve {what}"
+                + (f" — one of {', '.join(sorted(allowed.values()))}." if allowed
+                   else "; nothing is open right now, so propose scope first."),
+                status_code=422,
+            )
+    if body.ask.kind == "change" and not body.ask.levers:
+        raise Refusal(
+            "An ask of `change` names at least one lever: cut, add, reword, "
+            "move_date, raise_budget or accept_slip, each with the detail the "
+            "chairman would need to pull it. If nothing should change, the ask "
+            "is `proceed`.",
+            status_code=422,
+        )
+    if body.ask.kind == "proceed" and body.ask.levers:
+        raise Refusal(
+            "An ask of `proceed` carries no levers — `proceed` means nothing needs "
+            "him. If you want something changed, the ask is `change`.",
+            status_code=422,
+        )
+
+    report = body.model_dump(mode="json")
+    report["next"] = [
+        {**item, "serves": allowed[item["serves"].strip().upper()]}
+        for item in report["next"]
+    ]
+    review.report = report
+    review.narrative, review.recommended = _render_report(body)
+    review.narrative_run_id = ctx.run.id
+    review.narrative_filed_at = utcnow()
+    chairman_notify(
+        session, ctx.project, f"review #{review.number}: the CEO's report is in",
+        (f"Ask: {review.recommended[:1000]}\n\n" if review.recommended
+         else "Ask: proceed — nothing needs you.\n\n")
+        + review.narrative[:2500]
+        + "\n\nTake the meeting on the Review tab.",
+        attention=Attention.FYI,
+    )
+    return {"review_number": review.number,
+            "next_items": len(report["next"]),
+            "note": ("Filed. The chairman reads it from here; his decisions arrive "
+                     "as notices with his reasons, and your `next` list is on the "
+                     "record for the next meeting.")}
 
 
 # ── evidence, hypotheses, decisions ─────────────────────────────────────────────

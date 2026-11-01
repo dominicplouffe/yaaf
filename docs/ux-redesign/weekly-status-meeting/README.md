@@ -4,11 +4,17 @@
 a browser). The **Deliver / Operate / Explore** switch at the top shows the same meeting for each
 project shape. **Design notes** pins the reasoning to each section.
 
-> **Status: step 1 of §8 is built** — the record (`yaaf/server/review_record.py`, frozen onto
-> `reviews.record` at open), the headline, the Explore tiles, and the fold on the numbers, with
-> no agent-visible change. Steps 2–5 are still proposal. The decisions in §7 were taken as
-> recommended: one meeting on Operate (at the roll), two replies per meeting, old filings
-> rendered the old way, "Status meeting" as the name.
+> **Status: steps 1 and 2 of §8 are built.** Step 1: the record
+> (`yaaf/server/review_record.py`, frozen onto `reviews.record` at open), the headline, the
+> Explore tiles, the fold on the numbers. Step 2: the structured filing (`POST /review_report`,
+> tool `review_report`, `reviews.report`), the CEO's pack carrying the record with "explain it, do
+> not restate it", the refusals of §4.2 except the two about `last_plan` (step 3), and the screen's
+> CEO sections. Filing a report also renders `narrative`/`recommended`, so the green rule
+> (§4.3) already reads `proceed` as "recommended nothing" without a change of its own.
+> `review_narrative` is kept for one release. No eval golden moved: no scenario opens a review.
+> Steps 3–5 are still proposal. The decisions in §7 were taken as recommended: one meeting on
+> Operate (at the roll), two replies per meeting, old filings rendered the old way, "Status
+> meeting" as the name.
 >
 > This proposal changes what the review *contains* and what the CEO is made to file; it keeps every
 > mechanism the review already has — opened by the janitor at zero tokens, numbers frozen at

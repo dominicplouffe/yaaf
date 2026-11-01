@@ -1760,6 +1760,14 @@ class Review(Base):
     # open like the numbers, and for the same reason. Null on meetings opened
     # before it existed; the screen says so rather than inventing one.
     record: Mapped[dict | None] = mapped_column(JSONVariant)
+    # The CEO's status report, structured: what the period bought (`done`),
+    # what moved against the plan and its largest cause (`variance`), what it
+    # will do next and what each item serves (`next`, `goal_effect`), and the
+    # ask (`proceed`, or `change` with the levers it wants). Filing one also
+    # renders `narrative` and `recommended` below, so every reader of the
+    # old free-text filing — the green rule, the cycle narrative, the closing
+    # mail — keeps reading one thing. Null on meetings filed the old way.
+    report: Mapped[dict | None] = mapped_column(JSONVariant)
     narrative: Mapped[str | None] = mapped_column(Text)
     recommended: Mapped[str | None] = mapped_column(Text)
     narrative_run_id: Mapped[str | None] = mapped_column(String(40))

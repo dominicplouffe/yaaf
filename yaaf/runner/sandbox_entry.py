@@ -754,6 +754,32 @@ async def t_review_narrative(args):
 
 
 @tool(
+    "review_report",
+    "CEO only, when a review is open (see the `review` block in your context). File your "
+    "status report for the standing meeting. The platform already lists what was done in "
+    "`review.record` — do not restate it; explain it. Every field is required and each is "
+    "refused if it is missing or hollow. `done`: one paragraph on what the period BOUGHT "
+    "the goal. `variance`: {\"what\": what moved against the plan, \"largest_cause\": the "
+    "SINGLE largest cause named by what it is — a piece of work, a bet that failed, a run "
+    "of failures — not by its key}. `next`: a list of {\"what\", \"serves\", \"by\"} — what "
+    "you will do next period, each serving an open requirement by key (Operate: or "
+    "\"cycle\"; Explore: a live bet by id) and an ISO date; an item that serves nothing is "
+    "refused, as a task that serves no requirement is. `goal_effect`: one sentence on how "
+    "`next` moves the goal — scope and date on Deliver, the cycle on Operate, which bets "
+    "resolve on Explore. `ask`: {\"kind\": \"proceed\"|\"change\", \"levers\": "
+    "[{\"kind\": cut|add|reword|move_date|raise_budget|accept_slip, \"detail\"}], "
+    "\"why\"} — proceed means nothing needs him; change names the levers you want pulled "
+    "and why. The chairman reads this at the meeting, and " + FOR_HIM + ". His decisions "
+    "come back to you as notices with his reasons, and your `next` list is on the record "
+    "for the next meeting.",
+    _schema({"done": str, "variance": dict, "next": list, "goal_effect": str, "ask": dict},
+            optional=()),
+)
+async def t_review_report(args):
+    return _text(_call("POST", "/agent/review_report", dict(args)))
+
+
+@tool(
     "hypothesis_add",
     "CEO: state a falsifiable bet with a dated kill condition (ISO datetime), "
     "written BEFORE the work starts.",
@@ -1728,7 +1754,7 @@ ALL_TOOLS = [
     t_ask_chairman, t_ask_close,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_compact, t_memory_forget,
     t_memory_tool,
-    t_evidence_add, t_review_narrative, t_cycle_goal, t_commitment_propose, t_commitment_reset,
+    t_evidence_add, t_review_narrative, t_review_report, t_cycle_goal, t_commitment_propose, t_commitment_reset,
     t_scope_act,
     t_flag_raise, t_flags_list, t_roster_activity,
     t_roles_list, t_hire, t_stand_down, t_recall, t_stand_down_when,
@@ -1765,7 +1791,7 @@ CEO_ONLY_TOOLS = frozenset({
     "hire", "recall", "roles_list", "stand_down", "stand_down_when",
     "hypothesis_add", "hypothesis_kill",
     "requirement_propose", "requirement_depends_on",
-    "review_narrative",
+    "review_narrative", "review_report",
     "scope_act",
 })
 

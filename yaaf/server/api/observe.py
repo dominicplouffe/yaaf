@@ -3055,6 +3055,10 @@ def reviews(project_id: str, session: Session = Depends(db)) -> dict:
             # of the record and cannot be edited into disagreeing with it.
             "record": r.record,
             "headline": review_record.headline(project.mode, r.numbers, r.record),
+            # The structured filing, or None on a meeting filed the old way —
+            # which the screen renders the old way rather than inventing a
+            # `next` list the CEO never wrote.
+            "report": r.report,
             "narrative": r.narrative,
             "recommended": r.recommended,
             "narrative_filed_at": (r.narrative_filed_at.isoformat()

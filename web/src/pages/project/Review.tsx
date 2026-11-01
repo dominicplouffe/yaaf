@@ -1,7 +1,7 @@
 import { type ReactNode, useState } from "react";
 import {
-  Decision, get, post, requirementName, RequirementMeta, ReviewNumbers, ReviewRecord, ReviewRow,
-  ReviewsView,
+  Decision, get, post, requirementName, RequirementMeta, ReviewNumbers, ReviewRecord,
+  ReviewReport, ReviewRow, ReviewsView,
 } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import { AsOf, ExportCsv, NoteAction, Skeleton, clip, downloadCsv } from "../../ui";
@@ -341,6 +341,71 @@ function RecordSection({ record, mode }: { record: ReviewRecord | null; mode: st
   );
 }
 
+/** The CEO's status report, in the order a meeting is held: what the period
+    bought, what did not go to plan, what is next, the ask. The list of what
+    was done is the platform's and sits above this; the CEO explains it. */
+function ReportSections({ report }: { report: ReviewReport }) {
+  const head = (title: string) => (
+    <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+      <b style={{ fontSize: 13 }}>{title}</b><Source kind="ceo" />
+    </div>
+  );
+  const ask = report.ask;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 12 }}>
+      <div>
+        {head("What it bought us")}
+        <p style={{ marginTop: 6, whiteSpace: "pre-wrap", maxWidth: "70ch" }}>{report.done}</p>
+      </div>
+      <div>
+        {head("What did not go to plan, and why")}
+        <p style={{ marginTop: 6, whiteSpace: "pre-wrap", maxWidth: "70ch" }}>
+          {report.variance.what}
+        </p>
+        <p className="help" style={{ marginTop: 4, maxWidth: "70ch" }}>
+          Largest cause: {report.variance.largest_cause}
+        </p>
+      </div>
+      <div>
+        {head("Next period — what it will do")}
+        <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, display: "flex",
+          flexDirection: "column", gap: 6 }}>
+          {report.next.map((item, i) => (
+            <li key={i} style={{ display: "flex", gap: 10, alignItems: "baseline",
+              flexWrap: "wrap", padding: "6px 10px", background: "var(--sunken)",
+              borderRadius: "var(--radius-sm)" }}>
+              <span style={{ flex: 1, minWidth: 200 }}>{item.what}</span>
+              <span className="help" style={{ fontFamily: "var(--mono)" }}>
+                {item.serves}
+              </span>
+              {item.by && <span className="help">by {fmtDate(item.by)}</span>}
+            </li>
+          ))}
+        </ul>
+        <p className="help" style={{ margin: "8px 0 0", borderLeft: "3px solid var(--accent)",
+          padding: "2px 10px", maxWidth: "70ch" }}>
+          How this moves the goal: {report.goal_effect}
+        </p>
+      </div>
+      <div>
+        {head(ask.kind === "proceed" ? "The ask: proceed" : "The ask: change something")}
+        {ask.kind === "proceed" ? (
+          <p className="help" style={{ marginTop: 6 }}>
+            Nothing needs you. Closing with no changes records that.
+          </p>
+        ) : (
+          <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+            {ask.levers.map((l, i) => (
+              <li key={i}><b>{LEVER_LABELS[l.kind] ?? l.kind}</b> — {l.detail}</li>
+            ))}
+          </ul>
+        )}
+        {ask.why && <p className="help" style={{ marginTop: 4, maxWidth: "70ch" }}>{ask.why}</p>}
+      </div>
+    </div>
+  );
+}
+
 function NumbersTiles({ n, mode, record, requirements }: {
   n: ReviewNumbers; mode: string; record: ReviewRecord | null;
   requirements: RequirementOption[];
@@ -552,6 +617,9 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
               in small grey type underneath. A reader looking for "what do you
               want from me" had to read all of it to find out the answer was
               "nothing". */}
+          {open.report ? (
+            <ReportSections report={open.report} />
+          ) : (
           <div style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
               <b style={{ fontSize: 13 }}>What your CEO says it will do</b><Source kind="ceo" />
@@ -577,6 +645,7 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
               </p>
             )}
           </div>
+          )}
 
           {open.decisions.length > 0 && (
             <div style={{ marginBottom: 12 }}>

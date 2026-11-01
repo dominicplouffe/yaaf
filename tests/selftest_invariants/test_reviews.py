@@ -412,27 +412,33 @@ def test_the_meeting_opens_on_what_was_done_from_the_platforms_own_events(client
     assert frozen["requirements_met"] == record["requirements_met"]
 
 
-def test_the_record_stays_out_of_the_ceos_pack(client):
-    """The CEO explains the record; it is not handed it yet. Nothing here is
-    agent-visible, which is why no golden eval moved with this change, and a
-    test that pins it keeps the next change honest about when it does."""
+def _ceo_pack(project: dict) -> dict:
     from yaaf.core.models import Agent, Run, RunStatus
     from yaaf.server.contextpack import build_context_pack
 
-    project = deliver_project(client, slug="unseen")
-    open_review(project)
     with db_session() as session:
         run = Run(id="run_" + project["id"][-8:], project_id=project["id"],
                   agent_id=project["ceo_agent_id"], status=RunStatus.RUNNING,
                   trigger={"reasons": []})
         session.add(run)
         session.flush()
-        pack = build_context_pack(
+        return build_context_pack(
             session, run, session.get(Agent, project["ceo_agent_id"]),
             session.get(Project, project["id"]))
-    assert "record" not in pack["review"]
-    assert "record" not in pack["review"]["numbers"]
-    assert "headline" not in pack["review"]
+
+
+def test_the_ceo_is_handed_the_record_and_told_to_explain_it(client):
+    """Step 1 kept the record out of the CEO's pack; step 2 hands it over with
+    one instruction — explain it, do not restate it — because the report's
+    `done` is meaning on top of the platform's list, not a second list."""
+    project = deliver_project(client, slug="handed")
+    open_review(project)
+    block = _ceo_pack(project)["review"]
+    assert block["record"] is not None
+    assert "requirements_met" in block["record"]
+    assert "review_report" in block["note"]
+    assert "do not restate it" in block["note"]
+    assert "headline" not in block   # the sentence is the chairman's, composed for him
 
 
 def test_a_meeting_opened_before_the_record_still_has_a_headline(client):
@@ -480,3 +486,161 @@ def test_an_explore_meeting_speaks_of_bets_not_requirements(client):
     assert len(bets["added"]) == 2
     assert view["headline"].startswith("1 bet alive, 1 killed this period.")
     assert "requirement" not in view["headline"]
+
+
+# ── the status report: every section, or a refusal ────────────────────────────
+
+
+def _report(serves: str, ask: dict | None = None, **over) -> dict:
+    body = {
+        "done": "The week settled the two cheapest channels and bought us a first "
+                "real date for a customer conversation.",
+        "variance": {"what": "The date moved because the Ads channel went dark.",
+                     "largest_cause": "The Google Ads account was suspended on Oct 29 "
+                                      "and nine runs died retrying it."},
+        "next": [{"what": "Send the cold sequence to the 140-name list",
+                  "serves": serves, "by": "2026-11-07T00:00:00Z"}],
+        "goal_effect": "Takes scope to all requirements true by Nov 2.",
+        "ask": ask or {"kind": "proceed", "levers": [], "why": None},
+    }
+    body.update(over)
+    return body
+
+
+def _scoped(client, slug: str) -> tuple[dict, str, str]:
+    """A Deliver project with one accepted requirement and an open review."""
+    project = deliver_project(client, slug=slug)
+    token = ceo_token(project)
+    req = propose(client, token, statement="The landing page converts a test signup")
+    accept(client, req["requirement_id"], project)
+    open_review(project)
+    return project, token, req["key"]
+
+
+def test_the_report_is_the_ceos_files_once_and_renders_the_old_filing(client):
+    """One filing feeds both readers: the structured report for the screen,
+    and the free text every older reader of the meeting keeps reading — so
+    the green rule, the cycle narrative and the closing mail cannot disagree
+    with the report."""
+    project, token, key = _scoped(client, "reported")
+    lead = agent_by_name(project, "Lead")
+    _, lead_token = live_token(project["id"], lead)
+    assert client.post("/agent/review_report", json=_report(key),
+                       headers=bearer(lead_token)).status_code == 403
+
+    filed = client.post("/agent/review_report",
+                        json=_report(key, ask={"kind": "change", "why": "no proof yet",
+                                               "levers": [{"kind": "accept_slip",
+                                                           "detail": "accept Nov 2"}]}),
+                        headers=bearer(token))
+    assert filed.status_code == 200, filed.text
+    assert filed.json()["next_items"] == 1
+
+    view = _open_view(client, project)
+    assert view["report"]["ask"]["kind"] == "change"
+    assert view["report"]["next"][0]["serves"] == key
+    assert "Largest cause: The Google Ads account" in view["narrative"]
+    assert view["recommended"].startswith("Accept the slip: accept Nov 2")
+
+    again = client.post("/agent/review_report", json=_report(key), headers=bearer(token))
+    assert again.status_code == 409
+    old = client.post("/agent/review_narrative", json={"narrative": "x" * 60},
+                      headers=bearer(token))
+    assert old.status_code == 409, "the two filings are one meeting, not two"
+
+
+def test_a_next_item_must_serve_something_the_platform_holds_open(client):
+    """A plan of things that serve nothing is how a project stays busy without
+    finishing — the task rule, applied to the report. The refusal names what
+    the item said and what it could have said."""
+    project, token, key = _scoped(client, "serves")
+    refused = client.post("/agent/review_report", json=_report("R-99"),
+                          headers=bearer(token))
+    assert refused.status_code == 422, refused.text
+    assert "'R-99'" in refused.json()["error"]
+    assert key in refused.json()["error"]
+
+    empty = client.post("/agent/review_report", json=_report(key, next=[]),
+                        headers=bearer(token))
+    assert empty.status_code == 422
+    assert "`next` is empty" in empty.json()["error"]
+
+    with db_session() as session:
+        assert session.query(Review).filter_by(project_id=project["id"]).one().report is None
+
+
+def test_the_ask_names_real_levers_or_none(client):
+    project, token, key = _scoped(client, "asks")
+    hollow = client.post("/agent/review_report",
+                         json=_report(key, ask={"kind": "change", "levers": [], "why": "x"}),
+                         headers=bearer(token))
+    assert hollow.status_code == 422
+    assert "names at least one lever" in hollow.json()["error"]
+
+    mixed = client.post("/agent/review_report",
+                        json=_report(key, ask={"kind": "proceed", "why": None,
+                                               "levers": [{"kind": "cut", "detail": "cut it"}]}),
+                        headers=bearer(token))
+    assert mixed.status_code == 422
+    assert "carries no levers" in mixed.json()["error"]
+
+    bogus = client.post("/agent/review_report",
+                        json=_report(key, ask={"kind": "change", "why": None,
+                                               "levers": [{"kind": "fire_everyone",
+                                                           "detail": "now"}]}),
+                        headers=bearer(token))
+    assert bogus.status_code == 422
+
+
+def test_a_report_that_asks_to_proceed_is_a_green_meeting(client, monkeypatch):
+    """`proceed` renders no recommendation, so the rule that closes a meeting
+    nobody needs reads it exactly as it read "recommended nothing"."""
+    from yaaf.server import janitor
+
+    project, token, key = _scoped(client, "greenlit")
+    filed = client.post("/agent/review_report", json=_report(key), headers=bearer(token))
+    assert filed.status_code == 200, filed.text
+    with db_session() as session:
+        review = session.query(Review).filter_by(project_id=project["id"]).one()
+        assert review.recommended is None
+        assert janitor._review_needs_nobody(review) is not None
+
+
+def test_a_report_that_asks_for_change_is_a_meeting_worth_having(client):
+    from yaaf.server import janitor
+
+    project, token, key = _scoped(client, "chased")
+    filed = client.post("/agent/review_report",
+                        json=_report(key, ask={"kind": "change", "why": None,
+                                               "levers": [{"kind": "move_date",
+                                                           "detail": "to Nov 2"}]}),
+                        headers=bearer(token))
+    assert filed.status_code == 200, filed.text
+    with db_session() as session:
+        review = session.query(Review).filter_by(project_id=project["id"]).one()
+        assert janitor._review_needs_nobody(review) is None
+
+
+def test_an_explore_report_serves_bets_and_an_operate_report_may_serve_the_cycle(client):
+    from tests.selftest_invariants.test_modes import operate_project
+
+    explore = make_project(client, slug="bets-report")
+    token = ceo_token(explore)
+    filed = client.post("/agent/hypotheses",
+                        json={"statement": "accountants will pay forty-nine a month",
+                              "kill_condition": "under 3 of 10 say yes",
+                              "kill_date": (utcnow() + timedelta(days=5)).isoformat()},
+                        headers=bearer(token))
+    bet = filed.json()["id"]
+    open_review(explore)
+    assert client.post("/agent/review_report", json=_report("R-01"),
+                       headers=bearer(token)).status_code == 422
+    ok = client.post("/agent/review_report", json=_report(bet), headers=bearer(token))
+    assert ok.status_code == 200, ok.text
+
+    operate = operate_project(client, slug="cycle-report")
+    token = ceo_token(operate)
+    open_review(operate)
+    ok = client.post("/agent/review_report", json=_report("cycle"), headers=bearer(token))
+    assert ok.status_code == 200, ok.text
+    assert _open_view(client, operate)["report"]["next"][0]["serves"] == "cycle"

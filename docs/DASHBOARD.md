@@ -714,8 +714,14 @@ open review shows a banner on the project's Inbox and the Roadmap until you clos
   expired on Explore. Composed by the janitor at open and frozen beside the
   numbers; no agent writes a word of it. Meetings opened before this existed
   say so rather than showing an invented one.
-- **The CEO's variance narrative** — why the numbers are what they are, filed
-  on a reserved governance run — and what it recommends.
+- **The CEO's status report**, filed on a reserved governance run, in the
+  order a meeting is held: *what it bought us* (meaning on top of the record,
+  not a second list), *what did not go to plan and why* with the single
+  largest cause named by what it is, *next period* as a list where every item
+  serves an open requirement, the cycle or a live bet (an item that serves
+  nothing is refused), one sentence on how that moves the goal, and *the ask*:
+  proceed, or change with the levers it wants. Meetings filed the old way
+  show the free-text narrative instead.
 - **The platform's numbers**, under a fold at the bottom, frozen at open: pace,
   requirements met since the last review, the commitment's state with
   promised and projected dates, this month's spend, closes spot-checked out

@@ -1735,6 +1735,17 @@ export interface ReviewRecord {
   evidence: { verified: number; failed: number; pending: number };
 }
 
+/** The CEO's status report, structured. Null on a meeting filed the old way
+    (free-text narrative), which the screen renders the old way. */
+export interface ReviewReport {
+  done: string;
+  variance: { what: string; largest_cause: string };
+  next: { what: string; serves: string; by: string | null }[];
+  goal_effect: string;
+  ask: { kind: "proceed" | "change"; levers: { kind: string; detail: string }[];
+    why: string | null };
+}
+
 export interface ReviewRow {
   id: string;
   number: number;
@@ -1743,6 +1754,7 @@ export interface ReviewRow {
   opened_at: string;
   numbers: ReviewNumbers;
   record: ReviewRecord | null;
+  report: ReviewReport | null;
   /** One sentence in words from the frozen facts; composed server-side so the
       screen, the reader tool and the opening mail say the same thing. */
   headline: string;

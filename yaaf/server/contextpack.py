@@ -1605,18 +1605,31 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                                  Review.status == ReviewStatus.OPEN)
         ).scalar_one_or_none()
         if review is not None:
+            serves = (
+                "a live bet, by id" if project.mode == ProjectMode.EXPLORE
+                else "an open requirement, by key"
+                + (", or `cycle`" if project.mode == ProjectMode.OPERATE else "")
+            )
             pack["review"] = {
                 "number": review.number,
                 "opened_at": review.opened_at.isoformat(),
                 "numbers": review.numbers,
+                # What was done, from the record. The platform composed it at
+                # open; the CEO explains it and is told not to restate it.
+                "record": review.record,
                 "narrative_filed": review.narrative is not None,
                 "note": (
                     "The meeting is with the chairman now; his decisions arrive "
                     "as notices." if review.narrative is not None else
-                    "File your variance narrative with review_narrative: what "
-                    "moved against the plan, the SINGLE largest cause by name, "
-                    "and what you recommend cutting or moving. Explain the "
-                    "numbers above — do not restate them."
+                    "File your status report with review_report. `record` above "
+                    "is what was done — do not restate it, explain it: `done` is "
+                    "what the period bought the goal; `variance` is what moved "
+                    "against the plan and its SINGLE largest cause, named by what "
+                    "it is; `next` is what you will do next period, each item "
+                    f"serving {serves}, with a date; `goal_effect` is one sentence "
+                    "on how that moves the goal; `ask` is `proceed` if nothing "
+                    "needs him, or `change` naming the levers you want pulled and "
+                    "why. Every section is required."
                 ),
             }
 
