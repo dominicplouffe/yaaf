@@ -11,9 +11,13 @@ happen — are attacked directly.
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
 from tests.conftest import ADMIN, agent_by_name, bearer, channel_of, live_token, make_project
 from tests.selftest_invariants.test_mcp_auth import foreign_project, mint, rpc
+from yaaf.core import ids
+from yaaf.core.db import db_session
+from yaaf.core.models import Message, utcnow
 
 SLUG = "acme"
 
@@ -41,13 +45,15 @@ def noisy_project(client, messages: int = 60) -> dict:
     """A project with enough said in it that trimming has to happen."""
     project = make_project(client, slug=SLUG)
     channel = channel_of(client, project["id"], "boardroom")
-    _, token = live_token(project["id"], project["ceo_agent_id"])
-    for n in range(messages):
-        posted = client.post("/agent/messages", headers=bearer(token), json={
-            "channel_id": channel,
-            "body": f"Update {n}: " + ("progress in some detail. " * 40),
-        })
-        assert posted.status_code == 200, posted.text
+    # Written as rows, not posted: the boardroom refuses a CEO message this
+    # long (`yaaf.server.plain`), and what is under test is the reader's trim.
+    with db_session() as session:
+        for n in range(messages):
+            session.add(Message(
+                id=ids.new_id(ids.MESSAGE), project_id=project["id"], channel_id=channel,
+                sender_agent_id=project["ceo_agent_id"],
+                body=f"Update {n}: " + ("progress in some detail. " * 40),
+                created_at=utcnow() + timedelta(seconds=n)))
     return {**project, "channel": channel}
 
 
