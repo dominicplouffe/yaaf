@@ -232,10 +232,14 @@ export function ModelSelect({ value, onChange, info, registry, primary, provider
   const [other, setOther] = useState(!known);
   useEffect(() => { if (!known) setOther(true); }, [known]);
   const labelOf = (name: string) => registry.find((p) => p.name === name)?.label ?? name;
+  // A model as a person says it ("Claude Sonnet 5.5"), the catalog's own label;
+  // the exact id stays on hover for whoever needs to type it somewhere else.
+  const nameOf = (id: string) =>
+    (info?.models ?? []).find((m) => m.id === id)?.label ?? modelLabel(id, registry);
   const hint = (cls: string, provider: string | null | undefined) => {
     if (!provider) return "";
     const model = info?.lineups[provider]?.[cls];
-    return model ? ` → ${model}` : ` → none set on ${labelOf(provider)}`;
+    return model ? ` → ${nameOf(model)}` : ` → none set on ${labelOf(provider)}`;
   };
   return <span className="model-select">
     <select id={id} disabled={disabled} value={other ? "__other" : value}
@@ -258,13 +262,13 @@ export function ModelSelect({ value, onChange, info, registry, primary, provider
         </optgroup>)}
       {[...grouped.entries()].map(([name, models]) =>
         <optgroup key={name} label={`${labelOf(name)} — a model of its own`}>
-          {models.map((m) => <option key={m.id} value={m.id}>
-            {m.id}{m.priced ? "" : " · no price yet"}
+          {models.map((m) => <option key={m.id} value={m.id} title={m.id}>
+            {m.label}{m.priced ? "" : " · no price yet"}
           </option>)}
         </optgroup>)}
       {[...unpaidGroups.entries()].map(([name, models]) =>
         <optgroup key={`unpaid-${name}`} label={`${labelOf(name)} — not paid here`}>
-          {models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+          {models.map((m) => <option key={m.id} value={m.id} title={m.id}>{m.label}</option>)}
         </optgroup>)}
       <option value="__other">Another model, by name…</option>
     </select>

@@ -258,7 +258,7 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
       </label>
       {unpaidProvider && (
         <div className="seat-door">
-          <p>This project pays <b>{paidNames}</b>. <b>{model}</b> is a {sellerLabel} model.
+          <p>This project pays <b>{paidNames}</b>. <b>{modelLabel(model, registry)}</b> is a {sellerLabel} model.
             Connect a credential to run {name} on it.</p>
           <CredentialPicker provider={unpaidProvider} value={pick}
             onChange={(id) => setPick(id)} label={`Credential for ${sellerLabel}`}
@@ -267,7 +267,7 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
       )}
       {needsPrice && (
         <div className="seat-door">
-          <p><b>{priceable}</b> has no price on this install, so its runs could not be costed.
+          <p><b>{modelLabel(priceable, registry)}</b> has no price on this install, so its runs could not be costed.
             Saving imports it from the price list shipped with yaaf, recorded like any price
             you set under <Link to="/settings?section=prices" target="_blank"
             rel="noreferrer">Settings → Model prices</Link>.</p>
@@ -275,7 +275,7 @@ function SeatEditor({ ctx, agentId, name, work, onDone }: {
       )}
       {needsSearch && search && (
         <div className="seat-door">
-          <p>{name}&apos;s role uses the web, and <b>{model}</b>&apos;s provider cannot search it.
+          <p>{name}&apos;s role uses the web, and <b>{modelLabel(model, registry)}</b>&apos;s provider cannot search it.
             Connect a search service once and every seat like this one searches through it —
             each query is billed into the run that made it.</p>
           <label className="field">Search with
@@ -520,7 +520,7 @@ export default function Member({ ctx }: { ctx: ProjectCtx }) {
               {work?.model && (
                 <>
                   <dt>Model</dt>
-                  <dd>{work.model}{work.provider
+                  <dd><span title={work.model}>{modelLabel(work.model, registry)}</span>{work.provider
                     ? ` · ${registry.find((p) => p.name === work.provider)?.label ?? work.provider}`
                     : ""}{work.effort ? ` · ${effortWord(work.effort)} effort` : ""}
                     {work.overrides && Object.values(work.overrides).some(Boolean) && (

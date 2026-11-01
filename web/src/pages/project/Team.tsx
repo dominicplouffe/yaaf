@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { OrgView, post, SeatWork } from "../../api";
 import { useDesk } from "../../desk";
 import { firstName, ProjectCtx } from "../../projectCtx";
+import { modelLabel } from "../../providers";
 import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
 import { clip, fmtAgo, fmtUnit } from "../../ui";
 import { Avatar, PageHead, Seg } from "../../ui/kit";
@@ -42,7 +43,7 @@ function workLine(work: Partial<SeatWork> | undefined): string | null {
     ? ` · $${work.month_usd.toFixed(2)} this month`
       + (work.month_share ? ` (${Math.round(work.month_share * 100)}%)` : "")
     : "";
-  return `${work.model}${money}`;
+  return `${modelLabel(work.model)}${money}`;
 }
 
 function SeatNode({ seat, onOpen, wide, extra, work }: {

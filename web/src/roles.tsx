@@ -3,7 +3,9 @@ import { CrewSummary, OrgView, RoleSummary, get } from "./api";
 import { envVarName } from "./datasource";
 import { modelLabel, parseRef } from "./providers";
 import { GrantOption, TeamSwitches } from "./grants";
+import { Why } from "./settingsCopy";
 import { clip, downloadCsv } from "./ui";
+import "./pages/roles-copy.css";
 
 /** Everything the chairman meets when hiring, in one place.
 
@@ -434,10 +436,7 @@ export function HirePanel({
             {gaps.map((gap) => (
               <div className="card gap" key={gap.key}>
                 <strong>{gap.sentence}</strong>
-                <details style={{ margin: "var(--s1) 0 var(--s2)" }}>
-                  <summary className="help">Why?</summary>
-                  <p className="help" style={{ margin: "var(--s1) 0 0" }}>{gap.because}</p>
-                </details>
+                <Why className="gap-why">{gap.because}</Why>
                 <div className="pill-row">
                   {gap.suggest
                     .map((s) => roles.find((r) => r.slug === s))

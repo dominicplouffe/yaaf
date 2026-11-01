@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { get, post, RoleSummary } from "../api";
 import { modelLabel, ModelsInfo, useModels } from "../providers";
 import { CATEGORIES, DOMAINS, canDo, depthOf, effortWord, needsOf, purposeOf } from "../roles";
+import { Why } from "../settingsCopy";
 import { downloadCsv, ExportCsv } from "../ui";
 import "./roles-copy.css";
 
@@ -369,7 +370,6 @@ export default function Roles() {
   const [query, setQuery] = useState("");
   const [domain, setDomain] = useState("all");
   const [saved, setSaved] = useState<string | null>(null);
-  const [why, setWhy] = useState(false);
   const [params, setParams] = useSearchParams();
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -445,6 +445,9 @@ export default function Roles() {
       setSaved(
         `Saved as version ${result.version}. Existing teams keep their pinned version; new teams get this one.`,
       );
+      // The form is now that version: its button offers the next one, not the
+      // one just written ("Save as v2" again, after v2 was saved).
+      setEditing((cur) => (cur && cur.slug === editing.slug ? { ...cur, version: result.version } : cur));
       refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -515,12 +518,8 @@ export default function Roles() {
         </button>
       </div>
       <div className="rl-lede">
-        <span>Every role a project can hire. Edits save as a new version; running teams keep theirs.</span>{" "}
-        <button type="button" className="linkish inline" aria-expanded={why} onClick={() => setWhy(!why)}>
-          {why ? "Hide" : "Why?"}
-        </button>
-        {why && (
-          <div className="rl-why">
+        <span>Every role a project can hire. Edits save as a new version; running teams keep theirs.</span>
+        <Why>
             <p>
               A role is a craft: its instructions, how deeply it thinks, and the sandbox walls
               around it. Saving one creates a new version. Teams keep the version they were hired
@@ -532,8 +531,7 @@ export default function Roles() {
               Deepest, cheapest first. <b>Code</b> means the role may run shell commands. Click a
               role for its full description, system prompt and permissions.
             </p>
-          </div>
-        )}
+        </Why>
       </div>
       {error && <div className="error">{error}</div>}
 

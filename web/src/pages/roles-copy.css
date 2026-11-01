@@ -9,13 +9,8 @@
   color: var(--ink-2); font-size: var(--t-body);
   margin: var(--s1) 0 var(--s4); max-width: 80ch;
 }
-.rl-why {
-  margin-top: var(--s2); padding: var(--s2) var(--s3);
-  border-left: 2px solid var(--accent); background: var(--surface-2);
-  border-radius: var(--radius-sm); font-size: var(--t-small); color: var(--ink-2);
-}
-.rl-why p { margin: 0; }
-.rl-why p + p { margin-top: var(--s2); }
+/* Its "Why?" is the shared fold (settingsCopy), under the lede line. */
+.rl-lede > .s-why { margin: var(--s1) 0 0; }
 
 /* Header and rows share one template so the columns cannot drift apart. */
 .rl-head, .rl-row {
@@ -78,3 +73,6 @@ section + section .rl-group { border-top: 1px solid var(--border); }
   .rl-depth, .rl-use { grid-column: auto; font-size: var(--t-micro); }
   .rl-open { padding: var(--s2); }
 }
+
+/* A gap card's reason, folded under its sentence. */
+.gap-why.s-why { margin: var(--s1) 0 var(--s2); }
