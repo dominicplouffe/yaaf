@@ -270,14 +270,12 @@ function ReviewBanner({ projectId, number }: { projectId: string; number: number
     <div className="strip" style={{ marginTop: 0, marginBottom: "var(--s4)" }}>
       <Icon name="meeting" size={18} />
       <div className="grow">
-        <strong>Your standing review with the CEO is open.</strong>
+        <strong>Your status meeting with the CEO is open.</strong>
         <div className="sb">
-          The platform's numbers frozen at the moment it opened, the CEO's account of why they
-          are what they are, and the six things you can do about it.
-        </div>
+          The platform's numbers What was done since the last one, where the project stands, what the CEO will do next and what it asks of you.</div>
       </div>
       <NavLink to={`/projects/${projectId}/details/reviews`}>
-        <Btn kind="primary">Open review #{number}</Btn>
+        <Btn kind="primary">Open meeting #{number}</Btn>
       </NavLink>
     </div>
   );

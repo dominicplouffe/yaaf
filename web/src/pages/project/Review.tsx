@@ -488,8 +488,8 @@ function AskSection({ open, selfRunning, requirements, unit, onChanged }: {
             ? "Your CEO holds these decisions under the dial you set. Pulling one here is you "
               + "taking it back for this meeting; it is recorded with your reason. "
             : "Use one only if you want to change the plan. "}
-          Anything you do lands under “Decided this review” and stays there; the meeting ends
-          when you press <b>Close the review</b>, and closing with no changes is itself a decision.
+          Anything you do lands under “Decided this meeting” and stays there; the meeting ends
+          when you press <b>Close the meeting</b>, and closing with no changes is itself a decision.
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {Object.entries(LEVER_LABELS).filter(([k]) => selfRunning || !askedKinds.has(k))
@@ -742,11 +742,12 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
         <p className="subtitle" style={{ margin: 0, flex: 1 }}>
           {selfRunning
-            ? "Your CEO's standing report. You left the decisions to it, so nothing here is "
-              + "waiting on you — read it, say anything you want said back, and close it."
-            : "The standing meeting: the platform brings the numbers, the CEO explains the "
-              + "variance, you decide. Every lever is recorded with your reason and shown at "
-              + "the next review beside what it bought."}
+            ? "Your CEO's status report. You left the decisions to it, so nothing here is "
+              + "waiting on you — read what it did and what it will do, say anything you want "
+              + "said back, and close it."
+            : "The status meeting: the platform brings what was done, the CEO explains what "
+              + "it bought and what is next, and asks for what it needs. Every lever is "
+              + "recorded with your reason and shown at the next meeting beside what it bought."}
         </p>
         <AsOf at={at} error={error} />
       </div>
@@ -754,19 +755,19 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
       {!open ? (
         <div className="card" style={{ maxWidth: 640 }}>
           <p className="help" style={{ margin: 0 }}>
-            No review is open. The platform opens one on the schedule you set
-            (Settings → Rules in force → “Days between status reviews”) — with zero
-            tokens, whatever the board or the budget looks like — and emails you when
-            it does.
+            No status meeting is open. The platform opens one on the schedule you set
+            (Settings → Rules in force → “Days between status meetings”; on an Operate
+            rhythm of a week or more, at the cycle roll) — with zero tokens, whatever
+            the board or the budget looks like — and emails you when it does.
           </p>
         </div>
       ) : (
         <div className="card" style={{ padding: "14px 18px", marginBottom: 18 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-            <h2 style={{ margin: 0 }}>Review #{open.number}</h2>
+            <h2 style={{ margin: 0 }}>Status meeting #{open.number}</h2>
             <span className="help">opened {fmtWhen(open.opened_at)}</span>
             <span className="sp" style={{ flex: 1 }} />
-            <NoteAction label="Close the review" className="small primary"
+            <NoteAction label="Close the meeting" className="small primary"
               placeholder="Closing note (optional) — 'no change' is a decision too"
               confirmLabel="Close"
               onSubmit={async (note) => {
@@ -795,7 +796,7 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
           {open.numbers.prior && open.numbers.prior.decisions.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <b style={{ fontSize: 13 }}>
-                Last review's decisions, beside what they bought
+                Last meeting's decisions, beside what they bought
               </b>
               <div className="help">
                 {open.numbers.prior.bought.met_since} requirement(s) met since ·
@@ -844,7 +845,7 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
 
           {open.decisions.length > 0 && (
             <div style={{ marginBottom: 12 }}>
-              <b style={{ fontSize: 13 }}>Decided this review</b>
+              <b style={{ fontSize: 13 }}>Decided this meeting</b>
               <DecisionList decisions={open.decisions} />
             </div>
           )}
@@ -871,14 +872,14 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
       {data.history.length > 0 && (
         <>
           <div style={{ display: "flex", alignItems: "baseline", gap: "var(--s3)" }}>
-            <h2 style={{ flex: 1 }}>Past reviews</h2>
+            <h2 style={{ flex: 1 }}>Past meetings</h2>
             {/* What you decided, and what it bought — the one record a
                 chairman is most likely to want outside this screen. */}
             <ExportCsv
               onClick={() =>
                 downloadCsv(
-                  "reviews.csv",
-                  ["Review", "Opened", "Closed", "Settled since the last one",
+                  "status-meetings.csv",
+                  ["Meeting", "Opened", "Closed", "Settled since the last one",
                    "Settling per week", "Still open", "What you decided", "Why"],
                   data.history.flatMap((r) => {
                     const facts = [

@@ -64,8 +64,29 @@ def make_due(project: dict, days: float = 8) -> None:
                 latest.closed_at = utcnow() - timedelta(days=days - 1)
 
 
+def roll_once(project: dict) -> None:
+    """Close the open cycle the way the janitor does: age it past its roll and
+    tick. On a weekly-or-longer Operate rhythm the roll IS the meeting."""
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Cycle, CycleStatus
+    from yaaf.server import janitor
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        cons = effective(session, row.id)
+        janitor.roll_cycles(session, row, cons)  # opens the first cycle if none
+        cycle = session.query(Cycle).filter_by(
+            project_id=project["id"], status=CycleStatus.OPEN).one()
+        cycle.opened_at = utcnow() - timedelta(days=40)
+        janitor.roll_cycles(session, row, cons)
+
+
 def open_review(project: dict) -> dict:
     make_due(project)
+    with db_session() as session:
+        mode = session.get(Project, project["id"]).mode
+    if mode == "operate":
+        roll_once(project)
     run_review_tick(project)
     with db_session() as session:
         review = session.query(Review).filter_by(
@@ -858,3 +879,42 @@ def test_the_green_rule_reads_the_report_s_ask_itself(client):
         assert janitor._review_needs_nobody(review) is not None, "the report is the authority"
         review.report = {**review.report, "ask": {"kind": "change", "levers": [], "why": None}}
         assert janitor._review_needs_nobody(review) is None
+
+
+
+# ── on an Operate rhythm the roll is the meeting ────────────────────────────────
+
+
+def test_an_operate_meeting_opens_at_the_roll_not_on_the_interval(client):
+    """A weekly cycle and a seven-day review landed a day apart and were the
+    same conversation held twice. On a rhythm of a week or more the meeting
+    opens when the cycle rolls, and the interval alone opens nothing."""
+    from tests.selftest_invariants.test_modes import operate_project
+
+    project = operate_project(client, slug="at-the-roll")
+    make_due(project, days=30)
+    run_review_tick(project)
+    with db_session() as session:
+        assert session.query(Review).filter_by(project_id=project["id"]).count() == 0, \
+            "thirty days old and no cycle closed: no meeting"
+    agenda = client.get(f"/observe/projects/{project['id']}/agenda", headers=ADMIN).json()
+    meeting = next(e for e in agenda["events"] if e["kind"] == "review")
+    assert "rolls" in meeting["detail"]
+
+    roll_once(project)
+    run_review_tick(project)
+    with db_session() as session:
+        review = session.query(Review).filter_by(project_id=project["id"]).one()
+        assert review.number == 1
+        assert review.record["cycle"]["ordinal"] == 1, "opened on the cycle that just closed"
+
+
+def test_a_daily_operate_rhythm_keeps_the_interval(client):
+    """Seven meetings a week is a feed, not a meeting."""
+    from tests.selftest_invariants.test_modes import operate_project
+
+    project = operate_project(client, slug="daily-ops", constitution={"cycle_frequency": "daily"})
+    make_due(project)
+    run_review_tick(project)
+    with db_session() as session:
+        assert session.query(Review).filter_by(project_id=project["id"]).count() == 1

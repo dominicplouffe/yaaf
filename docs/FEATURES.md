@@ -136,10 +136,11 @@ dates are its cycles' (§4).
   the CEO the last three cycles' narratives verbatim. Two consecutive cycles
   with nothing accepted pause the project: a rhythm nobody dances to is a bill,
   not a project.
-- **The review is opened by the janitor with zero tokens**, on schedule,
-  regardless of budget or an empty board — because a review with nothing on the
-  board is the one you most need. It carries the platform's frozen numbers;
-  the CEO files its variance narrative on a *reserved* governance run.
+- **The status meeting is opened by the janitor with zero tokens**, on
+  schedule, regardless of budget or an empty board — because a meeting with
+  nothing on the board is the one you most need. Every `review_interval_days`
+  on Deliver and Explore; at the cycle roll on an Operate rhythm of a week or
+  more, where the roll already closes the week.
 - **It opens on what was done, from the record.** One sentence in words,
   then the period by name: requirements the platform made true and how it
   checked them, cuts with their reasons, deliverables published, closes
@@ -147,9 +148,21 @@ dates are its cycles' (§4).
   platform composes it at open from events it wrote under its own rules —
   the same rules the briefing counts by — and no agent writes a word of it.
   The forecast's inputs sit under a fold at the bottom, where they belong.
+- **The CEO files a status report, not a paragraph**, on a *reserved*
+  governance run: what the period bought, what moved against the plan and its
+  single largest cause, what it will do next — a list where every item serves
+  an open requirement, the cycle or a live bet, or is refused — and the ask:
+  proceed, or change with the levers it wants. Every section is required.
+- **The next meeting opens on that list**, each item marked from the record
+  before the CEO says a word, and the CEO's "done" against a requirement the
+  platform holds open is refused naming the key. The levers were always shown
+  beside what they bought; the CEO's own plan is now held to the same account.
 - **Six levers, each recorded with your reason**: cut scope, add scope, reword,
-  move the date, raise the budget, accept the slip. Each is disclosed to the
-  CEO and shown at the next review beside what it bought.
+  move the date, raise the budget, accept the slip — under the ask, the
+  asked-for one pre-filled so agreeing is one press. Each records what it moved
+  on the record, is disclosed to the CEO, and is shown at the next meeting
+  beside what it bought. Say something back and the CEO answers in the
+  meeting's thread, on the reserve for `review_replies` answers per meeting.
 
 ## 5. Work that can't be invented
 

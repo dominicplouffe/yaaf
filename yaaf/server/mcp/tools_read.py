@@ -297,7 +297,7 @@ def _also_yours(session: Session, reachable: set[str]) -> list[dict]:
                 Review.project_id == project.id,
                 Review.status == ReviewStatus.OPEN)).scalars():
             out.append({"project": project.slug, "kind": "review", "id": review.id,
-                        "what": f"review #{review.number} is open",
+                        "what": f"status meeting #{review.number} is open",
                         "answer_with": "review_decide"})
     return out
 

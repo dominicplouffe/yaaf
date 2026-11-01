@@ -428,10 +428,12 @@ You can watch all of it in **Roadmap**, **Tasks** and **Team**, and in
 - **Sign the date, and decide what happens when it slips.** Cut something, or
   move the date with a reason. Those are the two honest options and the
   platform offers exactly those two.
-- **Show up to the review.** Once a week (by default) the platform opens a
-  standing meeting with its own numbers and the CEO's explanation of them. Six
-  levers, each recorded with your reason and shown back at the next review
-  beside what it bought.
+- **Show up to the status meeting.** Once a week by default (at the cycle roll
+  on an Operate rhythm of a week or more) the platform opens one with what was
+  done from its own record, and the CEO's report: what it bought, what went
+  wrong, what it will do next, and what it asks of you. Six levers, each
+  recorded with your reason and shown back at the next meeting beside what it
+  bought — and the CEO's own plan shown back the same way.
 - **Answer the boardroom.** The CEO escalates real blockers there. A blocked
   project that's waiting on you says so.
 - **Decide approvals.** Any spend over the threshold you set lands in a

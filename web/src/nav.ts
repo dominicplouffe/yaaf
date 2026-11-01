@@ -22,7 +22,8 @@ export const DETAIL_TABS: { path: string; label: string; icon: IconName; key: st
   { path: "tasks", label: "Tasks", icon: "kanban", key: "k", words: "board work bets" },
   { path: "deliverables", label: "Deliverables", icon: "folder", key: "f", words: "files drafts working" },
   { path: "spend", label: "Spend", icon: "wallet", key: "s", words: "money budget cost" },
-  { path: "reviews", label: "Reviews", icon: "meeting", key: "v", words: "review meeting" },
+  { path: "reviews", label: "Status", icon: "meeting", key: "v",
+    words: "status meeting review" },
   { path: "activity", label: "Activity", icon: "history", key: "a",
     words: "records runs messages memory decisions evidence proof audit" },
 ];

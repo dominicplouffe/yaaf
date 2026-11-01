@@ -1008,7 +1008,7 @@ def _meeting_lines(session: Session, project: Project, since, until) -> list[dic
             "the CEO has not filed its report yet"
         lines.append(_line(
             "review_opened",
-            f"review #{review.number} opened — {filed}",
+            f"status meeting #{review.number} opened — {filed}",
             count=1, where="review",
         ))
     return lines

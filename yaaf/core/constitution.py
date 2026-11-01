@@ -558,13 +558,15 @@ class ConstitutionDoc(BaseModel):
     # The review. Opened, numbered and emailed by the janitor with zero
     # tokens; the CEO's narrative rides the governance reserve.
     review_interval_days: int = _rule(
-        7, ge=1, group="The review", label="Days between status reviews",
-        help="The standing meeting: the janitor opens it on schedule regardless of "
-             "budgets or an empty board, emails you the numbers, and the CEO files its "
-             "variance narrative on a reserved governance run. Your six levers — cut, "
-             "add, reword, move the date, raise the budget, accept the slip — are "
-             "recorded with your reasons and shown at the next review beside what "
-             "they bought.")
+        7, ge=1, group="The review", label="Days between status meetings",
+        help="The status meeting: the janitor opens it on schedule regardless of "
+             "budgets or an empty board, with what was done from the record and one "
+             "sentence on where the project stands; the CEO files its status report on "
+             "a reserved governance run. Your six levers — cut, add, reword, move the "
+             "date, raise the budget, accept the slip — are recorded with your reasons "
+             "and shown at the next meeting beside what they bought. On an Operate "
+             "project with a weekly or longer rhythm the meeting opens at the cycle "
+             "roll instead and this interval is not used.")
     review_replies: int = _rule(
         2, ge=0, group="The review", label="CEO replies per meeting on the reserve",
         help="When you say something back on an open review, the CEO answers in the "

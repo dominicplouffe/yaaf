@@ -20,9 +20,13 @@ project shape. **Design notes** pins the reasoning to each section.
 > **One deviation from §3.5:** the cap bounds *reserve* spending, not conversation — an answer
 > past it waits for an ordinary wake like any other message rather than being refused. A rule
 > that stopped the CEO answering its chairman would be a new failure mode, not a bound.
-> Filing a report also renders `narrative`/`recommended`, so every older reader of the filing
-> keeps reading one thing. `review_narrative` is kept for one release. No eval golden moved: no
-> scenario opens a review. Step 5 (naming, docs, the Operate alignment) is still proposal. The decisions in §7 were taken as recommended: one meeting on
+> Step 5: the name — *Status meeting* on every surface a chairman reads, tab **Status**, the rule
+> labelled *Days between status meetings*; the route, the table and the API keep `review` — and
+> the Operate alignment: `review_record.review_due` is one arithmetic for the janitor and the
+> agenda, and on an Operate rhythm of a week or more the meeting opens at the cycle roll (daily
+> keeps the interval). **All five steps are built.** Filing a report also renders
+> `narrative`/`recommended`, so every older reader of the filing keeps reading one thing.
+> `review_narrative` is kept for one release. No eval golden moved: no scenario opens a review. The decisions in §7 were taken as recommended: one meeting on
 > Operate (at the roll), two replies per meeting, old filings rendered the old way, "Status
 > meeting" as the name.
 >

@@ -426,3 +426,47 @@ def plan_marks(session: Session, project: Project, prior) -> list[dict]:
         out.append({"item": index, "what": item.get("what"), "serves": serves,
                     "by": item.get("by"), "kind": kind, "mark": mark, "says": says})
     return out
+
+
+# ── when the meeting is due ─────────────────────────────────────────────────────
+
+#: Operate rhythms whose roll IS the status meeting. A daily cycle keeps the
+#: interval: seven meetings a week is a feed, not a meeting.
+ROLL_IS_THE_MEETING = ("weekly", "monthly", "quarterly")
+
+
+def meeting_at_the_roll(project: Project, cons) -> bool:
+    return (project.mode == ProjectMode.OPERATE
+            and cons.cycle_frequency in ROLL_IS_THE_MEETING)
+
+
+def review_due(session: Session, project: Project, cons, latest) -> tuple[datetime | None, int]:
+    """(when the next meeting is due, its number). The janitor opens on it and
+    the agenda draws it, from one arithmetic.
+
+    Deliver and Explore meet every `review_interval_days`. An Operate project
+    on a weekly or longer rhythm meets at the roll: the roll already closes
+    the cycle, writes the scorecard and reopens the plan gate, and a second
+    meeting a day later about the same week was the same conversation held
+    twice. So the meeting is due the moment a cycle has closed since the
+    previous one opened, and not before — None while the cycle is still
+    open, and the agenda shows the roll as the meeting's time."""
+    from datetime import timedelta
+
+    number = 1 if latest is None else latest.number + 1
+    if meeting_at_the_roll(project, cons):
+        since = latest.opened_at if latest is not None else project.created_at
+        closed = session.execute(
+            select(Cycle).where(Cycle.project_id == project.id,
+                                Cycle.closed_at.is_not(None),
+                                Cycle.closed_at > since)
+            .order_by(Cycle.closed_at).limit(1)
+        ).scalar_one_or_none()
+        if closed is None:
+            return None, number
+        return closed.closed_at, number
+    interval = timedelta(days=cons.review_interval_days)
+    if latest is None:
+        return project.created_at + interval, number
+    return max(latest.scheduled_for + interval,
+               latest.closed_at or latest.opened_at), number

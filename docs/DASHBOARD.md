@@ -72,7 +72,7 @@ or variable**, **Connect a data source**, **Set the budget**, **Invite someone
 to this project**), and any deliverable by its name. **?** lists every shortcut. **g** then a letter
 goes to a page of the project you are in — **g o** its Inbox, **g t** Team, **g c** Chat,
 **g r** Results, **g d** Details, and straight to a Details tab with **g m**
-Roadmap, **g k** Tasks, **g f** Deliverables, **g s** Spend, **g v** Reviews,
+Roadmap, **g k** Tasks, **g f** Deliverables, **g s** Spend, **g v** Status,
 **g a** Activity, **g ,** the project's Settings, and **g 1** to **g 5** your
 pins in sidebar order — and **g i** to the Inbox. No single
 keypress ever decides anything: approving, denying and answering are always a
@@ -697,11 +697,16 @@ forecast grades. Nothing but the platform ever writes `met`.
   more than all the others together.
 - **The last 30 days, in detail** — tokens and runs by model, team or agent.
 
-## Reviews — the standing meeting
+## Status — the status meeting
 
 Opened on schedule by the janitor, with zero tokens, regardless of budget or an
-empty board. A review with nothing on the board is the one you most need. An
-open review shows a banner on the project's Inbox and the Roadmap until you close it.
+empty board — every `review_interval_days` on Deliver and Explore, and at the
+cycle roll on an Operate rhythm of a week or more, because the roll already
+closes the week and a second meeting a day later was the same conversation
+held twice. A meeting with nothing on the board is the one you most need. An
+open meeting shows a banner on the project's Inbox and the Roadmap until you
+close it. (The route is still `/reviews`, and the API and the record keep the
+word *review*; only what you read says *status meeting*.)
 
 - **One sentence first**, in words, from the frozen facts: *"Behind the promise
   by two days (Oct 31 → Nov 2). 11 of 15 requirements true, 3 this period. This

@@ -1478,19 +1478,14 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
     ).scalar_one_or_none()
     if latest is not None and latest.status == ReviewStatus.OPEN:
         return None  # one meeting at a time; an unattended one nags instead
-    interval = timedelta(days=cons.review_interval_days)
-    if latest is None:
-        due = project.created_at + interval
-        number = 1
-    else:
-        due = max(latest.scheduled_for + interval,
-                  (latest.closed_at or latest.opened_at))
-        number = latest.number + 1
-    now = utcnow()
-    if now < due:
-        return None
-
     from yaaf.server import review_record
+
+    # One arithmetic for the janitor and the agenda: every interval on
+    # Deliver and Explore; at the roll on an Operate rhythm of a week or more.
+    due, number = review_record.review_due(session, project, cons, latest)
+    now = utcnow()
+    if due is None or now < due:
+        return None
 
     numbers = review_numbers(session, project, cons, latest)
     # The window is the same one `review_numbers` counts "met since" over:
@@ -1525,8 +1520,8 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
               f"pace {bought['pace_then']} → {bought['pace_now']}/wk.\n"
         )
     chairman_notify(
-        session, project, f"review #{number} is open",
-        f"The standing review for {project.name} is open. {headline}\n\n"
+        session, project, f"status meeting #{number} is open",
+        f"The status meeting for {project.name} is open. {headline}\n\n"
         + _record_lines(record)
         + "The numbers:\n\n"
         f"  goal: {project.goal[:300]}\n"
@@ -1544,9 +1539,9 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
         f"{numbers['audit_coverage']['expired_unreviewed']} expired unreviewed\n"
         f"{prior_lines}\n"
         "The CEO is filing its variance narrative on a reserved governance run. "
-        "Take the meeting on the Review tab — your levers there are cut, add, "
+        "Take the meeting on the Status tab — your levers there are cut, add, "
         "reword, move the date, raise the budget, and accept the slip; each is "
-        "recorded with your reason and shown at the next review beside what it "
+        "recorded with your reason and shown at the next meeting beside what it "
         "bought.",
         attention=Attention.ACTION,
     )
@@ -1582,7 +1577,7 @@ def nag_reviews(session: Session, project: Project) -> None:
         return
     if review.nag_sent_at is None and age_hours >= REVIEW_NAG_HOURS:
         chairman_notify(
-            session, project, f"review #{review.number} is waiting on you",
+            session, project, f"status meeting #{review.number} is waiting on you",
             f"It opened {age_hours:.0f}h ago"
             + (" and the CEO's narrative is in" if review.narrative else
                " (the CEO has not filed its narrative yet)")
@@ -1593,7 +1588,7 @@ def nag_reviews(session: Session, project: Project) -> None:
         review.nag_sent_at = now
     elif review.escalated_at is None and age_hours >= REVIEW_ESCALATE_HOURS:
         chairman_notify(
-            session, project, f"review #{review.number} has been open {age_hours / 24:.0f} days",
+            session, project, f"status meeting #{review.number} has been open {age_hours / 24:.0f} days",
             "This is the second reminder; there will not be a third. Close it with "
             "no decisions if that is the decision — an explicit 'no change' is a "
             "record, an open meeting is a hole.",
@@ -1655,12 +1650,12 @@ def _close_green_review(session: Session, project: Project, review: Review) -> N
         action="review.auto_close", entity="review", entity_id=review.id,
         detail={"number": review.number, "why": why}))
     chairman_notify(
-        session, project, f"review #{review.number} closed itself — nothing needed you",
-        f"Review #{review.number} closed with no changes after {REVIEW_NAG_HOURS}h: {why}. "
+        session, project, f"status meeting #{review.number} closed itself — nothing needed you",
+        f"Status meeting #{review.number} closed with no changes after {REVIEW_NAG_HOURS}h: {why}. "
         f"The CEO's account of the period:\n\n{(review.narrative or '')[:3000]}\n\n"
         "Nothing was decided for you. Every lever the meeting offered — cut, add, move "
         "the date, raise the budget — is still on the Roadmap and in Settings."
-        + project_link(project.id, "reviews", "Read the review"),
+        + project_link(project.id, "reviews", "Read the meeting"),
         attention=Attention.FYI,
     )
 
