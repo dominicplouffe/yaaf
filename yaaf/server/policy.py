@@ -2341,6 +2341,48 @@ def check_chairman_report(
     )
 
 
+def check_plain_to_chairman(
+    session: Session, project: Project, agent: Agent, channel: Channel, run: Run,
+    body: str, redrafted: bool = False,
+) -> None:
+    """The CEO's boardroom words, refused when they would have to be read twice.
+
+    `plain` holds the measure and why it is these two numbers. The one way past
+    it is the chat lane's second draft: a live conversation must not leave the
+    chairman unanswered because the CEO wrote badly twice, so the session sends
+    its rewrite with `redrafted` and it lands — recorded, so a CEO that cannot
+    write plainly is visible rather than silenced. A work run has no such need:
+    it rewrites and posts again, as it would against any other refusal.
+    """
+    if agent.kind != AgentKind.CEO or channel.kind != ChannelKind.BOARDROOM:
+        return
+    from yaaf.server import plain
+
+    found = plain.problems(body)
+    if not found:
+        return
+    if redrafted and run.kind == RunKind.CHAT_SESSION:
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT), project_id=project.id, actor=f"agent:{agent.id}",
+            action="boardroom.plain_override", entity="agent", entity_id=agent.id,
+            detail={"run_id": run.id, "problems": found[:5]}))
+        return
+    raise Refusal(plain.refusal_text(found))
+
+
+def check_plain_parts(parts: dict[str, str | None]) -> None:
+    """The same measure for the CEO's other words to him — a question, a
+    heads-up — field by field. Sentence length only: the platform assembles
+    those fields into the item he reads, so their total is not the writer's.
+    Without this, the run-on refused in the boardroom moves one tool over."""
+    from yaaf.server import plain
+
+    found = [f"In `{name}`: {problem}" for name, text in parts.items() if text
+             for problem in plain.problems(text, whole_message=False)]
+    if found:
+        raise Refusal(plain.refusal_text(found))
+
+
 def obligation_unmet(session: Session, project: Project, agent: Agent,
                       last_ceo: datetime | None) -> bool:
     """Does the CEO owe the chairman a sentence it has not yet said?

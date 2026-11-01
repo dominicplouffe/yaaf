@@ -48,7 +48,7 @@ from yaaf.core.models import (
     Team,
     utcnow,
 )
-from yaaf.server import brief, policy
+from yaaf.server import brief, plain, policy
 from yaaf.server.rows import seat_row
 
 UNTRUSTED_NOTE = (
@@ -398,6 +398,11 @@ def chairman_writing(cons) -> str:
         "looked at it since your last message, does not keep its details in his head, "
         "and does not know the platform's internal words. Every message must make "
         "sense on its own, read cold. "
+        f"KEEP EVERY SENTENCE UNDER {plain.MAX_SENTENCE_WORDS} WORDS AND A MESSAGE UNDER "
+        f"{plain.MAX_MESSAGE_WORDS}; the platform refuses longer and makes you rewrite. One "
+        "idea per sentence. Never join clauses with dashes, colons, semicolons or "
+        "\"because … so …\" to fit a sentence count: a three-sentence message made of "
+        "three 70-word sentences is the thing he cannot read. "
         "NAME THINGS BY WHAT THEY ARE, never by an ID or a platform term: \"the weekly "
         "sales report\", not \"R-07\"; \"the test we stop on Friday if it has not "
         "worked\", not \"the bet's kill date\"; \"nine days with no proof from outside "

@@ -426,7 +426,7 @@ def test_the_chat_reply_names_every_line_its_turn_was_given(monkeypatch):
     monkeypatch.setattr(chat_entry, "_set_typing", lambda *a: None)
     monkeypatch.setattr(chat_entry, "_situation_block", lambda: "")
     monkeypatch.setattr(chat_entry, "_post_reply",
-                        lambda *a: posted.append(a) or True)
+                        lambda *a: posted.append(a) or {"status": 200, "body": {}})
     state = {"backlog": [], "last_seen": "msg_old", "history": [], "attempts": {},
              "turns_ok": 0}
     with contextlib.suppress(Stop):

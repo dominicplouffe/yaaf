@@ -910,6 +910,9 @@ class MessagePost(BaseModel):
     # the lines its turn was given, so a reply to his note on a decision is put
     # under that note — by what it was written to, not where it fell in the room.
     in_reply_to: list[str] = Field(default_factory=list, max_length=50)
+    # The chat lane's second draft after a plain-English refusal: it lands
+    # rather than leave him unanswered. Honoured only for a chat session.
+    redrafted: bool = False
 
 
 @router.post("/messages")
@@ -923,6 +926,8 @@ def post_message(
     policy.check_thread_not_frozen(session, body.thread_id)
     policy.check_chairman_report(
         session, ctx.project, ctx.agent, channel, ctx.run, body.override)
+    policy.check_plain_to_chairman(
+        session, ctx.project, ctx.agent, channel, ctx.run, body.body, body.redrafted)
     message = Message(
         id=ids.new_id(ids.MESSAGE),
         project_id=ctx.project.id,
@@ -2447,6 +2452,10 @@ def ask_chairman(
 
     cons = effective(session, ctx.project.id)
     policy.check_ask(session, ctx.project, ctx.agent, cons, body.answer_by_hours)
+    policy.check_plain_parts({
+        "title": body.title, "body": body.body, "why": body.why,
+        "recommendation": body.recommendation, "default_action": body.default_action,
+        **{f"options[{i}]": o for i, o in enumerate(body.options)}})
     boardroom = session.execute(
         select(Channel).where(Channel.project_id == ctx.project.id,
                               Channel.kind == ChannelKind.BOARDROOM)
@@ -3299,6 +3308,7 @@ def heads_up_send(
         raise Refusal(
             "Only the CEO puts things in front of the chairman. If he should hear "
             "this, tell the CEO — a suggestion survives your run.", status_code=403)
+    policy.check_plain_parts({"title": body.title, "body": body.body})
     try:
         row = heads.file(session, ctx.project, ctx.agent.id, body.title, body.body,
                          body.standing_order)

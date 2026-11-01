@@ -43,6 +43,8 @@ from claude_agent_sdk import (
 
 POLL_S = 2.0
 MAX_REPLY_CHARS = 19_000
+#: How a plain-English refusal from the platform opens (`plain.refusal_text`).
+PLAIN_REFUSAL_PREFIX = "Not sent — the chairman would have to read this twice."
 HISTORY_BOOTSTRAP = 30
 # Bootstrap is context, not archive: message bodies run to 20k chars, and 30
 # uncut ones would put ~150k tokens into the first turn of every session.
@@ -146,14 +148,50 @@ def _set_typing(channel_id: str, seconds: float) -> None:
     base._call("POST", "/agent/typing", {"channel_id": channel_id, "seconds": seconds})
 
 
-def _post_reply(channel_id: str, text: str, answers: list[str] | None = None) -> bool:
+def _post_reply(channel_id: str, text: str, answers: list[str] | None = None,
+                *, redrafted: bool = False) -> dict:
+    """Post a reply; the platform's answer as `_call` gives it."""
     body = text.strip()[:MAX_REPLY_CHARS] or "(no reply)"
     payload = {"channel_id": channel_id, "body": body}
     if answers:
         # The lines this turn was given: a note of his among them is answered
         # by this reply, and the platform puts it under that note.
         payload["in_reply_to"] = answers
-    result = base._call("POST", "/agent/messages", payload)
+    if redrafted:
+        payload["redrafted"] = True
+    return base._call("POST", "/agent/messages", payload)
+
+
+def _plain_refusal(result: dict) -> str | None:
+    """The plain-English refusal's text, if that is what refused this post."""
+    if result["status"] != 422 or not isinstance(result["body"], dict):
+        return None
+    error = str(result["body"].get("error") or "")
+    return error if error.startswith(PLAIN_REFUSAL_PREFIX) else None
+
+
+async def _deliver(conversation, channel_id: str, reply: str, answers: list[str]) -> bool:
+    """Deliver a composed reply, rewriting it once if it was not plain.
+
+    The platform refuses a boardroom message that would have to be read twice
+    (`yaaf.server.plain`). A work run rewrites against that like any refusal;
+    this lane has a chairman waiting, so it gets exactly one rewrite turn, and
+    the rewrite lands whatever it measures — marked `redrafted`, which the
+    platform records. A second refusal would only mean silence.
+    """
+    result = _post_reply(channel_id, reply, answers)
+    refusal = _plain_refusal(result)
+    if refusal is not None:
+        _set_typing(channel_id, 120)
+        try:
+            rewrite = await conversation.turn(channel_id, (
+                "Your reply was not delivered. The platform said:\n" + refusal
+                + "\n\nWrite the same reply again, plainly. Reply with only the new text."))
+        except Exception as exc:
+            _log(f"rewrite turn failed: {exc!r}; sending the first draft")
+            rewrite = ""
+        _set_typing(channel_id, 0)
+        result = _post_reply(channel_id, rewrite.strip() or reply, answers, redrafted=True)
     return result["status"] == 200
 
 
@@ -535,7 +573,8 @@ async def _serve(conversation, channel_id: str, state: dict) -> int | None:
 
         _set_typing(channel_id, 0)
         state["turns_ok"] += 1
-        if reply and not _post_reply(channel_id, reply, [m["id"] for m in fresh]):
+        if reply and not await _deliver(conversation, channel_id, reply,
+                                        [m["id"] for m in fresh]):
             # Composed and undeliverable — a revoked token, a refused post. The
             # reply itself is lost, but the chairman is not left guessing: the
             # supervisor sees the session end and says so in the boardroom
