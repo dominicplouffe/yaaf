@@ -205,7 +205,7 @@ jobs:
   # forever; this collapses "passed or deliberately not run" into one green
   # tick and fails the moment anything that did run went red.
   ci:
-    needs: [lint, test, web]
+    needs: [lint, test, web, e2e]
     if: always()
     runs-on: ubuntu-latest
     steps:
