@@ -100,3 +100,41 @@ def test_the_status_line_counts_the_same_total(client):
     row = _row(client, project)
     assert row["needs_you"]["total"] == 2
     assert row["status_line"]["headline"] == "2 decisions waiting on you."
+
+
+# ── the row a portfolio draws ───────────────────────────────────────────────────
+
+
+def test_a_row_carries_its_outcomes_not_its_tasks(client):
+    """Progress is drawn as outcomes. A row that counted closed tasks drew a
+    busy project as a progressing one; the path is one entry per requirement
+    in scope, in stage order, with its status, and a proposed one is an item
+    the scope decision can be taken on where it is drawn."""
+    from tests.selftest_invariants.test_requirements import (
+        accept,
+        ceo_token,
+        deliver_project,
+        propose,
+    )
+
+    project = deliver_project(client, slug="path-row")
+    token = ceo_token(project)
+    first = propose(client, token, statement="The archive exists, every filing saved")
+    accept(client, first["requirement_id"], project)
+    propose(client, token, statement="The comparison table exists, one baseline")
+
+    row = _row(client, project)
+    keys = [n["key"] for n in row["path"]]
+    assert len(keys) == 2 and keys == sorted(keys)
+    assert {n["status"] for n in row["path"]} >= {"proposed"}
+    assert all(n["kind"] == "requirement" for n in row["path"])
+    (item,) = row["scope_items"]
+    assert item["statement"] == "The comparison table exists, one baseline"
+    assert row["needs_you"]["plan"] == 1
+
+
+def test_a_milestone_is_a_date_the_platform_holds_or_none(client):
+    """The row's next milestone is never invented: with no commitment, no bet
+    and no window there is none, and the row says so rather than guessing."""
+    project = make_project(client, slug="no-milestone", integrations={"runtime": "mock"})
+    assert _row(client, project)["next_milestone"] is None

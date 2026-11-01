@@ -40,6 +40,7 @@ from yaaf.core.models import (
     Channel,
     ChannelKind,
     Commitment,
+    CommitmentStatus,
     Evidence,
     EvidenceKind,
     Hypothesis,
@@ -421,6 +422,9 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             # Every decision on this row, counted once (policy.needs_you), so
             # no reader re-adds the members and gets a different number.
             "needs_you": policy.needs_you(session, project, cons),
+            # Where the outcomes stand and what comes next, so a portfolio row
+            # can draw progress as outcomes rather than tasks or runs.
+            **_path_and_next(session, project, hyps, aware),
             "expired_bets": expired_bets,
             "kill_dates_soon": kill_dates_soon,
             "audit": {"completed": int(completed), "audited": int(audited),
@@ -460,6 +464,61 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
                if reader is not None else [])
     return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out,
             "snoozed": snoozed}
+
+
+def _path_and_next(session: Session, project: Project, hyps: list, aware) -> dict:
+    """A project's outcomes, in order, and the next dated milestone.
+
+    `path` is one entry per outcome — requirements in scope (proposed ones too,
+    since they wait on the chairman), or an Explore project's bets — so a row
+    can count what is verified rather than tasks closed, which is activity, not
+    progress. `scope_items` are the proposed requirements, so the scope
+    decision can be taken where it is drawn instead of on another page.
+
+    `next_milestone` is a date the platform holds, never one invented for the
+    row: the signed or proposed delivery date with its projection, else the
+    soonest bet kill date, else the Explore window's close. None when the
+    project holds no date at all — the row then says so.
+    """
+    path: list[dict] = []
+    scope_items: list[dict] = []
+    if project.mode == ProjectMode.EXPLORE:
+        path = [{"key": h.id, "status": h.status, "kind": "bet"}
+                for h in sorted(hyps, key=lambda h: aware(h.kill_date))
+                if h.status != "killed"]
+    else:
+        reqs = sorted((r for r in policy.scope_requirements(session, project.id)
+                       if r.status != RequirementStatus.CUT),
+                      key=lambda r: (r.stage or 1, r.key))
+        path = [{"key": r.key, "status": r.status, "stage": r.stage or 1,
+                 "name": requirement_name(r), "kind": "requirement"} for r in reqs]
+        scope_items = [{"id": r.id, "key": r.key, "name": requirement_name(r),
+                        "statement": r.statement,
+                        "checked_by": (r.acceptance_test or {}).get("type")}
+                       for r in reqs if r.status == RequirementStatus.PROPOSED]
+
+    nxt: dict | None = None
+    # The promise in force, else one waiting to be signed, else the one that
+    # was kept: a delivered project's next date is the one it met, not a bet
+    # some agent placed along the way.
+    commitment = policy.live_commitment(session, project.id) or session.execute(
+        select(Commitment).where(Commitment.project_id == project.id,
+                                 Commitment.status.in_((CommitmentStatus.PROPOSED,
+                                                        CommitmentStatus.MET)))
+        .order_by(Commitment.created_at.desc()).limit(1)).scalar_one_or_none()
+    if commitment is not None and commitment.deliver_by is not None:
+        projected = aware(commitment.projected_done_at)
+        nxt = {"kind": "promise", "at": aware(commitment.deliver_by).isoformat(),
+               "status": commitment.status,
+               "projected": projected.isoformat() if projected else None}
+    elif project.mode == ProjectMode.EXPLORE:
+        bets = [h for h in hyps if h.status == "active"]
+        if bets:
+            soonest = min(bets, key=lambda h: aware(h.kill_date))
+            nxt = {"kind": "bet", "at": aware(soonest.kill_date).isoformat(), "id": soonest.id}
+        elif project.deadline is not None:
+            nxt = {"kind": "window", "at": aware(project.deadline).isoformat()}
+    return {"path": path, "scope_items": scope_items, "next_milestone": nxt}
 
 
 def _spinning_runs(session: Session, project: Project, now: datetime) -> int:
