@@ -150,7 +150,7 @@ def test_an_approval_without_what_no_costs_is_refused(client):
     assert "if_declined" in refused.text
 
     filed = client.post("/agent/approvals", headers=bearer(token), json={
-        **SPEND, "if_declined": "We price from last quarter's numbers, which are six "
+        **SPEND, "recommendation": "Approve it; the case says why.", "if_declined": "We price from last quarter's numbers, which are six "
                                 "weeks stale."})
     assert filed.status_code == 200, filed.text
     listing = client.get(f"/observe/projects/{project['id']}/approvals", headers=ADMIN)
@@ -164,7 +164,7 @@ def test_the_chase_for_an_approval_reads_in_his_time(client, monkeypatch):
     project = make_project(client, slug="expiring", constitution=ZONE)
     _, token = live_token(project["id"], agent_by_name(project, "Lead"))
     filed = client.post("/agent/approvals", headers=bearer(token), json={
-        **SPEND, "if_declined": "We price from last quarter's numbers."})
+        **SPEND, "recommendation": "Approve it; the case says why.", "if_declined": "We price from last quarter's numbers."})
     assert filed.status_code == 200, filed.text
     with db_session() as session:
         approval = session.get(Approval, filed.json()["id"])

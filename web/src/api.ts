@@ -838,6 +838,8 @@ export interface ApprovalRow {
   kind: string;
   title: string;
   body: string;
+  /** The filer's own recommendation, in a sentence; null on older rows. */
+  recommendation?: string | null;
   undo?: string | null;
   amount_usd: number | null;
   status: string;
@@ -910,6 +912,9 @@ export interface DeskApproval {
   undo?: string | null;
   /** What silence decides on this project. */
   if_silent?: "approved" | "declined";
+  /** The filer's own recommendation, in a sentence — null on kinds filed
+      without one (assist, brief) and on rows older than the field. */
+  recommendation?: string | null;
 }
 
 /** A capacity request's dial. Approving it is what raises the dial. */

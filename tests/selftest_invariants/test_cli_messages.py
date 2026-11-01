@@ -156,7 +156,7 @@ def test_status_says_the_sentences_and_lists_what_they_counted(client, monkeypat
     _, token = live_token(project["id"], project["ceo_agent_id"])
     filed = client.post("/agent/approvals", headers=bearer(token), json={
         "kind": "spend", "title": "Buy the $49 injury-news feed",
-        "body": "Team news reaches us a day late.", "if_declined": "We react a day late.",
+        "body": "Team news reaches us a day late.", "recommendation": "Approve it; the case says why.", "if_declined": "We react a day late.",
         "amount_usd": 49})
     assert filed.status_code == 200, filed.text
 

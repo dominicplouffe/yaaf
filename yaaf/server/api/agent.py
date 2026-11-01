@@ -2310,7 +2310,8 @@ def _inbox_link(item_key: str) -> str:
 
 
 def _file_approval(session: Session, ctx: RunContext, kind: str, title: str,
-                   body: str, amount_usd: float | None = None) -> Approval:
+                   body: str, amount_usd: float | None = None,
+                   recommendation: str | None = None) -> Approval:
     """ONE way an agent puts something on the chairman's desk: same id, same
     expiry arithmetic, same default-deny clock, whichever lane filed it."""
     cons = effective(session, ctx.project.id)
@@ -2322,6 +2323,7 @@ def _file_approval(session: Session, ctx: RunContext, kind: str, title: str,
         title=title,
         body=body,
         amount_usd=amount_usd,
+        recommendation=(recommendation or "").strip() or None,
         expires_at=utcnow() + timedelta(days=cons.approval_timeout_days),
     )
     session.add(row)
@@ -2337,6 +2339,11 @@ class ApprovalRequest(BaseModel):
     # know to decide is what "no" costs — and it is the line a request written
     # from inside the work leaves out, because to its author it is obvious.
     if_declined: str = Field(min_length=10, max_length=2000)
+    # Required for the same reason, from the other side: what you recommend
+    # and the one reason, as the first line he reads. "Frame requests as
+    # recommendations you would defend" was advice in the response; a card
+    # that had to guess the recommendation from the case was the result.
+    recommendation: str = Field(min_length=10, max_length=300)
     amount_usd: float | None = None
 
 
@@ -2358,7 +2365,7 @@ def approval_request(
     row = _file_approval(
         session, ctx, body.kind, body.title,
         f"{body.body.strip()}\n\nWhat happens without it: {body.if_declined.strip()}",
-        body.amount_usd)
+        body.amount_usd, recommendation=body.recommendation)
     session.flush()
     # Told now, not two days before it decides itself. The expiry chase was the
     # first word he heard of a spend, legal or tool approval — five days into a
@@ -2367,7 +2374,7 @@ def approval_request(
     silence = "yes" if cons.approval_timeout_decision == "approve" else "no"
     chairman_notify(
         session, ctx.project, f"waiting on your decision: {body.title}",
-        f"{row.body[:4000]}\n\n"
+        f"Recommended: {row.recommendation}\n\n{row.body[:4000]}\n\n"
         f"If you have not decided by {chairman_time(row.expires_at, cons.timezone)}, "
         f"the answer is {silence}."
         + (f"\nCan you undo a yes? {undo}" if (undo := approval_undo(row.kind)) else "")

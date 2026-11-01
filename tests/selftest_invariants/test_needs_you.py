@@ -181,3 +181,40 @@ def test_a_rule_label_keeps_capitals_only_for_an_acronym():
     # "A daily wake…" is not an acronym; mid-sentence it reads lower-case.
     assert rule_label("ceo_daily_at") == "a daily wake at this time"
     assert rule_label("brief_daily_at") == "a daily briefing at this time"
+
+
+# ── an approval states its recommendation ───────────────────────────────────────
+
+
+def _approval(client, project, **extra):
+    from tests.conftest import bearer, live_token
+
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    body = {"kind": "spend", "title": "Buy the filings index for a year",
+            "body": "Two of five filers restated before 2001; the free endpoint drops them.",
+            "if_declined": "The memo marks two of five filers incomplete.", "amount_usd": 75}
+    body.update(extra)
+    return client.post("/agent/approvals", headers=bearer(token), json=body)
+
+
+def test_an_approval_without_a_recommendation_is_refused(client):
+    """The card he decides from opens on what the CEO recommends. Without the
+    field the screen could only guess it from the case, which is inventing a
+    fact on the one card that must not."""
+    project = make_project(client, slug="rec-required")
+    assert _approval(client, project).status_code == 422
+    assert _approval(client, project, recommendation="Yes").status_code == 422  # too thin
+
+
+def test_the_recommendation_reaches_the_desk_and_the_mail(client, monkeypatch):
+    from yaaf.server.api import agent as agent_api
+
+    sent: list[str] = []
+    monkeypatch.setattr(agent_api, "chairman_notify",
+                        lambda s, p, subject, body, **kw: sent.append(body))
+    project = make_project(client, slug="rec-shown")
+    said = "Approve it: it closes the pre-2001 gap for two filers."
+    assert _approval(client, project, recommendation=said).status_code == 200
+    (approval,) = _row(client, project)["pending_approvals"]
+    assert approval["recommendation"] == said
+    assert sent and sent[0].startswith(f"Recommended: {said}")

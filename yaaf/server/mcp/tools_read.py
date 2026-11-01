@@ -235,6 +235,8 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
     for row in filtered.get("projects") or []:
         for item in row.get("pending_approvals") or []:
             item["title"] = _wrapped(item.get("title"), "approval")
+            if item.get("recommendation"):
+                item["recommendation"] = _wrapped(item["recommendation"], "approval")
         for item in row.get("pending_asks") or []:
             for field in ("title", "body", "default_action", "recommendation"):
                 if item.get(field):

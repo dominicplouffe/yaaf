@@ -919,12 +919,13 @@ async def t_decision_add(args):
     "plan, the scope and the date, an owner_decision is refused and names the verb to "
     "use instead. To want his opinion without blocking, use ask_chairman and keep going. "
     "He decides it cold, often from an email: title says what he is approving in plain "
-    "words; body is what it is, why now, and the number that justifies it, with "
-    "everything named by what it is rather than by an ID; if_declined is what happens if "
-    "he says no or lets it expire — required, because on most projects that is the "
-    "default.",
-    _schema({"kind": str, "title": str, "body": str, "if_declined": str,
-             "amount_usd": float},
+    "words; recommendation is one sentence he reads first — what you recommend and the "
+    "single reason (required); body is what it is, why now, and the number that "
+    "justifies it, with everything named by what it is rather than by an ID; "
+    "if_declined is what happens if he says no or lets it expire — required, because "
+    "on most projects that is the default.",
+    _schema({"kind": str, "title": str, "recommendation": str, "body": str,
+             "if_declined": str, "amount_usd": float},
             optional=("amount_usd",)),
 )
 async def t_approval_request(args):

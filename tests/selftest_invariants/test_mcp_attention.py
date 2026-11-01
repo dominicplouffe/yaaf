@@ -158,7 +158,7 @@ def test_an_approval_on_the_desk_says_what_silence_decides_and_whether_yes_undoe
     filed = client.post("/agent/approvals", headers=bearer(token), json={
         "kind": "spend", "title": "Buy EDGAR full-text search access",
         "body": "Closes the pre-2001 gap for two of five companies.",
-        "if_declined": "Those two companies stay incomplete.", "amount_usd": 75})
+        "recommendation": "Approve it; the case says why.", "if_declined": "Those two companies stay incomplete.", "amount_usd": 75})
     assert filed.status_code == 200, filed.text
     _crowded_desk(client)
     reader = mint(client)

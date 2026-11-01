@@ -2050,6 +2050,10 @@ class Approval(Base):
     # and none moved anything; one desk filed the same token-cap raise three
     # times, because each yes left the cap exactly where it was.
     capacity: Mapped[dict | None] = mapped_column(JSONVariant)
+    # What the filer recommends and the one reason, in a sentence: the line he
+    # reads first. The case argues it; this states it. Null on rows filed
+    # before it existed and on kinds filed by other doors (assist, brief).
+    recommendation: Mapped[str | None] = mapped_column(Text)
 
 
 class Snooze(Base):

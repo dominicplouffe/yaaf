@@ -186,7 +186,7 @@ def test_an_approval_lands_on_the_day_it_decides_itself(client):
     filed = client.post("/agent/approvals",
                         json={"kind": "spend", "title": "buy the data feed",
                               "body": "we need the quotes for the model",
-                              "if_declined": "the model runs on yesterday's quotes",
+                              "recommendation": "Approve it; the case says why.", "if_declined": "the model runs on yesterday's quotes",
                               "amount_usd": 200.0},
                         headers=bearer(token))
     assert filed.status_code == 200, filed.text

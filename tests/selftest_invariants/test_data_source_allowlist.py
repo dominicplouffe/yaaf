@@ -407,7 +407,7 @@ def test_an_ordinary_approval_grants_no_call(client):
         "/agent/approvals", headers=_agent(client, project),
         json={"kind": "tool_request", "title": "Please let me change budgets",
               "body": "I would like to raise the Q4 budget.",
-              "if_declined": "The Q4 budget stays where it is."}).json()["id"]
+              "recommendation": "Approve it; the case says why.", "if_declined": "The Q4 budget stays where it is."}).json()["id"]
     client.post(f"/admin/approvals/{approval_id}/decide",
                 json={"approve": True}, headers=ADMIN)
 

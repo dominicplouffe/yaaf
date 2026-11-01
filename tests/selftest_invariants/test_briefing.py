@@ -175,7 +175,7 @@ def test_an_approval_that_timed_out_is_reported_as_having_decided_itself(client)
     filed = client.post("/agent/approvals",
                         json={"kind": "spend", "title": "buy the data feed",
                               "body": "we need the quotes",
-                              "if_declined": "the model runs on yesterday's quotes",
+                              "recommendation": "Approve it; the case says why.", "if_declined": "the model runs on yesterday's quotes",
                               "amount_usd": 200.0},
                         headers=bearer(token))
     assert filed.status_code == 200, filed.text

@@ -127,7 +127,7 @@ def test_a_note_on_an_approval_is_held_too(client):
     project = make_project(client)
     filed = client.post("/agent/approvals", json={
         "kind": "spend", "title": "Buy the $199 export tier", "body": "Export is paywalled.",
-        "if_declined": "We cannot export the plan.", "amount_usd": 199},
+        "recommendation": "Approve it; the case says why.", "if_declined": "We cannot export the plan.", "amount_usd": 199},
         headers=bearer(ceo(project)))
     assert filed.status_code == 200, filed.text
     approval_id = filed.json()["id"]

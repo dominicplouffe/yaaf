@@ -279,6 +279,7 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
         usd_mode = project.billing_mode == "api_key"
         pending = [
             {"id": a.id, "title": a.title, "kind": a.kind, "amount_usd": a.amount_usd,
+             "recommendation": a.recommendation,
              "expires_at": aware(a.expires_at).isoformat(), "capacity": a.capacity,
              "undo": approval_undo(a.kind),
              # What silence decides on THIS project; the row said "denied"

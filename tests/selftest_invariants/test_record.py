@@ -35,7 +35,7 @@ def test_your_decision_and_a_decision_that_made_itself_say_which(client):
     _, token = live_token(project["id"], project["ceo_agent_id"])
     filed = [client.post("/agent/approvals", headers=bearer(token), json={
         "kind": "spend", "title": f"Buy feed {n}", "body": "Team news is late.",
-        "if_declined": "We react a day late.", "amount_usd": 49}).json()["id"] for n in (1, 2)]
+        "recommendation": "Approve it; the case says why.", "if_declined": "We react a day late.", "amount_usd": 49}).json()["id"] for n in (1, 2)]
     assert client.post(f"/admin/approvals/{filed[0]}/decide", headers=ADMIN,
                        json={"approve": True, "note": "Worth it."}).status_code == 200
 
