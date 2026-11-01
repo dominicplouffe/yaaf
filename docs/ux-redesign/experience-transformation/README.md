@@ -20,7 +20,7 @@
 > one without it), so the card never guesses it from the case; the project page draws its
 > decisions as the same cards the Inbox opens, from the one list; and email links open the
 > signed-in Inbox row — they never decide anything by being opened. Approve, answer, accept
-> scope, complete and start are covered by browser tests on that demo (`web/e2e`, run in CI).
+> scope, complete and start are covered by browser tests on that demo (`web/e2e`; `npm run build && npm run e2e`).
 
 **In one line:** YAAF already knows almost everything a chairman needs. The interface shows it in several competing forms. The proposal adds **one state per project** (a server-derived ladder), **one decision card** for every kind, **the path to the promise drawn honestly**, and **a trust seal on every result**. Navigation is kept, and no capability is removed.
 
