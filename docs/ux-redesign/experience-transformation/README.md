@@ -8,15 +8,19 @@
 | ![Home today](before/b-home.png) | ![Home](after/home.png) |
 
 > **Status: built.** Everything below is in the app, and `built/` holds screenshots of the
-> real thing, taken from `seed/seed_demo.py`'s demo: [Home](built/home.png) ·
+> real thing, taken from the demo `tests/e2e/demo.py` builds — eight projects with weeks of
+> history, priced runs, published files, one late and one failing: [Home](built/home.png) ·
 > [a project with decisions](built/project-decisions.png) · [a finished project](built/project-finished.png) ·
 > [a spend decision](built/inbox-spend.png) · [scope, accepted in place](built/inbox-scope.png) ·
 > [Roadmap](built/roadmap.png) · [Results](built/results.png) · [Activity](built/activity.png) ·
 > [Projects](built/projects.png) · [phone](built/phone-project.png) · [dark](built/project-dark.png).
 > Where the build differs from the mockups: the project page keeps the name **Inbox** (the
 > proposed rename to "Brief" would collide with the goal, which is already called the brief);
-> approvals state the CEO's recommendation from the case it filed rather than from a new field;
-> and email links open the signed-in Inbox row — they never decide anything by being opened.
+> approvals carry the CEO's recommendation as a field the CEO must fill (the agent API refuses
+> one without it), so the card never guesses it from the case; the project page draws its
+> decisions as the same cards the Inbox opens, from the one list; and email links open the
+> signed-in Inbox row — they never decide anything by being opened. Approve, answer, accept
+> scope, complete and start are covered by browser tests on that demo (`web/e2e`, run in CI).
 
 **In one line:** YAAF already knows almost everything a chairman needs. The interface shows it in several competing forms. The proposal adds **one state per project** (a server-derived ladder), **one decision card** for every kind, **the path to the promise drawn honestly**, and **a trust seal on every result**. Navigation is kept, and no capability is removed.
 
@@ -36,7 +40,7 @@
 | `report.html` | The report: verdict, north star, audit, design language, concepts, before → after, priorities, feature map, roadmap, validation, 12 scenarios |
 | `mockups.html` → `after/*.png` | High-fidelity concepts: Home, Brief, decisions, Roadmap, Results, recovery, phone, design system, CLI/MCP/email |
 | `before.html` → `before/*.png` | Real screenshots with numbered findings. Raw captures are in `before/raw/` |
-| `seed/` | How the evidence was produced, so it can be re-run |
+| `seed/render.js` | Renders the mockup PNGs from `mockups.html` and `before.html` |
 
 ## How the evidence was produced
 
@@ -44,11 +48,15 @@ The live instance couldn't be reached from the research environment (network pol
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]" && (cd web && npm install && npm run build)
-.venv/bin/python docs/ux-redesign/experience-transformation/seed/seed_demo.py /tmp/yaaf-demo   # 6 projects from examples/, fire-drill crew, 1 approval + 1 ask
-# then run yaaf-server with YAAF_DATABASE_URL=sqlite:////tmp/yaaf-demo/yaaf.db and sign in as dominic@example.com / demo-password-123
+.venv/bin/python tests/e2e/demo.py /tmp/yaaf-demo --serve=8080   # seeds, then serves it on :8080
+# sign in as dominic@example.com / demo-password-123
 ```
 
-Agents are the repo's own scripted rehearsal crew (`yaaf/rehearsal/crew.py`), at $0. Costs are zero, time is compressed and nothing is published, so the findings that may come from the harness are marked in the report. Mockup content is sample data in the shape of real payloads and is labelled on every image. **No product code was changed.**
+Agents are the repo's own scripted rehearsal crew (`yaaf/rehearsal/crew.py`). The audit's
+evidence came from a smaller seed (six projects, costs zero, time compressed, nothing
+published), so the findings that may come from the harness are marked in the report. That
+seed was replaced by `tests/e2e/demo.py`, which ages each project over weeks, prices every
+run, publishes files and breaks two projects the way real ones break. Mockup content is sample data in the shape of real payloads and is labelled on every image. **No product code was changed.**
 
 ## Relationship to earlier studies
 
