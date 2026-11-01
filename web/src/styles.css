@@ -359,11 +359,13 @@ kbd {
 }
 @media (prefers-reduced-motion: reduce) { .sb-live.on i, .seat-dot.working { animation: none; } }
 
-/* The display face carries the voice: the page title, the verdict, the name of
-   a section. The sans carries the work. */
+/* The display face is used once a screen: the page title (and the wordmark).
+   It marked every section, verdict and empty state too, and a voice used for
+   everything stops saying "you are here". Sections speak in the sans, at
+   weight rather than size. */
 h1 { font-family: var(--font-display); font-weight: 400; font-size: var(--t-display);
   line-height: 1.1; margin: 0 0 var(--s1); letter-spacing: 0.01em; }
-h2 { font-family: var(--font-display); font-weight: 400; font-size: var(--t-h2);
+h2 { font-family: var(--font); font-weight: 600; font-size: var(--t-h3);
   line-height: 1.3; margin: var(--s6) 0 var(--s3); color: var(--ink); }
 h3 { font-size: var(--t-h3); font-weight: 600; line-height: 1.35; margin: var(--s5) 0 var(--s2); }
 .subtitle { color: var(--ink-2); font-size: var(--t-lead); margin: 0 0 var(--s5); max-width: 76ch; }
@@ -693,7 +695,7 @@ pre.block {
    words underneath were always good ("Is it working?", "The money"); it was
    the typesetting that made them read as machine output. */
 .zone {
-  font-family: var(--font-display); font-weight: 400; font-size: var(--t-h2);
+  font-family: var(--font); font-weight: 600; font-size: var(--t-h3);
   line-height: 1.3; color: var(--ink);
   margin: var(--s7) 0 var(--s3); display: flex; align-items: baseline; gap: var(--s2);
 }
@@ -1998,7 +2000,7 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
    other two are deliberately quieter, because a status row painted like a
    request is exactly the misreading these headings exist to end. */
 .list .listhead {
-  font-family: var(--font-display); font-weight: 400; font-size: var(--t-h2);
+  font-family: var(--font); font-weight: 600; font-size: var(--t-h3);
   line-height: 1.3; color: var(--ink); margin: var(--s6) 0 var(--s3);
 }
 .list .listhead.calm { color: var(--ink-2); }
@@ -2210,8 +2212,8 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .verdict.critical { border-left-color: var(--critical); }
 .verdict .vbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .verdict h2 {
-  margin: 0; font-family: var(--font-display); font-weight: 400;
-  font-size: var(--t-h1); line-height: 1.25; color: var(--ink);
+  margin: 0; font-family: var(--font); font-weight: 600;
+  font-size: var(--t-h2); line-height: 1.25; color: var(--ink);
 }
 .verdict p { margin: 0; font-size: var(--t-body); line-height: 1.6; color: var(--ink-2); max-width: 80ch; }
 .verdict p b, .verdict p strong { color: var(--ink); font-weight: 600; }
@@ -2290,8 +2292,8 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 }
 .emptystate .em-ico.good { background: rgba(var(--good-rgb), 0.12); color: var(--good); }
 .emptystate h3 {
-  margin: 0; font-family: var(--font-display); font-weight: 400;
-  font-size: var(--t-h2); line-height: 1.3;
+  margin: 0; font-family: var(--font); font-weight: 600;
+  font-size: var(--t-h3); line-height: 1.3;
 }
 .emptystate p { margin: 0; font-size: var(--t-body); color: var(--ink-2); max-width: 52ch; line-height: 1.55; }
 .emptystate .em-foot { font-size: var(--t-micro); color: var(--muted); margin-top: var(--s1); }
@@ -3021,23 +3023,6 @@ del.bd { color: var(--ink-2); background: rgba(var(--critical-rgb), 0.12);
 .goal-chain > span { display: inline-flex; align-items: center; gap: 4px; }
 
 /* Results: what was published, who made it, who checked it. */
-.results-counts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
-.results-platform { color: var(--good); }
-.results-reviewer { color: var(--good); }
-.results-unchecked { color: var(--warning); }
-.results-table { padding: 0; overflow: hidden; }
-.rt-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.4fr) minmax(90px, 0.5fr);
-  gap: 12px; align-items: center; width: 100%; padding: 11px 16px; text-align: left; border: 0; border-radius: 0;
-  border-top: 1px solid var(--border); background: transparent; color: var(--ink); font: inherit; font-size: 13.5px; min-height: 0; }
-.rt-row:first-child { border-top: 0; }
-button.rt-row:hover { background: var(--hover); }
-.rt-row.on { background: rgba(var(--accent-rgb), 0.07); }
-.rt-head { font-size: 12px; color: var(--muted); font-weight: 600; }
-.rt-name { display: flex; flex-direction: column; min-width: 0; }
-.rt-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.results-evidence { margin-top: var(--s4); }
-.results-evidence h3 { margin: 0 0 10px; }
-.results-evidence ul.plain { margin: 0; padding-left: 18px; }
 
 /* One person's page. */
 .back-link { display: inline-block; font-size: 13px; margin-bottom: 8px; }
@@ -3058,8 +3043,6 @@ button.rt-row:hover { background: var(--hover); }
 
 @media (max-width: 760px) {
   .member-grid { grid-template-columns: minmax(0, 1fr); }
-  .rt-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
-  .rt-head { display: none; }
   .sched-axis, .sched-row { grid-template-columns: 90px minmax(0, 1fr); }
 }
 
@@ -3127,7 +3110,7 @@ label.check-line.strong { font-weight: 600; font-size: 14px; margin-top: 0; }
 .provider-card { margin-bottom: 14px; scroll-margin-top: 16px; }
 .provider-card.flash { animation: target-flash 1.6s ease-out; }
 .pc-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.pc-head h3 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: var(--t-h2); }
+.pc-head h3 { margin: 0; font-family: var(--font); font-weight: 600; font-size: var(--t-h3); }
 .pc-creds { margin: 12px 0 4px; display: flex; flex-direction: column; gap: 2px; }
 .pc-cred { padding: 8px 0; border-top: 1px solid var(--grid); }
 .pc-cred:first-child { border-top: 0; }
@@ -3204,7 +3187,7 @@ label.check-line.strong { font-weight: 600; font-size: 14px; margin-top: 0; }
 /* The connect flow. */
 .modal.connect { max-width: 780px; }
 .connect-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.connect-top h3 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: var(--t-h2); }
+.connect-top h3 { margin: 0; font-family: var(--font); font-weight: 600; font-size: var(--t-h3); }
 .connect-steps { display: flex; gap: 4px; list-style: none; padding: 0; margin: 12px 0 14px; flex-wrap: wrap; }
 .connect-steps li { display: flex; align-items: center; gap: 6px; font-size: var(--t-micro); color: var(--muted); padding: 3px 10px 3px 4px; border-radius: 999px; }
 .connect-steps li .n { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border-strong); font-weight: 700; font-size: var(--t-micro); }
@@ -3605,3 +3588,9 @@ table.accessmap tr:hover td.hot { background: rgba(var(--accent-rgb), 0.06); }
 /* Inside one project's Inbox the project is the page you are on: no tag,
    no "open the project" link. */
 .inbox.embedded .ib-detail .ptag, .inbox.embedded .ib-open-project { display: none; }
+
+/* A project card's three facts, drawn as Home's table draws them. */
+.pcard-signal { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.1fr); gap: 14px; align-items: start; }
+.pcard-v { display: flex; flex-direction: column; gap: 4px; font-size: var(--t-small); min-width: 0; }
+.pcard-v .warn { color: var(--warning); }
+@media (max-width: 560px) { .pcard-signal { grid-template-columns: minmax(0, 1fr); } }

@@ -271,8 +271,7 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
   return (
     <>
       <p className="subtitle">
-        Every model invocation, why it happened, and what it cost — including the cost of running
-        the project itself.
+        Every model call, why it woke, and what it cost.
       </p>
 
       {/* Outcomes before receipts. "12 failures" in the same weight as

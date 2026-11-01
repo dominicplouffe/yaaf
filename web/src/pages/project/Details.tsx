@@ -23,8 +23,10 @@ function tabLede(path: string, ctx: ProjectCtx): string | null {
     case "spend":
       return "Every run is metered by the platform. The budget is the plan; no agent can talk "
         + "its way past the hard stop, where the project pauses itself.";
+    // No lede: the filter names say what each view is, and Messages says the
+    // rest ("you read everything; you speak only in the boardroom").
     case "activity":
-      return `Everything that happened on this project. You can read every channel; you speak only to ${ceo}.`;
+      return null;
     default:
       return null;
   }

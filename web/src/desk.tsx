@@ -100,6 +100,71 @@ export interface Item {
 
 const NEVER = Number.MAX_SAFE_INTEGER;
 
+/** Accept proposed scope where the decision is drawn. Compact, on a row, it
+    accepts every proposed requirement in two presses; in the Inbox's detail
+    pane it is a checklist, so one can be left out. Rewording and cutting stay
+    on the Roadmap, where the requirement's whole record is. Accepting is
+    reversible — a requirement can be cut later — so it is not a typed
+    confirmation. */
+export function ScopeAccept({ project, onDone, compact = false }: {
+  project: DeskProject; onDone: () => void; compact?: boolean;
+}) {
+  const items = project.scope_items ?? [];
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(items.map((i) => i.id)));
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!items.length) return null;
+  const chosen = items.filter((i) => picked.has(i.id));
+  const accept = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      for (const it of chosen) await post(`/admin/requirements/${it.id}/accept`, {});
+      onDone();
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  };
+  const n = chosen.length;
+  const label = `Accept ${n === items.length && n > 1 ? "all " : ""}${n} outcome${n === 1 ? "" : "s"}`;
+  if (compact) {
+    return (
+      <>
+        {armed ? (
+          <>
+            <button className="small primary" disabled={busy} onClick={accept}>Yes, {label.toLowerCase()}</button>
+            <button className="small" onClick={() => setArmed(false)}>Not yet</button>
+          </>
+        ) : <button className="small primary" onClick={() => setArmed(true)}>{label}…</button>}
+        {error && <span className="error">{error}</span>}
+      </>
+    );
+  }
+  return (
+    <div className="scope-accept">
+      <ul>
+        {items.map((it) => (
+          <li key={it.id}>
+            <label>
+              <input type="checkbox" checked={picked.has(it.id)} onChange={() => setPicked((cur) => {
+                const next = new Set(cur);
+                if (next.has(it.id)) next.delete(it.id); else next.add(it.id);
+                return next;
+              })} />
+              <span className="mono help">{it.key}</span>
+              <span className="grow">{it.name}</span>
+              <span className={`help${it.checked_by === "observable" ? " warn" : ""}`}>
+                {it.checked_by === "observable" ? "you judge it" : "the platform checks it"}
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <button className="primary" disabled={busy || n === 0} onClick={accept}>{label}</button>
+      {error && <span className="error">{error}</span>}
+    </div>
+  );
+}
+
 /** Complete a finished delivery from wherever its sign-off row is drawn. Two
     presses, because completing closes the project down; reopening stays
     possible for 14 days, which is why it is not a typed confirmation. */
@@ -235,7 +300,8 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "Proposed scope is not scope: no work can be built against it.",
-      to: `${to}/details/roadmap`, toLabel: "Review on the Roadmap",
+      to: `${to}/details/roadmap`, toLabel: "Reword or cut on the Roadmap",
+      actions: <ScopeAccept project={p} onDone={reload} compact />,
     });
   }
   if (w.commitment) {
@@ -285,14 +351,9 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
       yours: true, project: p,
       kind: a.kind === "assist" ? "For you to do" : `Decision · ${a.kind.replaceAll("_", " ")}`,
       title: a.title, approvalId: a.id, amountUsd: a.amount_usd, approval: a,
-      what: (
-        <>
-          {a.title}
-          {a.amount_usd !== null && (
-            <> — <b>${a.amount_usd.toLocaleString()}</b></>
-          )}
-        </>
-      ),
+      // The amount once: titles usually carry it already, and the card's chips
+      // state it again where the decision is made.
+      what: <>{a.title}</>,
       consequence: `It is ${a.if_silent ?? "declined"} ${fmtSoon(a.expires_at)}. Silence is a decision here.`,
       to: `${to}/details/activity/decisions`, toLabel: "Read the full request",
       actions: <DecideButtons approval={a} onDone={reload} />,

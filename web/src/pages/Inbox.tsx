@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApprovalRow, AskRow, DeskProject, get, HeadsUpRow, HeldNote, post, splitWithout } from "../api";
 import { BriefBody, DeskBrief, ProjectBrief } from "../briefing";
-import { isLive, Item, ItemType, needsYou, SnoozeMenu, soonestClock, useDesk, wake } from "../desk";
+import { isLive, Item, ItemType, needsYou, ScopeAccept, SnoozeMenu, soonestClock, useDesk, wake } from "../desk";
 import { fmtWhen, usePoll } from "../hooks";
 import { clip, DecideButtons, fmtAgo, fmtSoon, NotedButton, SEND_HINT, sendOnEnter } from "../ui";
 import { holdDecision } from "../undo";
 import { Avatar, EmptyState, Seg } from "../ui/kit";
 import { Icon, IconName } from "../ui/Icon";
 import { flagPlain } from "../ui/project";
+import { Fact, Facts, Recommendation } from "../ui/signal";
 
 /** One place for everything that wants the chairman, across every project.
 
@@ -91,25 +92,51 @@ function ProjectTag({ p }: { p: DeskProject }) {
 
 /** The full request behind an approval: the desk row carries the title and
     the clock, the project's approvals carry the case. Fetched when opened. */
+/** An approval in the one decision anatomy: the recommendation, then the
+    consequences as chips — the amount, what it does to the plan, whether a yes
+    can be taken back, what silence decides — then the verb. The full case is
+    one click down, folded rather than removed: nothing on it is hidden, and an
+    irreversible spend or an over-plan amount is a warning chip, never a line
+    at the bottom of a table. */
 function ApprovalCase({ item }: { item: Item }) {
   const { data } = usePoll(
     () => get<ApprovalRow[]>(`/observe/projects/${item.project.id}/approvals`), 30000,
     [item.project.id]);
   const row = data?.find((a) => a.id === item.approvalId);
   const [theCase, without] = row ? splitWithout(row.body) : ["", null];
+  const undo = row?.undo ?? item.approval?.undo ?? null;
+  const amount = item.amountUsd ?? null;
+  const b = item.project.budget;
+  const usd = b.unit === "usd";
+  const wall = b.cap * b.hard_stop_multiple;
+  const after = amount !== null && usd ? b.spent + amount : null;
+  const lead = theCase ? clip(theCase.split(/(?<=[.!?])\s/)[0], 220) : null;
   return (
-    <dl className="case">
-      <div><dt>Why it is yours</dt><dd>{whyYours(item.kind.toLowerCase())}</dd></div>
-      <div><dt>The case</dt><dd className="pre">{row ? theCase || "No case was written." : "Loading…"}</dd></div>
-      {without && <div><dt>If you say no</dt><dd className="pre">{without}</dd></div>}
-      {item.amountUsd !== null && item.amountUsd !== undefined && (
-        <div><dt>Amount</dt><dd>${item.amountUsd.toLocaleString()}</dd></div>
-      )}
-      <div className="silence"><dt>If you do nothing</dt><dd>{item.consequence}</dd></div>
-      {(row?.undo ?? item.approval?.undo) && (
-        <div><dt>Can you undo a yes?</dt><dd>{row?.undo ?? item.approval?.undo}</dd></div>
-      )}
-    </dl>
+    <>
+      {lead && <Recommendation who="The CEO">approving it. {lead}</Recommendation>}
+      <Facts>
+        {amount !== null && <Fact><b>${amount.toLocaleString()}</b> once</Fact>}
+        {after !== null && (after >= wall
+          ? <Fact warn>reaches the <b>${wall.toLocaleString()}</b> hard stop</Fact>
+          : after > b.cap
+            ? <Fact warn>plan goes to <b>${Math.round(after).toLocaleString()} of ${b.cap.toLocaleString()}</b></Fact>
+            : <Fact>leaves <b>${Math.round(b.cap - after).toLocaleString()}</b> of plan</Fact>)}
+        {undo && (undo.startsWith("No")
+          ? <Fact warn><b>Can't be undone</b></Fact>
+          : <Fact>can be undone</Fact>)}
+        <Fact>if you do nothing: <b>{item.approval?.if_silent ?? "declined"}</b> {item.clocked ? fmtSoon(new Date(item.at).toISOString()) : ""}</Fact>
+      </Facts>
+      <details className="case-more">
+        <summary>Full case</summary>
+        <dl className="case">
+          <div><dt>Why it is yours</dt><dd>{whyYours(item.kind.toLowerCase())}</dd></div>
+          <div><dt>The case</dt><dd className="pre">{row ? theCase || "No case was written." : "Loading…"}</dd></div>
+          {without && <div><dt>If you say no</dt><dd className="pre">{without}</dd></div>}
+          <div className="silence"><dt>If you do nothing</dt><dd>{item.consequence}</dd></div>
+          {undo && <div><dt>Can you undo a yes?</dt><dd>{undo}</dd></div>}
+        </dl>
+      </details>
+    </>
   );
 }
 
@@ -237,7 +264,7 @@ function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDes
       {item.type === "ask" && <AskAnswer item={item} others={otherAsks} onDone={desk.reload} />}
       {item.type !== "approval" && item.type !== "ask" && (
         <div className="ib-acts">
-          {item.actions}
+          {item.type === "scope" ? <ScopeAccept project={item.project} onDone={desk.reload} /> : item.actions}
           <Link className={`btnlink${item.yours && !item.actions ? " primary" : ""}`} to={item.to}>{item.toLabel} <Icon name="arrow" size={13} /></Link>
         </div>
       )}
@@ -651,7 +678,9 @@ export function InboxView({ project }: { project?: string }) {
   if (desk.error && !desk.data) return <div className="error">{desk.error}</div>;
 
   return (
-    <div className={`inbox${project ? " embedded" : ""}`}>
+    // Embedded with nothing to decide, the panes shrink to their content: two
+    // empty columns 760px tall pushed the rest of the project off the screen.
+    <div className={`inbox${project ? " embedded" : ""}${project && needs.length === 0 && tab === "needs" ? " calm" : ""}`}>
       <div className="ib-list">
         <div className="ib-head">
           {project ? <h2 className="ib-h2">Inbox</h2> : <h1>Inbox</h1>}

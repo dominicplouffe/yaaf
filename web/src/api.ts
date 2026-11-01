@@ -994,7 +994,7 @@ export interface DeskProject {
   unpaid?: boolean;
   /** One verdict and one sentence, decided on the server so every surface
       says the same thing (yaaf.server.status_line). */
-  status_line?: { verdict: string; sentence: string };
+  status_line?: { verdict: string; headline: string; sentence: string };
   goal: string;
   billing_mode: string;
   budget: {
@@ -1037,6 +1037,17 @@ export interface DeskProject {
     approvals: number; asks: number; plan: number; verdicts: number;
     commitment: number; signoff: number; bets: number; frozen: number; total: number;
   };
+  /** One entry per outcome — requirements in scope in stage order, or an
+      Explore project's bets — so progress is drawn as outcomes, not tasks. */
+  path: { key: string; status: string; stage?: number; name?: string; kind: "requirement" | "bet" }[];
+  /** Proposed requirements, so the scope decision is taken where it is drawn. */
+  scope_items: { id: string; key: string; name: string; statement: string; checked_by: string | null }[];
+  /** A date the platform holds — never one invented for the row. */
+  next_milestone:
+    | { kind: "promise"; at: string; status: string; projected: string | null }
+    | { kind: "bet"; at: string; id: string }
+    | { kind: "window"; at: string }
+    | null;
   expired_bets: DeskBet[];
   kill_dates_soon: DeskBet[];
   audit: { completed: number; audited: number; unaudited: number };
