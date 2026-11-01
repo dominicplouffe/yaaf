@@ -1768,6 +1768,10 @@ class Review(Base):
     # old free-text filing — the green rule, the cycle narrative, the closing
     # mail — keeps reading one thing. Null on meetings filed the old way.
     report: Mapped[dict | None] = mapped_column(JSONVariant)
+    # The boardroom thread this meeting's "say something back" runs in: the
+    # id of the chairman's first message on it, set when he first speaks.
+    # One thread per meeting, so the reply cap and the record have an edge.
+    thread_id: Mapped[str | None] = mapped_column(String(40))
     narrative: Mapped[str | None] = mapped_column(Text)
     recommended: Mapped[str | None] = mapped_column(Text)
     narrative_run_id: Mapped[str | None] = mapped_column(String(40))

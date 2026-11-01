@@ -12,9 +12,17 @@ project shape. **Design notes** pins the reasoning to each section.
 > actual — `review_record.plan_marks` freezes the previous `next` list with the platform's mark
 > per item into `numbers.prior.plan` at open; the filing's `last_plan` must answer for every item
 > and `done` against an open requirement is refused naming the key; the table is on the screen.
-> Filing a report also renders `narrative`/`recommended`, so the green rule (§4.3) already reads
-> `proceed` as "recommended nothing" without a change of its own. `review_narrative` is kept
-> for one release. No eval golden moved: no scenario opens a review. Steps 4–5 are still proposal. The decisions in §7 were taken as recommended: one meeting on
+> Step 4: the ask is the chairman's action point — the levers sit under it with the asked-for
+> ones pre-filled, each decision carries what it moved (`effect`), the green rule reads
+> `report.ask.kind` itself, and "say something back" is one boardroom thread per meeting
+> (`POST /admin/reviews/{id}/say`, `reviews.thread_id`) with the CEO's answers riding the
+> governance reserve up to `review_replies` per meeting (wake reason `review_reply`).
+> **One deviation from §3.5:** the cap bounds *reserve* spending, not conversation — an answer
+> past it waits for an ordinary wake like any other message rather than being refused. A rule
+> that stopped the CEO answering its chairman would be a new failure mode, not a bound.
+> Filing a report also renders `narrative`/`recommended`, so every older reader of the filing
+> keeps reading one thing. `review_narrative` is kept for one release. No eval golden moved: no
+> scenario opens a review. Step 5 (naming, docs, the Operate alignment) is still proposal. The decisions in §7 were taken as recommended: one meeting on
 > Operate (at the roll), two replies per meeting, old filings rendered the old way, "Status
 > meeting" as the name.
 >

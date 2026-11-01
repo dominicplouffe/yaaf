@@ -52,11 +52,13 @@ function field(style: object = {}) {
 
 /** One lever, one small form. Every form ends in the same two things — a
     reason and a button — because the reason IS the record. */
-function LeverForm({ review, kind, requirements, hasCommitment, unit, onDone }: {
+function LeverForm({ review, kind, requirements, hasCommitment, unit, onDone, initialReason }: {
   review: ReviewRow; kind: string; requirements: RequirementOption[];
-  hasCommitment: boolean; unit: string; onDone: () => void;
+  hasCommitment: boolean; unit: string; onDone: () => void; initialReason?: string;
 }) {
-  const [reason, setReason] = useState("");
+  // Agreeing with the CEO's ask is one press: its reason is already written.
+  // Edit it or keep it; either way it is recorded as yours.
+  const [reason, setReason] = useState(initialReason ?? "");
   const [requirementId, setRequirementId] = useState("");
   const [statement, setStatement] = useState("");
   const [testKind, setTestKind] = useState<"command" | "observable">("command");
@@ -179,7 +181,12 @@ function DecisionList({ decisions }: { decisions: Decision[] }) {
             <td style={{ whiteSpace: "nowrap" }}>
               <span className="chip">{LEVER_LABELS[d.kind] ?? d.kind.replaceAll("_", " ")}</span>
             </td>
-            <td>{d.detail}</td>
+            <td>
+              {d.detail}
+              {/* What the pull moved on the record, so the loop is seen to
+                  close here and not only on the Roadmap. */}
+              {d.effect && <div className="help" style={{ fontSize: 12 }}>{d.effect}</div>}
+            </td>
             <td className="help">{d.reason}</td>
           </tr>
         ))}
@@ -350,7 +357,6 @@ function ReportSections({ report }: { report: ReviewReport }) {
       <b style={{ fontSize: 13 }}>{title}</b><Source kind="ceo" />
     </div>
   );
-  const ask = report.ask;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 12 }}>
       <div>
@@ -387,20 +393,149 @@ function ReportSections({ report }: { report: ReviewReport }) {
           How this moves the goal: {report.goal_effect}
         </p>
       </div>
-      <div>
-        {head(ask.kind === "proceed" ? "The ask: proceed" : "The ask: change something")}
-        {ask.kind === "proceed" ? (
-          <p className="help" style={{ marginTop: 6 }}>
-            Nothing needs you. Closing with no changes records that.
+    </div>
+  );
+}
+
+/** The ask, and the chairman's answer to it, in one place. The CEO's line
+    first; under it the lever it asked for, pre-filled so agreeing is one
+    press; the other five under a fold; then the thread. Under the fully
+    autonomous dial the CEO already holds these decisions, so the section
+    reads as what it decided and the levers fold under "Overrule". */
+function AskSection({ open, selfRunning, requirements, unit, onChanged }: {
+  open: ReviewRow; selfRunning: boolean; requirements: RequirementOption[];
+  unit: string; onChanged: () => void;
+}) {
+  const [lever, setLever] = useState<string | null>(null);
+  const [say, setSay] = useState("");
+  const [sayError, setSayError] = useState<string | null>(null);
+  const ask = open.report?.ask ?? null;
+  const asked = ask?.kind === "change" ? ask.levers : [];
+  const askedKinds = new Set(asked.map((l) => l.kind));
+  const reasonFor = (kind: string) => {
+    const l = asked.find((x) => x.kind === kind);
+    return l ? `Agreed: ${l.detail}${ask?.why ? ` — ${ask.why}` : ""}` : undefined;
+  };
+
+  async function send() {
+    setSayError(null);
+    try {
+      await post(`/admin/reviews/${open.id}/say`, { body: say });
+      setSay("");
+      onChanged();
+    } catch (e) {
+      setSayError((e as Error).message);
+    }
+  }
+
+  const title = selfRunning ? "What your CEO decided"
+    : !ask ? "Your decision"
+    : ask.kind === "proceed" ? "The ask: proceed" : "The ask: change something";
+
+  return (
+    <div style={{ border: "1px solid rgba(var(--accent-rgb), 0.45)", borderRadius: "var(--radius)",
+      padding: "12px 14px", background: "rgba(var(--accent-rgb), 0.05)",
+      display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+        <b style={{ fontSize: 13 }}>{title}</b>
+        {ask && <Source kind="ceo" />}
+      </div>
+
+      {ask ? (
+        ask.kind === "proceed" ? (
+          <p style={{ margin: 0 }}>
+            {selfRunning ? "It is proceeding as above; nothing here needed you."
+              : "Nothing needs you. Closing with no changes records that."}
+            {ask.why && <span className="help"> {ask.why}</span>}
           </p>
         ) : (
-          <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
-            {ask.levers.map((l, i) => (
-              <li key={i}><b>{LEVER_LABELS[l.kind] ?? l.kind}</b> — {l.detail}</li>
+          <div>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {asked.map((l, i) => (
+                <li key={i}><b>{LEVER_LABELS[l.kind] ?? l.kind}</b> — {l.detail}</li>
+              ))}
+            </ul>
+            {ask.why && <p className="help" style={{ margin: "4px 0 0", maxWidth: "70ch" }}>
+              {ask.why}</p>}
+          </div>
+        )
+      ) : (
+        <p className="help" style={{ margin: 0 }}>
+          {open.narrative
+            ? "Filed the old way, without a structured ask; its recommendation is above."
+            : "The CEO has not filed yet. You can still decide, or wait for its report."}
+        </p>
+      )}
+
+      {/* The levers: the asked-for ones first and pre-filled, the rest folded. */}
+      {!selfRunning && asked.length > 0 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {asked.map((l) => (
+            <button key={l.kind} className={"small" + (lever === l.kind ? "" : " primary")}
+              onClick={() => setLever(lever === l.kind ? null : l.kind)}>
+              {LEVER_LABELS[l.kind] ?? l.kind}
+            </button>
+          ))}
+          <span className="help">one press; the CEO's reason is pre-filled — edit it or keep it</span>
+        </div>
+      )}
+      <details>
+        <summary className="help" style={{ fontSize: 13 }}>
+          {selfRunning ? "Overrule" : asked.length > 0 ? "Something else" : "Change something"}
+        </summary>
+        <p className="help" style={{ margin: "4px 0 8px" }}>
+          {selfRunning
+            ? "Your CEO holds these decisions under the dial you set. Pulling one here is you "
+              + "taking it back for this meeting; it is recorded with your reason. "
+            : "Use one only if you want to change the plan. "}
+          Anything you do lands under “Decided this review” and stays there; the meeting ends
+          when you press <b>Close the review</b>, and closing with no changes is itself a decision.
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {Object.entries(LEVER_LABELS).filter(([k]) => selfRunning || !askedKinds.has(k))
+            .map(([kind, label]) => (
+              <button key={kind} className={"small" + (lever === kind ? " primary" : "")}
+                onClick={() => setLever(lever === kind ? null : kind)}>
+                {label}
+              </button>
             ))}
-          </ul>
+        </div>
+      </details>
+      {lever && (
+        <LeverForm key={lever} review={open} kind={lever} requirements={requirements}
+          hasCommitment={open.numbers.commitment != null} unit={unit}
+          initialReason={reasonFor(lever)}
+          onDone={() => { setLever(null); onChanged(); }} />
+      )}
+
+      {/* Say something back: one boardroom thread per meeting. */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div className="label" style={{ fontSize: 12, textTransform: "uppercase",
+          letterSpacing: ".06em", color: "var(--muted)", fontWeight: 600 }}>
+          Say something back
+        </div>
+        {open.thread?.messages.map((m) => (
+          <div key={m.id} style={{ background: "var(--surface-2)", borderRadius: "var(--radius-sm)",
+            padding: "6px 10px", fontSize: 13, maxWidth: "70ch", whiteSpace: "pre-wrap" }}>
+            <span className="help" style={{ marginRight: 6 }}>
+              {m.from === "you" ? "You" : "CEO"}, {fmtWhen(m.at)}
+            </span>{m.body}
+          </div>
+        ))}
+        {open.thread?.unanswered && (
+          <div className="help" style={{ fontSize: 12 }}>
+            Waiting on the CEO — it answers on the governance reserve, so it lands even on a
+            day the ordinary allowance is spent.
+          </div>
         )}
-        {ask.why && <p className="help" style={{ marginTop: 4, maxWidth: "70ch" }}>{ask.why}</p>}
+        <div style={{ display: "flex", gap: 8 }}>
+          <input id={`say-${open.id}`} style={{ ...field(), flex: 1, minWidth: 0 }} value={say}
+            placeholder="Your words go to the CEO as a message on this meeting; it answers in the thread."
+            onChange={(e) => setSay(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && say.trim()) void send(); }} />
+          <button className="small" disabled={!say.trim()} onClick={send}>Send</button>
+        </div>
+        {sayError && <div className="error">{sayError}</div>}
       </div>
     </div>
   );
@@ -592,7 +727,6 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
     () => get<ReviewsView>(`/observe/projects/${projectId}/reviews`), 10000);
   const { data: requirements } = usePoll<RequirementOption[]>(
     () => get<RequirementOption[]>(`/admin/projects/${projectId}/requirements`), 30000);
-  const [lever, setLever] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState<Record<number, boolean>>({});
 
   if (!data) return <Skeleton rows={5} />;
@@ -637,7 +771,6 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
               confirmLabel="Close"
               onSubmit={async (note) => {
                 await post(`/admin/reviews/${open.id}/close`, { note });
-                setLever(null);
                 reload();
               }} />
           </div>
@@ -716,37 +849,13 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
             </div>
           )}
 
-          {/* Said out loud because the buttons look like a to-do list and are
-              not one. Pressing one opens a form; using it files a decision
-              into "Decided this review" above and leaves the meeting open,
-              because the meeting ends when you close it and not before. A row
-              of buttons where nothing visibly resolves is a row of buttons a
-              reader concludes is broken. */}
-          <b style={{ fontSize: 13 }}>Change something — optional</b>
-          <p className="help" style={{ margin: "4px 0 0" }}>
-            {selfRunning
-              ? "You do not have to use any of these: your CEO already holds these decisions. "
-              : "Use one only if you want to change the plan. "}
-            Anything you do lands under “Decided this review” above and stays there; the meeting
-            itself ends when you press <b>Close the review</b>, and closing with no changes is
-            itself a recorded decision.
-          </p>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-            {Object.entries(LEVER_LABELS).map(([kind, label]) => (
-              <button key={kind}
-                className={"small" + (lever === kind ? " primary" : "")}
-                onClick={() => setLever(lever === kind ? null : kind)}>
-                {label}
-              </button>
-            ))}
-          </div>
-          {lever && (
-            <LeverForm review={open} kind={lever}
-              requirements={requirements ?? []}
-              hasCommitment={open.numbers.commitment != null}
-              unit={unit}
-              onDone={() => { setLever(null); reload(); }} />
-          )}
+          {/* The ask and the answer to it, in one place: the levers sit under
+              the CEO's ask rather than in a row at the bottom that read as a
+              to-do list. Pulling one files a decision into "Decided this
+              review" above and leaves the meeting open; it ends when you
+              close it and not before. */}
+          <AskSection open={open} selfRunning={selfRunning} requirements={requirements ?? []}
+            unit={unit} onChanged={reload} />
 
           {/* The forecast's inputs, last. They opened the meeting for a year
               and a reader who did not live in the project could not say

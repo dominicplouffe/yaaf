@@ -3042,9 +3042,26 @@ def reviews(project_id: str, session: Session = Depends(db)) -> dict:
     ).scalars())
 
     from yaaf.server import review_record
+    from yaaf.server.dispatcher import review_thread_state
+
+    def thread(r: Review) -> dict | None:
+        state = review_thread_state(session, project, r)
+        if state is None:
+            return None
+        return {
+            "id": state["thread_id"],
+            "ceo_replies": state["ceo_replies"],
+            "unanswered": state["unanswered"],
+            "messages": [
+                {"id": m.id, "from": "ceo" if m.sender_agent_id else "you",
+                 "body": m.body, "at": m.created_at.isoformat()}
+                for m in state["messages"]
+            ],
+        }
 
     def view(r: Review) -> dict:
         return {
+            "thread": thread(r),
             "id": r.id, "number": r.number, "status": r.status,
             "scheduled_for": r.scheduled_for.isoformat(),
             "opened_at": r.opened_at.isoformat(),

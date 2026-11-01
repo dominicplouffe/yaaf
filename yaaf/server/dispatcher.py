@@ -67,7 +67,8 @@ log = logging.getLogger("yaaf.dispatcher")
 # new cycle's plan, a commitment that needs re-forecasting, a question to the
 # chairman that ran out its window — so they must still be possible on a day
 # the project has spent its ordinary allowance.
-GOVERNANCE_REASON_KINDS = {"review", "cycle_plan", "commitment", "ask_lapsed"}
+GOVERNANCE_REASON_KINDS = {"review", "cycle_plan", "commitment", "ask_lapsed",
+                           "review_reply"}
 
 # Notice coalescing: the janitor drips notices (a reaped run, a drought, an
 # expiry) and each alone is not worth a full-price run. Chairman-driven or
@@ -500,6 +501,55 @@ def _wakes_at_once(message: Message, channel_kind: str | None, notes: set[str]) 
     if message.id in notes:
         return False
     return message.sender_user_id is not None or channel_kind == ChannelKind.BOARDROOM
+
+
+def review_thread_state(session: Session, project: Project, review) -> dict | None:
+    """The open meeting's thread, as both the pack and the wake read it:
+    its messages in order, whether the chairman's last word is unanswered,
+    and how many CEO answers it has taken so far. None when he has not
+    spoken on it."""
+    if review is None or review.thread_id is None:
+        return None
+    root = session.get(Message, review.thread_id)
+    if root is None:
+        return None
+    rows = list(session.execute(
+        select(Message).where(
+            Message.project_id == project.id,
+            (Message.id == review.thread_id) | (Message.thread_id == review.thread_id),
+        ).order_by(Message.created_at)
+    ).scalars())
+    ceo_replies = [m for m in rows if m.sender_agent_id is not None]
+    last_chairman = max((m.created_at for m in rows if m.sender_user_id is not None),
+                        default=None)
+    last_ceo = max((m.created_at for m in ceo_replies), default=None)
+    return {
+        "thread_id": review.thread_id,
+        "channel_id": root.channel_id,
+        "messages": rows,
+        "ceo_replies": len(ceo_replies),
+        "unanswered": last_chairman is not None and (last_ceo is None or last_chairman > last_ceo),
+    }
+
+
+def review_reply_due(session: Session, project: Project, cons: ConstitutionDoc,
+                     agent: Agent) -> dict | None:
+    """A governance-classed reason to answer the chairman on the open review,
+    while the meeting still has reserve replies left."""
+    from yaaf.core.models import Review, ReviewStatus
+
+    review = session.execute(
+        select(Review).where(Review.project_id == project.id,
+                             Review.status == ReviewStatus.OPEN)
+    ).scalar_one_or_none()
+    state = review_thread_state(session, project, review)
+    if state is None or not state["unanswered"]:
+        return None
+    if state["ceo_replies"] >= cons.review_replies:
+        return None
+    return {"kind": "review_reply", "review_id": review.id,
+            "thread_id": state["thread_id"],
+            "reserve_replies_left": cons.review_replies - state["ceo_replies"]}
 
 
 def unread_messages_for(
@@ -1652,6 +1702,16 @@ def _wake_reasons(
         ripe = oldest_at <= now - timedelta(minutes=MESSAGE_COALESCE_MINUTES)
         if urgent or ripe or total >= MESSAGE_COALESCE_COUNT:
             reasons.extend(message_reasons)
+
+    # 1b. The chairman said something back on the open review and the CEO has
+    #     not answered. The boardroom wake above already carries the message;
+    #     this reason classes it as governance, so the answer rides the
+    #     reserve on the day the allowance is gone — bounded per meeting by
+    #     `review_replies`, past which it waits like any other message.
+    if agent.kind == AgentKind.CEO and not skip_channels:
+        due = review_reply_due(session, project, cons, agent)
+        if due is not None:
+            reasons.append(due)
 
     # 2. Unconsumed notices, coalesced (see URGENT_NOTICE_KINDS above).
     pending = session.execute(

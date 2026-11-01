@@ -1619,7 +1619,15 @@ def _review_needs_nobody(review: Review) -> str | None:
     Anything else — no narrative yet, a recommendation, a date at risk, a
     failed audit, an overrun — is a meeting worth having, and it chases him."""
     numbers = review.numbers or {}
-    if not review.narrative or review.recommended:
+    if not review.narrative:
+        return None
+    # A structured report says it outright; an older free-text filing says it
+    # by recommending nothing. One question, asked of whichever was filed.
+    asked_for_change = (
+        ((review.report.get("ask") or {}).get("kind") != "proceed")
+        if review.report else bool(review.recommended)
+    )
+    if asked_for_change:
         return None
     commitment = numbers.get("commitment") or {}
     if commitment.get("status") in (CommitmentStatus.AT_RISK, CommitmentStatus.BREACHED):

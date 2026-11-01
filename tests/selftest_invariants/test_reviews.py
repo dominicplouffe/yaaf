@@ -413,11 +413,14 @@ def test_the_meeting_opens_on_what_was_done_from_the_platforms_own_events(client
 
 
 def _ceo_pack(project: dict) -> dict:
+    import uuid
+
     from yaaf.core.models import Agent, Run, RunStatus
     from yaaf.server.contextpack import build_context_pack
 
     with db_session() as session:
-        run = Run(id="run_" + project["id"][-8:], project_id=project["id"],
+        # A fresh id each time: one test reads the pack before and after he speaks.
+        run = Run(id="run_" + uuid.uuid4().hex[:24], project_id=project["id"],
                   agent_id=project["ceo_agent_id"], status=RunStatus.RUNNING,
                   trigger={"reasons": []})
         session.add(run)
@@ -738,3 +741,120 @@ def test_a_last_plan_is_refused_when_there_was_no_last_plan(client):
     refused = client.post("/agent/review_report", json=body, headers=bearer(token))
     assert refused.status_code == 422
     assert "recorded no plan" in refused.json()["error"]
+
+
+# ── the ask, answered: say something back, and what a lever moved ──────────────
+
+
+def _ceo_reasons(project: dict) -> list[dict]:
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Agent
+    from yaaf.server import dispatcher
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        agent = session.get(Agent, project["ceo_agent_id"])
+        return dispatcher._wake_reasons(session, row, effective(session, row.id), agent)
+
+
+def _ceo_says(client, project: dict, token: str, thread_id: str, body: str) -> None:
+    from yaaf.core.models import Channel, ChannelKind
+
+    with db_session() as session:
+        channel = session.query(Channel).filter_by(
+            project_id=project["id"], kind=ChannelKind.BOARDROOM).one().id
+    posted = client.post("/agent/messages",
+                         json={"channel_id": channel, "thread_id": thread_id, "body": body},
+                         headers=bearer(token))
+    assert posted.status_code == 200, posted.text
+
+
+def test_saying_something_back_is_one_boardroom_thread_per_meeting(client):
+    """The chairman's words go where they always went — the boardroom, the
+    same CEO wake — kept in one thread per meeting so the meeting's record
+    is a thread and not the whole room. A closed meeting takes no more."""
+    project, token, key = _scoped(client, "spoken-to")
+    review = _open_view(client, project)
+    first = client.post(f"/admin/reviews/{review['id']}/say",
+                        json={"body": "If Ads is dead, do we need R-29 at all?"}, headers=ADMIN)
+    assert first.status_code == 200, first.text
+    assert first.json()["thread_id"] == first.json()["id"], "the first word opens the thread"
+    second = client.post(f"/admin/reviews/{review['id']}/say",
+                         json={"body": "And what would you cut instead?"}, headers=ADMIN)
+    assert second.json()["thread_id"] == first.json()["id"]
+
+    view = _open_view(client, project)
+    assert [m["from"] for m in view["thread"]["messages"]] == ["you", "you"]
+    assert view["thread"]["unanswered"] is True
+    assert "thread" in _ceo_pack(project)["review"]
+    assert _ceo_pack(project)["review"]["thread"]["reserve_replies_left"] == 2
+
+    _ceo_says(client, project, token, first.json()["id"], "No. Cut it; the sequence covers it.")
+    view = _open_view(client, project)
+    assert [m["from"] for m in view["thread"]["messages"]] == ["you", "you", "ceo"]
+    assert view["thread"]["unanswered"] is False
+
+    client.post(f"/admin/reviews/{review['id']}/close", json={}, headers=ADMIN)
+    late = client.post(f"/admin/reviews/{review['id']}/say", json={"body": "one more"},
+                       headers=ADMIN)
+    assert late.status_code == 409
+
+
+def test_an_unanswered_word_on_the_meeting_rides_the_reserve_until_the_cap(client):
+    """The answer is governance-classed — it lands on the day the allowance is
+    gone — for `review_replies` answers per meeting. Past the cap it is an
+    ordinary unread message and waits like one; nothing is refused."""
+    project, token, key = _scoped(client, "reserved-replies")
+    review = _open_view(client, project)
+    thread = client.post(f"/admin/reviews/{review['id']}/say",
+                         json={"body": "Why did nine runs die on one account?"},
+                         headers=ADMIN).json()["thread_id"]
+    reasons = _ceo_reasons(project)
+    kinds = [r["kind"] for r in reasons]
+    assert "messages" in kinds, "the boardroom wake is the carrier"
+    assert "review_reply" in kinds
+    from yaaf.server import dispatcher
+    assert dispatcher._is_governance(reasons)
+
+    for i in range(2):
+        _ceo_says(client, project, token, thread, f"Answer {i}: the appeal loop retried itself.")
+        client.post(f"/admin/reviews/{review['id']}/say",
+                    json={"body": f"Follow-up {i}"}, headers=ADMIN)
+    reasons = _ceo_reasons(project)
+    assert "messages" in [r["kind"] for r in reasons], "still unread, still answered"
+    assert "review_reply" not in [r["kind"] for r in reasons], "but on the ordinary allowance"
+    assert _ceo_pack(project)["review"]["thread"]["reserve_replies_left"] == 0
+
+
+def test_a_lever_records_what_it_moved(client):
+    """Pressing a lever was recorded as what was pressed. The decision now
+    carries what it changed on the record too, so the loop closes on the
+    meeting and not only on the Roadmap."""
+    project, token, key = _scoped(client, "moved")
+    review = _open_view(client, project)
+    with db_session() as session:
+        rid = session.query(Requirement).filter_by(project_id=project["id"], key=key).one().id
+    pulled = client.post(f"/admin/reviews/{review['id']}/lever",
+                         json={"kind": "cut", "requirement_id": rid,
+                               "reason": "the sequence covers it"}, headers=ADMIN)
+    assert pulled.status_code == 200, pulled.text
+    decision = _open_view(client, project)["decisions"][0]
+    assert decision["effect"] == "1 → 0 requirements open"
+
+
+def test_the_green_rule_reads_the_report_s_ask_itself(client):
+    """`proceed` is green and `change` is a meeting worth having, read off the
+    report rather than off the rendered recommendation — so a future change
+    to how the text is rendered cannot change what closes itself."""
+    from yaaf.server import janitor
+
+    project, token, key = _scoped(client, "asked-outright")
+    filed = client.post("/agent/review_report", json=_report(key), headers=bearer(token))
+    assert filed.status_code == 200, filed.text
+    with db_session() as session:
+        review = session.query(Review).filter_by(project_id=project["id"]).one()
+        assert janitor._review_needs_nobody(review) is not None
+        review.recommended = "a stray line that is not the ask"
+        assert janitor._review_needs_nobody(review) is not None, "the report is the authority"
+        review.report = {**review.report, "ask": {"kind": "change", "levers": [], "why": None}}
+        assert janitor._review_needs_nobody(review) is None

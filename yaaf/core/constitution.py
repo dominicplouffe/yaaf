@@ -565,6 +565,13 @@ class ConstitutionDoc(BaseModel):
              "add, reword, move the date, raise the budget, accept the slip — are "
              "recorded with your reasons and shown at the next review beside what "
              "they bought.")
+    review_replies: int = _rule(
+        2, ge=0, group="The review", label="CEO replies per meeting on the reserve",
+        help="When you say something back on an open review, the CEO answers in the "
+             "meeting's thread. This many of its answers per meeting may spend the "
+             "governance reserve, so they land on a day the ordinary allowance is "
+             "gone; past it, an answer waits for an ordinary wake like any other "
+             "message. 0 means every answer waits.")
 
     # The commitment. The projection itself refreshes every janitor tick; this
     # governs the third re-validation trigger — the "errors" one.

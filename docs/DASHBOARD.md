@@ -734,9 +734,20 @@ open review shows a banner on the project's Inbox and the Roadmap until you clos
   requirements met since the last review, the commitment's state with
   promised and projected dates, this month's spend, closes spot-checked out
   of closes considered, and the requirement with the most dead runs.
-- **Your six levers**: cut scope, add scope, reword, move the date, raise the
-  budget, accept the slip. Each is recorded with your reason, disclosed to the
-  CEO, and shown at the *next* review beside what it bought.
+- **The ask, and your answer to it, in one place.** Under the CEO's ask sit
+  the levers it asked for, pre-filled with its reason so agreeing is one
+  press (edit the reason or keep it; it is recorded as yours); the other
+  levers fold under *Something else*. Each pull is recorded with your reason,
+  with **what it moved** on the record (the projected finish, the open scope,
+  the cap — read before and after), disclosed to the CEO, and shown at the
+  *next* review beside what it bought. Under the fully autonomous dial the
+  section reads *What your CEO decided* and the levers fold under *Overrule*.
+- **Say something back.** Your words go to the CEO as a boardroom message,
+  kept in one thread per meeting, and it answers in the thread. Up to
+  `review_replies` of its answers per meeting ride the governance reserve,
+  so they land on a day the ordinary allowance is gone; past that an answer
+  waits for an ordinary wake like any other message. Nothing is refused, and
+  the meeting never waits on the thread: close it whenever you are done.
 
 ## Deliverables — the output
 

@@ -1638,6 +1638,35 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                        if (review.numbers.get("prior") or {}).get("plan") else "")
                 ),
             }
+            # He said something back on the meeting. The thread rides along
+            # with who said what, and how many of your answers this meeting
+            # may still take on the reserve.
+            from yaaf.server.dispatcher import review_thread_state
+
+            thread = review_thread_state(session, project, review)
+            if thread is not None:
+                left = max(cons.review_replies - thread["ceo_replies"], 0)
+                pack["review"]["thread"] = {
+                    "thread_id": thread["thread_id"],
+                    "channel_id": thread["channel_id"],
+                    "messages": [
+                        {"from": "you" if m.sender_agent_id else "chairman",
+                         "body": m.body, "at": m.created_at.isoformat()}
+                        for m in thread["messages"]
+                    ],
+                    "reserve_replies_left": left,
+                    "note": (
+                        ("The chairman's last word on this meeting is unanswered. "
+                         if thread["unanswered"] else "")
+                        + "Answer on the meeting itself: message_post with this "
+                        "channel_id and thread_id. THREE SENTENCES, as always. "
+                        + (f"{left} more answer(s) on this meeting may spend the "
+                           "governance reserve; after that an answer waits for an "
+                           "ordinary wake." if left else
+                           "This meeting's reserve answers are spent; further "
+                           "answers wait for an ordinary wake.")
+                    ),
+                }
 
         # The promise, if one exists. The projection and status are read-only
         # facts here — the enforcement (scope freeze) lives in policy, and the

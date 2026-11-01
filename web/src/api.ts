@@ -1719,7 +1719,20 @@ export interface PlanMark {
   mark: string; says: string;
 }
 
-export interface Decision { kind: string; reason: string; detail: string; at: string }
+export interface Decision {
+  kind: string; reason: string; detail: string; at: string;
+  /** What the pull changed on the record — the projected finish, open scope,
+      the cap — read before and after. Absent on decisions older than this. */
+  effect?: string | null;
+}
+
+/** "Say something back" on a meeting: one boardroom thread per meeting. */
+export interface ReviewThread {
+  id: string;
+  ceo_replies: number;
+  unanswered: boolean;
+  messages: { id: string; from: "you" | "ceo"; body: string; at: string }[];
+}
 
 
 
@@ -1767,6 +1780,7 @@ export interface ReviewRow {
   numbers: ReviewNumbers;
   record: ReviewRecord | null;
   report: ReviewReport | null;
+  thread: ReviewThread | null;
   /** One sentence in words from the frozen facts; composed server-side so the
       screen, the reader tool and the opening mail say the same thing. */
   headline: string;
