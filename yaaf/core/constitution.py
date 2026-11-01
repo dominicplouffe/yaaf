@@ -652,6 +652,21 @@ class ConstitutionDoc(BaseModel):
         return ConstitutionDoc.model_validate(merged)
 
 
+def rule_label(key: str) -> str:
+    """A rule as a person names it, mid-sentence: the settings page's own label
+    ("open tasks at once"), not the field that stores it (`queue_ceiling`).
+
+    The briefing used to list what he changed by key — "you changed 7 rules
+    (ceo_heartbeat_always, ceo_heartbeat_hours, …)" — on Home, in the morning
+    email and in `yaaf briefing`, beside a settings page that has never shown
+    him a key. Lower-cased only where the label does not open on an acronym.
+    A key the schema no longer knows still reads as words rather than vanishing.
+    """
+    field = ConstitutionDoc.model_fields.get(key)
+    label = (field.title if field is not None else None) or key.replace("_", " ")
+    return label if label[:2].isupper() else label[:1].lower() + label[1:]
+
+
 def effective(session: Session, project_id: str, at: datetime | None = None) -> ConstitutionDoc:
     """The constitution in force for a project right now: the highest version
     whose effective_at has passed."""

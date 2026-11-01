@@ -35,6 +35,7 @@ from yaaf.core.constitution import (
     effective,
     effective_version,
     propose_amendment,
+    rule_label,
 )
 from yaaf.core.db import notify
 from yaaf.core.models import (
@@ -4774,8 +4775,9 @@ def _amend(project_id: str, body: AmendmentIn, session: Session, *,
 
     # Name the fields rather than a category: a note that lists what you just
     # changed cannot go stale the way a note about which bucket it fell in did.
-    changed_now = sorted({k for a in applied_now for k in a.changes})
-    note_parts = [f"In force NOW: {', '.join(changed_now)}."]
+    # In the settings page's own words: this note is the toast he reads there.
+    changed_now = sorted({rule_label(k) for a in applied_now for k in a.changes})
+    note_parts = [f"In force NOW: {'; '.join(changed_now)}."]
     if lifted:
         note_parts.append(
             f"Re-hired on a stronger model or deeper reasoning: {', '.join(lifted)}.")

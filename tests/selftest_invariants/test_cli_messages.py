@@ -163,11 +163,40 @@ def test_status_says_the_sentences_and_lists_what_they_counted(client, monkeypat
     result = runner.invoke(cli.app, ["status"])
     assert result.exit_code == 0, result.output
     assert result.output.startswith("1 project. Desk")
-    assert "desk-one  1 decision waiting on you." in result.output
+    assert "◉ desk-one  1 decision waiting on you." in result.output
     assert "desk-one: Buy the $49 injury-news feed" in result.output
 
     as_json = runner.invoke(cli.app, ["status", "desk-one", "--json"])
     assert json.loads(as_json.output)[0]["verdict"] == "needs_you"
+
+
+def test_every_verdict_has_a_shape_so_the_list_scans():
+    """A shape per state, because a terminal often has no colour and the
+    design's rule is that colour never travels alone. A verdict added to the
+    server without one here would print as the unknown dot on every machine."""
+    from yaaf.server.status_line import VERDICTS
+
+    assert set(cli.STATE_GLYPHS) == set(VERDICTS)
+    assert cli.STATE_GLYPHS["needs_you"] == "◉"
+    assert {cli.STATE_GLYPHS[v] for v in ("at_risk", "late", "stalled", "spinning")} == {"▲"}
+    assert {cli.STATE_GLYPHS[v] for v in ("blocked", "failing")} == {"⊖"}
+    assert (cli.STATE_GLYPHS["on_track"], cli.STATE_GLYPHS["done"],
+            cli.STATE_GLYPHS["paused"]) == ("✓", "◆", "‖")
+    assert {cli.STATE_GLYPHS[v] for v in ("idle", "not_started")} == {"○"}
+    assert cli.UNKNOWN_GLYPH not in cli.STATE_GLYPHS.values()
+
+
+def test_a_project_that_cannot_run_scans_as_blocked(client, monkeypatch):
+    """The suite's default project has nothing to pay with, so its verdict is
+    `blocked`: the line opens on that shape, and the sentence is unchanged."""
+    from tests.conftest import make_project
+
+    as_admin = TestClient(client.app, headers=ADMIN)
+    monkeypatch.setattr(cli, "_client", lambda: contextlib.nullcontext(as_admin))
+    make_project(client, slug="unpaid")
+    result = runner.invoke(cli.app, ["status", "unpaid"])
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("⊖ unpaid  Cannot run: nothing is set to pay for it.")
 
 
 def test_a_setup_file_names_its_other_providers_credentials_by_name(client, monkeypatch, tmp_path):

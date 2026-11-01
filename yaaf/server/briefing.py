@@ -44,6 +44,7 @@ from yaaf.core.constitution import (
     bar_name,
     effective,
     preset_name,
+    rule_label,
     tempo_name,
 )
 from yaaf.core.models import (
@@ -751,13 +752,42 @@ def _staffing_lines(session: Session, project: Project, cons, since, until) -> l
         who = _listed([(f.arithmetic or {}).get("team") or "a team" for f in idle])
         lines.append(_line(
             "seats_idle",
-            f"{who} spent runs and closed no work in {cons.staffing_review_days} days",
+            f"{who} spent runs and closed no work {_idle_window(session, project, cons, idle)}",
             tone="bad", count=len(idle), where="overview",
             note="A seat that is awake is not free: it reads its channels, buys inbox "
                  "runs, and counts as a mover in the capacity forecast. Your CEO owes "
                  "you either a stand-down or a reason.",
         ))
     return lines
+
+
+def _idle_window(session: Session, project: Project, cons: ConstitutionDoc,
+                 idle: list[Flag]) -> str:
+    """How long the idle seats have really been idle, in words.
+
+    The flag's arithmetic looks back `staffing_review_days`, and the line used
+    to print that number as if it were time elapsed: "spent runs and closed no
+    work in 14 days" about a project created five minutes earlier. The window
+    cannot reach back past the project's birth or the seat's first run, so a
+    younger one is said from the date it really starts.
+    """
+    days = cons.staffing_review_days
+    window = utcnow() - timedelta(days=days)
+    starts = []
+    for flag in idle:
+        agents = ([a.id for a in policy.team_agents(session, flag.subject_id)]
+                  if flag.subject_id else [])
+        first_run = _aware(session.execute(
+            select(func.min(Run.created_at)).where(
+                Run.project_id == project.id, Run.agent_id.in_(agents))
+        ).scalar_one()) if agents else None
+        starts.append(max(t for t in (window, _aware(project.created_at), first_run)
+                          if t is not None))
+    start = min(starts)
+    if start <= window:
+        return f"in {days} {_plural(days, 'day')}"
+    # The date half of `chairman_time`, so it reads like every other date he is given.
+    return f"since {chairman_time(start, cons.timezone).split(',', 1)[0]}"
 
 
 def _run_lines(session: Session, project: Project, since, until) -> list[dict]:
@@ -927,6 +957,11 @@ def _self_acting_lines(session: Session, project: Project, since, until) -> list
     return lines
 
 
+#: How many changed rules the line names. A label is a phrase, not an id, so
+#: fewer fit in one line than the six keys it used to list.
+RULES_LISTED = 4
+
+
 def _your_decisions_lines(session: Session, project: Project, since, until) -> list[dict]:
     """What the chairman himself did in the window. Present so the brief reads
     as a record of the period rather than a list of things done to him — and
@@ -958,11 +993,15 @@ def _your_decisions_lines(session: Session, project: Project, since, until) -> l
         ).order_by(Amendment.created_at)
     ).scalars())
     if amendments:
-        changed = sorted({key for a in amendments for key in (a.changes or {})})
+        # Semicolons, because the labels carry commas of their own ("Hard
+        # stop, as a multiple of the budget").
+        changed = sorted({rule_label(key) for a in amendments for key in (a.changes or {})})
+        shown = "; ".join(changed[:RULES_LISTED])
+        if len(changed) > RULES_LISTED:
+            shown += f"; and {len(changed) - RULES_LISTED} more"
         lines.append(_line(
             "rules_changed",
-            f"you changed {len(changed)} {_plural(len(changed), 'rule')} "
-            f"({', '.join(changed[:6])}{'…' if len(changed) > 6 else ''})",
+            f"you changed {len(changed)} {_plural(len(changed), 'rule')} ({shown})",
             count=len(amendments), where="records/decisions",
         ))
     return lines

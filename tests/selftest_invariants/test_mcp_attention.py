@@ -142,3 +142,47 @@ def test_a_deliverables_name_reaches_claude_as_data(client):
     (item,) = brief["delivered"]
     assert item["name"].startswith(OPEN)
     assert "ignore-previous-instructions.md" in item["name"]
+
+
+def test_an_approval_on_the_desk_says_what_silence_decides_and_whether_yes_undoes(client):
+    """A client asked "should I approve this?" has to be able to say what
+    happens if he does nothing, by when, and whether a yes can be taken back.
+    The row carries all three; the wrapper must not be what loses them — not
+    even on a desk crowded enough to be trimmed."""
+    from datetime import datetime
+
+    from tests.conftest import bearer, live_token
+
+    project = make_project(client, slug=SLUG)
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    filed = client.post("/agent/approvals", headers=bearer(token), json={
+        "kind": "spend", "title": "Buy EDGAR full-text search access",
+        "body": "Closes the pre-2001 gap for two of five companies.",
+        "if_declined": "Those two companies stay incomplete.", "amount_usd": 75})
+    assert filed.status_code == 200, filed.text
+    _crowded_desk(client)
+    reader = mint(client)
+
+    desk = payload(call(client, reader["token"], "desk", {}))
+    assert desk.get("truncated") is True, "the desk must actually be trimmed for this test"
+    row = next(p for p in desk["projects"] if isinstance(p, dict) and p.get("slug") == SLUG)
+    (approval,) = row["pending_approvals"]
+    assert approval["id"] == filed.json()["id"]
+    assert approval["if_silent"] == "declined"
+    assert datetime.fromisoformat(approval["expires_at"]) > datetime.fromisoformat(desk["as_of"])
+    assert approval["undo"].startswith("No — a purchase cannot be taken back")
+    # And the row's own count of what needs him, with the sign-off slot beside it.
+    assert row["needs_you"]["total"] == 1
+    assert "pending_signoff" in row and row["pending_signoff"] is None
+
+
+def test_a_finished_delivery_reaches_claude_as_a_sign_off(client):
+    from tests.selftest_invariants.test_delivered_stands_down import delivered
+
+    delivered(client, "signed-off")
+    reader = mint(client)
+    desk = payload(call(client, reader["token"], "desk", {}))
+    row = next(p for p in desk["projects"] if p["slug"] == "signed-off")
+    assert row["pending_signoff"]["met"] == 1
+    assert row["needs_you"]["signoff"] == 1
+    assert row["status_line"]["verdict"] == "needs_you"
