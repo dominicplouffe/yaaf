@@ -11,7 +11,7 @@ import {
 } from "../../api";
 import { FailoverBanner } from "../../fallback";
 import Agenda from "../../agenda";
-import { itemsFor, needsYou, useDesk, WARN_VERDICTS } from "../../desk";
+import { itemsFor, needsYou, needsYouCount, useDesk, WARN_VERDICTS } from "../../desk";
 import { fmtWhen, usePoll } from "../../hooks";
 import Markdown from "../../Markdown";
 import { firstName, ProjectCtx } from "../../projectCtx";
@@ -31,7 +31,7 @@ import {
 import { Avatar, Badge, Btn, Term, Verdict } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
 import { chairmanDecides, deliveryVerdict, cycleOverdue, flagPlain, fmtDate, fmtRoll, fullyAutonomous } from "../../ui/project";
-import { statusBadge } from "../Projects";
+import { verdictBadge } from "../Projects";
 import { InboxView } from "../Inbox";
 import { ProjectSetup } from "../../projectSetup";
 
@@ -86,7 +86,7 @@ function autonomyWord(dash: Dashboard): { word: string; means: string } {
 function TeamFoot({ ctx, published }: { ctx: ProjectCtx; published: number | null }) {
   const { dash, plan, projectId, hypotheses } = ctx;
   const verdict = deliveryVerdict(dash, plan);
-  const { unit, spent, cap, frac } = budgetOf(dash);
+  const { unit, spent, cap, wall } = budgetOf(dash);
   const pace = paceDate(spent, cap);
   const reqs = (plan?.requirements ?? []).filter((r) => r.status !== "cut");
   const explore = dash.mode === "explore";
@@ -115,9 +115,14 @@ function TeamFoot({ ctx, published }: { ctx: ProjectCtx; published: number | nul
       <Link to={`${base}/results`}>
         <b>{published ?? "—"}</b> result{published === 1 ? "" : "s"} delivered · see results
       </Link>
-      <Link to={`${base}/details/spend`} title={pace ? `on pace to reach the cap ${fmtWhenShort(pace.toISOString())}` : "on pace to finish the month under the cap"}>
+      <Link to={`${base}/details/spend`} title={pace ? `on pace to reach its plan ${fmtWhenShort(pace.toISOString())}` : "on pace to finish the month inside its plan"}>
+        {/* The stop is the wall, never the budget: past the budget nothing
+            pauses, the CEO only has to account for the overrun. This line said
+            "pauses at $20" on a project whose wall was $60. */}
         <b>{fmtUnit(spent, unit)}</b> this month ·{" "}
-        {frac >= 1 ? "the cap is reached — the project is paused" : `pauses at ${fmtUnit(cap, unit)}`}
+        {wall > 0 && spent >= wall
+          ? "the hard stop is reached — the project is paused"
+          : `${spent > cap ? "over its plan of" : "plan"} ${fmtUnit(cap, unit)} · pauses at ${fmtUnit(wall, unit)}`}
       </Link>
       <span>
         <b>{dash.activity.daily_runs.used} of {dash.activity.daily_runs.cap}</b> runs today
@@ -134,13 +139,12 @@ function TeamFoot({ ctx, published }: { ctx: ProjectCtx; published: number | nul
 }
 
 /** The mode-shaped fact, one per mode: Explore counts its window down,
-    Deliver offers the completion gate the moment everything is true, Operate
+    Deliver says so once it has completed (its sign-off is an Inbox row), Operate
     names the turn of the rhythm it is on. */
 function ModeStrip({ dash, reload }: { dash: Dashboard; reload: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const closesAfter = Number(dash.constitution?.["complete_after_hours"] ?? 0);
   if (dash.mode === "deliver" && dash.status === "completed") {
     // Completing is automatic only because it can be taken back.
     return (
@@ -169,37 +173,10 @@ function ModeStrip({ dash, reload }: { dash: Dashboard; reload: () => void }) {
       </div>
     );
   }
-  if (dash.mode === "deliver" && dash.delivery_outstanding !== null
-      && dash.delivery_outstanding.length === 0) {
-    return (
-      <div className="strip good">
-        <div className="grow">
-          <b>Everything is true.{closesAfter > 0
-            ? ` It completes itself about ${closesAfter} hours after you were told, unless its scope moves.`
-            : " This delivery is ready for your confirmation."}</b>
-          <div className="sb">
-            Completing writes the receipt — including which requirements failed before they
-            passed — and closes the project down. It is not spending while it waits, and you
-            can reopen it for 14 days afterwards.
-          </div>
-          {error && <div className="error">{error}</div>}
-        </div>
-        {confirming ? (
-          <>
-            <button className="small primary" onClick={async () => {
-              try {
-                await post(`/admin/projects/${dash.id}/complete`);
-                reload();
-              } catch (e) { setError((e as Error).message); }
-            }}>Yes, complete it</button>
-            <button className="small" onClick={() => setConfirming(false)}>Not yet</button>
-          </>
-        ) : (
-          <button className="small primary" onClick={() => setConfirming(true)}>Complete the project…</button>
-        )}
-      </div>
-    );
-  }
+  // A finished delivery is not drawn here. It is a sign-off row in the Inbox
+  // panel on this same page, with the Complete button, and was once also this
+  // callout and a banner above every tab: three copies of one decision, under a
+  // queue that said nothing needed you.
   if (dash.mode === "explore" && dash.deadline) {
     const daysLeft = Math.ceil((new Date(dash.deadline).getTime() - Date.now()) / 86_400_000);
     return (
@@ -716,7 +693,8 @@ export default function Overview({
         <div className="ov-title-row">
           <div className="grow">
             <h1 className="ov-title">
-              {dash.name} {statusBadge(dash.status, unpaid)}
+              {dash.name} {verdictBadge(deskProject ?? { status: dash.status, unpaid },
+                deskProject ? needsYouCount(deskProject) : 0)}
               {dash.drought_active && (
                 <Badge tone="serious">
                   <Term means="Nothing outside this project has verified any of its claims for longer than your rules allow. Work carries on; new internal-only work is refused until proof lands.">

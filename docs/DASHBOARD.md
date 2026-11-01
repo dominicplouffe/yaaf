@@ -213,7 +213,8 @@ the project it belongs to.
 So it holds exactly what the Desk held: a bet past its kill date, a thread the
 pair breaker froze, an approval running down to auto-deny, a question the CEO
 asked you, scope waiting to be accepted, a delivery date waiting to be signed,
-and an observable close only you can judge. A drought, a kill date still in the
+an observable close only you can judge, and a finished delivery waiting for
+your sign-off. A drought, a kill date still in the
 future, a budget on pace, unaudited work — those resolve without you, so they
 are under **Watching**, where drawing them never teaches anyone to stop trusting
 the badge.
@@ -236,6 +237,9 @@ the whole case:
   the boardroom as a reply to that question, so the CEO reads it where it reads
   everything else from you; if other questions are still open on that project,
   the pane says so, because one boardroom message answers all of them.
+- **A finished delivery** says how many requirements are true and when it
+  completes itself if you say nothing, with **Complete & write receipt…** on
+  the row and a link to what was delivered.
 - **Scope, a date, a close to judge** link to the screen where the decision is
   made, with the consequence stated first.
 
@@ -375,8 +379,9 @@ Chosen once, at creation, and frozen — the rules differ by shape.
 
 A Deliver project whose every requirement is true tells you so, and then closes
 itself after `complete_after_hours` (24 by default; Settings → Rules in force →
-Autonomy) unless its scope moves: the project's Inbox says when, on its strip, and **Complete
-the project…** does it now. A completed delivery's Inbox offers **Reopen…** for
+Autonomy) unless its scope moves. Until then it is a **Sign off** row in your
+Inbox, counted on the badge like any decision, saying when it closes; **Complete
+& write receipt…** on that row does it now. A completed delivery's Inbox offers **Reopen…** for
 14 days; a reopened one runs again and will not close itself until its scope has
 moved.
 

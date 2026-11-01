@@ -415,6 +415,12 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             "ceo_judgment": policy.ceo_judgment(session, project.id),
             "pending_approvals": pending,
             "pending_asks": pending_asks,
+            # The finished delivery, as the decision it is: Complete, reopen, or
+            # let it close itself at `closes_at`.
+            "pending_signoff": policy.signoff_waiting(session, project, cons),
+            # Every decision on this row, counted once (policy.needs_you), so
+            # no reader re-adds the members and gets a different number.
+            "needs_you": policy.needs_you(session, project, cons),
             "expired_bets": expired_bets,
             "kill_dates_soon": kill_dates_soon,
             "audit": {"completed": int(completed), "audited": int(audited),
@@ -435,12 +441,10 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             "last_run_at": last_run_at.isoformat() if last_run_at else None,
         })
         row = projects_out[-1]
-        waiting = row["awaiting_you"]
         row["status_line"] = status_line(
             status=project.status, status_reason=project.status_reason,
             unpaid=row["unpaid"], commitment=policy.live_commitment(session, project.id),
-            waiting=(len(pending) + len(pending_asks) + (1 if waiting["plan"] else 0)
-                     + len(waiting["verdicts"]) + (1 if waiting["commitment"] else 0)),
+            waiting=row["needs_you"]["total"], signoff=row["pending_signoff"],
             open_tasks=row["open_tasks"], runs_running=int(running), last_run_at=last_run_at,
             stall_hours=float(cons.stall_hours), unit=row["budget"]["unit"],
             spent=row["budget"]["spent"], cap=row["budget"]["cap"],

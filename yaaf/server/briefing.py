@@ -1046,6 +1046,8 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
     ).scalar_one()
     heads_ups = len(heads_up.unacknowledged(session, project.id))
     soonest = _aware(pending[0].expires_at) if pending else None
+    decisions = policy.needs_you(session, project, cons)
+    signoff = policy.signoff_waiting(session, project, cons)
     return {
         "approvals": len(pending),
         "soonest_expiry": soonest.isoformat() if soonest else None,
@@ -1063,8 +1065,13 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
         # broke exactly that property in the one place it is quoted out loud:
         # "N now waiting on you", in his email, about a flag that proceeds on
         # the CEO's proposal whether he answers or not.
-        "total": (len(pending) + len(waiting["plan"]) + len(waiting["verdicts"])
-                  + (1 if waiting["commitment"] else 0)),
+        #
+        # The total is policy.needs_you's, not a sum written here: this one
+        # left out asks and the finished delivery, and read "Waiting on you: 1"
+        # beside a desk that said 2.
+        "asks": decisions["asks"],
+        "signoff": signoff,
+        "total": decisions["total"],
         # Real, and worth saying — just not the same sentence. A thing to read
         # counted beside a thing that denies itself in six hours teaches the
         # reader that the number is padded, and then the number that matters
@@ -1459,6 +1466,12 @@ def _waiting_lines(waiting: dict, when) -> list[str]:
             soonest = when(waiting["soonest_expiry"]) if waiting["soonest_expiry"] else "unknown"
             body.append(f"  · {waiting['approvals']} approval(s); the soonest "
                         f"decides itself {soonest}")
+        if waiting.get("signoff"):
+            closes = waiting["signoff"].get("closes_at")
+            body.append("  · a finished delivery to sign off"
+                        + (f"; it closes itself {when(closes)}" if closes else ""))
+        if waiting.get("asks"):
+            body.append(f"  · {waiting['asks']} question(s) from the CEO")
         if waiting["plan"]:
             body.append(f"  · {waiting['plan']} proposed requirement(s) to accept "
                         "— proposed scope is not scope")

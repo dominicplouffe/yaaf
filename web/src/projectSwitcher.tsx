@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { DeskProject } from "./api";
 import { useDesk } from "./desk";
 import { Icon } from "./ui/Icon";
-import { Avatar } from "./ui/kit";
+import { Avatar, VERDICT_CHIP } from "./ui/kit";
 
 /** The project switcher: the sidebar card's own dropdown, and nothing else.
 
@@ -20,7 +20,11 @@ import { Avatar } from "./ui/kit";
     single project. Pages, people and actions are what ⌘K is for, and it sits
     directly above this card; mixing them in here is what made it a mess. */
 
-export function statusWord(status: string): string {
+/** The server's verdict when the row has one — "Running" sat over projects
+    that could not run and projects that had finished — the status otherwise. */
+export function statusWord(status: string, verdict?: string): string {
+  const judged = verdict ? VERDICT_CHIP[verdict]?.[0] : undefined;
+  if (judged) return judged;
   return status === "running" ? "Running" : status === "paused" ? "Paused"
     : status === "draft" ? "Not started" : status;
 }
@@ -153,7 +157,7 @@ export function ProjectSwitcher({
                 <b>{p.name}</b>
                 <span>
                   <i className={`dot ${p.status === "running" ? "run" : ""}`} />
-                  {n > 0 ? <span className="warn">{n} need you</span> : statusWord(p.status)}
+                  {n > 0 ? <span className="warn">{n} need you</span> : statusWord(p.status, p.status_line?.verdict)}
                 </span>
               </span>
               {current && <Icon name="check" size={15} className="psw-check" />}

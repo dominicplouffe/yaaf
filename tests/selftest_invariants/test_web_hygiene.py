@@ -344,3 +344,24 @@ def test_nothing_is_set_below_the_12px_floor():
     assert not offenders, (
         "these set text below the 12px floor (use var(--t-micro)):\n  " + "\n  ".join(offenders)
     )
+
+
+#: "pauses at …" followed, on the same line, by an interpolation. The number
+#: after it is the one a chairman reads as the stop.
+PAUSES_AT = re.compile(r"pauses at \$\{([^}]*)\}")
+
+
+def test_every_pauses_at_names_the_wall_not_the_budget():
+    """The budget is a plan; the wall that pauses a project is the budget times
+    `hard_stop_multiple` (3 in every preset). The project header printed
+    "pauses at $20" on a project whose wall was $60 while its own Spend tab
+    said $60 — the one class of fact the cockpit must never get wrong, stated
+    two ways on two tabs. `budgetOf` returns both numbers, named apart; a line
+    that says where spending stops reads `wall`."""
+    offenders: list[str] = []
+    for path in _tsx_files():
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            for expr in PAUSES_AT.findall(line):
+                if "wall" not in expr:
+                    offenders.append(f"{path.relative_to(WEB_SRC)}:{number}: pauses at ${{{expr}}}")
+    assert not offenders, "\n".join(offenders)

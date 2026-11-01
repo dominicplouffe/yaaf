@@ -65,23 +65,26 @@ function NavItem({
 /** Which project the project half of the sidebar is about: the one you are
     in, else the one you were last in — so leaving for the Inbox and coming
     back is one click, not a trip through Projects. */
-function useCurrentProject(projects: DeskProject[]): { id: string; name: string; status: string } | null {
+function useCurrentProject(projects: DeskProject[]):
+    { id: string; name: string; status: string; verdict?: string } | null {
   const frame = useProjectFrame();
   const inside = frame?.ctx?.dash;
   useEffect(() => {
     if (inside) rememberProject(inside.id);
   }, [inside]);
-  if (inside) return { id: inside.id, name: inside.name, status: inside.status };
-  const last = lastProject();
-  const known = projects.find((p) => p.id === last) ?? null;
-  return known ? { id: known.id, name: known.name, status: known.status } : null;
+  const row = (id: string) => projects.find((p) => p.id === id);
+  if (inside) return { id: inside.id, name: inside.name, status: inside.status,
+    verdict: row(inside.id)?.status_line?.verdict };
+  const known = row(lastProject() ?? "") ?? null;
+  return known ? { id: known.id, name: known.name, status: known.status,
+    verdict: known.status_line?.verdict } : null;
 }
 
 /** The project half of the sidebar: who it is, how it is, and its pages. */
 function ProjectNav({
   project, projects, onNavigate,
 }: {
-  project: { id: string; name: string; status: string };
+  project: { id: string; name: string; status: string; verdict?: string };
   projects: DeskProject[];
   onNavigate: () => void;
 }) {
@@ -120,7 +123,7 @@ function ProjectNav({
   const lastLabel = lastTab ? placeOf(`details/${lastTab}`)?.label : null;
   const setup = ctx?.setup?.open ? ctx.setup : null;
   const settingsOn = location.pathname.startsWith(`${base}/settings`);
-  const statusWord = statusWordOf(project.status);
+  const statusWord = statusWordOf(project.status, project.verdict);
   const row = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const [switching, setSwitching] = useState(false);
@@ -146,7 +149,8 @@ function ProjectNav({
                   what needs you when anything does, the state otherwise —
                   the dot still says running or not. */}
               {needs > 0 ? <span className="warn">{needs} need you</span>
-                : ctx && !ctx.dash.billing_secret_id && ctx.dash.integrations?.runtime !== "mock"
+                : !project.verdict && ctx && !ctx.dash.billing_secret_id
+                  && ctx.dash.integrations?.runtime !== "mock"
                   ? <>{statusWord} · <span className="warn">no key</span></>
                   : statusWord}
             </span>

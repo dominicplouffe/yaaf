@@ -1371,6 +1371,84 @@ def delivered_awaiting_confirmation(session: Session, project: Project) -> bool:
             and not delivery_outstanding(session, project))
 
 
+def signoff_waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict | None:
+    """The finished delivery as a decision on his desk: how much is true, and
+    when silence completes it. None when there is nothing to sign.
+
+    It is a decision with a default, exactly like an approval: Complete, reopen,
+    or let `complete_after_hours` close it. It was announced by email and in the
+    boardroom, and was nowhere a "what needs me" list looked — the Inbox, the
+    badge, `yaaf status` and the briefing all said nothing was waiting while the
+    project counted down to closing itself.
+    """
+    if not delivered_awaiting_confirmation(session, project):
+        return None
+    met = sum(1 for r in scope_requirements(session, project.id)
+              if r.status == RequirementStatus.MET)
+    closes_at = None
+    if cons.complete_after_hours > 0:
+        announced = session.execute(
+            select(AuditLog.at).where(
+                AuditLog.project_id == project.id,
+                AuditLog.action == "project.completion_ready")
+            .order_by(AuditLog.at.desc()).limit(1)
+        ).scalar_one_or_none()
+        if announced is not None:
+            if announced.tzinfo is None:
+                announced = announced.replace(tzinfo=UTC)
+            closes_at = announced + timedelta(hours=cons.complete_after_hours)
+    return {"met": met, "closes_at": closes_at.isoformat() if closes_at else None}
+
+
+def needs_you(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
+    """Every decision waiting on the chairman for this project, counted once.
+
+    The count was assembled by hand in four places — the desk's status line,
+    `yaaf projects`, the briefing and the dashboard's Inbox — from different
+    members, so one project read "2 decisions waiting" in `yaaf status` and
+    "Waiting on you: 1" in `yaaf briefing` (the briefing never counted asks),
+    and every one of them left out the finished delivery. A reader that wants
+    the number reads `total`; a reader that lists items reads the members.
+
+    Decisions only, the same line `awaiting_chairman` draws: flags, heads-ups
+    and open reviews are things to read, and do not decide themselves.
+    """
+    from yaaf.server import asks as ask_lib
+
+    waiting = awaiting_chairman(session, project, cons)
+    approvals = int(session.execute(
+        select(func.count(Approval.id)).where(
+            Approval.project_id == project.id,
+            Approval.status == ApprovalStatus.PENDING)
+    ).scalar_one())
+    asks = ask_lib.open_count(session, project.id)
+    signoff = signoff_waiting(session, project, cons)
+    # Two things only he can undo, which the dashboard always counted and the
+    # status line never did: a bet past its kill date that he has not yet
+    # extended (the one extension is his), and threads the pair breaker froze.
+    bets = int(session.execute(
+        select(func.count(Hypothesis.id)).where(
+            Hypothesis.project_id == project.id, Hypothesis.status == "expired",
+            Hypothesis.extended_once.is_not(True))
+    ).scalar_one())
+    frozen = int(session.execute(
+        select(func.count(Message.id))
+        .join(Channel, Channel.id == Message.channel_id)
+        .where(Channel.project_id == project.id, Message.frozen_at.is_not(None))
+    ).scalar_one())
+    counts = {
+        "approvals": approvals,
+        "asks": asks,
+        "plan": 1 if waiting["plan"] else 0,
+        "verdicts": len(waiting["verdicts"]),
+        "commitment": 1 if waiting["commitment"] is not None else 0,
+        "signoff": 1 if signoff is not None else 0,
+        "bets": bets,
+        "frozen": 1 if frozen else 0,
+    }
+    return {**counts, "total": sum(counts.values())}
+
+
 def create_plan_requirement(session: Session, project: Project) -> Requirement:
     """The obligation a Deliver or Operate project starts with.
 

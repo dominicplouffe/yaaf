@@ -8,7 +8,7 @@ import { SetupChecklist } from "../setupChecklist";
 import { clip, fmtAgo, fmtSoon, fmtUnit } from "../ui";
 import { Avatar, EmptyState } from "../ui/kit";
 import { Icon } from "../ui/Icon";
-import { statusBadge } from "./Projects";
+import { verdictBadge } from "./Projects";
 
 /** The first screen: anything for me, across everything?
 
@@ -33,7 +33,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
       <span className="hcard-h">
         <Avatar name={p.name} team={p.name} />
         <span className="grow"><b>{p.name}</b><span className="help">{p.last_run_at ? `last ran ${fmtAgo(p.last_run_at)}` : "has not run yet"}</span></span>
-        {statusBadge(p.status, p.unpaid)}
+        {verdictBadge(p, needsYouCount(p))}
       </span>
       {/* Is it OK, and if not why — before what it is for. The goal is a
           paragraph the reader wrote; the sentence is what they came to learn. */}

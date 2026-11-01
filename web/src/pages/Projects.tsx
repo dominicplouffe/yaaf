@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { plainStatus } from "../ui/kit";
+import { plainStatus, VERDICT_CHIP } from "../ui/kit";
 import { Link, useSearchParams } from "react-router-dom";
 import { DeskProject, DeskView, get } from "../api";
 import { usePoll } from "../hooks";
@@ -22,6 +22,21 @@ export function statusBadge(status: string, unpaid = false) {
           ? "critical"
           : "accent";
   return <span className={`badge ${cls}`}>{plainStatus(status)}</span>;
+}
+
+/** The project's state in one chip: the server's verdict (yaaf.server.
+    status_line), the same one its sentence states and `yaaf status` prints.
+    The raw status said "Running" over a project whose sentence said it could
+    not run, and over one that had finished; it is the fallback only while the
+    desk row has not loaded. Tone comes from the verdict, and the word always
+    travels with it, so colour is never the only signal. */
+export function verdictBadge(p: { status: string; unpaid?: boolean;
+  status_line?: { verdict: string } }, needs = 0) {
+  const chip = p.status_line ? VERDICT_CHIP[p.status_line.verdict] : undefined;
+  if (!chip) return statusBadge(p.status, p.unpaid);
+  const [word, cls] = chip;
+  const label = p.status_line?.verdict === "needs_you" && needs > 0 ? `${word} · ${needs}` : word;
+  return <span className={`badge ${cls}`}>{label}</span>;
 }
 
 /** A project nobody can act on again. Terminal projects are the archive: they
@@ -471,7 +486,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
         <Link to={`/projects/${p.id}`}>
           <strong style={{ fontSize: 15 }}>{p.name}</strong>
         </Link>
-        {statusBadge(p.status, p.unpaid)}
+        {verdictBadge(p, needsYouCount(p))}
         <WaitingChip p={p} />
         <UnreadChip p={p} />
         <div className="spacer" />
@@ -523,7 +538,7 @@ function ProjectRow({ p }: { p: DeskProject }) {
   const { terminal } = vitals(p);
   return (
     <div className={`wrow prow${terminal ? " done" : ""}`}>
-      {statusBadge(p.status, p.unpaid)}
+      {verdictBadge(p, needsYouCount(p))}
       <div className="grow">
         <Link to={`/projects/${p.id}`}><strong>{p.name}</strong></Link>{" "}
         <span className="mono help">{p.slug}</span>

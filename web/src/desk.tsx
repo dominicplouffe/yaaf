@@ -60,7 +60,7 @@ type Tier = 1 | 2 | 3;
 /** Which verb a row asks for — what the Inbox's icon, filter and detail pane
     key on. Separate from `kind`, which is the human label. */
 export type ItemType =
-  | "approval" | "ask" | "scope" | "commitment" | "verdict" | "bet" | "frozen"
+  | "approval" | "ask" | "scope" | "commitment" | "verdict" | "bet" | "frozen" | "signoff"
   | "kill" | "drought" | "budget" | "noproof";
 
 export interface Item {
@@ -99,6 +99,32 @@ export interface Item {
 }
 
 const NEVER = Number.MAX_SAFE_INTEGER;
+
+/** Complete a finished delivery from wherever its sign-off row is drawn. Two
+    presses, because completing closes the project down; reopening stays
+    possible for 14 days, which is why it is not a typed confirmation. */
+function CompleteButtons({ projectId, onDone }: { projectId: string; onDone: () => void }) {
+  const [armed, setArmed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      {armed ? (
+        <>
+          <button className="small primary" onClick={async () => {
+            try {
+              await post(`/admin/projects/${projectId}/complete`);
+              onDone();
+            } catch (e) { setError((e as Error).message); }
+          }}>Yes, complete it</button>
+          <button className="small" onClick={() => setArmed(false)}>Not yet</button>
+        </>
+      ) : (
+        <button className="small primary" onClick={() => setArmed(true)}>Complete &amp; write receipt…</button>
+      )}
+      {error && <span className="error">{error}</span>}
+    </>
+  );
+}
 // A floor under the "spent, proved nothing" row, so it can't fire on a few
 // cents of overnight cache traffic. Arbitrary, and deliberately so: there is
 // no principled number here, only a threshold below which the row is noise.
@@ -230,6 +256,29 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
   }
 
   // ── tier 2: it resolves without you, at a time we can name ────────────
+  // A finished delivery is a decision with a default, like an approval: it was
+  // announced by email and in the boardroom and was in no "needs you" list, so
+  // every screen said nothing was waiting while it counted down to closing.
+  const so = p.pending_signoff;
+  if (so) {
+    const closes = so.closes_at ? new Date(so.closes_at).getTime() : null;
+    items.push({
+      key: `${p.id}-signoff`, type: "signoff", tier: 2, at: closes ?? NEVER - 2,
+      clocked: closes !== null, yours: true, project: p, kind: "Sign off",
+      title: `Finished: ${so.met} requirement${so.met === 1 ? "" : "s"} true — sign it off`,
+      what: (
+        <>
+          Everything in scope is true (<b>{so.met}</b>). Completing writes the receipt and
+          closes the project.
+        </>
+      ),
+      consequence: closes !== null
+        ? `It completes itself ${fmtSoon(so.closes_at!)} unless its scope moves. You can reopen it for 14 days.`
+        : "It waits, spending nothing, until you complete or reopen it.",
+      to: `${to}/results`, toLabel: "See what was delivered",
+      actions: <CompleteButtons projectId={p.id} onDone={reload} />,
+    });
+  }
   for (const a of p.pending_approvals) {
     items.push({
       key: a.id, type: "approval", tier: 2, at: new Date(a.expires_at).getTime(), clocked: true,

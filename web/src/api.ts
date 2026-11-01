@@ -1028,6 +1028,15 @@ export interface DeskProject {
       it does then. Beside the approvals rather than in `awaiting_you`: both
       are clocked things you answer, and neither is gated on the dial. */
   pending_asks: DeskAsk[];
+  /** Everything in scope is true and only your Complete is left. A decision
+      like any other: Complete, reopen, or let it close itself at `closes_at`. */
+  pending_signoff: { met: number; closes_at: string | null } | null;
+  /** Every decision on this row, counted once by the server. Read `total`;
+      never re-add the members, which is how the counts used to disagree. */
+  needs_you: {
+    approvals: number; asks: number; plan: number; verdicts: number;
+    commitment: number; signoff: number; bets: number; frozen: number; total: number;
+  };
   expired_bets: DeskBet[];
   kill_dates_soon: DeskBet[];
   audit: { completed: number; audited: number; unaudited: number };

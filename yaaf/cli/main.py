@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -1083,10 +1084,9 @@ def projects(as_json: bool = typer.Option(False, "--json", help="the raw payload
     table = [("PROJECT", "STATUS", "SPENT / BUDGET", "HARD STOP", "WAITING ON YOU", "NOW")]
     for row in rows:
         budget = row.get("budget") or {}
-        waiting = row.get("awaiting_you") or {}
-        count = (len(row.get("pending_approvals") or []) + len(row.get("pending_asks") or [])
-                 + (1 if waiting.get("plan") else 0) + len(waiting.get("verdicts") or [])
-                 + (1 if waiting.get("commitment") else 0))
+        # The server's count, never a re-add of the members: re-adding is
+        # how this column, the status line and the briefing came to disagree.
+        count = (row.get("needs_you") or {}).get("total", 0)
         cap = budget.get("cap") or 0
         table.append((row.get("slug", ""), row.get("status", ""),
                       f"{money(budget, budget.get('spent') or 0)} / {money(budget, cap)}",
@@ -1141,6 +1141,20 @@ def status(
                            f"[{verdict.get('key', '')}]")
         if yours.get("commitment"):
             waiting.append(f"{slug}: a delivery date to sign (its Roadmap)")
+        for bet in row.get("expired_bets") or []:
+            waiting.append(f"{slug}: a bet hit its kill date — extend it or let the CEO "
+                           f"pivot  [{bet.get('id', '')}]")
+        if row.get("frozen_threads"):
+            waiting.append(f"{slug}: {row['frozen_threads']} frozen thread(s) to release "
+                           "(`yaaf unfreeze`)")
+        signoff = row.get("pending_signoff")
+        if signoff:
+            closes = signoff.get("closes_at")
+            at = datetime.fromisoformat(closes) if closes else None
+            when = f"{at:%a} {at.day} {at:%b}, {at:%H:%M} UTC" if at else None
+            waiting.append(f"{slug}: finished, {signoff.get('met', 0)} requirement(s) true — "
+                           "sign it off on its project page"
+                           + (f", or it closes itself {when}" if when else ""))
     if waiting:
         typer.echo("")
         typer.echo("Waiting on you:")

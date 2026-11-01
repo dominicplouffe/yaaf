@@ -68,7 +68,7 @@ type Decided =
 
 const ICON: Record<ItemType, IconName> = {
   approval: "check", ask: "help", scope: "list", commitment: "calendar", verdict: "eye",
-  bet: "target", frozen: "alert", kill: "target", drought: "shield", budget: "wallet", noproof: "shield",
+  bet: "target", frozen: "alert", signoff: "flag", kill: "target", drought: "shield", budget: "wallet", noproof: "shield",
 };
 
 /** Why this one is the chairman's, in a clause — true at every dial setting,
@@ -207,7 +207,8 @@ function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDes
         {item.clocked && (
           <span className={`clockpill${item.at - Date.now() < 6 * 3_600_000 ? " warn" : ""}`}>
             <Icon name="clock" size={13} />
-            {item.type === "approval" ? "Denies itself" : item.type === "ask" ? "Falls back" : "Resolves"} {fmtSoon(new Date(item.at).toISOString())}
+            {item.type === "approval" ? "Denies itself" : item.type === "ask" ? "Falls back"
+              : item.type === "signoff" ? "Completes itself" : "Resolves"} {fmtSoon(new Date(item.at).toISOString())}
           </span>
         )}
       </div>
@@ -236,7 +237,8 @@ function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDes
       {item.type === "ask" && <AskAnswer item={item} others={otherAsks} onDone={desk.reload} />}
       {item.type !== "approval" && item.type !== "ask" && (
         <div className="ib-acts">
-          <Link className={`btnlink${item.yours ? " primary" : ""}`} to={item.to}>{item.toLabel} <Icon name="arrow" size={13} /></Link>
+          {item.actions}
+          <Link className={`btnlink${item.yours && !item.actions ? " primary" : ""}`} to={item.to}>{item.toLabel} <Icon name="arrow" size={13} /></Link>
         </div>
       )}
       <p className="ib-foot-note help">
@@ -504,13 +506,12 @@ function AllClear({ projects, items }: { projects: DeskProject[]; items: Item[] 
       </div>
     );
   }
+  // No "Nothing needs you" headline here: the empty list beside this pane
+  // already says it, and the two side by side were one sentence twice. What
+  // this pane adds is the evidence, so it leads with that.
   return (
     <div className="quiet ok">
-      <div className="mark">Nothing needs you.</div>
-      <div className="sub">
-        No decision is blocked, nothing has stopped, and nothing is waiting on a
-        click from you. The proof it is actually working:
-      </div>
+      <div className="mark">It is working.</div>
       <div className="proof">
         <div className="pf"><div className="pv">{live.length}</div><div className="pl">project{live.length === 1 ? "" : "s"} working</div></div>
         <div className="pf"><div className="pv">{fmtAgo(latestRun(live))}</div><div className="pl">last run</div></div>

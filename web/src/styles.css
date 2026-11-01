@@ -2478,7 +2478,7 @@ button.linkish.inline { min-height: 0; padding: 0; border: 0; background: none; 
   background: var(--surface-2); color: var(--ink-2);
 }
 .kind-ic.k-approval, .kind-ic.k-budget { color: var(--warning); background: rgba(var(--warning-rgb), 0.13); }
-.kind-ic.k-ask, .kind-ic.k-commitment, .kind-ic.k-brief { color: var(--accent); background: rgba(var(--accent-rgb), 0.13); }
+.kind-ic.k-ask, .kind-ic.k-commitment, .kind-ic.k-signoff, .kind-ic.k-brief { color: var(--accent); background: rgba(var(--accent-rgb), 0.13); }
 .kind-ic.k-scope, .kind-ic.k-verdict { color: var(--c5); background: rgba(var(--accent-rgb), 0.08); }
 .kind-ic.k-bet, .kind-ic.k-frozen, .kind-ic.k-kill, .kind-ic.k-flag, .kind-ic.k-drought, .kind-ic.k-noproof {
   color: var(--serious); background: rgba(var(--serious-rgb), 0.12);
