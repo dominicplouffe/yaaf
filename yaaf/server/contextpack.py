@@ -1616,7 +1616,9 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                     "File your variance narrative with review_narrative: what "
                     "moved against the plan, the SINGLE largest cause by name, "
                     "and what you recommend cutting or moving. Explain the "
-                    "numbers above — do not restate them."
+                    "numbers above — do not restate them. Every sentence under "
+                    f"{plain.MAX_SENTENCE_WORDS} words, and `recommended` under "
+                    f"{plain.MAX_MESSAGE_WORDS} words; the platform refuses longer."
                 ),
             }
 
