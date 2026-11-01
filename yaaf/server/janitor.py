@@ -1412,10 +1412,14 @@ def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
         },
     }
     if prior is not None:
+        from yaaf.server import review_record
+
         numbers["prior"] = {
             "number": prior.number,
             "opened_at": prior.opened_at.isoformat(),
             "decisions": prior.decisions or [],
+            # What the CEO said it would do, each item marked from the record.
+            "plan": review_record.plan_marks(session, project, prior),
             # What the week's levers bought, in the only currencies that
             # count here: things made true, and the pace they happened at.
             "bought": {

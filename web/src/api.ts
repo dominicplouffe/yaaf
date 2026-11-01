@@ -1707,7 +1707,16 @@ export interface ReviewNumbers {
     number: number;
     decisions: Decision[];
     bought: { met_since: number; pace_then: number | null; pace_now: number };
+    /** What the CEO said it would do last meeting, each item marked from the
+        record at open. Absent on snapshots older than the report. */
+    plan?: PlanMark[];
   };
+}
+
+export interface PlanMark {
+  item: number; what: string; serves: string; by: string | null;
+  kind: "requirement" | "cycle" | "bet" | "unknown";
+  mark: string; says: string;
 }
 
 export interface Decision { kind: string; reason: string; detail: string; at: string }
@@ -1739,6 +1748,9 @@ export interface ReviewRecord {
     (free-text narrative), which the screen renders the old way. */
 export interface ReviewReport {
   done: string;
+  /** One line per item of last meeting's plan, by index into `prior.plan`. */
+  last_plan?: { item: number; outcome: "done" | "partly" | "not_done" | "dropped";
+    note: string | null }[];
   variance: { what: string; largest_cause: string };
   next: { what: string; serves: string; by: string | null }[];
   goal_effect: string;

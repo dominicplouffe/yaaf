@@ -1630,6 +1630,12 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                     "on how that moves the goal; `ask` is `proceed` if nothing "
                     "needs him, or `change` naming the levers you want pulled and "
                     "why. Every section is required."
+                    + (" `numbers.prior.plan` is what you said you would do last "
+                       "meeting with the platform's mark beside each item: "
+                       "`last_plan` gives one line per item — done, partly, "
+                       "not_done or dropped, with a note — and `done` against a "
+                       "requirement the platform holds open is refused."
+                       if (review.numbers.get("prior") or {}).get("plan") else "")
                 ),
             }
 

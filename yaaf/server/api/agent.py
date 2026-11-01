@@ -2209,8 +2209,17 @@ class ReportAsk(BaseModel):
     why: str | None = Field(default=None, max_length=2000)
 
 
+class ReportOutcome(BaseModel):
+    item: int = Field(ge=0, le=REPORT_NEXT_MAX)
+    outcome: str = Field(pattern="^(done|partly|not_done|dropped)$")
+    note: str | None = Field(default=None, max_length=400)
+
+
 class ReviewReportIn(BaseModel):
     done: str = Field(min_length=30, max_length=1200)
+    # One line per item of what it said it would do last meeting. Required
+    # whenever there was a last plan; the platform's mark sits beside each.
+    last_plan: list[ReportOutcome] = Field(default_factory=list, max_length=REPORT_NEXT_MAX)
     variance: ReportVariance
     next: list[ReportNextItem] = Field(max_length=REPORT_NEXT_MAX)
     goal_effect: str = Field(min_length=10, max_length=600)
@@ -2239,6 +2248,56 @@ def _report_serves(session: Session, project: Project) -> dict[str, str]:
     return allowed
 
 
+def _check_last_plan(review: Review, body: ReviewReportIn) -> None:
+    """Plan versus actual, the half the CEO writes. Every item of what it said
+    it would do gets one line, and "done" against a requirement the platform
+    holds open is refused naming the key — the same rule as "nothing but the
+    platform writes met", applied to the meeting. Without this the table
+    would be an agent grading its own last plan."""
+    prior_plan = ((review.numbers or {}).get("prior") or {}).get("plan") or []
+    by_index = {p["item"]: p for p in prior_plan}
+    if not prior_plan:
+        if body.last_plan:
+            raise Refusal(
+                "`last_plan` names items, but the previous meeting recorded no plan. "
+                "Leave it empty this time; from the next meeting on it is required.",
+                status_code=422,
+            )
+        return
+    covered = {o.item for o in body.last_plan}
+    for p in prior_plan:
+        if p["item"] not in covered:
+            raise Refusal(
+                f"`last_plan` says nothing about item {p['item']} ({p['what'][:80]!r}, "
+                f"serving {p['serves']}). Every item of what you said you would do last "
+                "meeting gets one line: done, partly, not_done or dropped, with a note.",
+                status_code=422,
+            )
+    for o in body.last_plan:
+        p = by_index.get(o.item)
+        if p is None:
+            raise Refusal(
+                f"`last_plan` names item {o.item}; the previous plan had "
+                f"{len(prior_plan)} item(s), numbered from 0.",
+                status_code=422,
+            )
+        if o.outcome != "done":
+            continue
+        if p["kind"] == "requirement" and p["mark"] != "true":
+            raise Refusal(
+                f"You say item {o.item} is done; the platform holds {p['serves']} "
+                f"{p['mark']}. Done is never self-graded — a requirement is true when "
+                "the platform says so. Say partly or not_done, and what is left.",
+                status_code=422,
+            )
+        if p["kind"] == "cycle" and p["mark"] != "completed":
+            raise Refusal(
+                f"You say item {o.item} is done; the record says {p['says']}. "
+                "Say partly or not_done, and what carried.",
+                status_code=422,
+            )
+
+
 def _render_report(body: ReviewReportIn) -> tuple[str, str | None]:
     """The free-text pair every older reader of the filing reads — the green
     rule, the cycle narrative, the closing mail. Rendered from the report so
@@ -2247,6 +2306,10 @@ def _render_report(body: ReviewReportIn) -> tuple[str, str | None]:
         body.variance.what.strip(),
         f"Largest cause: {body.variance.largest_cause.strip()}",
         f"What the period bought: {body.done.strip()}",
+        *(["Last plan: " + "; ".join(
+            f"item {o.item} {o.outcome.replace('_', ' ')}"
+            + (f" — {o.note.strip()}" if o.note else "")
+            for o in body.last_plan)] if body.last_plan else []),
         "Next: " + "; ".join(
             f"{item.what.strip()} (serves {item.serves}"
             + (f", by {item.by:%Y-%m-%d}" if item.by else "") + ")"
@@ -2329,6 +2392,7 @@ def file_review_report(
             "him. If you want something changed, the ask is `change`.",
             status_code=422,
         )
+    _check_last_plan(review, body)
 
     report = body.model_dump(mode="json")
     report["next"] = [

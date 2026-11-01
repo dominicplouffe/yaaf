@@ -644,3 +644,97 @@ def test_an_explore_report_serves_bets_and_an_operate_report_may_serve_the_cycle
     ok = client.post("/agent/review_report", json=_report("cycle"), headers=bearer(token))
     assert ok.status_code == 200, ok.text
     assert _open_view(client, operate)["report"]["next"][0]["serves"] == "cycle"
+
+
+# ── plan versus actual ──────────────────────────────────────────────────────────
+
+
+def _second_meeting(client, slug: str):
+    """Meeting #1 filed with a two-item plan (one requirement each), closed;
+    then one requirement settled true and meeting #2 opened on the plan."""
+    from tests.selftest_invariants.test_scope_verbs import settle
+
+    project = deliver_project(client, slug=slug)
+    token = ceo_token(project)
+    landed = propose(client, token, statement="The landing page converts a test signup")
+    accept(client, landed["requirement_id"], project)
+    stuck = propose(client, token, statement="The Ads account is unblocked")
+    accept(client, stuck["requirement_id"], project)
+    first = open_review(project)
+    body = _report(landed["key"])
+    body["next"] = [
+        {"what": "Ship the landing page and prove a signup", "serves": landed["key"],
+         "by": "2026-11-07T00:00:00Z"},
+        {"what": "Get the Ads account unblocked", "serves": stuck["key"], "by": None},
+    ]
+    filed = client.post("/agent/review_report", json=body, headers=bearer(token))
+    assert filed.status_code == 200, filed.text
+    client.post(f"/admin/reviews/{first['id']}/close", json={}, headers=ADMIN)
+    settle(landed["requirement_id"])
+    make_due(project, days=16)
+    run_review_tick(project)
+    return project, token, landed["key"], stuck["key"]
+
+
+def test_the_next_meeting_opens_on_what_the_ceo_said_it_would_do(client):
+    """The levers were accountable — shown beside what they bought. The CEO's
+    plan now is too: each item of last meeting's `next`, marked from the
+    record at open, before the CEO has said a word about it."""
+    project, _, landed, stuck = _second_meeting(client, "held-to-it")
+    view = _open_view(client, project)
+    assert view["number"] == 2
+    plan = view["numbers"]["prior"]["plan"]
+    assert [(p["item"], p["serves"], p["mark"]) for p in plan] == [
+        (0, landed, "true"), (1, stuck, "open")]
+    assert plan[0]["says"] == "true · verified"
+    assert plan[0]["kind"] == "requirement"
+    block = _ceo_pack(project)["review"]
+    assert "last_plan" in block["note"]
+
+
+def test_the_report_must_answer_for_every_item_of_the_last_plan(client):
+    project, token, _, stuck = _second_meeting(client, "answer-all")
+    body = _report(stuck)   # no last_plan at all
+    refused = client.post("/agent/review_report", json=body, headers=bearer(token))
+    assert refused.status_code == 422, refused.text
+    assert "says nothing about item 0" in refused.json()["error"]
+
+    body["last_plan"] = [{"item": 0, "outcome": "done", "note": None},
+                         {"item": 1, "outcome": "not_done", "note": "account suspended"},
+                         {"item": 7, "outcome": "dropped", "note": None}]
+    refused = client.post("/agent/review_report", json=body, headers=bearer(token))
+    assert refused.status_code == 422
+    assert "names item 7" in refused.json()["error"]
+
+
+def test_done_against_a_requirement_the_platform_holds_open_is_refused(client):
+    """Done is never self-graded. The platform's mark is beside the item; a
+    CEO that contradicts it is refused naming the key, and the honest line
+    — partly, not done — is accepted."""
+    project, token, _, stuck = _second_meeting(client, "self-graded")
+    body = _report(stuck)
+    body["last_plan"] = [{"item": 0, "outcome": "done", "note": None},
+                         {"item": 1, "outcome": "done", "note": "I am sure it is"}]
+    refused = client.post("/agent/review_report", json=body, headers=bearer(token))
+    assert refused.status_code == 422, refused.text
+    assert stuck in refused.json()["error"]
+    assert "never self-graded" in refused.json()["error"]
+
+    body["last_plan"][1] = {"item": 1, "outcome": "not_done",
+                            "note": "the account was suspended on Oct 29"}
+    filed = client.post("/agent/review_report", json=body, headers=bearer(token))
+    assert filed.status_code == 200, filed.text
+    view = _open_view(client, project)
+    assert view["report"]["last_plan"][1]["outcome"] == "not_done"
+    assert "Last plan: item 0 done; item 1 not done — the account" in view["narrative"]
+
+
+def test_a_last_plan_is_refused_when_there_was_no_last_plan(client):
+    """A first meeting has nothing to answer for, and a filing that answers
+    for a plan nobody recorded is a filing inventing its own record."""
+    project, token, key = _scoped(client, "no-prior")
+    body = _report(key)
+    body["last_plan"] = [{"item": 0, "outcome": "done", "note": None}]
+    refused = client.post("/agent/review_report", json=body, headers=bearer(token))
+    assert refused.status_code == 422
+    assert "recorded no plan" in refused.json()["error"]

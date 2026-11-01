@@ -714,6 +714,14 @@ open review shows a banner on the project's Inbox and the Roadmap until you clos
   expired on Explore. Composed by the janitor at open and frozen beside the
   numbers; no agent writes a word of it. Meetings opened before this existed
   say so rather than showing an invented one.
+- **What it said it would do last meeting, and what happened.** Each item of
+  the previous report's *next period*, with the platform's mark first (true
+  and how it was checked, open with its dead runs, cut; the cycle's close;
+  the bet's state) and the CEO's line second — done, partly, not done,
+  dropped. The platform's column was frozen at open; the CEO's "done" against
+  a requirement the platform holds open was refused at filing. The levers
+  were already shown beside what they bought; this is the same mechanism
+  pointed at the CEO's own plan.
 - **The CEO's status report**, filed on a reserved governance run, in the
   order a meeting is held: *what it bought us* (meaning on top of the record,
   not a second list), *what did not go to plan and why* with the single

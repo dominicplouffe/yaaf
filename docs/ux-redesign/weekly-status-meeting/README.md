@@ -4,15 +4,17 @@
 a browser). The **Deliver / Operate / Explore** switch at the top shows the same meeting for each
 project shape. **Design notes** pins the reasoning to each section.
 
-> **Status: steps 1 and 2 of §8 are built.** Step 1: the record
+> **Status: steps 1–3 of §8 are built.** Step 1: the record
 > (`yaaf/server/review_record.py`, frozen onto `reviews.record` at open), the headline, the
 > Explore tiles, the fold on the numbers. Step 2: the structured filing (`POST /review_report`,
 > tool `review_report`, `reviews.report`), the CEO's pack carrying the record with "explain it, do
-> not restate it", the refusals of §4.2 except the two about `last_plan` (step 3), and the screen's
-> CEO sections. Filing a report also renders `narrative`/`recommended`, so the green rule
-> (§4.3) already reads `proceed` as "recommended nothing" without a change of its own.
-> `review_narrative` is kept for one release. No eval golden moved: no scenario opens a review.
-> Steps 3–5 are still proposal. The decisions in §7 were taken as recommended: one meeting on
+> not restate it", the refusals of §4.2, and the screen's CEO sections. Step 3: plan versus
+> actual — `review_record.plan_marks` freezes the previous `next` list with the platform's mark
+> per item into `numbers.prior.plan` at open; the filing's `last_plan` must answer for every item
+> and `done` against an open requirement is refused naming the key; the table is on the screen.
+> Filing a report also renders `narrative`/`recommended`, so the green rule (§4.3) already reads
+> `proceed` as "recommended nothing" without a change of its own. `review_narrative` is kept
+> for one release. No eval golden moved: no scenario opens a review. Steps 4–5 are still proposal. The decisions in §7 were taken as recommended: one meeting on
 > Operate (at the roll), two replies per meeting, old filings rendered the old way, "Status
 > meeting" as the name.
 >

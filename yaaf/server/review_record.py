@@ -353,3 +353,76 @@ def _count(n: int, one: str, many: str | None = None) -> str:
 
 def _their(n: int) -> str:
     return "its" if n == 1 else "their"
+
+
+# ── plan versus actual ──────────────────────────────────────────────────────────
+
+#: What the platform can say about an item the CEO said it would do.
+PLAN_MARKS = ("true", "open", "cut", "completed", "missed", "alive", "killed", "expired",
+              "unknown")
+
+
+def plan_marks(session: Session, project: Project, prior) -> list[dict]:
+    """The previous meeting's `next` list, each item marked from the record.
+
+    The levers were already accountable — "shown at the next review beside
+    what they bought". This is the same mechanism pointed at the CEO's own
+    plan: an item that served a requirement reads that requirement's status
+    today; one that served the cycle reads the cycle that closed since; one
+    that served a bet reads the bet. The platform's column comes first and
+    cannot be argued with; the CEO's line beside it is its `last_plan`, and
+    "done" against a requirement the platform holds open is refused there.
+    Zero tokens, frozen at open like everything else the janitor writes.
+    """
+    items = ((prior.report or {}).get("next") or []) if prior is not None else []
+    if not items:
+        return []
+    requirements = {
+        r.key: r for r in session.execute(
+            select(Requirement).where(Requirement.project_id == project.id)
+        ).scalars()
+    }
+    bets = {
+        h.id: h for h in session.execute(
+            select(Hypothesis).where(Hypothesis.project_id == project.id)
+        ).scalars()
+    }
+    cycle = session.execute(
+        select(Cycle).where(Cycle.project_id == project.id,
+                            Cycle.closed_at.is_not(None),
+                            Cycle.closed_at > prior.opened_at)
+        .order_by(Cycle.ordinal.desc()).limit(1)
+    ).scalar_one_or_none()
+
+    out: list[dict] = []
+    for index, item in enumerate(items):
+        serves = item.get("serves") or ""
+        kind, mark, says = "unknown", "unknown", "nothing on the record serves this"
+        if serves == "cycle":
+            kind = "cycle"
+            if cycle is None:
+                mark, says = "open", "no cycle has closed since"
+            else:
+                mark = cycle.status
+                card = cycle.scorecard or {}
+                says = (f"cycle {cycle.ordinal} closed {cycle.status}, "
+                        f"{card.get('met', 0)} of {card.get('accepted', 0)} met")
+        elif serves in requirements:
+            r = requirements[serves]
+            kind = "requirement"
+            if r.status == RequirementStatus.MET:
+                mark, says = "true", f"true · {checked_how(r)}"
+            elif r.status == RequirementStatus.CUT:
+                mark, says = "cut", "cut"
+            else:
+                mark = "open"
+                dead = getattr(r, "failure_load", 0) or 0
+                says = "open" + (f" · {dead} dead runs" if dead else "")
+        elif serves in bets:
+            h = bets[serves]
+            kind = "bet"
+            mark = {"active": "alive"}.get(h.status, h.status)
+            says = f"bet {mark}"
+        out.append({"item": index, "what": item.get("what"), "serves": serves,
+                    "by": item.get("by"), "kind": kind, "mark": mark, "says": says})
+    return out

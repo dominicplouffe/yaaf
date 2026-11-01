@@ -1,6 +1,6 @@
 import { type ReactNode, useState } from "react";
 import {
-  Decision, get, post, requirementName, RequirementMeta, ReviewNumbers, ReviewRecord,
+  Decision, get, PlanMark, post, requirementName, RequirementMeta, ReviewNumbers, ReviewRecord,
   ReviewReport, ReviewRow, ReviewsView,
 } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
@@ -406,6 +406,62 @@ function ReportSections({ report }: { report: ReviewReport }) {
   );
 }
 
+const OUTCOME_LABELS: Record<string, string> = {
+  done: "done", partly: "partly", not_done: "not done", dropped: "dropped",
+};
+
+/** What the CEO said it would do last meeting, beside what happened. The
+    platform's column first — it cannot be argued with — and the CEO's line
+    second, where "done" against an open requirement was refused at filing. */
+function PlanVsActual({ plan, outcomes }: {
+  plan: PlanMark[]; outcomes: ReviewReport["last_plan"] | undefined;
+}) {
+  const said = new Map((outcomes ?? []).map((o) => [o.item, o]));
+  const tone = (m: PlanMark) =>
+    ["true", "completed"].includes(m.mark) ? "var(--good)"
+      : ["open", "missed"].includes(m.mark) ? "var(--critical)"
+      : "var(--muted)";
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+        <b style={{ fontSize: 13 }}>What it said it would do last meeting, and what happened</b>
+        <Source kind="record" /><Source kind="ceo" />
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ marginTop: 8 }}>
+          <thead>
+            <tr><th>Said it would</th><th>Serves</th><th>Platform says</th><th>CEO says</th></tr>
+          </thead>
+          <tbody>
+            {plan.map((m) => {
+              const o = said.get(m.item);
+              return (
+                <tr key={m.item}>
+                  <td>{m.what}</td>
+                  <td className="help" style={{ fontFamily: "var(--mono)", whiteSpace: "nowrap" }}>
+                    {m.serves}
+                  </td>
+                  <td style={{ color: tone(m), fontWeight: 600, whiteSpace: "nowrap" }}>
+                    {m.says}
+                  </td>
+                  <td>
+                    {o ? (
+                      <>
+                        <b>{OUTCOME_LABELS[o.outcome] ?? o.outcome}</b>
+                        {o.note && <span className="help"> — {o.note}</span>}
+                      </>
+                    ) : <span className="help">not filed yet</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function NumbersTiles({ n, mode, record, requirements }: {
   n: ReviewNumbers; mode: string; record: ReviewRecord | null;
   requirements: RequirementOption[];
@@ -596,6 +652,12 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
           <div style={{ marginBottom: 16 }}>
             <RecordSection record={open.record} mode={ctx.dash.mode} />
           </div>
+
+          {open.numbers.prior?.plan && open.numbers.prior.plan.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <PlanVsActual plan={open.numbers.prior.plan} outcomes={open.report?.last_plan} />
+            </div>
+          )}
 
           {open.numbers.prior && open.numbers.prior.decisions.length > 0 && (
             <div style={{ marginBottom: 12 }}>
