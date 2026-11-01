@@ -1,0 +1,66 @@
+/* Settings copy: one line that says what a section is for, the reasoning one
+   click away, and the consequences that must not be missed kept in sight.
+   Tokens only, from the top of styles.css. */
+
+.s-lede {
+  margin: 0 0 var(--s3);
+  font-size: var(--t-small);
+  line-height: 1.5;
+  color: var(--ink-2);
+  max-width: 76ch;
+}
+.pagehead-row .s-lede { margin-bottom: 0; }
+
+/* "Why?": quiet until asked, and tucked under the line it explains. */
+.s-why { margin: calc(-1 * var(--s2)) 0 var(--s3); }
+.s-why > summary {
+  display: inline-flex; align-items: center; gap: var(--s1);
+  width: fit-content; list-style: none;
+  font-size: var(--t-micro); color: var(--accent); cursor: pointer;
+}
+.s-why > summary::-webkit-details-marker { display: none; }
+.s-why > summary::before { content: "▸"; font-size: var(--t-micro); }
+.s-why[open] > summary::before { content: "▾"; }
+.s-why > summary:hover { text-decoration: underline; }
+.s-why-body {
+  margin-top: var(--s1);
+  padding-left: var(--s3);
+  border-left: 2px solid var(--border);
+  font-size: var(--t-micro);
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 76ch;
+}
+.s-why-body p { margin: 0 0 var(--s2); }
+.s-why-body p:last-child { margin-bottom: 0; }
+.s-why-body dl { margin: 0; }
+.s-why-body dt { font-weight: 600; color: var(--ink); }
+.s-why-body dd { margin: 0 0 var(--s2); }
+.s-why-body dd em { display: block; color: var(--muted); }
+
+/* After a row of buttons there is no line to tuck under; it stands clear. */
+.actions + .s-why { margin-top: var(--s2); }
+
+/* Inside a rule row the help line is already small and close; the toggle sits
+   right under it rather than pulled up into it. */
+.rule .s-why { margin: 2px 0 0; }
+.rule .s-why-body { margin-top: 2px; }
+
+/* A consequence that must not be missed: short, and in the reader's line of
+   sight rather than in the footnote register of .help. */
+.s-must {
+  margin: var(--s2) 0;
+  font-size: var(--t-small);
+  line-height: 1.5;
+  color: var(--ink-2);
+  max-width: 76ch;
+}
+.s-must.warn { color: var(--warning); }
+
+/* The state line under a section heading: what is true now, in a row. */
+.s-state {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3);
+  margin: 0 0 var(--s3);
+  font-size: var(--t-small); color: var(--ink-2);
+}
+.s-state b { color: var(--ink); font-weight: 600; }

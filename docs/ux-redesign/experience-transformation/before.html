@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>YAAF today — annotated</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600;700&family=Instrument+Serif&display=swap">
+<style>
+body{margin:0;background:#d9d7d0;font-family:"Instrument Sans",system-ui,sans-serif}
+.frame{display:flex;gap:0;margin:30px auto;width:max-content;background:#16171b;box-shadow:0 30px 80px rgba(0,0,0,.2)}
+.shot{position:relative;width:1440px;flex:none}
+.shot img{display:block;width:1440px}
+.shot.m{width:390px}.shot.m img{width:390px}
+.box{position:absolute;border:3px solid #e2401b;border-radius:8px;background:rgba(226,64,27,.06)}
+.box.g{border-color:#13a36a;background:rgba(19,163,106,.06)}
+.n{position:absolute;top:-16px;left:-16px;width:32px;height:32px;border-radius:50%;background:#e2401b;color:#fff;font:700 16px/32px "Instrument Sans";text-align:center;box-shadow:0 0 0 4px rgba(226,64,27,.3)}
+.g .n{background:#13a36a;box-shadow:0 0 0 4px rgba(19,163,106,.3)}
+.side{width:440px;padding:34px 30px;color:#e9e7e1;font-size:15.5px;line-height:1.5;display:flex;flex-direction:column;gap:16px}
+.side h2{font:400 34px/1.1 "Instrument Serif",serif;margin:0;color:#fff}
+.side .k{font:600 12px "Instrument Sans";letter-spacing:.08em;text-transform:uppercase;color:#ff8a65}
+.side ol{margin:0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:14px}
+.side li{display:grid;grid-template-columns:30px 1fr;gap:10px}
+.side li i{font-style:normal;width:26px;height:26px;border-radius:50%;background:#e2401b;color:#fff;font-weight:700;font-size:13px;display:grid;place-items:center}
+.side li i.g{background:#13a36a}
+.side b{color:#fff}
+.side .src{font-size:12.5px;color:#9a988f;border-top:1px solid #2e2f35;padding-top:12px;margin-top:auto}
+</style></head><body>
+
+<!-- B1: project landing page -->
+<section class="frame" id="b-project">
+  <div class="shot"><img src="before/raw/10_A_inbox.png">
+    <div class="box" style="left:280px;top:86px;width:1130px;height:88px"><span class="n">1</span></div>
+    <div class="box" style="left:470px;top:220px;width:200px;height:34px"><span class="n">2</span></div>
+    <div class="box" style="left:280px;top:362px;width:1130px;height:82px"><span class="n">3</span></div>
+    <div class="box" style="left:760px;top:463px;width:180px;height:30px"><span class="n">4</span></div>
+    <div class="box" style="left:280px;top:487px;width:1130px;height:480px"><span class="n">5</span></div>
+    <div class="box" style="left:280px;top:1160px;width:395px;height:225px"><span class="n">6</span></div>
+    <div class="box" style="left:708px;top:1112px;width:670px;height:210px"><span class="n">6</span></div>
+    <div class="box" style="left:280px;top:2050px;width:1130px;height:90px"><span class="n">1</span></div>
+  </div>
+  <div class="side">
+    <span class="k">Observed · local build at f2f9ce3 · scripted crew</span>
+    <h2>A finished project, described six ways at once</h2>
+    <ol>
+      <li><i>1</i><span>The same 60-word paragraph appears <b>three times</b> on this page and again atop Team, Chat, Results and Details.</span></li>
+      <li><i>2</i><span>Header chips say <b>Running</b> and <b>1 problem</b>; the banner says <b>delivered</b>; the strip says <b>On track</b>. Four states, no hierarchy.</span></li>
+      <li><i>3</i><span>The one action that matters (<b>Complete the project</b>) sits in a green callout, not in the decision queue.</span></li>
+      <li><i>4</i><span><b>"pauses at $20"</b>. The real wall is $60 (3×). The Spend tab says $60. <code>Overview.tsx:120</code> prints the budget, not the wall.</span></li>
+      <li><i>5</i><span>A six-step setup checklist outranks everything below it, on a project that has already finished.</span></li>
+      <li><i>6</i><span><b>"Nothing needs you"</b>, twice, side by side, while the project waits for your sign-off.</span></li>
+    </ol>
+    <div class="src">644 words before any interaction · 2,265 px tall at 1440 wide · <code>/projects/:id</code></div>
+  </div>
+</section>
+
+<!-- B2: Home -->
+<section class="frame" id="b-home">
+  <div class="shot"><img src="before/raw/01_home.png">
+    <div class="box" style="left:282px;top:162px;width:1126px;height:352px"><span class="n">1</span></div>
+    <div class="box" style="left:515px;top:548px;width:86px;height:30px"><span class="n">2</span></div>
+    <div class="box" style="left:282px;top:590px;width:330px;height:28px"><span class="n">3</span></div>
+    <div class="box" style="left:994px;top:650px;width:400px;height:240px"><span class="n">4</span></div>
+    <div class="box" style="left:994px;top:730px;width:400px;height:24px;border-style:dashed"><span class="n">5</span></div>
+  </div>
+  <div class="side">
+    <span class="k">Observed · Home, 5 projects</span>
+    <h2>Every card looks the same, so nothing stands out</h2>
+    <ol>
+      <li><i>1</i><span>Install setup takes the first 350 px. Fair on day one, but it sets the pattern: <b>configuration before state</b>.</span></li>
+      <li><i>2</i><span>Four cards say <b>Running</b> while each project's health says <b>"agents cannot run"</b>.</span></li>
+      <li><i>3</i><span>Every card repeats its numbers twice ("$0 of $20" in the sentence, then in the footer). No card shows where the work stands or what comes next.</span></li>
+      <li><i>4</i><span>"While you were away" prints raw rule keys: <b>ceo_heartbeat_always, inbox_runs_per_project_per_hour…</b></span></li>
+      <li><i>5</i><span><b>"closed no work in 14 days"</b> on a project five minutes old. The window is reported as if it were elapsed time.</span></li>
+    </ol>
+    <div class="src">474 words · the rule keys came from a real amendment made while seeding; the rendering is the product's.</div>
+  </div>
+</section>
+
+<!-- B3: Roadmap -->
+<section class="frame" id="b-roadmap">
+  <div class="shot"><img src="before/raw/14_A_roadmap.png">
+    <div class="box" style="left:280px;top:378px;width:1130px;height:290px"><span class="n">1</span></div>
+    <div class="box" style="left:280px;top:755px;width:1112px;height:110px"><span class="n">2</span></div>
+    <div class="box" style="left:278px;top:1015px;width:118px;height:34px"><span class="n">3</span></div>
+    <div class="box" style="left:1116px;top:1068px;width:108px;height:30px"><span class="n">3</span></div>
+    <div class="box" style="left:278px;top:1132px;width:240px;height:30px"><span class="n">4</span></div>
+  </div>
+  <div class="side">
+    <span class="k">Observed · Details › Roadmap</span>
+    <h2>Eight tiles, mostly zeros and dashes</h2>
+    <ol>
+      <li><i>1</i><span>Eight KPI tiles. Five read 0, — or 0%. Each needs a sentence under it to be understood ("0 still open — too little has settled to call this a pace").</span></li>
+      <li><i>2</i><span><b>Nov 1</b> printed three times in three boxes: Commitment, You promised, On course for.</span></li>
+      <li><i>3</i><span><b>Stage 1 · open</b> above a requirement marked <b>Proven true</b>.</span></li>
+      <li><i>4</i><span>"work here is refused until stage 1 settles" under stages already proven.</span></li>
+    </ol>
+    <div class="src">400 words. The stage list itself (statement, status, jobs, reopen) is the right structure and is kept.</div>
+  </div>
+</section>
+
+<!-- B4: Activity -->
+<section class="frame" id="b-activity">
+  <div class="shot"><img src="before/raw/19_A_activity.png" style="clip-path:inset(0 0 600px 0)">
+    <div class="box" style="left:280px;top:356px;width:660px;height:30px"><span class="n">1</span></div>
+    <div class="box" style="left:298px;top:412px;width:690px;height:42px"><span class="n">1</span></div>
+    <div class="box" style="left:490px;top:500px;width:420px;height:40px"><span class="n">2</span></div>
+  </div>
+  <div class="side">
+    <span class="k">Observed · Details › Activity</span>
+    <h2>Fifteen filters in two rows</h2>
+    <ol>
+      <li><i>1</i><span>8 pills over 7 tabs. <b>Runs</b>, <b>Proof</b> and <b>Messages</b> appear in both.</span></li>
+      <li><i>2</i><span>Every row shows its internal summary: "ceo: nothing legal to do · done". That's activity, not progress, and it is the default view.</span></li>
+    </ol>
+    <div class="src">The record itself is excellent: every line says on whose authority it happened. Keep it; lead with "What happened".</div>
+  </div>
+</section>
+
+<!-- B5: decision — what to keep -->
+<section class="frame" id="b-decision">
+  <div class="shot"><img src="before/raw/71_inbox_spend.png">
+    <div class="box g" style="left:688px;top:170px;width:712px;height:346px"><span class="n">1</span></div>
+    <div class="box g" style="left:1234px;top:80px;width:166px;height:30px"><span class="n">2</span></div>
+    <div class="box" style="left:688px;top:122px;width:620px;height:34px"><span class="n">3</span></div>
+    <div class="box" style="left:688px;top:220px;width:712px;height:86px;border-style:dashed"><span class="n">4</span></div>
+  </div>
+  <div class="side">
+    <span class="k">Observed · Inbox › Decide</span>
+    <h2>The best screen in the product. Keep its bones.</h2>
+    <ol>
+      <li><i class="g">1</i><span>Why it's yours · the case · if you say no · if you do nothing · <b>can you undo a yes</b>. No comparable product states consequences this honestly.</span></li>
+      <li><i class="g">2</i><span>A real clock, not invented urgency.</span></li>
+      <li><i>3</i><span>"$75" appears three times (title, suffix, Amount row) while the remaining budget is never shown.</span></li>
+      <li><i>4</i><span>Approvals carry <b>no recommendation</b>. Asks have one; approvals make you read the case to find what the CEO wants.</span></li>
+    </ol>
+    <div class="src">The Question card (<code>asks</code>) already turns options into buttons with the recommended one first. Extend that to every kind.</div>
+  </div>
+</section>
+
+<!-- B6: mobile -->
+<section class="frame" id="b-mobile">
+  <div class="shot m"><img src="before/raw/81_m_proj.png">
+    <div class="box" style="left:10px;top:290px;width:372px;height:100px"><span class="n">1</span></div>
+    <div class="box" style="left:10px;top:490px;width:372px;height:350px"><span class="n">2</span></div>
+  </div>
+  <div class="side" style="width:520px">
+    <span class="k">Observed · 390 × 844</span>
+    <h2>On a phone, the decision is off-screen</h2>
+    <ol>
+      <li><i>1</i><span>The first screen spends its space on <b>Pause</b>, <b>Stop</b> and <b>Message</b>.</span></li>
+      <li><i>2</i><span>Then the setup checklist. The pending scope decision is below the first screen; the only sign of it above the fold is a sentence.</span></li>
+    </ol>
+    <div class="src">The sentence "1 decision waiting on you" is there and correct. It just isn't a button.</div>
+  </div>
+</section>
+</body></html>

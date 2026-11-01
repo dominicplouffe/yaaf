@@ -65,6 +65,7 @@ import urllib.request
 from datetime import timedelta
 from email.message import EmailMessage
 from enum import StrEnum
+from urllib.parse import quote
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -129,12 +130,46 @@ MAIL_HELD = "chairman.mail_held"
 SLACK_VIA_DELIVERABLE = "via-deliverable"
 
 
-def inbox_url(item_key: str) -> str | None:
+def inbox_url(item_key: str, tab: str | None = None) -> str | None:
     """The one Inbox row, as a link — when this install knows its
     browser-facing origin. Never the API's own origin: inside compose that is
-    `http://api:8080`, a link nobody's browser can open."""
+    `http://api:8080`, a link nobody's browser can open. `tab` for a row that
+    is not on Decide (a heads-up is noted on Acknowledge)."""
     origin = (settings().public_base_url or "").rstrip("/")
-    return f"{origin}/app/#/inbox?item={item_key}" if origin else None
+    on = f"tab={quote(tab, safe='')}&" if tab else ""
+    return f"{origin}/app/#/inbox?{on}item={quote(item_key, safe='')}" if origin else None
+
+
+# The Inbox's keys for the rows that are not one database row. The Inbox builds
+# them (`itemsFor` in web/src/desk.tsx) and selects `?item=` by exact match, so
+# a key spelled differently here opens his first row instead of this one;
+# `tests/selftest_invariants/test_inbox_links.py` holds the two spellings together.
+def signoff_item(project_id: str) -> str:
+    return f"{project_id}-signoff"
+
+
+def scope_item(project_id: str) -> str:
+    return f"{project_id}-plan"
+
+
+def commitment_item(project_id: str) -> str:
+    return f"{project_id}-commitment"
+
+
+def verdict_item(project_id: str, requirement_key: str) -> str:
+    return f"{project_id}-verdict-{requirement_key}"
+
+
+def inbox_link(item_key: str, label: str) -> str:
+    """`project_link` for a thing waiting on him: a last line opening that one
+    Inbox row, or nothing when this install has no browser-facing origin.
+
+    It opens the signed-in dashboard and decides nothing by being opened. A
+    link that approved on a GET would be a decision anybody holding the email —
+    a forward, a mail scanner prefetching links — could take for him.
+    """
+    url = inbox_url(item_key)
+    return f"\n\n{label}: {url}" if url else ""
 
 
 def project_link(project_id: str, page: str = "", label: str = "Open it") -> str:

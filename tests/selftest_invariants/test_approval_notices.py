@@ -68,7 +68,7 @@ def _file(client, project: dict, kind: str = "spend") -> dict:
     response = client.post("/agent/approvals", headers=bearer(token), json={
         "kind": kind, "title": "Buy the $199 projections feed",
         "body": "The free feed lags injury news by a day. I recommend one month.",
-        "if_declined": "We keep the free feed and miss late team news.",
+        "recommendation": "Approve it; the case says why.", "if_declined": "We keep the free feed and miss late team news.",
         "amount_usd": 199 if kind == "spend" else None})
     assert response.status_code == 200, response.text
     return response.json()

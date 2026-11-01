@@ -279,7 +279,7 @@ def test_an_expired_approval_notifies_with_its_row(client, monkeypatch):
     filed = client.post("/agent/approvals", headers=bearer(token),
                         json={"kind": "spend", "title": "Buy a data pull",
                               "body": "Two months.",
-                              "if_declined": "We forecast from last year's data.",
+                              "recommendation": "Approve it; the case says why.", "if_declined": "We forecast from last year's data.",
                               "amount_usd": 40})
     assert filed.status_code == 200, filed.text
     with db_session() as session:

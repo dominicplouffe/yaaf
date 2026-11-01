@@ -1,0 +1,437 @@
+<title>YAAF Signal</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap">
+<style>
+/* Layout: a single reading column (~68ch) that breaks out to full width for screens and tables.
+   Same paper/ink/indigo tokens as the proposal, so the report is a specimen of the language it proposes. */
+:root{
+  --font:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --display:"Instrument Serif",Georgia,serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --paper:#f6f5f1; --surface:#ffffff; --sunken:#efede7; --ink:#15161a; --ink-2:#464851; --muted:#6c6e77; --line:#e3e1da;
+  --signal:#3346d3; --signal-ink:#2433a8; --signal-soft:#eceefc;
+  --ok:#13774e; --ok-soft:#e6f3ec; --risk:#9a5b00; --risk-soft:#fbf1df; --stop:#b42318; --stop-soft:#fbeae8;
+  --shot-bg:#16171b;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#141413; --surface:#1c1c1b; --sunken:#232321; --ink:#f3f1ec; --ink-2:#c3c0b8; --muted:#9a978f; --line:#302f2c;
+  --signal:#8c9cf2; --signal-ink:#aab6ff; --signal-soft:#22263d; --ok:#5cc48f; --ok-soft:#173025; --risk:#e2ac4f; --risk-soft:#33280f; --stop:#f0776d; --stop-soft:#3a1d1a; --shot-bg:#0e0e0d; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#141413; --surface:#1c1c1b; --sunken:#232321; --ink:#f3f1ec; --ink-2:#c3c0b8; --muted:#9a978f; --line:#302f2c;
+  --signal:#8c9cf2; --signal-ink:#aab6ff; --signal-soft:#22263d; --ok:#5cc48f; --ok-soft:#173025; --risk:#e2ac4f; --risk-soft:#33280f; --stop:#f0776d; --stop-soft:#3a1d1a; --shot-bg:#0e0e0d; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font:16px/1.6 var(--font);-webkit-font-smoothing:antialiased;margin:0}
+.wrap{max-width:1180px;margin:0 auto;padding-block:48px 96px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.col{max-width:720px}
+h1{font:400 clamp(44px,7vw,76px)/1 var(--display);letter-spacing:-.015em;margin:0;text-wrap:balance}
+h2{font:400 clamp(30px,4vw,42px)/1.1 var(--display);margin:0 0 6px;text-wrap:balance}
+h3{font:600 18px/1.3 var(--font);margin:0 0 6px}
+p{margin:0 0 12px}
+.eyebrow{font:600 12px var(--font);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.lede{font-size:20px;line-height:1.5;color:var(--ink-2);max-width:760px}
+.lede b{color:var(--ink)}
+section{padding-top:72px;display:flex;flex-direction:column;gap:20px}
+section>header{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:22px}
+.sec-n{font:600 13px var(--font);color:var(--signal-ink)}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px;margin-top:28px}
+nav.toc a{font-size:13.5px;color:var(--ink-2);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--surface)}
+nav.toc a:hover{border-color:var(--signal);color:var(--signal-ink)}
+a{color:var(--signal-ink)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+code{font:13px var(--mono);background:var(--sunken);padding:1px 5px;border-radius:4px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+@media (max-width:820px){.grid2,.grid3{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px 20px;min-width:0}
+.card h3{font-size:16px}
+.card ul{margin:0;padding-left:18px}
+.card li{margin:4px 0}
+.shot{background:var(--shot-bg);border-radius:14px;overflow:hidden;margin:0}
+.shot img{display:block;width:100%;height:auto}
+.shot figcaption{color:#cfccc4;font-size:13.5px;padding:10px 16px}
+.shot a{display:block}
+.pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:820px){.pair{grid-template-columns:1fr}}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:720px}
+th{text-align:left;font:600 11.5px var(--font);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:12px 14px;border-bottom:1px solid var(--line);background:var(--sunken)}
+td{padding:11px 14px;border-top:1px solid var(--line);vertical-align:top}
+tr:first-child td{border-top:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.lbl{display:inline-block;font:600 11px var(--font);letter-spacing:.03em;border-radius:5px;padding:1px 7px;white-space:nowrap}
+.L-v{background:var(--ok-soft);color:var(--ok)} .L-c{background:var(--signal-soft);color:var(--signal-ink)} .L-h{background:var(--risk-soft);color:var(--risk)} .L-d{background:var(--sunken);color:var(--ink-2)}
+.P0{background:var(--stop-soft);color:var(--stop)} .P1{background:var(--risk-soft);color:var(--risk)} .P2{background:var(--sunken);color:var(--ink-2)}
+.score{display:grid;grid-template-columns:200px 1fr 46px;gap:12px;align-items:center;font-size:14.5px;padding:7px 0;border-top:1px solid var(--line)}
+.score:first-child{border-top:0}
+.bar{height:10px;border-radius:5px;background:var(--sunken);position:relative;overflow:hidden}
+.bar i{position:absolute;inset:0 auto 0 0;border-radius:5px;background:var(--ink)}
+.bar i.lo{background:var(--stop)} .bar i.mid{background:var(--risk)} .bar i.hi{background:var(--ok)}
+.score b{font-variant-numeric:tabular-nums;text-align:right}
+@media (max-width:560px){.score{grid-template-columns:120px 1fr 36px;font-size:13px}}
+.big{font:400 92px/1 var(--display)}
+.verdict{display:grid;grid-template-columns:260px 1fr;gap:28px;align-items:start}
+@media (max-width:820px){.verdict{grid-template-columns:1fr}}
+.quote{font:italic 400 30px/1.25 var(--display);color:var(--ink);border-left:3px solid var(--signal);padding-left:18px;max-width:820px}
+.ba{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface)}
+.ba>div{padding:14px 18px;min-width:0}
+.ba .b{background:var(--sunken);color:var(--ink-2);font-size:14px;border-right:1px solid var(--line)}
+.ba .a{font-size:14.5px}
+.ba .t{grid-column:1/-1;border-top:1px solid var(--line);font-size:13px;color:var(--muted);padding:8px 18px}
+.ba .h{grid-column:1/-1;font:600 13px var(--font);padding:10px 18px;border-bottom:1px solid var(--line)}
+@media (max-width:640px){.ba{grid-template-columns:1fr}.ba .b{border-right:0;border-bottom:1px solid var(--line)}}
+.wc{font-size:12px;color:var(--muted);display:block;margin-top:6px}
+.legend{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:13px;color:var(--muted)}
+.phase{border-left:3px solid var(--ink);padding:4px 0 4px 18px}
+.phase.p2{border-color:var(--signal)} .phase.p3{border-color:var(--ok)}
+.chk{list-style:none;padding:0;margin:8px 0 0}
+.chk li{padding-left:24px;position:relative;margin:6px 0;font-size:14.5px}
+.chk li::before{content:"";position:absolute;left:2px;top:7px;width:11px;height:11px;border:2px solid var(--muted);border-radius:3px}
+.ladder{display:flex;flex-direction:column;gap:6px}
+.st{display:inline-flex;align-items:center;gap:6px;font:600 12.5px var(--font);padding:3px 10px;border-radius:999px;white-space:nowrap}
+.st.need{background:var(--signal);color:#fff}.st.ok{background:var(--ok-soft);color:var(--ok)}.st.risk{background:var(--risk-soft);color:var(--risk)}.st.stop{background:var(--stop-soft);color:var(--stop)}
+.foot{margin-top:80px;padding-top:20px;border-top:1px solid var(--line);font-size:13px;color:var(--muted)}
+@media (prefers-reduced-motion:no-preference){nav.toc a{transition:border-color .15s,color .15s}}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">YAAF · Product experience transformation · 1 November 2026</div>
+  <h1 style="margin-top:14px">YAAF Signal</h1>
+  <p class="lede" style="margin-top:18px"><b>YAAF already knows almost everything a chairman needs to know.</b> The interface makes you assemble it. This is a design blueprint for showing it: one state per project, one decision card, a visible path to the promise, and a seal on every result. It keeps every capability the product has.</p>
+  <div class="legend" style="margin-top:18px">
+    <span>Evidence labels:</span>
+    <span class="lbl L-v">Verified</span> seen in the running product
+    <span class="lbl L-c">Code</span> read from source, file:line given
+    <span class="lbl L-h">Hypothesis</span> needs user testing
+    <span class="lbl L-d">Proposal</span> not built
+  </div>
+  <nav class="toc" aria-label="Contents">
+    <a href="#verdict">A · Verdict</a><a href="#north">B · North star</a><a href="#audit">C · Audit</a><a href="#system">D · Design language</a><a href="#concepts">E · Concepts</a><a href="#ba">F · Before → after</a><a href="#priorities">G · Priorities</a><a href="#preserve">H · Nothing removed</a><a href="#roadmap">I · Roadmap</a><a href="#validate">J · Validation</a><a href="#scenarios">Scenarios</a><a href="#limits">Limits</a>
+  </nav>
+
+  <!-- A -->
+  <section id="verdict">
+    <header><span class="sec-n">A</span><h2>The verdict</h2></header>
+    <div class="verdict">
+      <div class="card" style="text-align:center;padding:26px">
+        <div class="eyebrow">Overall, today</div>
+        <div class="big">5.0<span style="font-size:36px;color:var(--muted)">/10</span></div>
+        <div style="font-size:14px;color:var(--ink-2)">Honest, deep and well-navigated. It doesn't yet communicate.</div>
+      </div>
+      <div class="card">
+        <div class="score"><span>Navigation</span><span class="bar"><i class="hi" style="width:75%"></i></span><b>7.5</b></div>
+        <div class="score"><span>Decision cards</span><span class="bar"><i class="hi" style="width:72%"></i></span><b>7.0</b></div>
+        <div class="score"><span>Trust &amp; honesty model</span><span class="bar"><i class="mid" style="width:65%"></i></span><b>6.5</b></div>
+        <div class="score"><span>Interaction design</span><span class="bar"><i class="mid" style="width:60%"></i></span><b>6.0</b></div>
+        <div class="score"><span>Visual polish</span><span class="bar"><i class="mid" style="width:55%"></i></span><b>5.5</b></div>
+        <div class="score"><span>Coherence across screens</span><span class="bar"><i class="lo" style="width:45%"></i></span><b>4.5</b></div>
+        <div class="score"><span>Clarity of project state</span><span class="bar"><i class="lo" style="width:35%"></i></span><b>3.5</b></div>
+        <div class="score"><span>Economy of words</span><span class="bar"><i class="lo" style="width:30%"></i></span><b>3.0</b></div>
+        <div class="small" style="font-size:12.5px;color:var(--muted);margin-top:8px">Scored by one reviewer against the criteria in §J, on a local build with scripted agents. Not a user study. Navigation is close to the founder's 8: switcher, pins, ⌘K and five project pages hold up. It loses half a point for Details' six tabs and Activity's fifteen filters.</div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h3 style="color:var(--ok)">Already excellent — keep it</h3><ul>
+        <li><b>The approval card.</b> "Why it's yours · if you say no · if you do nothing · can you undo a yes" <span class="lbl L-v">Verified</span></li>
+        <li><b>The ask card</b>: the options are buttons and the recommended one comes first <span class="lbl L-v">Verified</span></li>
+        <li><b>The Team org chart</b>: each seat shows status, current work, model and runs, plus a "who works when" strip <span class="lbl L-v">Verified</span></li>
+        <li><b>The briefing is written from the record</b>, not by an agent, and says so <span class="lbl L-v">Verified</span></li>
+        <li><b>Spend page honesty</b>: "Pauses the project at $60 (3× the budget) — the hard stop". The P0 from the 23 Oct audit is fixed here <span class="lbl L-v">Verified</span></li>
+        <li><b><code>yaaf status</code></b>: one sentence for the portfolio, then one line per project <span class="lbl L-v">Verified</span></li>
+      </ul></div>
+      <div class="card"><h3 style="color:var(--stop)">What makes it hard to understand</h3><ul>
+        <li><b>No single state.</b> One project showed Running, delivered, 1 problem, On track and "Nothing needs you" at the same time <span class="lbl L-v">Verified</span></li>
+        <li><b>The most important action is outside the queue.</b> Completion sign-off is a callout, not a decision <span class="lbl L-v">Verified</span></li>
+        <li><b>Paragraphs repeat themselves.</b> The same 60-word notice appears 3× on one page and tops 5 pages <span class="lbl L-v">Verified</span></li>
+        <li><b>Configuration outranks state.</b> A setup checklist sits above decisions, even on a finished project <span class="lbl L-v">Verified</span></li>
+        <li><b>Internal language leaks.</b> snake_case rule keys, "7 of 9999 runs", "ceo: nothing legal to do" <span class="lbl L-v">Verified</span></li>
+        <li><b>Every surface is the same white card</b>, so nothing has visual priority <span class="lbl L-v">Verified</span></li>
+      </ul></div>
+    </div>
+    <div class="grid3">
+      <div class="card" style="border-color:var(--signal)"><div class="eyebrow" style="color:var(--signal-ink)">Opportunity 1</div><h3>One state per project, everywhere</h3><p style="font-size:14.5px;margin:0">A server-derived state ladder (Can't run → Blocked → Needs you → At risk → On track → Delivered) and one status sentence. Home, the sidebar, the header, the CLI, MCP and email all render the same chip. This retires most banners.</p></div>
+      <div class="card" style="border-color:var(--signal)"><div class="eyebrow" style="color:var(--signal-ink)">Opportunity 2</div><h3>The project Brief: four questions, in a fixed order</h3><p style="font-size:14.5px;margin:0">Needs you → Where it stands → What changed / what's next → What it produced. Decisions are inline. The path to the promise is drawn. Setup becomes a chip.</p></div>
+      <div class="card" style="border-color:var(--signal)"><div class="eyebrow" style="color:var(--signal-ink)">Opportunity 3</div><h3>Trust you can see</h3><p style="font-size:14.5px;margin:0">Three seals (Verified · Judged · Agent's word) on every result and claim. A money meter that draws the plan and the 3× wall. A projection drawn as a range only when there is data for one.</p></div>
+    </div>
+    <div class="card"><h3>What keeps YAAF from an award-level standard today</h3>
+      <p style="font-size:15px;margin:0">Not the depth, and not the navigation. It is <b>contradiction and repetition</b>: the product often holds the right fact, then shows it in several competing forms. Award-level products have one way to say each thing. The fix is mostly <i>subtraction plus one shared state model</i>. It is not a new visual coat.</p></div>
+  </section>
+
+  <!-- B -->
+  <section id="north">
+    <header><span class="sec-n">B</span><h2>North star</h2></header>
+    <p class="quote">Know in five seconds. Decide in thirty. Verify in one click.</p>
+    <div class="grid2">
+      <div class="card"><h3>Every project screen answers four questions, in this order</h3>
+        <ol style="margin:0;padding-left:20px;font-size:15px">
+          <li><b>Does it need me?</b> Decision cards, inline, soonest consequence first.</li>
+          <li><b>Where does it stand?</b> The path to the promise: outcomes by stage, today, projection, promise.</li>
+          <li><b>What changed, and what's next?</b> A digest since you looked, and the next dated events.</li>
+          <li><b>What did it produce, and can I trust it?</b> Results with seals.</li>
+        </ol>
+        <p style="font-size:14px;color:var(--muted);margin:10px 0 0">Money is always one glance away, as a meter beside these zones. Machinery (runs, messages, rules) is one click down, in Details, unchanged.</p></div>
+      <div class="card"><h3>Six principles</h3>
+        <ul style="font-size:14.5px">
+          <li><b>One fact, one place, one form.</b> If it's already on screen, don't say it again.</li>
+          <li><b>State before configuration.</b> Setup only leads when it is the reason nothing runs.</li>
+          <li><b>Indigo means you.</b> The accent is reserved for what needs your hand.</li>
+          <li><b>Activity ≠ progress ≠ achievement.</b> Runs live in Details, outcomes on the Path, verified results on Results.</li>
+          <li><b>Draw only what's true.</b> No percentages without a denominator. No projection without a basis. Uncertainty is drawn as a range.</li>
+          <li><b>Show, summarise, explain on demand.</b> Headline ≤ 8 words, reason ≤ 20, then "Why?".</li>
+        </ul></div>
+    </div>
+    <div class="card"><h3>What the chairman should feel</h3><p style="font-size:15px;margin:0">Like a board member reading a well-run company's one-page update: calm when it's calm, alerted when something needs them, and never wondering whether a green dot is telling the truth. They lead an organisation. They don't debug one.</p></div>
+  </section>
+
+  <!-- C -->
+  <section id="audit">
+    <header><span class="sec-n">C</span><h2>The audit: what's on screen today</h2>
+      <p class="col" style="color:var(--ink-2)">Real screenshots from YAAF at <code>f2f9ce3</code>, run locally on SQLite. The projects were built from the repo's own <code>examples/</code> and driven by the fire-drill's scripted crew, at $0. Numbered marks are findings. Click any image to open it full size.</p></header>
+    <figure class="shot"><a href="before/b-project.png" target="_blank" rel="noopener"><img src="before/b-project.png" alt="Annotated project landing page with six findings"></a></figure>
+    <div class="pair">
+      <figure class="shot"><a href="before/b-home.png" target="_blank" rel="noopener"><img src="before/b-home.png" alt="Annotated Home page"></a></figure>
+      <figure class="shot"><a href="before/b-roadmap.png" target="_blank" rel="noopener"><img src="before/b-roadmap.png" alt="Annotated Roadmap"></a></figure>
+      <figure class="shot"><a href="before/b-decision.png" target="_blank" rel="noopener"><img src="before/b-decision.png" alt="Annotated spend approval, what to keep"></a></figure>
+      <figure class="shot"><a href="before/b-activity.png" target="_blank" rel="noopener"><img src="before/b-activity.png" alt="Annotated Activity"></a></figure>
+    </div>
+
+    <h3 style="margin-top:12px">Measured reading load</h3>
+    <div class="tw"><table>
+      <tr><th>Screen</th><th class="num">Words on load</th><th class="num">Height @1440</th><th>Notes</th></tr>
+      <tr><td>Project landing (finished project)</td><td class="num">644</td><td class="num">2,265 px</td><td>The decision isn't in the queue. "Nothing needs you" appears twice.</td></tr>
+      <tr><td>Project landing (with 1 decision)</td><td class="num">385</td><td class="num">1,937 px</td><td>The decision starts at ~860 px, under setup</td></tr>
+      <tr><td>Home (6 projects)</td><td class="num">633</td><td class="num">1,714 px</td><td>Every card has the same weight</td></tr>
+      <tr><td>Roadmap</td><td class="num">400</td><td class="num">1,410 px</td><td>8 tiles, 5 of them empty or zero</td></tr>
+      <tr><td>Role library</td><td class="num">1,429</td><td class="num">3,627 px</td><td>Reference material shown as the default</td></tr>
+      <tr><td>Start a project</td><td class="num">305</td><td class="num">900 px</td><td>The two paths are explained in paragraphs</td></tr>
+      <tr><td><code>className="help"</code> blocks in <code>web/src</code></td><td class="num">474</td><td class="num">—</td><td>Each is a paragraph explaining a screen <span class="lbl L-c">Code</span></td></tr>
+    </table></div>
+
+    <h3 style="margin-top:12px">Findings by area</h3>
+    <div class="tw"><table>
+      <tr><th style="width:150px">Area</th><th>What fails</th><th style="width:110px">Evidence</th><th>Preserve</th></tr>
+      <tr><td><b>Money truth</b></td><td>The project header says "<b>pauses at $20</b>" while the wall is $60. <code>web/src/pages/project/Overview.tsx:120</code> prints <code>cap</code>, not <code>wall</code>, against the explicit rule in <code>ui.tsx:307</code>. At 100% it would also claim "the project is paused", which is false.</td><td><span class="lbl L-v">Verified</span> <span class="lbl L-c">Code</span></td><td>The Spend page's meter and wording</td></tr>
+      <tr><td><b>Status</b></td><td>Five status signals on one header with no precedence. Home cards say "Running" on projects whose health says "agents cannot run".</td><td><span class="lbl L-v">Verified</span></td><td>The status sentence (<i>"1 decision waiting on you. $0 of $60 this month."</i>) is right; make it the one line</td></tr>
+      <tr><td><b>Needs you</b></td><td>Completion sign-off is not in Decide. Web shows "Nothing needs you". <code>yaaf status</code> says "Nothing open right now". The briefing says "Waiting on you: nothing". Meanwhile it closes itself in 24 h.</td><td><span class="lbl L-v">Verified</span> web+CLI</td><td>The Decide/Acknowledge/Updates/Watching split</td></tr>
+      <tr><td><b>Counts</b></td><td>For the same project, <code>yaaf status</code> says "2 decisions waiting" and <code>yaaf briefing</code> says "Waiting on you: 1 · 1 approval(s)". The briefing doesn't count asks.</td><td><span class="lbl L-v">Verified</span> CLI</td><td>The shared producer idea; finish it</td></tr>
+      <tr><td><b>Time claims</b></td><td>"spent runs and closed no work <b>in 14 days</b>" on a project created 5 minutes earlier, on Home and in the briefing.</td><td><span class="lbl L-v">Verified</span></td><td>The drought rule; fix its sentence</td></tr>
+      <tr><td><b>Roadmap</b></td><td>"Stage 1 · open" above "Proven true". "Work here is refused until stage 1 settles" under settled stages. Nov 1 printed 3×.</td><td><span class="lbl L-v">Verified</span></td><td>Stages, requirement rows, reopen</td></tr>
+      <tr><td><b>Results</b></td><td>The project reads "delivered · Everything is true" while Results says "Nothing published yet". A user cannot tell what was produced. The scripted crew publishes nothing, but the screen doesn't reconcile the two either.</td><td><span class="lbl L-v">Verified</span> <span class="lbl L-h">partly harness</span></td><td>"who made it, who checked it"</td></tr>
+      <tr><td><b>Scope decision</b></td><td>The card says "Review on the Roadmap →". It is the only decision kind you can't take in place.</td><td><span class="lbl L-v">Verified</span></td><td>"If you do nothing" line</td></tr>
+      <tr><td><b>Approvals</b></td><td>No recommendation field (<code>ApprovalRequest</code>, <code>yaaf/server/api/agent.py:2331</code>). "$75" appears 3× on the card; the budget remaining is never shown.</td><td><span class="lbl L-c">Code</span> <span class="lbl L-v">Verified</span></td><td>The whole card anatomy</td></tr>
+      <tr><td><b>Activity</b></td><td>8 pills over 7 tabs; Runs, Proof and Messages appear twice. Default rows read like logs.</td><td><span class="lbl L-v">Verified</span></td><td>"On whose authority" on every row</td></tr>
+      <tr><td><b>Projects page</b></td><td>Card links say "Overview →" (the page is now "Inbox"). Slugs are in mono. "— CEO judgment" with no value. 4 text links per card.</td><td><span class="lbl L-v">Verified</span></td><td>Sort by "Needs you first"; Cards/Compact</td></tr>
+      <tr><td><b>Mobile</b></td><td>The first screen holds Pause, Stop and Message, then setup. The decision is below the first screen.</td><td><span class="lbl L-v">Verified</span> 390×844</td><td>Drawer navigation</td></tr>
+      <tr><td><b>Typography</b></td><td>Instrument Serif is used for page titles, section titles, empty states and stage labels. Display type everywhere means no display moment anywhere. Body copy is 12–13 px in many supporting blocks.</td><td><span class="lbl L-v">Verified</span> <span class="lbl L-c">styles.css</span></td><td>The font pairing itself; it's distinctive</td></tr>
+    </table></div>
+  </section>
+
+  <!-- D -->
+  <section id="system">
+    <header><span class="sec-n">D</span><h2>The design language: YAAF Signal</h2>
+      <p class="col" style="color:var(--ink-2)">An evolution of <code>web/src/styles.css</code>, not a rebrand. The same Instrument pairing and the same warm paper, with stricter rules about what each element is allowed to mean.</p></header>
+    <figure class="shot"><a href="after/system.png" target="_blank" rel="noopener"><img src="after/system.png" alt="YAAF Signal design system sheet"></a></figure>
+    <div class="grid3">
+      <div class="card"><h3>Type does one job per style</h3><p style="font-size:14px;margin:0">Serif display <b>once per screen</b>: the project name or the greeting. The status sentence is 17/600 sans; it is the most important line and should look it. Metrics are tabular. Mono only in Details. Minimum body size 14 px; 12.5 px only for metadata.</p></div>
+      <div class="card"><h3>Colour carries meaning, not decoration</h3><p style="font-size:14px;margin:0">Indigo is the <b>"you" colour</b>: Needs-you chips, decision rings and primary verbs. Today blue is every link, so it means nothing. Green = proven, amber = risk, red = stopped. Each always ships with a shape and a word. The existing contrast-checked status tokens are kept.</p></div>
+      <div class="card"><h3>Containers by role</h3><p style="font-size:14px;margin:0">Card = a thing. Ringed card = a decision; it's the only ringed object, so decisions are found by shape before reading. Sunken = supporting detail. Zones are separated by 24 px of space, not by more borders.</p></div>
+      <div class="card"><h3>Charts answer one question each</h3><p style="font-size:14px;margin:0"><b>Path track</b>: are we inside the promise? <b>Burn-up</b>: is the pace real? <b>Meter</b>: how close is the wall? <b>Mini-path dots</b>: how far along, in outcomes, not tasks. No chart appears below its data threshold. Instead it says "Too early to project".</p></div>
+      <div class="card"><h3>Motion explains a change</h3><p style="font-size:14px;margin:0">A chip changing state cross-fades (160 ms). A decided card collapses into its confirmation with an 8 s Undo (240 ms). A newly verified node fills once. Nothing loops or pulses except "Live now". With <code>prefers-reduced-motion</code>, every transition is instant.</p></div>
+      <div class="card"><h3>Accessibility</h3><p style="font-size:14px;margin:0">Status never relies on colour alone: shape + word + colour. Every chart has a text equivalent (the status sentence is that equivalent). Decision verbs are ≥ 44 px on touch. j/k and ⌘K are kept. Charts carry <code>aria-label</code> summaries.</p></div>
+    </div>
+    <div class="card"><h3>The state ladder: one derived state, first true rung wins</h3>
+      <div class="tw" style="border:0"><table>
+        <tr><th>State</th><th>True when</th><th>Replaces today</th></tr>
+        <tr><td><span class="st stop">⊖ Can't run</span></td><td>A dependency is missing: provider, billing credential, required data source</td><td>"Running" + red "1 problem" pill + health row</td></tr>
+        <tr><td><span class="st stop">▲ Blocked</span></td><td>Work stopped on a failed check, a frozen thread, or the money wall</td><td>Scattered flags and heads-ups</td></tr>
+        <tr><td><span class="st need">◉ Needs you · n</span></td><td>Anything in Decide, <b>including completion sign-off and proposed scope</b></td><td>"Waiting on you" sentence, banners, the green callout</td></tr>
+        <tr><td><span class="st risk">▲ At risk</span></td><td>Projection range crosses the promise, spend is past plan, or a bet is near expiry without proof</td><td>"Watching" rows and suggestions</td></tr>
+        <tr><td><span class="st ok">✓ On track</span></td><td>Running, inside promise and plan</td><td>"Running" + "On track" strip</td></tr>
+        <tr><td><span class="st" style="background:var(--ok);color:#fff">◆ Delivered</span></td><td>Completed with a receipt</td><td>The "delivered" banner (which today shows <i>before</i> completion)</td></tr>
+      </table></div>
+      <p style="font-size:13.5px;color:var(--muted);margin:10px 0 0">Plus Paused and Draft. The state and its sentence are computed once on the server, next to the existing desk producer, so web, CLI, MCP, email and Slack can never disagree. Today they do: see §C, Counts.</p>
+    </div>
+  </section>
+
+  <!-- E -->
+  <section id="concepts">
+    <header><span class="sec-n">E</span><h2>High-fidelity concepts</h2>
+      <p class="col" style="color:var(--ink-2)">Built as HTML and rendered, in the proposed tokens. Content is sample data written in the shape of the real payloads (requirements, asks, approvals, agenda, ledger). Every number on them could be produced by an existing endpoint. Where one couldn't, it is called out.</p></header>
+
+    <h3>1 · Home: the portfolio in five seconds</h3>
+    <figure class="shot"><a href="after/home.png" target="_blank" rel="noopener"><img src="after/home.png" alt="Proposed Home"></a></figure>
+    <div class="grid3">
+      <div class="card"><h3>What changed</h3><ul style="font-size:14px"><li>Summary line = the counts of each state</li><li>Needs you leads, with the <b>primary verb inline</b></li><li>Projects become a table: state · sentence · path · next milestone · money</li><li>"Since you looked" is the briefing, grouped and counted</li></ul></div>
+      <div class="card"><h3>Data it needs</h3><ul style="font-size:14px"><li>State + sentence per project <span class="lbl L-d">new field</span></li><li>Requirement statuses (exists, <code>/plan</code>)</li><li>Next agenda item (exists, <code>/agenda</code>)</li><li>Month spend, plan, wall (exists)</li><li>"Last looked" (exists, <code>briefing_seen</code>)</li></ul></div>
+      <div class="card"><h3>Incomplete &amp; small screens</h3><ul style="font-size:14px"><li>No requirements yet → path shows "—"; Explore projects show bets instead</li><li>No date → "no date yet · too early to project"</li><li>Under 900 px the table becomes stacked rows: chip + name + sentence; the columns fold into a second line</li></ul></div>
+    </div>
+
+    <h3 style="margin-top:12px">2 · Project Brief: the project's front page</h3>
+    <figure class="shot"><a href="after/brief.png" target="_blank" rel="noopener"><img src="after/brief.png" alt="Proposed Project Brief"></a></figure>
+    <div class="grid3">
+      <div class="card"><h3>What changed</h3><ul style="font-size:14px"><li>Decisions are <b>inline and actionable</b>, above everything else</li><li>The Path strip shows today, projection range and promise on one axis</li><li>Setup shrinks to "Setup 5 of 6" in the meta row (it expands only when setup is why the project can't run)</li><li>Pause and Stop move to ⋯. Message stays primary</li></ul></div>
+      <div class="card"><h3>Why this beats today</h3><ul style="font-size:14px"><li>644 → ~210 words on load (estimate, sample content)</li><li>The first decision sits at 270 px, not ~860 px</li><li>No sentence appears twice</li><li>The banner on every page is replaced by the state chip in the sidebar switcher, which is already on every page</li></ul></div>
+      <div class="card"><h3>Naming</h3><p style="font-size:14px;margin:0">The page called "Inbox" holds far more than an inbox, and shares its name with the global Inbox. Proposed name: <b>Brief</b>. This is the only navigation change in the proposal, and it's optional (P2). Keyboard shortcut and route are unchanged.</p></div>
+    </div>
+
+    <h3 style="margin-top:12px">3 · Decisions: one anatomy for every kind</h3>
+    <figure class="shot"><a href="after/decisions.png" target="_blank" rel="noopener"><img src="after/decisions.png" alt="Proposed decision cards"></a></figure>
+    <div class="card"><h3>Anatomy, top to bottom</h3><p style="font-size:14.5px;margin:0"><b>Kind + clock</b> (the clock only when one exists) → <b>the question</b> as a verb phrase → <b>the recommendation</b> (required for every kind; approvals gain the field asks already have) → <b>consequence chips</b>: amount, effect on plan, reversibility, the default if silent → <b>one primary verb</b> naming the amount ("Approve $75") → "Full case" expands in place. It never navigates away. After acting: a confirmation with an 8-second Undo where the action allows it, and "You're clear" with the next likely interruption. <b>Nothing is hidden.</b> Irreversibility and over-plan spend are amber chips, never footnotes.</p></div>
+
+    <div class="grid2" style="margin-top:12px">
+      <div><h3>4 · Roadmap: the promise, drawn honestly</h3>
+        <figure class="shot"><a href="after/path.png" target="_blank" rel="noopener"><img src="after/path.png" alt="Proposed Roadmap"></a></figure>
+        <p style="font-size:14px;color:var(--ink-2);margin-top:10px">Eight tiles become one burn-up and one sentence. The projection is a <b>range</b> drawn from settled outcomes (<code>plan.burnup</code>). Below 2 settled it is not drawn at all. The stage list keeps every verb (accept, cut, verdict, reopen, restage, reword).</p></div>
+      <div><h3>5 · Results: trust as a label</h3>
+        <figure class="shot"><a href="after/results.png" target="_blank" rel="noopener"><img src="after/results.png" alt="Proposed Results"></a></figure>
+        <p style="font-size:14px;color:var(--ink-2);margin-top:10px">Each result carries one of three seals, from data that exists (<code>record?view=results</code>, evidence provenance, audit samples). The drawer says what "verified" <i>doesn't</i> cover. That's the most important trust sentence in the product.</p></div>
+      <div><h3>6 · Errors, blockers, recovery</h3>
+        <figure class="shot"><a href="after/recovery.png" target="_blank" rel="noopener"><img src="after/recovery.png" alt="Proposed recovery states"></a></figure>
+        <p style="font-size:14px;color:var(--ink-2);margin-top:10px">Every failure card answers: what failed · what it costs · what the CEO proposes · your alternatives. Loading, stale, offline and paused each get a designed state. A decision is never queued silently while offline.</p></div>
+      <div><h3>7 · Phone</h3>
+        <figure class="shot"><a href="after/mobile.png" target="_blank" rel="noopener"><img src="after/mobile.png" alt="Proposed mobile Brief"></a></figure>
+        <p style="font-size:14px;color:var(--ink-2);margin-top:10px">The same four-question order. Full-width primary verbs. Path as a dot row with a single line beneath.</p></div>
+    </div>
+
+    <h3 style="margin-top:12px">8 · Beyond the browser</h3>
+    <figure class="shot"><a href="after/surfaces.png" target="_blank" rel="noopener"><img src="after/surfaces.png" alt="CLI, chat, email and MCP renderings"></a></figure>
+    <p class="col" style="font-size:14.5px;color:var(--ink-2)">The CLI keeps its sentence-first style and gains the state glyph and a numbered decide shortcut. MCP's <code>desk</code> returns <code>state</code>, <code>sentence</code>, <code>next_milestone</code> and a decision object with <code>recommendation</code>, <code>reversible</code> and <code>default</code>, so Claude can answer "what did I miss?" in four lines. Email carries signed one-tap verbs, which fixes the "Decide it on the Decisions screen" dead end the 23 Oct audit found <span class="lbl L-h">re-check</span>.</p>
+  </section>
+
+  <!-- F -->
+  <section id="ba">
+    <header><span class="sec-n">F</span><h2>Before → after, in words</h2>
+      <p class="col" style="color:var(--ink-2)">The left column is verbatim from the running product unless marked. The right column is the proposal.</p></header>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="ba"><div class="h">Project update (delivered, awaiting sign-off)</div><div class="b">"Everything is true. This delivery is waiting on your confirmation. Nothing will run until it completes — the project has stopped waking for its own agents' messages, so it is not spending while it waits. Confirm it on the project page to write the receipt and close it now, or let it close itself when your rules say (Complete after, in Settings); reopen scope first if something is still missing."<span class="wc">63 words · shown 3× on one page</span></div><div class="a"><b>◉ Needs you · Sign off</b><br>The briefing note is finished. 3 of 3 outcomes verified.<br><span style="color:var(--muted)">Closes itself Mon 10:02 am · $0 spent while waiting</span><br>[Complete &amp; write receipt] [Something's missing]<span class="wc">19 words · once</span></div></div>
+      <div class="ba"><div class="h">Dense status strip</div><div class="b">"On track · 3 of 3 must-be-true things true · 0 results delivered · see results · $0 this month · pauses at $20 · 7 of 9999 runs today"<span class="wc">contradictory (on track / delivered), wrong ($20), internal (9999)</span></div><div class="a">State chip + one sentence. Outcomes go on the Path, money on the meter (plan $20 · pauses at $60). Run counts move to Details › Activity.</div></div>
+      <div class="ba"><div class="h">Approval</div><div class="b">Title "Buy 12 months of EDGAR full-text search access ($75) — $75", then 6 rows: Why it is yours · The case · If you say no · Amount $75 · If you do nothing · Can you undo a yes?<span class="wc">≈ 110 words before the button</span></div><div class="a"><b>Buy EDGAR full-text access</b><br>CIO recommends yes: closes the pre-2001 gap for 2 of 5 companies.<br>[$75 once] [plan goes to $83 of $60] [Can't be undone]<br>[Approve $75] [Decline] · Full case ▾<span class="wc">≈ 30 words · nothing removed, the rest is one click</span></div></div>
+      <div class="ba"><div class="h">Warning</div><div class="b">"Somebody you are paying for has had nothing to do — the platform opened this Nov 1; Founder is required to bring it to you with a proposal. In its own words: Desk (Founder) has spent 7 runs in 14 days and closed no work in that time. A seat that is awake is not free…"</div><div class="a"><b>▲ Desk is idle and still costing runs</b><br>7 runs, no work closed since Nov 1. The CEO owes you a proposal.<br>[Ask now] · Why?</div></div>
+      <div class="ba"><div class="h">Project creation entry</div><div class="b">"Two ways in, one destination: both end on the same review screen, and nothing exists — or costs anything — until you sign it there." + 2 cards of ~120 words each.<span class="wc">305 words</span></div><div class="a"><b>What do you want to exist?</b> [paragraph field]<br>[Draft it for me] · <span style="color:var(--muted)">or fill in the form</span><br><span style="color:var(--muted)">Nothing is created or charged until you review it.</span><span class="wc">≈ 25 words · same two paths</span></div></div>
+      <div class="ba"><div class="h">Budget</div><div class="b">Header: "pauses at $20". Spend page: "Pauses the project at $60 (3× the budget)".</div><div class="a">One meter everywhere: spent ▬ · plan tick $20 · red wall $60, both labelled. "On pace for ~$7 this month. Warns you at $16." Pace only after 3 days of data.</div></div>
+      <div class="ba"><div class="h">Milestone tracking</div><div class="b">Eight tiles (Commitment Nov 1 · Still to do 0 · Work it should take 0 · If nothing went wrong 0 days · Requirements settled — · Spend that bought nothing 0% · Overhead 36% · What the rest buys —), then a second "Will the work be finished" box repeating Nov 1 twice.</div><div class="a">"On course for Nov 17–19, promised Nov 20." One burn-up with range and promise. Overhead and "spend that bought nothing" move to Spend, where they answer a money question.</div></div>
+      <div class="ba"><div class="h">Agent activity</div><div class="b">"CEO ceo: nothing legal to do · done — On whose authority: woken for notices" ×11 rows as the default view.</div><div class="a">Default view = "What happened": grouped outcomes ("3 tasks closed · R-01–R-03 verified"). The full record stays one tab over, unchanged, with authority on every line.</div></div>
+      <div class="ba"><div class="h">Completed deliverable</div><div class="b">"Nothing published yet. Results appear here the moment the team publishes one…" on a project marked delivered.</div><div class="a">When outcomes are verified but nothing is published: "<b>3 outcomes verified, no file published.</b> The checks passed on the workspace. [See what was checked]". No silent contradiction.</div></div>
+      <div class="ba"><div class="h">Conversation (MCP / chat) <span class="lbl L-d">today derived from CLI output</span></div><div class="b">"You changed 7 rules (ceo_heartbeat_always, ceo_heartbeat_hours, inbox_runs_per_project_per_hour…) — but Watch spent runs and closed no work in 14 days. 1 now waiting on your decision."</div><div class="a">"<b>Two things need you</b>, the soonest in 36 h: the baseline year (CIO: own FY2019) and $75 EDGAR access (CIO: yes; can't be undone). The Watch desk is idle. Want me to approve the $75?"</div></div>
+    </div>
+  </section>
+
+  <!-- G -->
+  <section id="priorities">
+    <header><span class="sec-n">G</span><h2>Prioritised improvements</h2>
+      <p class="col" style="color:var(--ink-2)">Ranked by expected user impact. <b>V</b> = visual/copy change · <b>W</b> = interaction or workflow change · <b>S</b> = needs a server change. Effort: S &lt; 3 days, M &lt; 2 weeks, L &gt; 2 weeks.</p></header>
+    <div class="tw"><table>
+      <tr><th>#</th><th>Change</th><th>Problem → evidence</th><th>Benefit</th><th>Type</th><th>Effort</th><th>Risk / trade-off</th><th>Pri</th></tr>
+      <tr><td class="num">1</td><td><b>Fix "pauses at"</b> to the wall; fix "the cap is reached — paused"</td><td>Wrong money statement · <code>Overview.tsx:120</code></td><td>The one class of fact that must never be wrong</td><td>V</td><td>S</td><td>None</td><td><span class="lbl P0">P0</span></td></tr>
+      <tr><td class="num">2</td><td><b>Completion sign-off and proposed scope enter Decide</b> everywhere: badge, Home, CLI, briefing, MCP</td><td>"Nothing needs you" while sign-off waits · verified web + CLI</td><td>Needs-you becomes trustworthy</td><td>S W</td><td>M</td><td>Badge counts rise; that's correct</td><td><span class="lbl P0">P0</span></td></tr>
+      <tr><td class="num">3</td><td><b>Server-derived state + sentence</b> (the ladder) on dashboard, desk, briefing, CLI</td><td>5 conflicting signals; CLI/briefing counts disagree</td><td>Five-second comprehension; one vocabulary</td><td>S V</td><td>M</td><td>Ladder edge cases need tests (add to <code>selftest_invariants</code>)</td><td><span class="lbl P0">P0</span></td></tr>
+      <tr><td class="num">4</td><td><b>Delete repeats</b>: one banner max, never the same sentence twice; drop the cross-page "delivered" banner</td><td>63-word notice ×3 on one page, ×5 pages</td><td>~30% fewer words on project pages (est.)</td><td>V</td><td>S</td><td>Low; the state chip carries it</td><td><span class="lbl P0">P0</span></td></tr>
+      <tr><td class="num">5</td><td><b>Copy hygiene</b>: no snake_case, no raw caps (9999), no ISO dates, true elapsed time ("in 14 days" → "since Nov 1")</td><td>Home, briefing, chat · verified</td><td>Looks designed, not generated</td><td>V</td><td>S</td><td>Needs a lint test for user-facing strings</td><td><span class="lbl P1">P1</span></td></tr>
+      <tr><td class="num">6</td><td><b>Project Brief layout</b>: decisions → path → changed/next/money → results; setup becomes a chip</td><td>Decision at ~860 px under setup</td><td>Decide without scrolling</td><td>W V</td><td>M</td><td>Users who rely on the setup list need the chip to be obvious</td><td><span class="lbl P1">P1</span></td></tr>
+      <tr><td class="num">7</td><td><b>Recommendation on every decision kind</b> (add to <code>ApprovalRequest</code>); consequence chips; amount once</td><td>Approvals lack it · <code>agent.py:2331</code></td><td>Decide in 30 s</td><td>S V</td><td>S</td><td>Agents must write one; refuse empty, as asks do</td><td><span class="lbl P1">P1</span></td></tr>
+      <tr><td class="num">8</td><td><b>Scope accepted inline</b> (checklist + Accept n)</td><td>Only decision kind that links away</td><td>One fewer context switch</td><td>W</td><td>S</td><td>Reword/cut stay on Roadmap</td><td><span class="lbl P1">P1</span></td></tr>
+      <tr><td class="num">9</td><td><b>Home as portfolio table</b> with path dots, next milestone, meter</td><td>Identical cards, numbers repeated</td><td>Compare projects at a glance</td><td>V</td><td>M</td><td>Needs a compact stacked layout on phones</td><td><span class="lbl P1">P1</span></td></tr>
+      <tr><td class="num">10</td><td><b>Trust seals</b> on Results, the Brief, the briefing and receipts</td><td>"delivered" vs "nothing published"</td><td>Find evidence in one click</td><td>V S</td><td>M</td><td>Must map exactly to existing provenance, or it lies</td><td><span class="lbl P1">P1</span></td></tr>
+      <tr><td class="num">11</td><td><b>Roadmap: burn-up + range</b> replaces 8 tiles; fix stage status labels</td><td>Stage "open" over proven items</td><td>Schedule health is visible</td><td>V</td><td>M</td><td>Range math must say its basis</td><td><span class="lbl P1">P1</span></td></tr>
+      <tr><td class="num">12</td><td><b>Typography &amp; colour roles</b>: serif once per screen; indigo = you; ink links</td><td>Serif and blue everywhere</td><td>Hierarchy without extra boxes</td><td>V</td><td>M</td><td>Touches every screen; ship behind a theme flag</td><td><span class="lbl P2">P2</span></td></tr>
+      <tr><td class="num">13</td><td><b>Activity filters</b>: 15 → one segmented row + a "kind" filter</td><td>Duplicate tabs</td><td>Less hunting</td><td>V</td><td>S</td><td>Deep links to old views must redirect</td><td><span class="lbl P2">P2</span></td></tr>
+      <tr><td class="num">14</td><td><b>One-tap email/Slack verbs</b> and the decision object in MCP</td><td>Decisions arrive late or without verbs (23 Oct audit)</td><td>Decide where you are</td><td>S W</td><td>L</td><td>Signed links need expiry and audit</td><td><span class="lbl P2">P2</span></td></tr>
+      <tr><td class="num">15</td><td><b>Rename project "Inbox" → "Brief"</b></td><td>Two different pages share a name</td><td>Clearer model</td><td>V</td><td>S</td><td>Docs and muscle memory; optional</td><td><span class="lbl P2">P2</span></td></tr>
+    </table></div>
+  </section>
+
+  <!-- H -->
+  <section id="preserve">
+    <header><span class="sec-n">H</span><h2>Nothing is removed: where every capability lives</h2></header>
+    <div class="tw"><table>
+      <tr><th>Capability</th><th>Shown by default</th><th>Revealed in context</th><th>Advanced / Details</th></tr>
+      <tr><td>Approvals (7 kinds), asks, scope, date, verdicts, levers, audits</td><td>Decision cards on Brief, Home, Inbox</td><td>Full case expands in place; Discuss with CEO</td><td>Activity › Decisions history</td></tr>
+      <tr><td>Budget, hard stop, warn ratio, ledger</td><td>Meter: spent · plan · wall</td><td>Over-plan chip on a spend decision</td><td>Spend tab; Settings › Money</td></tr>
+      <tr><td>Requirements, stages, dependencies, commitment</td><td>Path strip; mini-path on Home</td><td>Node hover: check + evidence</td><td>Roadmap (all verbs kept)</td></tr>
+      <tr><td>Bets / hypotheses (Explore)</td><td>Path shows bets and expiry</td><td>"Extend" inside an at-risk card</td><td>Tasks › bets</td></tr>
+      <tr><td>Evidence, provenance, spot audits</td><td>Seal on each result</td><td>"Why you can trust this" drawer</td><td>Activity › Proof</td></tr>
+      <tr><td>Org chart, seats, models, schedules</td><td>Live now (sidebar)</td><td>Agent names in digest link to the seat</td><td>Team (unchanged; it's good)</td></tr>
+      <tr><td>Runs, traces, context packs, messages, memory</td><td>—</td><td>"Full activity" link from digest</td><td>Activity tabs (unchanged content)</td></tr>
+      <tr><td>Constitution, autonomy, pace, amendments</td><td>Meta row: "Supervised"</td><td>Term hover explains it</td><td>Settings › Rules in force</td></tr>
+      <tr><td>Setup checklist</td><td>"Setup 5 of 6" chip, or the lead card when it's why the project can't run</td><td>Chip expands the list</td><td>Settings sections</td></tr>
+      <tr><td>Pause / Stop / Stand down</td><td>—</td><td>⋯ menu on Brief; Team seat menu</td><td>CLI, MCP <code>lifecycle</code></td></tr>
+      <tr><td>Fire drill, Founder, grading</td><td>Creation flow</td><td>Drill result on review</td><td>CLI <code>rehearse</code>, MCP <code>create</code></td></tr>
+    </table></div>
+    <p class="col" style="font-size:14px;color:var(--muted)">Governance, spending, irreversibility and permissions are never collapsed out of the decision card's first view. They are chips there, not footnotes.</p>
+  </section>
+
+  <!-- I -->
+  <section id="roadmap">
+    <header><span class="sec-n">I</span><h2>Implementation roadmap</h2>
+      <p class="col" style="color:var(--ink-2)">Kept separate from the vision on purpose: the vision shouldn't shrink to fit a sprint.</p></header>
+    <div class="grid3">
+      <div class="card phase"><div class="eyebrow">Phase 1 · ~2–3 weeks</div><h3>Immediate clarity</h3><p style="font-size:14px">Items 1–5, 7, 8. Mostly subtraction and one server field.</p>
+        <ul class="chk"><li>Every money line names the wall; a selftest asserts it</li><li>Sign-off and scope count in Decide on all 5 surfaces; one test compares them</li><li>No user-facing string matches <code>[a-z]+_[a-z_]+</code> or an ISO date (lint test)</li><li>No sentence rendered twice on one route (DOM test)</li><li>Project landing ≤ 300 words on load with 0–2 decisions</li></ul></div>
+      <div class="card phase p2"><div class="eyebrow">Phase 2 · ~6–8 weeks</div><h3>Unified experience</h3><p style="font-size:14px">Items 6, 9, 10, 11, 13: the Brief, Home table, seals, Roadmap, Activity.</p>
+        <ul class="chk"><li>First decision above the fold at 1440×900 and 390×844</li><li>Every result shows a seal derived from provenance (test per seal level)</li><li>Projection never drawn under its data threshold (test)</li><li>5-second test ≥ 80% correct (§J)</li></ul></div>
+      <div class="card phase p3"><div class="eyebrow">Phase 3 · ~1 quarter</div><h3>Exceptional polish</h3><p style="font-size:14px">Items 12, 14, 15: the full design language, one-tap verbs off-app, motion, dark-theme pass.</p>
+        <ul class="chk"><li>Tokens documented; no literal colours in components</li><li>Email/Slack verbs signed, expiring, audited</li><li>Reduced-motion and contrast audits pass both themes</li><li>Decision median time ≤ 30 s with correct choice ≥ 90%</li></ul></div>
+    </div>
+    <p class="col" style="font-size:14px;color:var(--muted)">Per <code>CLAUDE.md</code>: the state field is a new concept, so diff its footprint against <code>Approval</code> (desk, briefing, agenda, change stamp, MCP, CLI) before calling it done.</p>
+  </section>
+
+  <!-- J -->
+  <section id="validate">
+    <header><span class="sec-n">J</span><h2>How we'll know it's better</h2>
+      <p class="col" style="color:var(--ink-2)">Moderated sessions with 6–8 real or prospective chairmen per round, old vs new on the same seeded projects (the seeding script used here makes that reproducible). Looking better proves nothing. These do:</p></header>
+    <div class="tw"><table>
+      <tr><th>Test</th><th>Task</th><th>Pass bar</th><th>Measures</th></tr>
+      <tr><td>Five-second state</td><td>Show Home for 5 s, hide it. "Which project needs you? Which is at risk?"</td><td>≥ 80% both correct</td><td>Accuracy</td></tr>
+      <tr><td>What needs me</td><td>"List everything waiting on you."</td><td>100% incl. sign-off; ≤ 20 s</td><td>Recall, time</td></tr>
+      <tr><td>Next milestone</td><td>"What's due next on Read The Filings, and when?"</td><td>≤ 10 s, no navigation</td><td>Time, clicks</td></tr>
+      <tr><td>Project health</td><td>"Will it make its promise? How sure are you?"</td><td>Answer matches projection basis</td><td>Calibration</td></tr>
+      <tr><td>Approval</td><td>Decide the $75 request</td><td>≤ 30 s median; can state reversibility and plan impact afterwards</td><td>Decision quality</td></tr>
+      <tr><td>Failure</td><td>"Why did it stop and what would you do?"</td><td>Names cause + a recovery path</td><td>Comprehension</td></tr>
+      <tr><td>Evidence</td><td>"Show me why you trust restatements.csv."</td><td>≤ 2 clicks; can say what isn't covered</td><td>Trust accuracy</td></tr>
+      <tr><td>Back after a week</td><td>Seeded 7-day gap: "What happened?"</td><td>3 key events named in ≤ 60 s</td><td>Recall</td></tr>
+      <tr><td>Advanced use</td><td>Reopen R-02; amend pace; read one run's trace</td><td>No slower than today</td><td>Power preserved</td></tr>
+    </table></div>
+    <p class="col" style="font-size:14px;color:var(--muted)">Product metrics (local, opt-in): time from app open to first decision; share of decisions that lapse to default; visits to Details per session (should fall but not to zero); undo rate (high = misleading cards).</p>
+  </section>
+
+  <!-- Scenarios -->
+  <section id="scenarios">
+    <header><span class="sec-n">+</span><h2>Twelve scenarios, today vs proposed</h2>
+      <p class="col" style="color:var(--ink-2)">"Today" observations are from the local build. Proposed figures are <b>estimates</b> until §J runs.</p></header>
+    <div class="tw"><table>
+      <tr><th>#</th><th>Scenario</th><th>Today</th><th>Proposed</th></tr>
+      <tr><td class="num">1</td><td>First project</td><td>Start page: 305 words over two paths; "Describe it" is badged "needs a key first"; form step 1 is 437 words <span class="lbl L-v">Verified</span></td><td>One field, "What do you want to exist?", then a proposal card with cost range, cadence of asks and a Start button. Form one link away</td></tr>
+      <tr><td class="num">2</td><td>Health in 5 s</td><td>Identical cards; "Running" on projects that can't run <span class="lbl L-v">Verified</span></td><td>Summary line + state column</td></tr>
+      <tr><td class="num">3</td><td>Back after days</td><td>"While you were away" lists raw rule keys and false durations <span class="lbl L-v">Verified</span></td><td>Grouped counted digest since last look, with expired decisions and Reopen</td></tr>
+      <tr><td class="num">4</td><td>A week-old project</td><td>Brief ~2,000 px; tiles of zeros on Roadmap <span class="lbl L-v">Verified</span></td><td>Path strip + burn-up range</td></tr>
+      <tr><td class="num">5</td><td>What's due next</td><td>"Coming up" box below the fold; one item <span class="lbl L-v">Verified</span></td><td>Next column on Brief; next milestone on Home</td></tr>
+      <tr><td class="num">6</td><td>Budget approval</td><td>Strong card, no recommendation, no plan impact <span class="lbl L-v">Verified</span></td><td>Recommendation + "plan goes to $83 of $60" chip</td></tr>
+      <tr><td class="num">7</td><td>Running late</td><td>Roadmap sentence + "On course for" box <span class="lbl L-c">Code</span></td><td>At-risk chip everywhere; range crossing the promise line; "Move the date / Cut scope" card</td></tr>
+      <tr><td class="num">8</td><td>Blocked / failed</td><td>"1 problem" pill + a health row at the bottom <span class="lbl L-v">Verified</span></td><td>Can't run / Blocked leads the Brief, with the fix button</td></tr>
+      <tr><td class="num">9</td><td>Trust a result</td><td>"delivered" next to "Nothing published yet" <span class="lbl L-v">Verified</span></td><td>Seal + trust drawer</td></tr>
+      <tr><td class="num">10</td><td>Change goals mid-flight</td><td>Settings › Brief, or a chat message; effect explained in prose <span class="lbl L-c">Code</span></td><td>"Change direction" in ⋯ → the CEO files a brief proposal → a decision card showing the scope diff <span class="lbl L-h">Hypothesis</span></td></tr>
+      <tr><td class="num">11</td><td>Several projects</td><td>Projects page sorts by "Needs you first" (good) <span class="lbl L-v">Verified</span></td><td>Same sort, plus a state column and a needs-you strip</td></tr>
+      <tr><td class="num">12</td><td>All by conversation</td><td>MCP <code>desk</code> leads with a summary paragraph <span class="lbl L-c">docs</span></td><td>Structured state + decision objects; four-line answers</td></tr>
+    </table></div>
+  </section>
+
+  <!-- Limits -->
+  <section id="limits">
+    <header><span class="sec-n">!</span><h2>Limits of this assessment, and how it relates to earlier work</h2></header>
+    <div class="grid2">
+      <div class="card"><h3>What I couldn't see</h3><ul style="font-size:14.5px">
+        <li><b>The live app.</b> This session's network policy blocked <code>yaaf-app.dplouffe.ca</code>, so the temporary login wasn't used. Everything observed comes from <code>main@f2f9ce3</code> run locally.</li>
+        <li><b>Real agents.</b> The data came from the repo's own scripted fire-drill crew. Costs are $0, timings are compressed, and nothing was published. Findings that the harness may have caused are marked.</li>
+        <li><b>The "no billing credential" problem</b> appears because the local projects ran on the mock runtime. A production install with a provider may not show it, but the Running-vs-can't-run contradiction is in the logic either way.</li>
+        <li><b>No real users.</b> Scores are expert judgement. §J says how to replace them with evidence.</li>
+      </ul></div>
+      <div class="card"><h3>Relationship to the earlier studies</h3><ul style="font-size:14.5px">
+        <li><code>docs/ux-redesign/</code> (IA redesign) <b>shipped</b>, and navigation is now its strongest part. This proposal keeps it.</li>
+        <li>The 23 Oct audit scored 4.5/10 and was ~19,500 words. Since then the Spend page states the 3× wall truthfully and the project collapsed to 5 pages. Its money finding <b>survives in the header strip</b>, and its "one status" recommendation is still open.</li>
+        <li>This report adds what the earlier ones didn't: the <b>visual system</b>, the <b>state ladder</b>, rendered concepts and annotated evidence.</li>
+      </ul></div>
+    </div>
+    <div class="card"><h3>Reproduce everything</h3><p style="font-size:14.5px;margin:0">Mockups: <code>mockups.html</code>. Annotations: <code>before.html</code>. The PNGs are rendered from those files. The demo database was seeded from <code>examples/01, 06, 07, 09, 10, 11</code> with <code>yaaf.rehearsal.crew</code>. <code>tests/e2e/demo.py</code> now builds a richer version of that database (weeks of history, priced runs, published files). No product code was changed.</p></div>
+  </section>
+
+  <div class="foot">YAAF Signal · product experience transformation · prepared 1 Nov 2026 for the YAAF maintainers · sample data in all mockups is labelled as such</div>
+</div>

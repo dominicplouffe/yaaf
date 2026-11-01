@@ -40,6 +40,7 @@ from yaaf.core.models import (
     Channel,
     ChannelKind,
     Commitment,
+    CommitmentStatus,
     Evidence,
     EvidenceKind,
     Hypothesis,
@@ -206,11 +207,13 @@ def projects(session: Session = Depends(db),
     ]
 
 
-def _awaiting_chairman(session: Session, project: Project, cons) -> dict:
+def _awaiting_chairman(session: Session, project: Project, cons,
+                       waiting: dict | None = None) -> dict:
     """The desk's view of policy.awaiting_chairman — same query, shaped for the
     wire. The definition itself lives in policy so the janitor's nags and this
     page can never disagree about what is waiting."""
-    waiting = policy.awaiting_chairman(session, project, cons)
+    if waiting is None:
+        waiting = policy.awaiting_chairman(session, project, cons)
     commitment = waiting["commitment"]
     return {
         "plan": len(waiting["plan"]),
@@ -276,6 +279,7 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
         usd_mode = project.billing_mode == "api_key"
         pending = [
             {"id": a.id, "title": a.title, "kind": a.kind, "amount_usd": a.amount_usd,
+             "recommendation": a.recommendation,
              "expires_at": aware(a.expires_at).isoformat(), "capacity": a.capacity,
              "undo": approval_undo(a.kind),
              # What silence decides on THIS project; the row said "denied"
@@ -365,6 +369,10 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
                 break
             failed_in_a_row += 1
         spinning = _spinning_runs(session, project, now)
+        # Each asked once: the row, the count and the status line all read them.
+        awaiting = policy.awaiting_chairman(session, project, cons)
+        signoff = policy.signoff_waiting(session, project, cons)
+        commitment = policy.live_commitment(session, project.id)
         projects_out.append({
             "id": project.id, "slug": project.slug, "name": project.name,
             "status": project.status, "status_reason": project.status_reason,
@@ -395,7 +403,7 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             # CEO holds it there is nothing waiting — it decides rather than
             # parking — so an autonomous project reads empty here, and the dial
             # itself rides the project dashboard for anyone who needs it.
-            "awaiting_you": _awaiting_chairman(session, project, cons),
+            "awaiting_you": _awaiting_chairman(session, project, cons, awaiting),
             # The reader's own, so each row says which boardroom has news.
             "boardroom_unread": boardroom_unread(session, project),
             "evidence_7d": policy.countable_external_evidence(session, project.id, week_ago),
@@ -415,6 +423,17 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             "ceo_judgment": policy.ceo_judgment(session, project.id),
             "pending_approvals": pending,
             "pending_asks": pending_asks,
+            # The finished delivery, as the decision it is: Complete, reopen, or
+            # let it close itself at `closes_at`.
+            "pending_signoff": signoff,
+            # Every decision on this row, counted once (policy.needs_you), so
+            # no reader re-adds the members and gets a different number.
+            "needs_you": policy.needs_you(session, project, cons, awaiting=awaiting,
+                                          approvals=len(pending), asks=len(pending_asks),
+                                          signoff=signoff),
+            # Where the outcomes stand and what comes next, so a portfolio row
+            # can draw progress as outcomes rather than tasks or runs.
+            **_path_and_next(session, project, hyps, aware, commitment),
             "expired_bets": expired_bets,
             "kill_dates_soon": kill_dates_soon,
             "audit": {"completed": int(completed), "audited": int(audited),
@@ -435,12 +454,10 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             "last_run_at": last_run_at.isoformat() if last_run_at else None,
         })
         row = projects_out[-1]
-        waiting = row["awaiting_you"]
         row["status_line"] = status_line(
             status=project.status, status_reason=project.status_reason,
-            unpaid=row["unpaid"], commitment=policy.live_commitment(session, project.id),
-            waiting=(len(pending) + len(pending_asks) + (1 if waiting["plan"] else 0)
-                     + len(waiting["verdicts"]) + (1 if waiting["commitment"] else 0)),
+            unpaid=row["unpaid"], commitment=commitment,
+            waiting=row["needs_you"]["total"], signoff=signoff, timezone=cons.timezone,
             open_tasks=row["open_tasks"], runs_running=int(running), last_run_at=last_run_at,
             stall_hours=float(cons.stall_hours), unit=row["budget"]["unit"],
             spent=row["budget"]["spent"], cap=row["budget"]["cap"],
@@ -456,6 +473,62 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
                if reader is not None else [])
     return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out,
             "snoozed": snoozed}
+
+
+def _path_and_next(session: Session, project: Project, hyps: list, aware,
+                   live: Commitment | None) -> dict:
+    """A project's outcomes, in order, and the next dated milestone.
+
+    `path` is one entry per outcome — requirements in scope (proposed ones too,
+    since they wait on the chairman), or an Explore project's bets — so a row
+    can count what is verified rather than tasks closed, which is activity, not
+    progress. `scope_items` are the proposed requirements, so the scope
+    decision can be taken where it is drawn instead of on another page.
+
+    `next_milestone` is a date the platform holds, never one invented for the
+    row: the signed or proposed delivery date with its projection, else the
+    soonest bet kill date, else the Explore window's close. None when the
+    project holds no date at all — the row then says so.
+    """
+    path: list[dict] = []
+    scope_items: list[dict] = []
+    if project.mode == ProjectMode.EXPLORE:
+        path = [{"key": h.id, "status": h.status, "kind": "bet"}
+                for h in sorted(hyps, key=lambda h: aware(h.kill_date))
+                if h.status != "killed"]
+    else:
+        reqs = sorted((r for r in policy.scope_requirements(session, project.id)
+                       if r.status != RequirementStatus.CUT),
+                      key=lambda r: (r.stage or 1, r.key))
+        path = [{"key": r.key, "status": r.status, "stage": r.stage or 1,
+                 "name": requirement_name(r), "kind": "requirement"} for r in reqs]
+        scope_items = [{"id": r.id, "key": r.key, "name": requirement_name(r),
+                        "statement": r.statement,
+                        "checked_by": (r.acceptance_test or {}).get("type")}
+                       for r in reqs if r.status == RequirementStatus.PROPOSED]
+
+    nxt: dict | None = None
+    # The promise in force, else one waiting to be signed, else the one that
+    # was kept: a delivered project's next date is the one it met, not a bet
+    # some agent placed along the way.
+    commitment = live or session.execute(
+        select(Commitment).where(Commitment.project_id == project.id,
+                                 Commitment.status.in_((CommitmentStatus.PROPOSED,
+                                                        CommitmentStatus.MET)))
+        .order_by(Commitment.created_at.desc()).limit(1)).scalar_one_or_none()
+    if commitment is not None and commitment.deliver_by is not None:
+        projected = aware(commitment.projected_done_at)
+        nxt = {"kind": "promise", "at": aware(commitment.deliver_by).isoformat(),
+               "status": commitment.status,
+               "projected": projected.isoformat() if projected else None}
+    elif project.mode == ProjectMode.EXPLORE:
+        bets = [h for h in hyps if h.status == "active"]
+        if bets:
+            soonest = min(bets, key=lambda h: aware(h.kill_date))
+            nxt = {"kind": "bet", "at": aware(soonest.kill_date).isoformat(), "id": soonest.id}
+        elif project.deadline is not None:
+            nxt = {"kind": "window", "at": aware(project.deadline).isoformat()}
+    return {"path": path, "scope_items": scope_items, "next_milestone": nxt}
 
 
 def _spinning_runs(session: Session, project: Project, now: datetime) -> int:
@@ -911,8 +984,13 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         checks.append({"key": key, "status": status, "detail": detail,
                        "where": where, "action": action})
 
-    # Billing: attached, and the credential matches the mode.
-    if not project.billing_secret_id:
+    # Billing: attached, and the credential matches the mode. The mock runtime
+    # pays nobody, which is why the desk's `unpaid` exempts it; a red "agents
+    # cannot run" here, beside a project visibly running, was the page
+    # contradicting itself.
+    if not project.billing_secret_id and integrations.get("runtime") == "mock":
+        add("billing", "ok", "runs on the mock runtime — there is nothing to pay", "settings")
+    elif not project.billing_secret_id:
         add("billing", "fail", "no billing credential attached — agents cannot run",
             "settings")
     else:
@@ -1235,9 +1313,11 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     if pending_asks:
         soonest = min(a.answer_by for a in pending_asks)
         add("asks", "ok",
-            f"{len(pending_asks)} question(s) from your CEO waiting on you, the first "
+            f"{len(pending_asks)} question{'' if len(pending_asks) == 1 else 's'} from your CEO "
+            "waiting on you, " + ("" if len(pending_asks) == 1 else "the first ") +
             f"stopping {chairman_time(soonest, effective(session, project.id).timezone)}. "
-            "Nothing is blocked: each says what the CEO will do if you don't answer.",
+            "Nothing is blocked: " + ("it says" if len(pending_asks) == 1 else "each says")
+            + " what the CEO will do if you don't answer.",
             "boardroom")
 
     # Liveness. Every other check on this page asks "is this project set up

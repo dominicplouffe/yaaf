@@ -150,7 +150,7 @@ def test_an_approval_without_what_no_costs_is_refused(client):
     assert "if_declined" in refused.text
 
     filed = client.post("/agent/approvals", headers=bearer(token), json={
-        **SPEND, "if_declined": "We price from last quarter's numbers, which are six "
+        **SPEND, "recommendation": "Approve it; the case says why.", "if_declined": "We price from last quarter's numbers, which are six "
                                 "weeks stale."})
     assert filed.status_code == 200, filed.text
     listing = client.get(f"/observe/projects/{project['id']}/approvals", headers=ADMIN)
@@ -164,7 +164,7 @@ def test_the_chase_for_an_approval_reads_in_his_time(client, monkeypatch):
     project = make_project(client, slug="expiring", constitution=ZONE)
     _, token = live_token(project["id"], agent_by_name(project, "Lead"))
     filed = client.post("/agent/approvals", headers=bearer(token), json={
-        **SPEND, "if_declined": "We price from last quarter's numbers."})
+        **SPEND, "recommendation": "Approve it; the case says why.", "if_declined": "We price from last quarter's numbers."})
     assert filed.status_code == 200, filed.text
     with db_session() as session:
         approval = session.get(Approval, filed.json()["id"])
@@ -254,3 +254,17 @@ def test_a_capacity_request_names_the_dial_the_way_his_settings_page_does(client
         "last, where the Decisions screen reads it as what saying no costs")
     for text in (title, body, line, sent.mail[0]["subject"], sent.mail[0]["body"]):
         assert "runs_per_project_per_day" not in text, text
+
+
+def test_saving_a_rule_confirms_it_by_the_name_he_just_saved_it_under(client):
+    """The Settings page shows this note as the toast after he saves. It read
+    "In force NOW: queue_ceiling." under a field labelled "Open tasks at once"."""
+    project = make_project(client, slug="toast")
+    response = client.post(f"/admin/projects/{project['id']}/amendments", headers=ADMIN,
+                           json={"reason": "two at a time is all I can review",
+                                 "changes": {"queue_ceiling": 2, "hard_stop_multiple": 2.0}})
+    assert response.status_code == 200, response.text
+    note = response.json()["note"]
+    assert note.startswith(
+        "In force NOW: hard stop, as a multiple of the budget; open tasks at once.")
+    assert "queue_ceiling" not in note and "hard_stop_multiple" not in note

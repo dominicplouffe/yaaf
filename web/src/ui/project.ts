@@ -195,6 +195,14 @@ export function deliveryVerdict(dash: Dashboard, plan: PlanView | null): Verdict
       headline: "This project is paused. Nothing new is starting.", daysLate: null };
   }
 
+  // Everything true, the chairman's Complete unpressed. It said "On track"
+  // here, beside a banner saying "delivered" and a chip saying "Running".
+  if (dash.mode === "deliver" && dash.delivery_outstanding !== null
+      && dash.delivery_outstanding.length === 0) {
+    return { tone: "good", label: "Finished", sub: "waiting for your sign-off",
+      headline: "Everything in scope is true. Only your sign-off is left.", daysLate: null };
+  }
+
   // Work that comes round again has no finish line, so no delivery date: it is
   // judged a turn at a time. Asked "is this on track?", an Operate project
   // answers for the cycle it is in.

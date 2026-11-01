@@ -838,6 +838,8 @@ export interface ApprovalRow {
   kind: string;
   title: string;
   body: string;
+  /** The filer's own recommendation, in a sentence; null on older rows. */
+  recommendation?: string | null;
   undo?: string | null;
   amount_usd: number | null;
   status: string;
@@ -910,6 +912,9 @@ export interface DeskApproval {
   undo?: string | null;
   /** What silence decides on this project. */
   if_silent?: "approved" | "declined";
+  /** The filer's own recommendation, in a sentence — null on kinds filed
+      without one (assist, brief) and on rows older than the field. */
+  recommendation?: string | null;
 }
 
 /** A capacity request's dial. Approving it is what raises the dial. */
@@ -994,7 +999,7 @@ export interface DeskProject {
   unpaid?: boolean;
   /** One verdict and one sentence, decided on the server so every surface
       says the same thing (yaaf.server.status_line). */
-  status_line?: { verdict: string; sentence: string };
+  status_line?: { verdict: string; headline: string; sentence: string };
   goal: string;
   billing_mode: string;
   budget: {
@@ -1028,6 +1033,26 @@ export interface DeskProject {
       it does then. Beside the approvals rather than in `awaiting_you`: both
       are clocked things you answer, and neither is gated on the dial. */
   pending_asks: DeskAsk[];
+  /** Everything in scope is true and only your Complete is left. A decision
+      like any other: Complete, reopen, or let it close itself at `closes_at`. */
+  pending_signoff: { met: number; closes_at: string | null } | null;
+  /** Every decision on this row, counted once by the server. Read `total`;
+      never re-add the members, which is how the counts used to disagree. */
+  needs_you: {
+    approvals: number; asks: number; plan: number; verdicts: number;
+    commitment: number; signoff: number; bets: number; frozen: number; total: number;
+  };
+  /** One entry per outcome — requirements in scope in stage order, or an
+      Explore project's bets — so progress is drawn as outcomes, not tasks. */
+  path: { key: string; status: string; stage?: number; name?: string; kind: "requirement" | "bet" }[];
+  /** Proposed requirements, so the scope decision is taken where it is drawn. */
+  scope_items: { id: string; key: string; name: string; statement: string; checked_by: string | null }[];
+  /** A date the platform holds — never one invented for the row. */
+  next_milestone:
+    | { kind: "promise"; at: string; status: string; projected: string | null }
+    | { kind: "bet"; at: string; id: string }
+    | { kind: "window"; at: string }
+    | null;
   expired_bets: DeskBet[];
   kill_dates_soon: DeskBet[];
   audit: { completed: number; audited: number; unaudited: number };

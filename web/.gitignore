@@ -1,2 +1,6 @@
 web/node_modules/
 web/dist/
+# Playwright: the signed-in session and run output
+e2e/.auth/
+test-results/
+playwright-report/

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { OrgView, post, SeatWork } from "../../api";
 import { useDesk } from "../../desk";
 import { firstName, ProjectCtx } from "../../projectCtx";
+import { modelLabel } from "../../providers";
 import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
 import { clip, fmtAgo, fmtUnit } from "../../ui";
 import { Avatar, PageHead, Seg } from "../../ui/kit";
@@ -42,7 +43,7 @@ function workLine(work: Partial<SeatWork> | undefined): string | null {
     ? ` · $${work.month_usd.toFixed(2)} this month`
       + (work.month_share ? ` (${Math.round(work.month_share * 100)}%)` : "")
     : "";
-  return `${work.model}${money}`;
+  return `${modelLabel(work.model)}${money}`;
 }
 
 function SeatNode({ seat, onOpen, wide, extra, work }: {
@@ -60,7 +61,9 @@ function SeatNode({ seat, onOpen, wide, extra, work }: {
         </span>
         <span className="on-name">
           <b>{seat.name}{seat.lead && !seat.ceo && <span className="on-lead">lead</span>}</b>
-          <span>{seat.title}</span>
+          {/* A team member's title is their team's role, which the team's
+              heading above them already names. The CEO has no such heading. */}
+          {seat.ceo && <span>{seat.title}</span>}
         </span>
       </span>
       <span className="on-state">
@@ -257,7 +260,6 @@ function AddTeam({ ctx, onClose }: { ctx: ProjectCtx; onClose: () => void }) {
         <div className="team-t"><b>Add a team</b>
           <span className="grow" />
           <button className="small" onClick={onClose}>Close</button></div>
-        <div className="team-sub">From the role library</div>
       </div>
       <div className="onode addnode">
         {!role && (
@@ -278,9 +280,8 @@ function AddTeam({ ctx, onClose }: { ctx: ProjectCtx; onClose: () => void }) {
             <input value={employees} onChange={(e) => setEmployees(e.target.value)} placeholder="Ada, Bea" />
             {needsOf(role.secret_scopes ?? []).length > 0 && (
               <p className="help">
-                {role.name} needs {needsOf(role.secret_scopes ?? []).map((n) => n.words).join(" and ")} —
-                add it in Settings → Secrets &amp; variables, granted to this team, or its runs will
-                fail asking for it.
+                {role.name} needs {needsOf(role.secret_scopes ?? []).map((n) => n.words).join(" and ")}:
+                add it in Settings → Secrets &amp; variables, granted to this team.
               </p>
             )}
             <button className="primary small"
@@ -295,7 +296,7 @@ function AddTeam({ ctx, onClose }: { ctx: ProjectCtx; onClose: () => void }) {
         <HirePanel
           roles={roles} crews={crews} loaded={loaded} error={libraryError}
           selected={picked} onToggle={toggle} onClose={() => setOpen(false)}
-          alreadyOn={alreadyOn} gaps={gaps} title="Who's missing?"
+          alreadyOn={alreadyOn} gaps={gaps} title="Add a team"
         />
       )}
     </div>
@@ -359,14 +360,14 @@ function OrgChart({ ctx, chair }: { ctx: ProjectCtx; chair: ReactNode }) {
           {ceo && (
             <div className="org-level">
               <SeatNode seat={ceo} onOpen={ctx.openAgent} wide work={org?.ceo ?? undefined}
-                extra={<span className="on-ceo"><Icon name="message" size={13} /> Reports to you · the only agent you talk to</span>} />
+                extra={<span className="on-ceo"><Icon name="message" size={13} /> The only agent you talk to</span>} />
             </div>
           )}
           <div className="org-v" />
           {large ? (
             <>
               <div className="org-caption help">
-                {shown.length} teams report to {ceo ? ceo.name : "the CEO"} · the ones with someone at work come first
+                {shown.length} teams · busiest first
               </div>
               <div className="org-grid">
                 {ordered.map((team) => (
@@ -473,7 +474,6 @@ export function TeamSection({ ctx, chair, foot }: {
   const view = params.get("view") === "list" ? "list" : "chart";
   const ceo = firstName(ctx.ceoName);
   const people = ctx.seats.filter((s) => s.state !== "stood_down");
-  const working = people.filter((s) => s.state === "working").length;
   const teams = (ctx.org?.teams ?? []).filter((t) => t.running).length;
   const counts = new Map<SeatState, number>();
   for (const s of ctx.seats) counts.set(s.state, (counts.get(s.state) ?? 0) + 1);
@@ -483,7 +483,7 @@ export function TeamSection({ ctx, chair, foot }: {
         <h2>Your team</h2>
         <span className="help">
           {people.length} {people.length === 1 ? "person" : "people"} in {teams} {teams === 1 ? "team" : "teams"},
-          reporting to {ceo} · {working} working now · click anyone
+          reporting to {ceo}
         </span>
         <span className="grow" />
         <span className="legend">
@@ -524,7 +524,7 @@ export default function TeamPage({ ctx }: { ctx: ProjectCtx }) {
         <span className="on-name">
           <b>{dash.my_role === "chairman" ? "You" : (dash.chairman?.display_name ?? "The chairman")}</b>
           <span>
-            {dash.my_role === "chairman" ? "Owner" : "Chairman"} · money, dates, scope
+            {dash.my_role === "chairman" ? "Owner" : "Chairman"}
             {" · "}{waiting > 0
               ? <span className="warn">{waiting} waiting on you</span>
               : "nothing waiting on you"}
@@ -537,8 +537,7 @@ export default function TeamPage({ ctx }: { ctx: ProjectCtx }) {
   );
   return (
     <>
-      <PageHead title="Team"
-        lede="Who is doing this project's work, who they report to, and what each of them is on right now. Click anyone for their page." />
+      <PageHead title="Team" lede="Who does this project's work, and what each is on now. Click anyone." />
       <TeamSection ctx={ctx} chair={chair} />
       <ScheduleStrip ctx={ctx} />
     </>

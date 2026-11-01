@@ -606,6 +606,18 @@ const PLAIN: Record<string, string> = {
   unverifiable: "Nothing could check it",
 };
 
+/** A project's state as the server judged it (yaaf.server.status_line), in
+ *  a word and a tone. Every chip that names a project's state reads this, so
+ *  the chip and the sentence beside it can never disagree. */
+export const VERDICT_CHIP: Record<string, [word: string, tone: string]> = {
+  done: ["Delivered", "good"], stopped: ["Stopped", "critical"],
+  not_started: ["Not started", "accent"], blocked: ["Can't run", "critical"],
+  paused: ["Paused", "warn"], failing: ["Failing", "critical"], late: ["Late", "critical"],
+  at_risk: ["At risk", "warn"], needs_you: ["Needs you", "accent"],
+  spinning: ["No progress", "warn"], stalled: ["Stalled", "warn"],
+  on_track: ["On track", "good"], idle: ["Idle", "accent"],
+};
+
 export function plainStatus(status: string): string {
   return PLAIN[status] ?? status.replace(/_/g, " ");
 }

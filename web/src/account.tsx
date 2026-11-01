@@ -20,6 +20,7 @@ import { fmtWhen, usePoll } from "./hooks";
 import { useMe } from "./me";
 import { clip, CopyField, fmtAgo, fmtLeft } from "./ui";
 import { Badge, Btn } from "./ui/kit";
+import { Why } from "./settingsCopy";
 
 /** The server's rule, said before it is broken rather than after. */
 const MIN_PASSWORD = 12;
@@ -73,9 +74,8 @@ export function PasswordCard() {
   return (
     <form className="card" onSubmit={submit}>
       <p className="help" style={{ marginTop: 0 }}>
-        Changing it signs out every other browser that is signed in as you — which is what
-        you want after leaving a laptop somewhere. Your personal tokens keep working; revoke
-        those below if they are the worry.
+        Changing it signs out every other browser signed in as you. Personal tokens keep
+        working — revoke those below.
       </p>
       {/* The address rides along hidden so a password manager updates the
           right entry instead of saving a new one against nothing. */}
@@ -184,12 +184,14 @@ export function TokensCard() {
     <div className="card">
       <p className="help" style={{ marginTop: 0 }}>
         For the <code>yaaf</code> command line and your own scripts. A token can do exactly
-        what you can, no more, until it expires or you revoke it — and what it does is
-        recorded as you, marked with the token&apos;s name, so a script&apos;s work never
-        reads as your clicks. You rarely need to make one here: <code>yaaf login</code> asks
-        for your password and makes one for you. This is for a script or a machine where you
-        would rather not type it.
+        what you can until it expires or you revoke it.
       </p>
+      <Why>
+        What a token does is recorded as you, marked with the token&apos;s name, so a
+        script&apos;s work never reads as your clicks. You rarely need to make one here:{" "}
+        <code>yaaf login</code> asks for your password and makes one for you. This is for a
+        script or a machine where you would rather not type it.
+      </Why>
 
       {minted && (
         <div className="notice-box">
@@ -279,8 +281,7 @@ export function TokensCard() {
           </div>
         </div>
         <p className="help">
-          Between 1 and 365 days. Every token expires; the shorter it lives, the less a
-          leaked one is worth.
+          Between 1 and 365 days. The shorter it lives, the less a leaked one is worth.
         </p>
       </form>
       <Flash note={note} />
@@ -339,10 +340,13 @@ export function SessionsCard() {
   return (
     <div className="card">
       <p className="help" style={{ marginTop: 0 }}>
-        Every browser signed in as you. A session ends on its own after three days without
-        use, and after fourteen whatever happens. One you do not recognise is worth signing
-        out — and then worth changing your password, which signs out all of them.
+        Every browser signed in as you. Don&apos;t recognise one? Sign it out, then change your
+        password.
       </p>
+      <Why>
+        A session ends on its own after three days without use, and after fourteen whatever
+        happens. Changing your password signs out all of them.
+      </Why>
       {error && <div className="error">{error}</div>}
       {sessions === null ? (
         <p className="help">Loading…</p>

@@ -44,6 +44,7 @@ from yaaf.core.constitution import (
     bar_name,
     effective,
     preset_name,
+    rule_label,
     tempo_name,
 )
 from yaaf.core.models import (
@@ -751,13 +752,30 @@ def _staffing_lines(session: Session, project: Project, cons, since, until) -> l
         who = _listed([(f.arithmetic or {}).get("team") or "a team" for f in idle])
         lines.append(_line(
             "seats_idle",
-            f"{who} spent runs and closed no work in {cons.staffing_review_days} days",
+            f"{who} spent runs and closed no work {_idle_window(session, project, cons, idle)}",
             tone="bad", count=len(idle), where="overview",
             note="A seat that is awake is not free: it reads its channels, buys inbox "
                  "runs, and counts as a mover in the capacity forecast. Your CEO owes "
                  "you either a stand-down or a reason.",
         ))
     return lines
+
+
+def _idle_window(session: Session, project: Project, cons: ConstitutionDoc,
+                 idle: list[Flag]) -> str:
+    """How long the idle seats have really been idle, in words — the rule the
+    flag itself says it by (staffing.idle_window_start), so the line and the
+    flag cannot disagree. The earliest seat's start speaks for the list."""
+    from yaaf.server import staffing
+
+    since = utcnow() - timedelta(days=cons.staffing_review_days)
+    start = min(
+        staffing.idle_window_start(
+            session, project,
+            [a.id for a in policy.team_agents(session, f.subject_id)] if f.subject_id else [],
+            since)
+        for f in idle)
+    return staffing.idle_window_words(start, since, cons.staffing_review_days, cons.timezone)
 
 
 def _run_lines(session: Session, project: Project, since, until) -> list[dict]:
@@ -927,6 +945,11 @@ def _self_acting_lines(session: Session, project: Project, since, until) -> list
     return lines
 
 
+#: How many changed rules the line names. A label is a phrase, not an id, so
+#: fewer fit in one line than the six keys it used to list.
+RULES_LISTED = 4
+
+
 def _your_decisions_lines(session: Session, project: Project, since, until) -> list[dict]:
     """What the chairman himself did in the window. Present so the brief reads
     as a record of the period rather than a list of things done to him — and
@@ -958,11 +981,15 @@ def _your_decisions_lines(session: Session, project: Project, since, until) -> l
         ).order_by(Amendment.created_at)
     ).scalars())
     if amendments:
-        changed = sorted({key for a in amendments for key in (a.changes or {})})
+        # Semicolons, because the labels carry commas of their own ("Hard
+        # stop, as a multiple of the budget").
+        changed = sorted({rule_label(key) for a in amendments for key in (a.changes or {})})
+        shown = "; ".join(changed[:RULES_LISTED])
+        if len(changed) > RULES_LISTED:
+            shown += f"; and {len(changed) - RULES_LISTED} more"
         lines.append(_line(
             "rules_changed",
-            f"you changed {len(changed)} {_plural(len(changed), 'rule')} "
-            f"({', '.join(changed[:6])}{'…' if len(changed) > 6 else ''})",
+            f"you changed {len(changed)} {_plural(len(changed), 'rule')} ({shown})",
             count=len(amendments), where="records/decisions",
         ))
     return lines
@@ -1046,6 +1073,9 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
     ).scalar_one()
     heads_ups = len(heads_up.unacknowledged(session, project.id))
     soonest = _aware(pending[0].expires_at) if pending else None
+    signoff = policy.signoff_waiting(session, project, cons)
+    decisions = policy.needs_you(session, project, cons, awaiting=waiting,
+                                 approvals=len(pending), signoff=signoff)
     return {
         "approvals": len(pending),
         "soonest_expiry": soonest.isoformat() if soonest else None,
@@ -1063,8 +1093,15 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
         # broke exactly that property in the one place it is quoted out loud:
         # "N now waiting on you", in his email, about a flag that proceeds on
         # the CEO's proposal whether he answers or not.
-        "total": (len(pending) + len(waiting["plan"]) + len(waiting["verdicts"])
-                  + (1 if waiting["commitment"] else 0)),
+        #
+        # The total is policy.needs_you's, not a sum written here: this one
+        # left out asks and the finished delivery, and read "Waiting on you: 1"
+        # beside a desk that said 2.
+        "asks": decisions["asks"],
+        "signoff": signoff,
+        "bets": decisions["bets"],
+        "frozen": decisions["frozen"],
+        "total": decisions["total"],
         # Real, and worth saying — just not the same sentence. A thing to read
         # counted beside a thing that denies itself in six hours teaches the
         # reader that the number is padded, and then the number that matters
@@ -1459,6 +1496,12 @@ def _waiting_lines(waiting: dict, when) -> list[str]:
             soonest = when(waiting["soonest_expiry"]) if waiting["soonest_expiry"] else "unknown"
             body.append(f"  · {waiting['approvals']} approval(s); the soonest "
                         f"decides itself {soonest}")
+        if waiting.get("signoff"):
+            closes = waiting["signoff"].get("closes_at")
+            body.append("  · a finished delivery to sign off"
+                        + (f"; it closes itself {when(closes)}" if closes else ""))
+        if waiting.get("asks"):
+            body.append(f"  · {waiting['asks']} {_plural(waiting['asks'], 'question')} from the CEO")
         if waiting["plan"]:
             body.append(f"  · {waiting['plan']} proposed requirement(s) to accept "
                         "— proposed scope is not scope")
@@ -1466,6 +1509,12 @@ def _waiting_lines(waiting: dict, when) -> list[str]:
             body.append(f"  · {waiting['verdicts']} observable close(s) only you can judge")
         if waiting["commitment"]:
             body.append("  · a delivery date to sign")
+        # Counted in the total, so listed under it: the count and the list
+        # disagreeing is the thing this letter must never do.
+        if waiting.get("bets"):
+            body.append(f"  · {waiting['bets']} bet(s) past the kill date — extend or let go")
+        if waiting.get("frozen"):
+            body.append("  · frozen thread(s) only you can release")
         if waiting["flags_raised"]:
             body.append(f"  · {waiting['flags_raised']} flag(s) the CEO raised with a "
                         "proposal")

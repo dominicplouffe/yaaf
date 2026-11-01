@@ -1,0 +1,72 @@
+/* Results (pages/project/Results.tsx): the published shelf, each result's seal,
+   and the panel that says why it can be trusted. Every colour and size is a
+   token from the top of styles.css; the seals themselves are ui/signal.css. */
+
+/* ── the seal counts, under the title ── */
+.rs-counts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4);
+  margin: calc(-1 * var(--s2)) 0 var(--s4); }
+.rs-seals { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.rs-seals .sg-seal { font-size: var(--t-small); padding: 3px 10px 3px 8px; }
+.rs-trust { margin-left: auto; font-size: var(--t-small); color: var(--muted); }
+
+/* ── list beside panel; stacked when the content column is narrow ── */
+.rs { container-type: inline-size; }
+.rs-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); align-items: start; }
+/* 52px is the sticky top bar (.topbar), which the panel must clear. */
+.rs-side { min-width: 0; scroll-margin-top: calc(52px + var(--s4)); }
+@container (min-width: 860px) {
+  .rs-grid { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+  .rs-side { position: sticky; top: calc(52px + var(--s4)); }
+  .rs-side .rs-why { max-height: calc(100vh - 52px - var(--s7)); overflow-y: auto; }
+}
+
+/* ── the rows ── */
+/* Two classes: this sheet loads before styles.css, whose `.card` sets padding. */
+.card.rs-list { list-style: none; margin: 0; padding: 0; overflow: hidden; }
+.rs-list > li + li { border-top: 1px solid var(--border); }
+button.rs-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
+  gap: var(--s3); width: 100%; min-height: 0; padding: var(--s3) var(--s4); border: 0; border-radius: 0;
+  background: transparent; color: var(--ink); font-weight: 400; text-align: left; }
+.rs-row > svg { color: var(--muted); }
+button.rs-row:hover { background: var(--hover); }
+button.rs-row.on { background: rgba(var(--accent-rgb), 0.07); box-shadow: inset 3px 0 0 var(--accent); }
+.rs-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rs-row-name { font-size: var(--t-body); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rs-row-sub { font-size: var(--t-small); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── why you can trust it ── */
+.rs-why-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3);
+  margin-bottom: var(--s4); }
+.rs-why-head h2 { margin: 0; min-width: 0; font-family: var(--font); font-size: var(--t-h3); font-weight: 600;
+  line-height: 1.35; overflow-wrap: anywhere; }
+.rs-why-head .btnlink { flex: none; }
+
+.rs-trail { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.rs-step { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: var(--s3);
+  padding-bottom: var(--s4); }
+.rs-step:last-child { padding-bottom: 0; }
+.rs-step:not(:last-child)::before { content: ""; position: absolute; left: 8px; top: 23px; bottom: 3px;
+  width: 2px; border-radius: 1px; background: var(--border); }
+.rs-mark { width: 18px; height: 18px; margin-top: 2px; border-radius: 50%; display: grid; place-items: center;
+  box-sizing: border-box; }
+.rs-mark.verified { background: var(--good); color: var(--surface); }
+.rs-mark.judged { box-shadow: inset 0 0 0 2px var(--accent); color: var(--accent); }
+.rs-mark.open { box-shadow: inset 0 0 0 2px var(--border-strong); }
+.rs-step-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rs-step-t { font-size: var(--t-body); font-weight: 600; }
+.rs-step-x { font-size: var(--t-small); color: var(--ink-2); overflow-wrap: anywhere; }
+.rs-step .did { margin-top: 2px; }
+
+.rs-serves { margin-top: var(--s4); padding-top: var(--s3); border-top: 1px dashed var(--border-strong);
+  font-size: var(--t-small); color: var(--ink-2); }
+.rs-serves ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.rs-serves li .mono { margin-right: 6px; }
+.rs-limit { margin: var(--s3) 0 0; font-size: var(--t-small); color: var(--ink-2); }
+
+/* ── nothing published ── */
+.rs-empty { display: flex; gap: var(--s3); align-items: flex-start; }
+.rs-empty > svg { flex: none; margin-top: 3px; color: var(--muted); }
+.rs-empty.delivered > svg { color: var(--good); }
+.rs-empty p { margin: 0; font-size: var(--t-body); }
+.rs-empty p + p { margin-top: 4px; font-size: var(--t-small); color: var(--ink-2); }
+.rs-chain { margin: 0 0 8px; font-size: var(--t-small); color: var(--ink-2); }

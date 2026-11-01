@@ -72,13 +72,17 @@ GATES = {
     # project is working — this is a step the board passes through, and the
     # reviewer's own wake clears it — but it is not a clock, so not in WAITS.
     "review_owed",
-    # Everything is true and only his click is left. NOT in FINE: the project
-    # is fine, but it is waiting on him and he is the only one who can end it,
-    # so this is the one quiet that earns a banner. Not in WAITS either — no
-    # clock clears it, and a dismissible banner with no clearing time is how a
-    # permanent state gets mistaken for a passing one.
+    # Everything is true and only his click is left. See QUEUED below.
     "delivery_ready",
 }
+# Stopped and waiting on him, but drawn as a decision in his queue rather than
+# as a banner. Finishing was once "the one quiet that earns a banner", because
+# the banner was the only place he would learn of it. It is a sign-off row in
+# the Inbox now, on the badge, like every approval — and approvals have never
+# had a banner. As a banner as well it was the same sixty words three times on
+# one page, beside a queue that said nothing needed him.
+# test_a_finished_delivery_is_in_the_queue_not_a_banner holds the replacement.
+QUEUED = {"delivery_ready"}
 # Gates that mean the project is fine — working, or the platform verifying its
 # finished work. These never raise the banner.
 FINE = {"concurrency", "agents_busy", "checking", "review_owed", "awaiting_ceo"}
@@ -185,9 +189,9 @@ def test_only_stopped_gates_raise_the_banner():
     end by itself. This said "every stopped gate" until the chairman named the
     scheduled box useless: it, pacing, the wake ceiling and batching all clear
     on their own and say so, so they print as a quiet line instead."""
-    for gate in (*FINE, *QUIET_WAITS, None):
+    for gate in (*FINE, *QUIET_WAITS, *QUEUED, None):
         assert dispatcher._activity_brief(_synthetic(gate))["banner"] is False, gate
-    for gate in sorted(GATES - FINE - QUIET_WAITS):
+    for gate in sorted(GATES - FINE - QUIET_WAITS - QUEUED):
         assert dispatcher._activity_brief(_synthetic(gate))["banner"] is True, gate
     # Quiet is not silent: each still names the moment it ends.
     for gate in QUIET_WAITS:

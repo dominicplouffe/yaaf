@@ -1,57 +1,98 @@
 import { Link } from "react-router-dom";
 import { DeskProject, get } from "../api";
 import { DeskBrief } from "../briefing";
-import { ItemActions, needsYouCount, soonestClock, useDesk, WARN_VERDICTS } from "../desk";
-import { usePoll } from "../hooks";
+import { Item, ItemActions, needsYouCount, soonestClock, useDesk, WARN_VERDICTS } from "../desk";
+import { fmtSince, usePoll } from "../hooks";
 import { useMe } from "../me";
 import { SetupChecklist } from "../setupChecklist";
-import { clip, fmtAgo, fmtSoon, fmtUnit } from "../ui";
-import { Avatar, EmptyState } from "../ui/kit";
+import { fmtSoon } from "../ui";
+import { EmptyState } from "../ui/kit";
 import { Icon } from "../ui/Icon";
-import { statusBadge } from "./Projects";
+import { milestoneLine, MoneyMeter, PathDots, pathWords, rowPath, verdictBadge } from "../ui/signal";
+import "./home.css";
 
-/** The first screen: anything for me, across everything?
+/** The first screen: does anything need me, and how is everything else?
 
-    One sentence answers it, then the decisions themselves, then every
-    project's state side by side, then what happened while you were away. The
-    old landing page was the Desk, which answered the first question very well
-    and nothing else — a chairman with four healthy projects opened the app to
-    a page that said "nothing needs you" and had to go elsewhere to learn
-    whether anything was happening at all. */
+    Five seconds, four answers, in this order: one line counting each state,
+    the decisions themselves with their verb on the row, every project as one
+    comparable row — state, sentence, outcomes, next date, money — and what
+    happened since you last looked. The cards this replaced gave every project
+    the same weight and the same shape, so a project that needed you and one
+    that was fine looked alike until you read both. */
 
 function greeting(): string {
   const h = new Date().getHours();
   return h < 5 ? "Good evening" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 }
 
-function ProjectCard({ p }: { p: DeskProject }) {
-  const b = p.budget;
-  const frac = b.cap > 0 ? b.spent / b.cap : 0;
-  const needs = needsYouCount(p);
+/** The order a reader wants the rows in: what needs them, then what is in
+    trouble, then what is fine, then what has not started. */
+const RANK: Record<string, number> = {
+  needs_you: 0, blocked: 1, failing: 1, late: 1, at_risk: 2, stalled: 2, spinning: 2,
+  paused: 3, on_track: 4, idle: 5, done: 6, not_started: 7, stopped: 8,
+};
+
+function stateCounts(projects: DeskProject[], decisions: number): string[] {
+  const n = (vs: string[]) => projects.filter((p) => vs.includes(p.status_line?.verdict ?? "")).length;
+  const out: string[] = [];
+  const trouble = n(["blocked", "failing"]);
+  const late = n(["late"]);
+  const risk = n(["at_risk", "stalled", "spinning"]);
+  const fine = n(["on_track"]);
+  const idle = n(["idle"]);
+  if (trouble) out.push(`${trouble} blocked`);
+  if (late) out.push(`${late} late`);
+  if (risk) out.push(`${risk} at risk`);
+  if (fine) out.push(`${fine} on track`);
+  if (idle) out.push(`${idle} idle`);
+  const done = n(["done"]);
+  if (done) out.push(`${done} delivered`);
+  return [decisions ? `${decisions} decision${decisions === 1 ? "" : "s"} need${decisions === 1 ? "s" : ""} you` : "", ...out]
+    .filter(Boolean);
+}
+
+function NeedRow({ it }: { it: Item }) {
   return (
-    <Link className="hcard" to={`/projects/${p.id}`}>
-      <span className="hcard-h">
-        <Avatar name={p.name} team={p.name} />
-        <span className="grow"><b>{p.name}</b><span className="help">{p.last_run_at ? `last ran ${fmtAgo(p.last_run_at)}` : "has not run yet"}</span></span>
-        {statusBadge(p.status, p.unpaid)}
+    <div className="hn-row">
+      <div className="hn-body">
+        <div className="hn-top">
+          <span className="badge you hn-kind">{it.kind}</span>
+          <Link className="hn-t" to={`/inbox?item=${encodeURIComponent(it.key)}`}>{it.title}</Link>
+        </div>
+        <div className="hn-m">
+          <span>{it.project.name}</span>
+          {it.clocked && <span className="hn-clock"><Icon name="clock" size={12} /> {fmtSoon(new Date(it.at).toISOString())}</span>}
+          <span>{it.consequence}</span>
+        </div>
+      </div>
+      <div className="hn-a"><ItemActions item={it} /></div>
+    </div>
+  );
+}
+
+function ProjectRow({ p }: { p: DeskProject }) {
+  const b = p.budget;
+  const m = milestoneLine(p);
+  const warn = WARN_VERDICTS.includes(p.status_line?.verdict ?? "") && p.status_line?.verdict !== "needs_you";
+  return (
+    <Link className="hp-row" to={`/projects/${p.id}`}>
+      <span className="hp-state">{verdictBadge(p, needsYouCount(p))}</span>
+      <span className="hp-name">
+        <b>{p.name}</b>
+        <span className={warn ? "warn" : ""}>{p.status_line?.headline ?? p.status}</span>
       </span>
-      {/* Is it OK, and if not why — before what it is for. The goal is a
-          paragraph the reader wrote; the sentence is what they came to learn. */}
-      {p.status_line
-        ? <span className={`hcard-goal${WARN_VERDICTS.includes(p.status_line.verdict) ? " warn" : ""}`} title={p.goal}>
-            {p.status_line.sentence}</span>
-        : <span className="hcard-goal">{clip(p.goal, 160)}</span>}
-      <span className="hcard-stats">
-        <span><b>{p.runs_running}</b> running now</span>
-        <span><b>{fmtUnit(b.spent, b.unit)}</b> of {fmtUnit(b.cap, b.unit)}</span>
-        {needs > 0 ? <span className="warn"><b>{needs}</b> need{needs === 1 ? "s" : ""} you</span>
-          : <span className="help">nothing needs you</span>}
+      <span className="hp-path">
+        <PathDots nodes={rowPath(p)} />
+        <span className="help">{pathWords(p)}</span>
       </span>
-      <span className="meterline">
-        <i className={frac >= 1 ? "over" : frac >= b.warn_ratio ? "warn" : ""} style={{ width: `${Math.min(frac, 1) * 100}%` }} />
-        <b style={{ left: `${b.warn_ratio * 100}%` }} />
+      <span className="hp-next">
+        <b>{m.what}</b>
+        <span className={m.warn ? "warn" : "help"}>{m.when}</span>
       </span>
-      {p.status === "paused" && p.status_reason && <span className="help">Paused: {clip(p.status_reason, 120)}</span>}
+      <span className="hp-money">
+        <MoneyMeter compact spent={b.spent} cap={b.cap} wall={b.cap * b.hard_stop_multiple}
+          unit={b.unit} warnRatio={b.warn_ratio} />
+      </span>
     </Link>
   );
 }
@@ -61,11 +102,8 @@ export default function Home() {
   const desk = useDesk();
   const { data: brief } = usePoll(() => get<DeskBrief>("/observe/briefing"), 120000);
   const projects = desk.data?.projects ?? [];
-  const running = projects.filter((p) => p.status === "running");
-  const inFlight = running.reduce((n, p) => n + p.runs_running, 0);
   const soonest = soonestClock(desk.mine);
   const name = me?.display_name.split(" ")[0] ?? "";
-  const needingProjects = new Set(desk.mine.map((i) => i.project.id)).size;
   const briefs = (brief?.projects ?? []).filter((b) => !b.quiet);
 
   if (!desk.data) return desk.error ? <div className="error">{desk.error}</div> : <p className="subtitle">Loading…</p>;
@@ -79,84 +117,60 @@ export default function Home() {
           foot={<Link className="btnlink primary" to="/projects/new">Start a project</Link>}>
           {desk.data.finished > 0
             ? `All ${desk.data.finished} of your projects were completed or stopped — for a Deliver project that is the end state, not a fault.`
-            : "A project is a CEO agent, a team, a goal and a budget. Describe what you want done in a paragraph and yaaf drafts the rest; once it runs, this page tells you what it needs and what it did."}
+            : "Describe what you want done in a paragraph; yaaf drafts the team, the budget and the date. Once it runs, this page shows what it needs from you and how it is going."}
         </EmptyState>
       </>
     );
   }
+
+  const counts = stateCounts(projects, desk.mine.length);
+  const ordered = [...projects].sort((a, b) =>
+    (RANK[a.status_line?.verdict ?? ""] ?? 9) - (RANK[b.status_line?.verdict ?? ""] ?? 9)
+    || needsYouCount(b) - needsYouCount(a) || a.name.localeCompare(b.name));
+  const lastLooked = (brief?.projects ?? []).map((b) => b.since).sort()[0];
 
   return (
     <>
       <div className="pagehead">
         <div className="ph">
           <h1>{greeting()}{name ? `, ${name}` : ""}</h1>
-          <p className="lede">
-            {desk.mine.length > 0 ? (
-              <>
-                <b>{desk.mine.length} thing{desk.mine.length === 1 ? "" : "s"} need{desk.mine.length === 1 ? "s" : ""} you
-                {needingProjects > 1 ? ` across ${needingProjects} projects` : ""}.</b>
-                {soonest && <> The soonest decides itself {fmtSoon(new Date(soonest.at).toISOString())}.</>}
-              </>
-            ) : <b>Nothing needs a decision from you.</b>}{" "}
-            {running.length === 0
-              ? "No project is running right now."
-              : inFlight > 0
-                ? `${inFlight} run${inFlight === 1 ? " is" : "s are"} in flight across ${running.length} running project${running.length === 1 ? "" : "s"}.`
-                : `${running.length} project${running.length === 1 ? " is" : "s are"} running; nothing is in flight this minute.`}
+          <p className="lede hm-lede">
+            {counts.length ? counts.map((c, i) => (
+              <span key={c}>{i > 0 && <span className="hm-sep"> · </span>}{i === 0 && desk.mine.length ? <b>{c}</b> : c}</span>
+            )) : <b>Nothing needs you.</b>}
           </p>
         </div>
         <div className="pacts"><Link className="btnlink" to="/projects/new"><Icon name="plus" size={14} /> New project</Link></div>
       </div>
 
-      {me?.is_admin && <SetupChecklist hasProjects />}
-      <div className="home-grid">
-        <div className="ov-col">
-          {desk.mine.length > 0 && (
-            <section className="card ov-card">
-              <div className="card-h">
-                <h3>Needs you</h3>
-                <span className="count warn">{desk.mine.length}</span>
-                <span className="grow" />
-                <Link className="card-link" to="/inbox">Inbox <Icon name="arrow" size={13} /></Link>
-              </div>
-              <div className="needs">
-                {desk.mine.slice(0, 5).map((it) => (
-                  <div className="need" key={it.key}>
-                    <span className={`kind-ic k-${it.type}`}><Icon name={it.type === "approval" ? "check" : it.type === "ask" ? "help" : "flag"} size={15} /></span>
-                    <div className="grow">
-                      <Link className="need-t" to={`/inbox?item=${encodeURIComponent(it.key)}`}>{it.title}</Link>
-                      <div className="need-m"><span>{it.kind}</span><span>{it.project.name}</span>
-                        <span><Icon name="clock" size={12} /> {it.consequence}</span></div>
-                    </div>
-                    <div className="need-a"><ItemActions item={it} /></div>
-                  </div>
-                ))}
-                {desk.mine.length > 5 && (
-                  <Link className="more-row" to="/inbox">{desk.mine.length - 5} more in your Inbox</Link>
-                )}
-              </div>
-            </section>
-          )}
-          <div className="pgrid">
-            {projects.map((p) => <ProjectCard key={p.id} p={p} />)}
-            <Link className="hcard add" to="/projects/new">
-              <Icon name="plus" size={20} />
-              <b>Start a project</b>
-              <span className="help">Describe it in a paragraph, or fill in the form.</span>
-            </Link>
+      <div className={`hm-grid${desk.mine.length ? "" : " solo"}`}>
+        {desk.mine.length > 0 && (
+        <section className="hm-sec">
+          <div className="hm-h">
+            <h2>Needs you</h2>
+            <span className="help">{soonest ? `soonest decides itself ${fmtSoon(new Date(soonest.at).toISOString())}` : "soonest consequence first"}</span>
+            <span className="grow" />
+            <Link className="card-link" to="/inbox">Inbox <Icon name="arrow" size={13} /></Link>
           </div>
-        </div>
-        <aside className="ov-col">
-          <section className="card ov-card">
-            <div className="card-h">
-              <h3>While you were away</h3>
-              <span className="grow" />
-              <Link className="card-link" to="/inbox?tab=updates">Updates <Icon name="arrow" size={13} /></Link>
-            </div>
+          <div className="card hn">
+            {desk.mine.slice(0, 5).map((it) => <NeedRow key={it.key} it={it} />)}
+            {desk.mine.length > 5 && <Link className="more-row" to="/inbox">{desk.mine.length - 5} more in your Inbox</Link>}
+          </div>
+        </section>
+      )}
+
+        <aside className="hm-sec">
+          <div className="hm-h">
+            <h2>Since you looked</h2>
+            {lastLooked && <span className="help">{fmtSince(lastLooked)}</span>}
+            <span className="grow" />
+            <Link className="card-link" to="/inbox?tab=updates">Updates <Icon name="arrow" size={13} /></Link>
+          </div>
+          <div className="card hb">
             {!brief ? <p className="help">Loading…</p> : briefs.length === 0 ? (
-              <p className="help">Nothing happened since you last looked that changes anything.</p>
+              <p className="help">Nothing changed that needs a second look.</p>
             ) : (
-              <ul className="home-brief">
+              <ul>
                 {briefs.map((b) => (
                   <li key={b.project_id}>
                     <Link to={`/inbox?tab=updates&item=brief-${b.project_id}`}><b>{b.name}</b></Link>
@@ -165,20 +179,24 @@ export default function Home() {
                 ))}
               </ul>
             )}
-            <p className="help" style={{ marginTop: 10 }}>The same briefing reaches your email each morning if you set it to.</p>
-          </section>
-          <section className="card ov-card">
-            <div className="card-h"><h3>Finding your way</h3></div>
-            <ul className="tips">
-              <li><kbd>⌘K</kbd> search for any page, project or person</li>
-              <li><b>Inbox</b> holds everything that needs you — the badge counts only what decides itself if you leave it</li>
-              <li><b>Chat</b> is where you talk to a project's CEO, the one agent that speaks to you</li>
-              <li><b>Team</b> shows who is working on what, right now</li>
-              <li><kbd>?</kbd> lists every keyboard shortcut</li>
-            </ul>
-          </section>
+          </div>
+          <p className="help hb-foot">Written from the record — no agent wrote it, no run paid for it. <kbd>⌘K</kbd> finds anything; <kbd>?</kbd> lists shortcuts.</p>
         </aside>
       </div>
+
+      {me?.is_admin && <SetupChecklist hasProjects />}
+
+      <section className="hm-sec">
+          <div className="hm-h"><h2>Projects</h2><span className="grow" />
+            <Link className="card-link" to="/projects">All projects <Icon name="arrow" size={13} /></Link></div>
+          <div className="card hp" aria-label="Your projects">
+            <div className="hp-row hp-head" aria-hidden>
+              <span>State</span><span>Project</span><span>Outcomes</span><span>Next</span><span>Money · this month</span>
+            </div>
+            {ordered.map((p) => <ProjectRow key={p.id} p={p} />)}
+            <Link className="hp-add" to="/projects/new"><Icon name="plus" size={14} /> Start a project</Link>
+          </div>
+      </section>
     </>
   );
 }

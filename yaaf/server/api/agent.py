@@ -2571,7 +2571,8 @@ def _inbox_link(item_key: str) -> str:
 
 
 def _file_approval(session: Session, ctx: RunContext, kind: str, title: str,
-                   body: str, amount_usd: float | None = None) -> Approval:
+                   body: str, amount_usd: float | None = None,
+                   recommendation: str | None = None) -> Approval:
     """ONE way an agent puts something on the chairman's desk: same id, same
     expiry arithmetic, same default-deny clock, whichever lane filed it."""
     cons = effective(session, ctx.project.id)
@@ -2583,6 +2584,7 @@ def _file_approval(session: Session, ctx: RunContext, kind: str, title: str,
         title=title,
         body=body,
         amount_usd=amount_usd,
+        recommendation=(recommendation or "").strip() or None,
         expires_at=utcnow() + timedelta(days=cons.approval_timeout_days),
     )
     session.add(row)
@@ -2598,6 +2600,11 @@ class ApprovalRequest(BaseModel):
     # know to decide is what "no" costs — and it is the line a request written
     # from inside the work leaves out, because to its author it is obvious.
     if_declined: str = Field(min_length=10, max_length=2000)
+    # Required for the same reason, from the other side: what you recommend
+    # and the one reason, as the first line he reads. "Frame requests as
+    # recommendations you would defend" was advice in the response; a card
+    # that had to guess the recommendation from the case was the result.
+    recommendation: str = Field(min_length=10, max_length=300)
     amount_usd: float | None = None
 
 
@@ -2619,7 +2626,7 @@ def approval_request(
     row = _file_approval(
         session, ctx, body.kind, body.title,
         f"{body.body.strip()}\n\nWhat happens without it: {body.if_declined.strip()}",
-        body.amount_usd)
+        body.amount_usd, recommendation=body.recommendation)
     session.flush()
     # Told now, not two days before it decides itself. The expiry chase was the
     # first word he heard of a spend, legal or tool approval — five days into a
@@ -2628,7 +2635,7 @@ def approval_request(
     silence = "yes" if cons.approval_timeout_decision == "approve" else "no"
     chairman_notify(
         session, ctx.project, f"waiting on your decision: {body.title}",
-        f"{row.body[:4000]}\n\n"
+        f"Recommended: {row.recommendation}\n\n{row.body[:4000]}\n\n"
         f"If you have not decided by {chairman_time(row.expires_at, cons.timezone)}, "
         f"the answer is {silence}."
         + (f"\nCan you undo a yes? {undo}" if (undo := approval_undo(row.kind)) else "")
@@ -2762,6 +2769,18 @@ def ask_chairman(
         detail={"title": body.title, "answer_by": answer_by.isoformat(),
                 "default_action": row.default_action[:500]},
     ))
+    # Told now, the way an approval is: the first email he got about a question
+    # was the chase near its deadline, so its default could land before he had
+    # read it. It names the default and the moment, which is the whole of what
+    # makes ignoring it a choice.
+    chairman_notify(
+        session, ctx.project, f"a question from your CEO: {body.title}",
+        f"{case[:4000]}\n\n"
+        f"If you have not answered by {chairman_time(answer_by, cons.timezone)}: "
+        f"{row.default_action}\n{inbox_line(row.id)}",
+        kind="ask_opened", data={"ask_id": row.id, "answer_by": answer_by.isoformat()},
+        attention=Attention.ACTION,
+    )
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {
         "ask_id": row.id,
@@ -2982,7 +3001,7 @@ def data_write_request(
     chairman_notify(
         session, ctx.project,
         f"Approve a change to your {body.source} account?",
-        f"{row.title}\n\n{row.body}",
+        f"{row.title}\n\n{row.body}\n\n{inbox_line(row.id)}",
         kind="approval_requested", data={"approval": approval_row(row)},
         attention=Attention.ACTION,
     )
@@ -3540,7 +3559,7 @@ def brief_propose(
           f"(#/projects/{ctx.project.id}/activity/decisions)")
     chairman_notify(
         session, ctx.project, "Your CEO asks you to confirm the brief",
-        "\n".join(lines), kind="approval_requested",
+        "\n".join([*lines, "", inbox_line(approval.id)]), kind="approval_requested",
         data={"approval": approval_row(approval)}, attention=Attention.ACTION,
     )
     return {
@@ -3590,7 +3609,8 @@ def heads_up_send(
         "[Mark it noted](#/inbox)")
     chairman_notify(
         session, ctx.project, f"Heads-up: {row.title}",
-        f"{row.body}\n\nYou asked for this: {row.standing_order}",
+        f"{row.body}\n\nYou asked for this: {row.standing_order}"
+        + (f"\n\nMark it noted: {url}" if (url := inbox_url(f"hu-{row.id}", tab="ack")) else ""),
         kind="heads_up", data={"heads_up": heads.row(row)}, attention=Attention.ACTION,
     )
     return {

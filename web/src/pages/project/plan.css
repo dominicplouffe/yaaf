@@ -1,0 +1,67 @@
+/* Roadmap: one sentence, one chart, one quiet line. Everything else is a
+   click away — the stage board below, and "More numbers" at the foot. Tokens
+   only; 12px is the floor here as everywhere. */
+
+/* The status sentence. Said plainly when it needs nothing from you; boxed
+   (a .strip) when it hands you a lever. */
+.plan-status { margin: 0 0 var(--s4); }
+.plan-status.strip { display: block; margin: 0 0 var(--s4); padding: var(--s3) var(--s4); }
+.plan-lede { margin: 0; max-width: 82ch; font-size: var(--t-lead); line-height: 1.5; color: var(--ink-2); }
+.plan-lede b { color: var(--ink); font-weight: 600; }
+.plan-note { margin: var(--s2) 0 0; font-size: var(--t-small); color: var(--ink-2); }
+
+.plan-acts { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; margin-top: var(--s3); }
+/* The global input is a full-width form field; these sit in a row of levers. */
+.plan-acts input { width: auto; min-height: 32px; padding: 4px 10px; font-size: var(--t-small); }
+.plan-acts .plan-reason { min-width: 0; flex: 1 1 260px; max-width: 420px; }
+
+/* The one chart. Its heading is a label, not a second question: the sentence
+   above already asked and answered it. */
+.plan-chart { margin-bottom: var(--s3); }
+.plan-chart .charthead { margin-bottom: var(--s2); }
+.plan-chart .charthead h2 {
+  font: 600 var(--t-micro)/1.3 var(--font); letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.plan-chart .charthead:only-child { margin-bottom: 0; }
+
+/* At most three facts, quiet, under the chart. */
+.plan-facts {
+  display: flex; flex-wrap: wrap; margin: 0 0 var(--s5);
+  font-size: var(--t-small); color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.plan-facts span + span::before { content: "·"; margin: 0 var(--s2); }
+
+/* Stage headings: the sans, small and quiet — the display face is for the page's
+   one voice, and the badge carries the state in a word. */
+.plan-stage { margin-bottom: var(--s5); }
+.plan-stage-h {
+  display: flex; gap: var(--s2) var(--s3); align-items: center; flex-wrap: wrap;
+  margin: 0 0 var(--s2);
+  font: 600 var(--t-small)/1.3 var(--font); letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--ink-2);
+}
+.plan-stage-h > span { text-transform: none; letter-spacing: 0; }
+.plan-stage-h .help { font-weight: 400; }
+
+/* The demoted numbers. Collapsed by default; nothing in here is gone. */
+.plan-more { margin: var(--s6) 0 0; padding-top: var(--s3); border-top: 1px solid var(--border); }
+.plan-more > summary { width: fit-content; font-size: var(--t-small); color: var(--muted); }
+.plan-more > summary:hover { color: var(--ink); }
+.pm-list { display: flex; flex-direction: column; margin-top: var(--s2); }
+.pm-row {
+  display: grid; grid-template-columns: minmax(150px, 230px) minmax(64px, 96px) minmax(0, 1fr);
+  gap: var(--s3); align-items: baseline;
+  padding: var(--s2) 0; border-top: 1px solid var(--border); font-size: var(--t-small);
+}
+.pm-row:first-child { border-top: 0; }
+.pm-l { color: var(--muted); }
+.pm-v { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.pm-why { color: var(--ink-2); }
+
+@media (max-width: 620px) {
+  .plan-chart .charthead { flex-wrap: wrap; }
+  .pm-row { grid-template-columns: minmax(0, 1fr) auto; gap: var(--s1) var(--s3); }
+  .pm-why { grid-column: 1 / -1; }
+  .plan-lede { font-size: var(--t-body); }
+}

@@ -32,6 +32,7 @@ def approval_row(a: Approval, *, outcome: dict | None = None,
     return {
         "id": a.id, "kind": a.kind, "title": a.title, "body": a.body,
         "amount_usd": a.amount_usd, "status": a.status,
+        "recommendation": a.recommendation,
         "requested_by": a.requested_by_agent_id,
         "created_at": a.created_at.isoformat() if a.created_at else None,
         "expires_at": a.expires_at.isoformat() if a.expires_at else None,

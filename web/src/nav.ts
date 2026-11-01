@@ -61,25 +61,35 @@ export const SETTINGS_NAV = [
 export const SETTINGS_SECTIONS = SETTINGS_NAV.filter(
   (i): i is Extract<(typeof SETTINGS_NAV)[number], { key: string }> => "key" in i);
 
-// Every way of asking "what happened?", on one page. The five record views
-// were a utility tab; they lead with the narrative now, because "what did I
-// miss?" is the question this page is opened with, and the five tables are
-// where that sentence's evidence lives.
+// Every way of asking "what happened?", on one page, as one row of filters.
+// The narrative leads, because "what did I miss?" is the question this page
+// is opened with; the record and the tables after it are where that
+// sentence's evidence lives. It used to open on the record, whose newest
+// lines are mostly runs reporting themselves done — activity, not progress.
+//
+// Each subject is here once. The record had its own second row of kind tabs,
+// three of which (Messages, Runs, Proof) repeated a view in this list; the
+// kinds only the record has are a select inside it now.
 export const ACTIVITY_VIEWS = [
-  ["record", "Everything", "every line, filterable by person and kind, each saying on whose authority it happened"],
   ["summary", "What happened", "the briefing: what moved, what is worth your eye"],
-  ["runs", "Runs", "every model call, why it woke, what it cost"],
+  ["record", "Everything", "every line, filterable by person and kind, each saying on whose authority it happened"],
   ["decisions", "Decisions", "everything you decided, and everything that decided itself"],
+  ["runs", "Runs", "every model call, why it woke, what it cost"],
   // Evidence is a record and belongs with the records. On the Work tab it was
   // drawn as a queue with a verdict button on every row and a percentage of it
   // done, which is a demand rather than an account.
   ["evidence", "Proof", "every claim the agents made, and what the platform could check"],
-  // Before Messages: the inbox answers "who has not read what", which is the
-  // question the inbox banner raises and the channel log cannot answer.
-  ["inbox", "Agent inbox", "each agent's unread messages"],
+  // The channel log, then who has not read it. The inbox banner links
+  // straight to the inbox and its pill carries the unread count, so it does
+  // not need to stand first to be found.
   ["messages", "Messages", "every channel you can read but not speak in"],
+  ["inbox", "Agent inbox", "each agent's unread messages"],
   ["memory", "Memory", "what the project chose to remember"],
 ] as const;
+
+/** The view Details › Activity opens on — so the one a place called just
+    "Activity" means, in a pin, the sidebar and the palette's recent places. */
+export const ACTIVITY_DEFAULT: (typeof ACTIVITY_VIEWS)[number][0] = "summary";
 
 /** Every place inside a project the palette and the G-keys can go. */
 export const PROJECT_DESTINATIONS = [
@@ -110,7 +120,7 @@ export function placeOf(rel: string): { label: string; icon: IconName } | null {
   if (!tab) return { label: "Details", icon: "layout" };
   if (tab.path === "activity" && parts[2]) {
     const view = ACTIVITY_VIEWS.find(([p]) => p === parts[2]);
-    if (view && view[0] !== "record") return { label: view[1], icon: "history" };
+    if (view && view[0] !== ACTIVITY_DEFAULT) return { label: view[1], icon: "history" };
   }
   return { label: tab.label, icon: tab.icon };
 }

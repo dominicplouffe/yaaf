@@ -480,7 +480,7 @@ def test_an_owner_decision_is_refused_when_the_dial_already_granted_it(client):
         json={"kind": "owner_decision",
               "title": "Reset the delivery date, keep the scope",
               "body": "My recommendation on the at-risk commitment.",
-              "if_declined": "We miss the delivery date."},
+              "recommendation": "Approve it; the case says why.", "if_declined": "We miss the delivery date."},
         headers=bearer(token(project)))
     assert refused.status_code == 403
     error = refused.json()["error"]
@@ -499,7 +499,7 @@ def test_the_undelegable_kinds_still_reach_the_chairman_under_full_autonomy(clie
             "/agent/approvals",
             json={"kind": kind, "title": f"A {kind} decision",
                   "body": "Something the constitution does not let you delegate.",
-                  "if_declined": "It does not happen.",
+                  "recommendation": "Approve it; the case says why.", "if_declined": "It does not happen.",
                   **({"amount_usd": 900.0} if kind == "spend" else {})},
             headers=bearer(token(project)))
         assert response.status_code == 200, f"{kind}: {response.text}"
@@ -511,7 +511,7 @@ def test_under_the_supervised_dial_an_owner_decision_is_exactly_as_before(client
         "/agent/approvals",
         json={"kind": "owner_decision", "title": "A genuine direction question",
               "body": "This one really is the owner's.",
-              "if_declined": "We stay on the current plan."},
+              "recommendation": "Approve it; the case says why.", "if_declined": "We stay on the current plan."},
         headers=bearer(token(project)))
     assert response.status_code == 200, response.text
 

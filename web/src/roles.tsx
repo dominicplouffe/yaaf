@@ -3,7 +3,9 @@ import { CrewSummary, OrgView, RoleSummary, get } from "./api";
 import { envVarName } from "./datasource";
 import { modelLabel, parseRef } from "./providers";
 import { GrantOption, TeamSwitches } from "./grants";
+import { Why } from "./settingsCopy";
 import { clip, downloadCsv } from "./ui";
+import "./pages/roles-copy.css";
 
 /** Everything the chairman meets when hiring, in one place.
 
@@ -95,16 +97,49 @@ export function canDo(tools: string[]): string[] {
 
 const SECRET_WORDS: Record<string, string> = {
   github: "a GitHub token",
-  "market-data": "a market-data key",
+  "market-data": "a market data key",
   wordpress: "a WordPress login",
   "news-api": "a news API key",
+};
+
+/** The same need as a chip says it: no article, no raw scope name. */
+const SECRET_SHORT: Record<string, string> = {
+  github: "GitHub token",
+  "market-data": "Market data key",
+  wordpress: "WordPress login",
+  "news-api": "News API key",
 };
 
 /** What a role cannot work without. The API has always sent this; the picker
     never showed it, so the first sign of a missing key was a run that failed
     for a role the chairman had already hired. */
-export function needsOf(scopes: string[]): { scope: string; words: string }[] {
-  return (scopes ?? []).map((s) => ({ scope: s, words: SECRET_WORDS[s] ?? `a ${s} key` }));
+export function needsOf(scopes: string[]):
+  { scope: string; words: string; short: string; service: string }[] {
+  return (scopes ?? []).map((s) => {
+    const plain = s.replace(/[-_]+/g, " ");
+    const short = SECRET_SHORT[s] ?? `${plain.charAt(0).toUpperCase()}${plain.slice(1)} key`;
+    return {
+      scope: s,
+      words: SECRET_WORDS[s] ?? `a ${plain} key`,
+      short,
+      // What it is for, under a column already headed "Needs".
+      service: short.replace(/ (key|token|login)$/, ""),
+    };
+  });
+}
+
+const EFFORT_WORDS: Record<string, string> = { xhigh: "extra high" };
+
+/** An effort level as words: `xhigh` is a key, "extra high" is a level. */
+export function effortWord(level: string | null | undefined): string {
+  return level ? EFFORT_WORDS[level] ?? level : "default";
+}
+
+/** A role's purpose in one line: its first sentence, cut short if it runs on.
+    The whole description stays one click away, on the role itself. */
+export function purposeOf(description: string, max = 72): string {
+  const first = (description ?? "").split(/(?<=[.!?])\s/)[0] ?? "";
+  return clip(first.replace(/[.:;]$/, ""), max);
 }
 
 // ── who's missing: rules over the roster, never a model call ─────────────────
@@ -371,7 +406,7 @@ export function HirePanel({
           <div style={{ flex: 1, minWidth: 220 }}>
             <strong style={{ fontSize: 17 }}>{title ?? "Who's on this team?"}</strong>
             <p className="help" style={{ margin: "3px 0 0" }}>
-              Hire from the role library. You can change any of it afterwards.
+              You can change any of it later.
             </p>
           </div>
           <button type="button" onClick={onClose}>Done</button>
@@ -401,7 +436,7 @@ export function HirePanel({
             {gaps.map((gap) => (
               <div className="card gap" key={gap.key}>
                 <strong>{gap.sentence}</strong>
-                <p className="help" style={{ margin: "5px 0 9px" }}>{gap.because}</p>
+                <Why className="gap-why">{gap.because}</Why>
                 <div className="pill-row">
                   {gap.suggest
                     .map((s) => roles.find((r) => r.slug === s))
@@ -431,7 +466,7 @@ export function HirePanel({
                     ? `This install's library has no ${crew.missing_role_slugs.join(", ")}`
                     : undefined}>
                   <span className="cn">{crew.name}</span>
-                  <span className="co">{crew.outcome}</span>
+                  <span className="co" title={crew.outcome}>{purposeOf(crew.outcome, 90)}</span>
                   <span className="cr">
                     {crew.teams.map((t, i) => (
                       <span className="chip" key={i}>
@@ -517,13 +552,13 @@ export function HirePanel({
                             <strong>{r.name}</strong>
                             <span className="chip">{depthOf(r.model, r.effort).dollars}</span>
                           </span>
-                          <span className="rd">{clip(r.description, 120)}</span>
+                          <span className="rd">{purposeOf(r.description, 90)}</span>
                           <span className="pill-row">
                             {(r.domains ?? []).map((d) => (
                               <span className="chip" key={d}>{domainShort(d)}</span>
                             ))}
                             {needsOf(r.secret_scopes ?? []).map((n) => (
-                              <span className="chip warn" key={n.scope}>{n.scope}</span>
+                              <span className="chip warn" key={n.scope}>{n.short}</span>
                             ))}
                           </span>
                         </button>
@@ -546,10 +581,9 @@ export function HirePanel({
                             onClick={(e) => { e.stopPropagation(); setDetail(r.slug); }}>
                             {r.name}
                           </button>
-                          <span className="rs">{r.slug}</span>
                           {on && <span className="rs on-project">on this project · {on}</span>}
                         </span>
-                        <span className="rd">{clip(r.description, 132)}</span>
+                        <span className="rd" title={r.description}>{purposeOf(r.description, 90)}</span>
                         <span className="rw">
                           {(r.domains ?? []).map((d) => (
                             <span className="chip" key={d} title={domainLabel(d)}>
@@ -565,7 +599,7 @@ export function HirePanel({
                             ? <span className="rm dash">—</span>
                             : needsOf(r.secret_scopes ?? []).map((n) => (
                               <span className="chip warn" key={n.scope}
-                                title={`Needs ${n.words}`}>{n.scope}</span>
+                                title={`Needs ${n.words}`}>{n.service}</span>
                             ))}
                         </span>
                       </div>
@@ -622,7 +656,6 @@ export function HirePanel({
                 <strong style={{ fontSize: 15 }}>{detailRole.name}</strong>
                 {detailRole.is_ceo_role && <span className="badge accent">CEO</span>}
               </div>
-              <div className="rs">{detailRole.slug}</div>
               <div className="dl">What they do</div>
               <div className="dv">{detailRole.description || "No description yet."}</div>
               <div className="dl">Depth</div>
@@ -631,7 +664,7 @@ export function HirePanel({
                 <span className="chip">{depthOf(detailRole.model, detailRole.effort).dollars}</span>
                 <div className="help" style={{ marginTop: 3 }}>
                   {detailRole.model ? modelLabel(detailRole.model) : "default model"}
-                  {" · "}{detailRole.effort ?? "default"} effort
+                  {" · "}{effortWord(detailRole.effort)} effort
                 </div>
               </div>
               <div className="dl">Can do</div>

@@ -235,11 +235,22 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
     for row in filtered.get("projects") or []:
         for item in row.get("pending_approvals") or []:
             item["title"] = _wrapped(item.get("title"), "approval")
+            if item.get("recommendation"):
+                item["recommendation"] = _wrapped(item["recommendation"], "approval")
         for item in row.get("pending_asks") or []:
             for field in ("title", "body", "default_action", "recommendation"):
                 if item.get(field):
                     item[field] = _wrapped(item[field], "ask")
             item["options"] = [_wrapped(o, "ask_option") for o in item.get("options") or []]
+        # A requirement's statement and its owner-facing name are the CEO's
+        # words too, on the proposed-scope items and on the path.
+        for item in row.get("scope_items") or []:
+            for field in ("statement", "name"):
+                if item.get(field):
+                    item[field] = _wrapped(item[field], "requirement")
+        for node in row.get("path") or []:
+            if node.get("name"):
+                node["name"] = _wrapped(node["name"], "requirement")
     also = _also_yours(session, reachable)
     summary = portfolio_summary(filtered.get("projects") or [], also)
     # Both added AFTER the trim. The summary is what must survive it — a long

@@ -1,0 +1,74 @@
+/* The Signal vocabulary (ui/signal.tsx). Every colour is a token from the top
+   of styles.css; every state carries a word or a shape beside its colour. */
+
+/* A state chip that needs the reader is the one filled chip: the accent is
+   reserved for "this is yours to press". */
+.badge.you { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+
+/* ── money ── */
+.sg-meter { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sg-bar { position: relative; height: 8px; border-radius: 4px; background: var(--sunken); box-shadow: inset 0 0 0 1px var(--border); }
+.sg-meter.compact .sg-bar { height: 6px; }
+.sg-fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--ink-2); min-width: 2px; }
+.sg-fill.near { background: var(--warning); }
+.sg-fill.over { background: var(--serious); }
+.sg-fill.stop { background: var(--critical); }
+.sg-plan { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink); border-radius: 1px; }
+.sg-wall { position: absolute; top: -3px; bottom: -3px; right: 0; width: 3px; background: var(--critical); border-radius: 1px; }
+.sg-labels { position: relative; height: 18px; font-size: var(--t-micro); color: var(--muted); font-variant-numeric: tabular-nums; }
+.sg-labels > span { position: absolute; top: 0; white-space: nowrap; }
+.sg-labels > span:first-child { left: 0; }
+.sg-labels .sg-at { transform: translateX(-50%); }
+.sg-labels .sg-end { right: 0; color: var(--critical); font-weight: 600; }
+.sg-cap { font-size: var(--t-micro); color: var(--muted); font-variant-numeric: tabular-nums; }
+.sg-cap b { color: var(--ink); font-weight: 600; }
+
+/* ── the path ── */
+.sg-dots { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.sg-gap { width: 6px; }
+.sg-node { display: inline-block; width: 11px; height: 11px; border-radius: 50%; flex: none; box-sizing: border-box; }
+.sg-node.md { width: 14px; height: 14px; }
+.sg-node.verified { background: var(--good); }
+.sg-node.work { background: conic-gradient(var(--accent) 0 50%, transparent 50% 100%); box-shadow: inset 0 0 0 2px var(--accent); }
+.sg-node.you { box-shadow: inset 0 0 0 2px var(--accent); background: radial-gradient(circle, var(--accent) 0 30%, transparent 32%); }
+.sg-node.todo { box-shadow: inset 0 0 0 2px var(--border-strong); }
+.sg-node.failed { background: var(--critical); }
+
+/* ── trust ── */
+.sg-seal { display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-micro); font-weight: 600;
+  padding: 2px 8px 2px 6px; border-radius: var(--radius-sm); white-space: nowrap; }
+.sg-seal.verified { color: var(--good); background: rgba(var(--good-rgb), 0.12); }
+.sg-seal.judged { color: var(--accent); background: rgba(var(--accent-rgb), 0.1); }
+.sg-seal.word { color: var(--ink-2); background: var(--surface-2); }
+.sg-seal-x { font-weight: 500; }
+
+/* ── consequences ── */
+.sg-facts { display: flex; flex-wrap: wrap; gap: 6px; }
+.sg-fact { display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-small); color: var(--ink-2);
+  border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius-sm); padding: 2px 8px;
+  font-variant-numeric: tabular-nums; }
+.sg-fact b { color: var(--ink); font-weight: 600; }
+.sg-fact.warn { color: var(--warning); border-color: rgba(var(--warning-rgb), 0.35); background: rgba(var(--warning-rgb), 0.1); }
+.sg-fact.warn b { color: var(--warning); }
+.sg-rec { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: rgba(var(--accent-rgb), 0.08); color: var(--ink); font-size: var(--t-body); }
+.sg-rec > svg { color: var(--accent); margin-top: 3px; flex: none; }
+.sg-rec b { color: var(--accent); font-weight: 600; }
+
+/* ── decisions ── */
+.ib-doc .sg-rec, .ib-doc .sg-facts { margin-top: 14px; }
+.case-more { margin-top: 14px; }
+.case-more > summary { cursor: pointer; color: var(--accent); font-size: var(--t-small); font-weight: 600; list-style: none; }
+.case-more > summary::-webkit-details-marker { display: none; }
+.case-more > summary::after { content: " ▾"; }
+.case-more[open] > summary::after { content: " ▴"; }
+.case-more .case { margin-top: 10px; }
+.scope-accept { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; width: 100%; }
+.scope-accept ul { list-style: none; margin: 0; padding: 0; width: 100%; border: 1px solid var(--border); border-radius: var(--radius); }
+.scope-accept li + li { border-top: 1px solid var(--border); }
+.scope-accept label { display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer; font-size: var(--t-small); }
+.scope-accept .warn { color: var(--warning); }
+.ib-acts .scope-accept { flex-basis: 100%; }
+.scope-accept input[type="checkbox"] { width: 16px; height: 16px; flex: none; margin: 0; padding: 0; }
+.scope-accept label > .grow { flex: 1; min-width: 0; }
+.scope-accept label > .help, .scope-accept label > .mono { flex: none; white-space: nowrap; }

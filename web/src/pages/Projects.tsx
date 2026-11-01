@@ -1,28 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { plainStatus } from "../ui/kit";
 import { Link, useSearchParams } from "react-router-dom";
 import { DeskProject, DeskView, get } from "../api";
 import { usePoll } from "../hooks";
 import { AsOf, Skeleton, clip, fmtAgo, fmtUnit } from "../ui";
 import { needsYouCount, WARN_VERDICTS } from "../desk";
 
-export function statusBadge(status: string, unpaid = false) {
-  // A project that cannot pay for a run is not running, whatever its row says:
-  // its first run dies on the missing key. Say so where the status is read.
-  if (unpaid && (status === "running" || status === "draft")) {
-    return <span className="badge warn" title="No billing credential: agents cannot run">
-      {plainStatus(status)} · no key</span>;
-  }
-  const cls =
-    status === "running"
-      ? "good"
-      : status === "paused"
-        ? "warn"
-        : status === "stopped"
-          ? "critical"
-          : "accent";
-  return <span className={`badge ${cls}`}>{plainStatus(status)}</span>;
-}
+// The chips moved to ui/signal so every screen draws a project's state alike.
+import { milestoneLine, MoneyMeter, PathDots, pathWords, rowPath, verdictBadge } from "../ui/signal";
+export { statusBadge, verdictBadge } from "../ui/signal";
 
 /** A project nobody can act on again. Terminal projects are the archive: they
     are kept, they are readable, and they are not what this page opens on. */
@@ -463,7 +448,7 @@ function UnreadChip({ p }: { p: DeskProject }) {
 /** Goal text is clipped to its opening — some are memo-length, and a card that
     scrolls is a card nobody compares against its neighbour. */
 function ProjectCard({ p }: { p: DeskProject }) {
-  const { terminal, judgment } = vitals(p);
+  const { terminal } = vitals(p);
 
   return (
     <div className={`card pcard${terminal ? " done" : ""}`}>
@@ -471,8 +456,10 @@ function ProjectCard({ p }: { p: DeskProject }) {
         <Link to={`/projects/${p.id}`}>
           <strong style={{ fontSize: 15 }}>{p.name}</strong>
         </Link>
-        {statusBadge(p.status, p.unpaid)}
-        <WaitingChip p={p} />
+        {/* The chip carries the count when it says "Needs you"; when a higher
+            rung wins (late, blocked…) the count still has to be said. */}
+        {verdictBadge(p, needsYouCount(p))}
+        {p.status_line?.verdict !== "needs_you" && <WaitingChip p={p} />}
         <UnreadChip p={p} />
         <div className="spacer" />
         <span className="mono help">{p.slug}</span>
@@ -493,24 +480,20 @@ function ProjectCard({ p }: { p: DeskProject }) {
         {clip(p.goal, 220)}
       </p>
 
-      <div className="pcard-vitals">
-        <span>
-          <b>{judgment === null ? "—" : `${judgment}%`}</b> CEO judgment
-        </span>
-        <span>
-          <b>{p.evidence_7d}</b> evidence · 7d
-        </span>
-        <span>
-          <b>{p.open_tasks}</b> of {p.queue_ceiling} jobs open
-        </span>
-        <BudgetBit p={p} />
-        <span className="help">active {fmtAgo(p.last_run_at)}</span>
+      {/* Outcomes, the next date the platform holds, and money against the
+          plan and the wall — the same three facts as Home's table. The
+          internal ratios this showed (CEO judgment, evidence in 7 days, jobs
+          open) are on the project's Details pages, where they are explained. */}
+      <div className="pcard-vitals pcard-signal">
+        <span className="pcard-v"><PathDots nodes={rowPath(p)} /><span className="help">{pathWords(p)}</span></span>
+        <span className="pcard-v"><b>{milestoneLine(p).what}</b><span className={milestoneLine(p).warn ? "warn" : "help"}>{milestoneLine(p).when}</span></span>
+        <span className="pcard-v pcard-m"><MoneyMeter compact spent={p.budget.spent} cap={p.budget.cap}
+          wall={p.budget.cap * p.budget.hard_stop_multiple} unit={p.budget.unit} warnRatio={p.budget.warn_ratio} /></span>
       </div>
-
       <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 12.5 }}>
-        <Link to={`/projects/${p.id}`}>Overview →</Link>
+        <span className="help">active {fmtAgo(p.last_run_at)}</span>
+        <span className="grow" />
         <Link to={`/projects/${p.id}/chat`}>Chat →</Link>
-        <Link to={`/projects/${p.id}/details/tasks`}>Tasks →</Link>
         <Link to={`/projects/${p.id}/settings`}>Settings →</Link>
       </div>
     </div>
@@ -523,7 +506,7 @@ function ProjectRow({ p }: { p: DeskProject }) {
   const { terminal } = vitals(p);
   return (
     <div className={`wrow prow${terminal ? " done" : ""}`}>
-      {statusBadge(p.status, p.unpaid)}
+      {verdictBadge(p, needsYouCount(p))}
       <div className="grow">
         <Link to={`/projects/${p.id}`}><strong>{p.name}</strong></Link>{" "}
         <span className="mono help">{p.slug}</span>

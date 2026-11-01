@@ -30,7 +30,9 @@ reachable by curl. What was missing was a decision this module can represent:
 
 from __future__ import annotations
 
-from sqlalchemy import or_, select
+from datetime import UTC, datetime
+
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
@@ -58,6 +60,7 @@ from yaaf.core.models import (
 )
 from yaaf.server import policy
 from yaaf.server.policy import Refusal
+from yaaf.server.rows import chairman_time
 
 #: Seats whose job is to read somebody else's work and disagree with it. Same
 #: category `admin._refuse_without_review_seat` and `founder.roster_problems`
@@ -327,6 +330,37 @@ def notify_ceo(session: Session, project: Project, body: str) -> None:
 # ── the idle-seat arithmetic ────────────────────────────────────────────────────
 
 
+def _aware(at: datetime | None) -> datetime | None:
+    return at if at is None or at.tzinfo else at.replace(tzinfo=UTC)
+
+
+def idle_window_start(session: Session, project: Project, agent_ids: list[str],
+                      since: datetime) -> datetime:
+    """When an idle seat's window really starts.
+
+    The look-back is `staffing_review_days`, but a window cannot reach past the
+    project's birth or the seat's first run: "6 runs in 14 days" was said of a
+    project created five minutes earlier, and of a role hired yesterday into an
+    old one. The flag the CEO reads and the line the chairman reads both say
+    the window from here, so they cannot tell the two different stories."""
+    first_run = _aware(session.execute(
+        select(func.min(Run.created_at)).where(
+            Run.project_id == project.id, Run.agent_id.in_(agent_ids))
+    ).scalar_one()) if agent_ids else None
+    return max(t for t in (_aware(since), _aware(project.created_at), first_run)
+               if t is not None)
+
+
+def idle_window_words(start: datetime, since: datetime, days: int,
+                      timezone: str | None) -> str:
+    """"in 14 days" when the whole look-back has passed, else "since Thu 16
+    Oct" — the date half of `chairman_time`, like every other date he reads."""
+    if start <= _aware(since):
+        return f"in {days} day{'' if days == 1 else 's'}"
+    return f"since {chairman_time(start, timezone).split(',', 1)[0]}"
+
+
+
 def idle_seats(session: Session, project: Project, cons: ConstitutionDoc,
                since) -> list[dict]:
     """Seats that spent runs in the window and closed no work in it.
@@ -397,10 +431,14 @@ def idle_seats(session: Session, project: Project, cons: ConstitutionDoc,
         ).scalars().first()
         if reviewed:
             continue
+        start = idle_window_start(session, project, ids_, since)
         out.append({
             "team_id": team.id, "team": team.name,
             "role_slug": team_role_slug(session, team),
             "runs": len(runs), "days": cons.staffing_review_days,
+            "since": start.isoformat(),
+            "window": idle_window_words(start, since, cons.staffing_review_days,
+                                        cons.timezone),
             "agents": [a.name for a in members],
         })
     return out

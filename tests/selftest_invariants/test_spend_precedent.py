@@ -35,7 +35,7 @@ def _file(client, project: dict, usd: float) -> str:
     response = client.post("/agent/approvals", headers=bearer(tok), json={
         "kind": "spend", "title": f"Pull the ${usd:g} dataset",
         "body": "Recommended: it is the input to this week's model.",
-        "if_declined": "The model runs on last week's data.", "amount_usd": usd})
+        "recommendation": "Approve it; the case says why.", "if_declined": "The model runs on last week's data.", "amount_usd": usd})
     assert response.status_code == 200, response.text
     return response.json()["id"]
 

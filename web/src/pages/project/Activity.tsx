@@ -6,7 +6,7 @@ import { usePoll } from "../../hooks";
 import { Skeleton } from "../../ui";
 import { Seg } from "../../ui/kit";
 import type { ProjectCtx } from "../../projectCtx";
-import { ACTIVITY_VIEWS } from "../../nav";
+import { ACTIVITY_DEFAULT, ACTIVITY_VIEWS } from "../../nav";
 import Runs from "./Runs";
 import AgentInbox from "./AgentInbox";
 import Channels from "./Channels";
@@ -71,23 +71,48 @@ const KIND_LABEL: Record<RecordLine["kind"], string> = {
   proof: "Proof",
 };
 
-const FILTERS: { key: "all" | RecordLine["kind"]; label: string }[] = [
-  { key: "all", label: "Everything" },
-  { key: "message", label: "Messages" },
-  { key: "run", label: "Runs" },
+type Show = "all" | RecordLine["kind"];
+
+/** The record's one kind filter: every line, or a kind that only the record
+    can pick out. Messages, runs and proof are not offered — each is a view of
+    its own in the row above, and offering them here too was a second row of
+    the same filters. */
+const SHOW: { key: Show; label: string }[] = [
+  { key: "all", label: "All kinds" },
   { key: "yours", label: "Your decisions" },
   { key: "ceo", label: "What the CEO decided" },
   { key: "rule", label: "By your rules" },
-  { key: "proof", label: "Proof" },
 ];
+
+/** Where an address that still asks the record for one of those kinds lands:
+    on that kind's own view, one person's runs staying one person's runs. */
+function ownView(kind: string | null, person: string): string | null {
+  switch (kind) {
+    case "run": return `runs${person ? `?agent=${encodeURIComponent(person)}` : ""}`;
+    case "message": return "messages";
+    case "proof": return "evidence";
+    default: return null;
+  }
+}
+
+/** The record's address, before the record: a kind with a view of its own
+    goes there, and anything else is the record's to read. */
+function RecordRoute({ ctx }: { ctx: ProjectCtx }) {
+  const [params] = useSearchParams();
+  const own = ownView(params.get("kind"), params.get("person") ?? "");
+  if (own) return <Navigate to={`/projects/${ctx.projectId}/details/activity/${own}`} replace />;
+  return <Record ctx={ctx} />;
+}
 
 /** The record: every line, newest first, filtered by person and kind — and
     each action saying on whose authority it happened. Filters live in the
-    address, so "Ada's runs this week" is a link you can send. */
+    address, so "Ada's decisions this month" is a link you can send. */
 function Record({ ctx }: { ctx: ProjectCtx }) {
   const { projectId } = ctx;
   const [params, setParams] = useSearchParams();
-  const kind = (params.get("kind") ?? "all") as "all" | RecordLine["kind"];
+  // An address naming a kind this select does not offer reads as every kind,
+  // rather than as a refusal from the server.
+  const kind = SHOW.find((s) => s.key === params.get("kind"))?.key ?? "all";
   const person = params.get("person") ?? "";
   const days = params.get("days") ?? "7";
   const query = new URLSearchParams({ kind, days, limit: "500" });
@@ -108,15 +133,12 @@ function Record({ ctx }: { ctx: ProjectCtx }) {
   return (
     <div className="card record" style={{ marginTop: "var(--s3)" }}>
       <div className="record-bar">
-        <div className="seg" role="group" aria-label="Show">
-          {FILTERS.map((f) => (
-            <button key={f.key} type="button" aria-pressed={kind === f.key}
-              className={kind === f.key ? "on" : ""} onClick={() => set("kind", f.key, "all")}>
-              {f.label}
-            </button>
-          ))}
-        </div>
-        <span className="grow" />
+        <label className="record-pick">
+          <span className="sr-only">Show</span>
+          <select value={kind} onChange={(e) => set("kind", e.target.value, "all")}>
+            {SHOW.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+          </select>
+        </label>
         <label className="record-pick">
           <span className="sr-only">Person</span>
           <select value={person} onChange={(e) => set("person", e.target.value, "")}>
@@ -133,13 +155,14 @@ function Record({ ctx }: { ctx: ProjectCtx }) {
             <option value="90">90 days</option>
           </select>
         </label>
+        <span className="grow" />
         <a className="btnlink small" href={`/observe/projects/${projectId}/record?${csv}`} download>
           Export CSV
         </a>
       </div>
       {error && <div className="error">{error}</div>}
       {!data ? <Skeleton rows={6} /> : data.lines.length === 0 ? (
-        <p className="help">Nothing of that kind{person ? " by that person" : ""} in this window.</p>
+        <p className="help">Nothing{kind === "all" ? "" : " of that kind"}{person ? " by that person" : ""} in this window.</p>
       ) : (
         <div className="record-lines">
           {data.lines.map((line, i) => {
@@ -174,11 +197,16 @@ function Record({ ctx }: { ctx: ProjectCtx }) {
   );
 }
 
+/** Details › Activity: one row of views, opening on what happened. Every
+    address any of them ever had still lands — an old record link naming a
+    kind that has a view of its own goes to that view, and anything this page
+    does not know opens the default. */
 export default function Activity({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, dash } = ctx;
+  const home = `/projects/${projectId}/details/activity/${ACTIVITY_DEFAULT}`;
   return (
     <>
-      <div className="pills" style={{ marginTop: 4 }}>
+      <nav className="pills" aria-label="Activity" style={{ marginTop: 4 }}>
         {ACTIVITY_VIEWS.map(([path, label, means]) => (
           <NavLink
             key={path}
@@ -194,18 +222,19 @@ export default function Activity({ ctx }: { ctx: ProjectCtx }) {
             )}
           </NavLink>
         ))}
-      </div>
+      </nav>
 
       <Routes>
-        <Route index element={<Navigate to="record" replace />} />
-        <Route path="record" element={<Record ctx={ctx} />} />
+        <Route index element={<Navigate to={home} replace />} />
         <Route path="summary" element={<Summary ctx={ctx} />} />
-        <Route path="runs" element={<Runs projectId={projectId} dash={dash} />} />
-        <Route path="inbox" element={<AgentInbox ctx={ctx} />} />
-        <Route path="messages" element={<Channels projectId={projectId} />} />
-        <Route path="memory" element={<Memory projectId={projectId} ctx={ctx} />} />
+        <Route path="record" element={<RecordRoute ctx={ctx} />} />
         <Route path="decisions" element={<Decisions ctx={ctx} />} />
+        <Route path="runs" element={<Runs projectId={projectId} dash={dash} />} />
         <Route path="evidence" element={<Evidence projectId={projectId} />} />
+        <Route path="messages" element={<Channels projectId={projectId} />} />
+        <Route path="inbox" element={<AgentInbox ctx={ctx} />} />
+        <Route path="memory" element={<Memory projectId={projectId} ctx={ctx} />} />
+        <Route path="*" element={<Navigate to={home} replace />} />
       </Routes>
     </>
   );

@@ -395,8 +395,8 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
             who = ", ".join(seat["agents"])
             if open_flag(
                 session, project, FlagKind.SEAT_IDLE,
-                f"{seat['team']} ({who}) has spent {seat['runs']} runs in "
-                f"{seat['days']} days and closed no work in that time. A seat that is "
+                f"{seat['team']} ({who}) has spent {seat['runs']} runs "
+                f"{seat['window']} and closed no work in that time. A seat that is "
                 f"awake is not free: it reads its channels, it buys inbox runs, and it "
                 f"counts as a mover in your capacity forecast. If that role's job is "
                 f"finished, stand it down. If it is not, say what it is waiting for "
@@ -404,7 +404,7 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
                 f"itself next time.",
                 arithmetic={"team": seat["team"], "role_slug": seat["role_slug"],
                             "runs": seat["runs"], "tasks_closed": 0,
-                            "window_days": seat["days"]},
+                            "window_days": seat["days"], "window_starts": seat["since"]},
                 subject_id=team.id,
             ):
                 opened += 1

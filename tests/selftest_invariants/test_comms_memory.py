@@ -338,7 +338,7 @@ def test_spend_needs_approval_above_threshold(client):
         json={"kind": "spend", "title": "Ad buy on ExampleAds",
               "body": "I recommend spending $250 on X because Y; say no and I will work "
                       "around it.",
-              "if_declined": "No ads this month; we grow on the mailing list alone.",
+              "recommendation": "Approve it; the case says why.", "if_declined": "No ads this month; we grow on the mailing list alone.",
               "amount_usd": 250},
         headers=bearer(ceo_token),
     ).json()

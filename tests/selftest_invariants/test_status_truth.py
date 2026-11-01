@@ -72,7 +72,7 @@ def test_the_health_card_reads_a_question_s_deadline_as_a_time_not_a_timestamp(c
     assert _ask(client, project).status_code == 200
     health = client.get(f"/observe/projects/{project['id']}/health", headers=ADMIN).json()
     text = str(health)
-    assert "question(s) from your CEO waiting on you" in text
+    assert re.search(r"questions? from your CEO waiting on you", text), text[:600]
     assert not re.search(r"stopping at \d{4}-\d{2}-\d{2}T", text)
     assert re.search(r"stopping (?:\w{3} )?\d{1,2} \w{3}|stopping \w{3}", text), text[:600]
 

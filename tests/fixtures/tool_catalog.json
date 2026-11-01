@@ -44,7 +44,7 @@
     "name": "accounts_list"
   },
   {
-    "description": "Put a decision to the chairman as a recommendation you would defend \u2014 never an open question. kind: spend|legal|owner_decision|tool_request. Unanswered approvals expire to DENIED. An approval BLOCKS on a human, so it is the wrong tool for anything the constitution already put in your hands: where the authority dial grants you the plan, the scope and the date, an owner_decision is refused and names the verb to use instead. To want his opinion without blocking, use ask_chairman and keep going. He decides it cold, often from an email: title says what he is approving in plain words; body is what it is, why now, and the number that justifies it, with everything named by what it is rather than by an ID; if_declined is what happens if he says no or lets it expire \u2014 required, because on most projects that is the default.",
+    "description": "Put a decision to the chairman as a recommendation you would defend \u2014 never an open question. kind: spend|legal|owner_decision|tool_request. Unanswered approvals expire to DENIED. An approval BLOCKS on a human, so it is the wrong tool for anything the constitution already put in your hands: where the authority dial grants you the plan, the scope and the date, an owner_decision is refused and names the verb to use instead. To want his opinion without blocking, use ask_chairman and keep going. He decides it cold, often from an email: title says what he is approving in plain words; recommendation is one sentence he reads first \u2014 what you recommend and the single reason (required); body is what it is, why now, and the number that justifies it, with everything named by what it is rather than by an ID; if_declined is what happens if he says no or lets it expire \u2014 required, because on most projects that is the default.",
     "input_schema": {
       "properties": {
         "amount_usd": {
@@ -59,6 +59,9 @@
         "kind": {
           "type": "string"
         },
+        "recommendation": {
+          "type": "string"
+        },
         "title": {
           "type": "string"
         }
@@ -66,6 +69,7 @@
       "required": [
         "kind",
         "title",
+        "recommendation",
         "body",
         "if_declined"
       ],

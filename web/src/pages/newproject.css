@@ -1,0 +1,56 @@
+/* The new-project screens: the start page, the form and the Founder.
+
+   Every card on these screens used to open with a paragraph, so a chairman
+   choosing between two cards read four. A card now carries its name and one
+   line; the paragraph sits under "Why?" beside it, one click away. */
+
+/* The fold itself is the shared one (settingsCopy's Why); here it is only
+   placed, under the line it explains rather than tucked into a lede. */
+.s-why.np-why { margin: var(--s1) 0 0; }
+
+/* A label and its "Why?" on one line, when there is room. */
+.np-head { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; }
+.np-head > label.field { margin-bottom: 0; }
+.np-head > .np-why { margin: 0; }
+
+/* Pick-one cards: a name and one line. */
+.np-cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--s2); margin-top: 6px;
+}
+button.np-card {
+  gap: var(--s1); padding: 10px 12px; border-radius: 8px; font-weight: 400;
+  background: var(--surface); border: 1px solid var(--border); color: var(--ink);
+}
+button.np-card.on { background: rgba(var(--accent-rgb), 0.09); border-color: var(--accent); }
+.np-card-t { font-weight: 650; font-size: var(--t-body); }
+.np-card-h { font-size: var(--t-small); color: var(--accent); font-variant-numeric: tabular-nums; }
+.np-card-l { font-size: var(--t-small); color: var(--ink-2); }
+
+.np-line { margin: var(--s2) 0 0; font-size: var(--t-small); color: var(--ink-2); }
+.np-line + .np-why { margin-top: 2px; }
+
+/* The one note on the roster step: the quality card wants a second reader. */
+.np-note {
+  margin: 10px 0; padding: 10px 12px; border-radius: 8px; font-size: var(--t-small);
+  border: 1px solid var(--warning); background: rgba(var(--warning-rgb), 0.09);
+}
+.np-note.quiet { border-color: var(--border); background: var(--surface-2); }
+.np-note-acts { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s2); }
+
+/* "Fine-tune the numbers": every field is still here, folded under a line
+   that names what is inside so nobody has to open it to know. */
+.np-more { margin: 10px 0 0; }
+.np-more > summary { font-size: var(--t-small); color: var(--accent); }
+.np-more[open] > summary { margin-bottom: var(--s2); }
+
+.np-file { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.np-file > label.field { margin: 0; }
+.np-file input[type="file"] { width: auto; }
+
+/* The start page: one question, two answers. */
+.start-q { margin-bottom: var(--s1); }
+.startpick.np-two { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); max-width: 720px; }
+.startpick.np-two .startcard { gap: 6px; align-items: flex-start; }
+.startpick + .np-why { margin-top: var(--s2); }
+.startnote > .np-why { display: inline-block; margin: 0; }

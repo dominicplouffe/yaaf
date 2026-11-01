@@ -933,6 +933,12 @@ def _activity_brief(state: dict) -> dict:
                      sig=sig, clears_at=clears_at)
 
     if gate == "delivery_ready":
+        # Not a banner. It needs him, which is why it was one — but a decision
+        # has a home now: the finished delivery is a sign-off row in his Inbox,
+        # counted on the badge, like every approval (policy.signoff_waiting).
+        # As a banner it topped every tab of the project and was repeated by
+        # the health card and the Overview, the same sixty words three times on
+        # one page, beside a queue that said nothing needed him.
         return brief(
             "ok", "delivered",
             "everything is true; waiting on your confirmation",
@@ -941,7 +947,8 @@ def _activity_brief(state: dict) -> dict:
             "for its own agents' messages, so it is not spending while it waits. "
             "Confirm it on the project page to write the receipt and close it now, "
             "or let it close itself when your rules say (Complete after, in "
-            "Settings); reopen scope first if something is still missing.")
+            "Settings); reopen scope first if something is still missing.",
+            banner=False)
 
     if gate == "daily_runs":
         d = state["daily_runs"]

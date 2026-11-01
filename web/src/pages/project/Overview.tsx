@@ -8,11 +8,14 @@ import {
   HealthCheck,
   MessageRow,
   post,
+  requirementName,
+  ResultsView,
 } from "../../api";
+import { ProjectBrief } from "../../briefing";
 import { FailoverBanner } from "../../fallback";
 import Agenda from "../../agenda";
-import { itemsFor, needsYou, useDesk, WARN_VERDICTS } from "../../desk";
-import { fmtWhen, usePoll } from "../../hooks";
+import { itemsFor, needsYou, needsYouCount, useDesk, WARN_VERDICTS } from "../../desk";
+import { fmtSince, fmtWhen, usePoll } from "../../hooks";
 import Markdown from "../../Markdown";
 import { firstName, ProjectCtx } from "../../projectCtx";
 import {
@@ -28,25 +31,24 @@ import {
   paceDate,
   runHealth,
 } from "../../ui";
-import { Avatar, Badge, Btn, Term, Verdict } from "../../ui/kit";
+import { Avatar, Badge, Term, Verdict } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
 import { chairmanDecides, deliveryVerdict, cycleOverdue, flagPlain, fmtDate, fmtRoll, fullyAutonomous } from "../../ui/project";
-import { statusBadge } from "../Projects";
-import { InboxView } from "../Inbox";
+import { MoneyMeter, NODE_WORD, PathNode, requirementNode, Seal, sealOf, verdictBadge } from "../../ui/signal";
+import "./overview.css";
+import { DecisionCard } from "../Inbox";
 import { ProjectSetup } from "../../projectSetup";
 
-/** A project's home is its Inbox: what it needs from you and what you
-    should know, in about five seconds.
+/** A project's home answers four questions, in the order they are asked:
 
-      is it on track?            one line — delivery, done, results, money, runs
-      does anything need me?     this project's rows of the one Inbox, with their buttons
-      what should I know?        the CEO's last word, its clocks, the calendar, health
+      does it need me?          this project's rows of the one Inbox, with their buttons
+      where does it stand?      the outcomes against the promise, one dot each
+      what changed, what next?  since you looked · the next dated events · the money
+      what did it produce?      the newest results, each with how far it can be trusted
 
-    The team used to be drawn here too, as an org chart with the decisions in
-    the chairman's box. At thirteen teams the chart was three screens wide and
-    the decisions scrolled away with it, so the team is a page of its own and
-    this one keeps what you open a project to find out. Everything here links
-    to where its detail lives. */
+    Then the CEO's last word, what it is handling, and Setup & health. The
+    team is a page of its own, and Pause, Stop and Settings sit behind ⋯: rare
+    and consequential, so never beside the button used every day. */
 
 /** An obligation to speak, opened by the platform from arithmetic or a failed
     check — never by the CEO deciding the news was worth your time. */
@@ -65,8 +67,6 @@ interface FlagRow {
 }
 interface FlagsView { unraised: number; flags: FlagRow[] }
 
-/** How many deliverables have been published — the files index's own count. */
-interface ShelfView { matched: number }
 
 /** Who holds which verb, in one word for the header. */
 function autonomyWord(dash: Dashboard): { word: string; means: string } {
@@ -80,67 +80,13 @@ function autonomyWord(dash: Dashboard): { word: string; means: string } {
     : { word: "Mixed autonomy", means: "Some decisions are yours and some are your CEO's — Settings → How it runs says which." };
 }
 
-/** The team's scoreboard, one line under the chart: is it on track, how
-    much of "done" is true, what it has delivered, and what it has cost. Each
-    fact links to where its detail lives. */
-function TeamFoot({ ctx, published }: { ctx: ProjectCtx; published: number | null }) {
-  const { dash, plan, projectId, hypotheses } = ctx;
-  const verdict = deliveryVerdict(dash, plan);
-  const { unit, spent, cap, frac } = budgetOf(dash);
-  const pace = paceDate(spent, cap);
-  const reqs = (plan?.requirements ?? []).filter((r) => r.status !== "cut");
-  const explore = dash.mode === "explore";
-  const bets = hypotheses.filter((h) => h.status === "active");
-  const base = `/projects/${projectId}`;
-  const tone = verdict.tone === "good" ? "good" : verdict.tone;
-  return (
-    <div className="team-foot" aria-label="Is it on track?">
-      <Link to={explore ? `${base}/details/tasks` : `${base}/details/roadmap`} title={verdict.sub}>
-        <b className={`tf-${tone}`}>{verdict.label}</b>
-      </Link>
-      {explore ? (
-        <Link to={`${base}/details/tasks`}>
-          <b>{bets.length}</b> {bets.length === 1 ? "bet" : "bets"} in play ·{" "}
-          {dash.ceo_judgment.tasks_with_verified_external} proven outside
-        </Link>
-      ) : (
-        <Link to={`${base}/details/roadmap`}>
-          <b>{plan?.burnup?.settled ?? reqs.filter((r) => r.status === "met").length} of{" "}
-            {plan?.burnup?.scope_total ?? reqs.length}</b>{" "}
-          <Term means="A requirement is a testable outcome; together they define done. Only the platform can mark one met.">
-            must-be-true things
-          </Term>{" "}true
-        </Link>
-      )}
-      <Link to={`${base}/results`}>
-        <b>{published ?? "—"}</b> result{published === 1 ? "" : "s"} delivered · see results
-      </Link>
-      <Link to={`${base}/details/spend`} title={pace ? `on pace to reach the cap ${fmtWhenShort(pace.toISOString())}` : "on pace to finish the month under the cap"}>
-        <b>{fmtUnit(spent, unit)}</b> this month ·{" "}
-        {frac >= 1 ? "the cap is reached — the project is paused" : `pauses at ${fmtUnit(cap, unit)}`}
-      </Link>
-      <span>
-        <b>{dash.activity.daily_runs.used} of {dash.activity.daily_runs.cap}</b> runs today
-        {dash.activity.waiting.unread > 0 &&
-          ` · ${dash.activity.waiting.unread} unread message${dash.activity.waiting.unread === 1 ? "" : "s"}`}
-        {dash.status === "running" && !dash.activity.brief.banner && dash.activity.brief.clears_at && (
-          <span title={`${dash.activity.brief.headline} ${dash.activity.brief.detail}`}>
-            {` · resumes ${fmtSoon(dash.activity.brief.clears_at)}`}
-          </span>
-        )}
-      </span>
-    </div>
-  );
-}
-
 /** The mode-shaped fact, one per mode: Explore counts its window down,
-    Deliver offers the completion gate the moment everything is true, Operate
+    Deliver says so once it has completed (its sign-off is an Inbox row), Operate
     names the turn of the rhythm it is on. */
 function ModeStrip({ dash, reload }: { dash: Dashboard; reload: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const closesAfter = Number(dash.constitution?.["complete_after_hours"] ?? 0);
   if (dash.mode === "deliver" && dash.status === "completed") {
     // Completing is automatic only because it can be taken back.
     return (
@@ -169,37 +115,10 @@ function ModeStrip({ dash, reload }: { dash: Dashboard; reload: () => void }) {
       </div>
     );
   }
-  if (dash.mode === "deliver" && dash.delivery_outstanding !== null
-      && dash.delivery_outstanding.length === 0) {
-    return (
-      <div className="strip good">
-        <div className="grow">
-          <b>Everything is true.{closesAfter > 0
-            ? ` It completes itself about ${closesAfter} hours after you were told, unless its scope moves.`
-            : " This delivery is ready for your confirmation."}</b>
-          <div className="sb">
-            Completing writes the receipt — including which requirements failed before they
-            passed — and closes the project down. It is not spending while it waits, and you
-            can reopen it for 14 days afterwards.
-          </div>
-          {error && <div className="error">{error}</div>}
-        </div>
-        {confirming ? (
-          <>
-            <button className="small primary" onClick={async () => {
-              try {
-                await post(`/admin/projects/${dash.id}/complete`);
-                reload();
-              } catch (e) { setError((e as Error).message); }
-            }}>Yes, complete it</button>
-            <button className="small" onClick={() => setConfirming(false)}>Not yet</button>
-          </>
-        ) : (
-          <button className="small primary" onClick={() => setConfirming(true)}>Complete the project…</button>
-        )}
-      </div>
-    );
-  }
+  // A finished delivery is not drawn here. It is a sign-off row in the Inbox
+  // panel on this same page, with the Complete button, and was once also this
+  // callout and a banner above every tab: three copies of one decision, under a
+  // queue that said nothing needed you.
   if (dash.mode === "explore" && dash.deadline) {
     const daysLeft = Math.ceil((new Date(dash.deadline).getTime() - Date.now()) / 86_400_000);
     return (
@@ -287,6 +206,254 @@ function LateBanner({ ctx }: { ctx: ProjectCtx }) {
   );
 }
 
+/** Where the outcomes stand, against the promise.
+
+    One axis — started, today, the platform's projection, the promised date —
+    and under it the outcomes by stage, one dot each. Outcomes, never tasks or
+    runs: a project that closed forty tasks and made nothing true has not moved
+    on this strip, which is the point of it. The projection is the server's own
+    number with its basis on hover; with no commitment there is no axis at all
+    rather than an invented one. */
+function PathStrip({ ctx, verdicts }: { ctx: ProjectCtx; verdicts: Set<string> }) {
+  const { dash, plan, projectId, hypotheses } = ctx;
+  const base = `/projects/${projectId}`;
+  if (dash.mode === "explore") {
+    const bets = hypotheses.filter((h) => h.status !== "killed");
+    if (!bets.length) return null;
+    return (
+      <section className="card ov-path">
+        <div className="card-h"><h3>Where it stands</h3><span className="help">{bets.length} bet{bets.length === 1 ? "" : "s"}</span>
+          <span className="grow" /><Link className="card-link" to={`${base}/details/tasks`}>Bets <Icon name="arrow" size={13} /></Link></div>
+        <ul className="ov-bets">
+          {bets.map((h) => (
+            <li key={h.id}>
+              <i className={`sg-node md ${h.status === "expired" ? "you" : "work"}`} />
+              <span className="grow">{clip(h.statement, 140)}</span>
+              <span className="help">{h.status === "expired" ? "past its kill date — yours to extend" : `kill date ${fmtDate(h.kill_date)}`}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
+  }
+  const scopeYours = chairmanDecides(dash, "plan_authority");
+  const reqs = (plan?.requirements ?? []).filter((r) => r.status !== "cut");
+  if (!reqs.length) return null;
+  const nodes = reqs.flatMap((r) => {
+    const status = r.status === "proposed" && !scopeYours ? "pending" : r.status;
+    const n = requirementNode({ key: r.key, status, name: requirementName(r), stage: r.stage }, verdicts.has(r.key));
+    return n ? [n] : [];
+  });
+  const stages = [...new Set(nodes.map((n) => n.stage ?? 1))].sort((a, b) => a - b);
+  const stageWord = (ns: PathNode[]) => ns.every((n) => n.state === "verified") ? ["settled", "good"]
+    : ns.some((n) => n.state === "you") ? ["waits on you", "you"]
+      : ns.some((n) => n.state === "work" || n.state === "verified") ? ["in work", ""] : ["not started", "muted"];
+  const verified = nodes.filter((n) => n.state === "verified").length;
+
+  const c = plan?.commitment;
+  const promised = c?.deliver_by ? new Date(c.deliver_by).getTime() : null;
+  const projected = c?.projected_done_at && c.status !== "met" ? new Date(c.projected_done_at).getTime() : null;
+  const start = new Date(dash.created_at).getTime();
+  const now = Date.now();
+  const end = Math.max(promised ?? 0, projected ?? 0, now) + 86_400_000;
+  const at = (t: number) => `${Math.max(0, Math.min(100, ((t - start) / (end - start)) * 100))}%`;
+  const late = projected !== null && promised !== null && projected > promised;
+
+  return (
+    <section className="card ov-path">
+      <div className="card-h">
+        <h3>Where it stands</h3>
+        <span className="help">{verified} of {nodes.length} outcome{nodes.length === 1 ? "" : "s"} verified</span>
+        <span className="grow" />
+        <span className="ov-legend">
+          {(["verified", "work", "you", "todo"] as const).map((k) => (
+            <span key={k}><i className={`sg-node ${k}`} /> {NODE_WORD[k]}</span>))}
+        </span>
+        <Link className="card-link" to={`${base}/details/roadmap`}>Roadmap <Icon name="arrow" size={13} /></Link>
+      </div>
+      {promised !== null && (
+        <div className="ov-axis" role="img" aria-label={`Started ${fmtDate(dash.created_at)}; promised ${fmtDate(c!.deliver_by)}${projected ? `; projected ${fmtDate(c!.projected_done_at!)}` : ""}.`}>
+          <div className="ov-axis-bar"><i style={{ width: at(Math.min(now, end)) }} /></div>
+          <span className="ov-mark now" style={{ left: at(now) }}><b>today</b></span>
+          {projected !== null && (
+            <span className={`ov-mark proj${late ? " late" : ""}`} style={{ left: at(projected) }}
+              title={c?.projection_basis ?? undefined}><b>projected {fmtDate(c!.projected_done_at!)}</b></span>
+          )}
+          <span className="ov-mark promise" style={{ left: at(promised) }}>
+            <b>{c!.status === "proposed" ? "proposed" : c!.status === "met" ? "kept" : "promised"} {fmtDate(c!.deliver_by)}</b>
+          </span>
+          <span className="ov-axis-start">started {fmtDate(dash.created_at)}</span>
+        </div>
+      )}
+      <div className="ov-stages">
+        {stages.map((st) => {
+          const ns = nodes.filter((n) => (n.stage ?? 1) === st);
+          const [word, tone] = stageWord(ns);
+          return (
+            <div className="ov-stage" key={st}>
+              <h4><span>Stage {st}</span><span className={`ov-st-${tone}`}>{word}</span></h4>
+              {ns.map((n) => (
+                <div className="ov-node" key={n.key} title={NODE_WORD[n.state]}>
+                  <i className={`sg-node md ${n.state}`} />
+                  <span className="mono help">{n.key}</span>
+                  <span className="ov-node-t">{n.title}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/** What changed since the reader last looked at this project — the same
+    composer as the morning letter, cut to the lines worth a glance. */
+function SinceYouLooked({ projectId }: { projectId: string }) {
+  const { data } = usePoll(() => get<ProjectBrief>(`/observe/projects/${projectId}/briefing`), 60000, [projectId]);
+  const lines = (data?.lines ?? []).filter((l) => l.group === "attention" || l.group === "moved").slice(0, 4);
+  return (
+    <section className="card ov-card">
+      <div className="card-h">
+        <h3>Since you looked</h3>
+        {data && <span className="help">{fmtSince(data.since)}</span>}
+        <span className="grow" />
+        <Link className="card-link" to={`/projects/${projectId}/details/activity`}>Activity <Icon name="arrow" size={13} /></Link>
+      </div>
+      {!data ? <p className="help">Loading…</p> : data.quiet || !lines.length ? (
+        <p className="help">Nothing changed that needs a second look.</p>
+      ) : (
+        <ul className="ov-since">
+          {lines.map((l, i) => (
+            <li key={`${l.kind}-${i}`} className={`tone-${l.tone}`}><i />{l.text}</li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/** Money, drawn once: spent against the plan and the wall, and what the pace
+    says about the month. */
+function MoneyCard({ ctx }: { ctx: ProjectCtx }) {
+  const { dash, projectId } = ctx;
+  const { unit, spent, cap, wall, warnRatio } = budgetOf(dash);
+  const pace = paceDate(spent, cap);
+  const said = wall > 0 && spent >= wall ? "Paused at the hard stop."
+    : spent > cap ? `Over its plan. The CEO owes you an account; nothing pauses until ${fmtUnit(wall, unit)}.`
+      : pace ? `On pace to reach its plan ${fmtWhenShort(pace.toISOString())}.` : "On pace to stay inside its plan this month.";
+  return (
+    <section className="card ov-card">
+      <div className="card-h">
+        <h3>Money · this month</h3>
+        <span className="grow" />
+        <Link className="card-link" to={`/projects/${projectId}/details/spend`}>Spend <Icon name="arrow" size={13} /></Link>
+      </div>
+      <div className="ov-money"><b>{fmtUnit(spent, unit)}</b> <span className="help">of {fmtUnit(cap, unit)} plan</span></div>
+      <MoneyMeter spent={spent} cap={cap} wall={wall} unit={unit} warnRatio={warnRatio} />
+      <p className="help ov-money-s">{said}{spent < cap * warnRatio ? ` Warns you at ${fmtUnit(cap * warnRatio, unit)}.` : ""}</p>
+    </section>
+  );
+}
+
+/** The newest results and how far each can be trusted. */
+function LatestResults({ ctx }: { ctx: ProjectCtx }) {
+  const { projectId, dash, plan } = ctx;
+  const { data } = usePoll(() => get<ResultsView>(`/observe/projects/${projectId}/results`), 30000, [projectId]);
+  if (!data) return null;
+  const met = (plan?.requirements ?? []).filter((r) => r.status === "met").length;
+  const delivered = dash.status === "completed"
+    || (dash.mode === "deliver" && dash.delivery_outstanding !== null && dash.delivery_outstanding.length === 0);
+  if (!data.results.length && !(delivered && met)) return null;
+  return (
+    <section className="card ov-card">
+      <div className="card-h">
+        <h3>Latest results</h3>
+        <span className="grow" />
+        <Link className="card-link" to={`/projects/${projectId}/results`}>All results <Icon name="arrow" size={13} /></Link>
+      </div>
+      {data.results.length ? (
+        <div className="ov-results">
+          {data.results.slice(0, 3).map((r) => (
+            <Link className="ov-result" key={r.key} to={`/projects/${projectId}/results`}>
+              <span className="ov-result-h"><Icon name="file" size={15} /><b>{r.name}</b></span>
+              <span className="help">{r.made_by ? `${r.made_by.name} · ` : ""}{fmtDate(r.published_at)}</span>
+              <Seal level={sealOf(r.checked)} />
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <p className="help">
+          {met} outcome{met === 1 ? "" : "s"} verified, no file published. The checks ran on the project's workspace —{" "}
+          <Link to={`/projects/${projectId}/details/roadmap`}>see what was checked</Link>.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** What this project needs from you, as whole decision cards — the same
+    cards and the same list (`desk.mine`, the Inbox's Decide) as the Inbox.
+    It embedded the Inbox's two panes once, which put one decision in a
+    760px frame beside an empty column; the decisions are the page's first
+    zone now, and the Inbox is one link away for notes and updates. Three at
+    most: past that the Inbox, which sorts and filters them, is the place. */
+const SHOWN_HERE = 3;
+
+function ProjectDecisions({ projectId, desk }: { projectId: string; desk: ReturnType<typeof useDesk> }) {
+  const decisions = desk.mine.filter((i) => i.project.id === projectId);
+  const inbox = `/inbox?project=${encodeURIComponent(projectId)}`;
+  if (!desk.data) return null;
+  if (!decisions.length) {
+    return (
+      <div className="ov-clear">
+        <Icon name="check" size={15} />
+        <span><b>Nothing needs you here.</b></span>
+        <span className="grow" />
+        <Link className="card-link" to={`${inbox}&tab=ack`}>Notes and updates <Icon name="arrow" size={13} /></Link>
+      </div>
+    );
+  }
+  return (
+    <section className="ov-decisions" aria-label="Needs you">
+      <div className="ov-dec-h">
+        <h2>Needs you <span className="count warn">{decisions.length}</span></h2>
+        <span className="help">soonest consequence first</span>
+        <span className="grow" />
+        <Link className="card-link" to={inbox}>
+          {decisions.length > SHOWN_HERE ? `All ${decisions.length} in the Inbox` : "Inbox"} <Icon name="arrow" size={13} />
+        </Link>
+      </div>
+      {decisions.slice(0, SHOWN_HERE).map((item) => (
+        <div className="card ov-dcard" key={item.key}>
+          <DecisionCard item={item} desk={desk} inProject />
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/** Pause, Settings and Stop: rare and consequential, so one press away rather
+    than beside the button you use every day. Start is not here: on a project
+    that is not running it is the one thing to do, so it stays in view. */
+function MoreMenu({ ctx, onPause, onStop, unpaid }: {
+  ctx: ProjectCtx; onPause: () => void; onStop: () => void; unpaid: boolean;
+}) {
+  const { dash, projectId } = ctx;
+  if (dash.can_steer === false) return null;
+  const base = `/projects/${projectId}`;
+  return (
+    <details className="ov-more">
+      <summary aria-label="More actions"><Icon name="more" size={16} /></summary>
+      <div className="ov-more-menu" role="menu">
+        {dash.status === "running" && <button role="menuitem" onClick={onPause}><Icon name="pause" size={14} /> Pause the team…</button>}
+        <Link role="menuitem" to={`${base}/settings`}><Icon name="gear" size={14} /> Settings</Link>
+        {dash.status !== "stopped" && <button role="menuitem" className="danger" onClick={onStop}><Icon name="stop" size={14} /> Stop for good…</button>}
+      </div>
+    </details>
+  );
+}
+
 /** The CEO's last word, and anything the platform made it bring you — the
     news, beside the work, one step from answering it. */
 function CeoCard({ ctx, news }: { ctx: ProjectCtx; news: ReactNode[] }) {
@@ -303,8 +470,10 @@ function CeoCard({ ctx, news }: { ctx: ProjectCtx; news: ReactNode[] }) {
     15000, [channelId],
   );
   // The CEO's own words only: a line the platform posted has no sender, and
-  // under a "From <CEO>" heading it read as the CEO saying it.
-  const last = [...(tail ?? [])].reverse().find((m) => !!m.from_agent);
+  // under a "From <CEO>" heading it read as the CEO saying it. And not an open
+  // question: that is a decision card at the top of this page already.
+  const asking = new Set(ctx.asks.filter((a) => a.status === "open").map((a) => a.asked_in_message_id));
+  const last = [...(tail ?? [])].reverse().find((m) => !!m.from_agent && !asking.has(m.id));
   const ceo = firstName(ctx.ceoName);
   return (
     <section className="card ov-card">
@@ -319,6 +488,10 @@ function CeoCard({ ctx, news }: { ctx: ProjectCtx; news: ReactNode[] }) {
           <Avatar name={ctx.ceoName} team="leadership" />
           <div className="ceo-body"><Markdown>{clipMarkdown(last.body, 420)}</Markdown></div>
         </div>
+      ) : (tail ?? []).some((m) => !!m.from_agent) ? (
+        // Everything it said lately is a question already drawn above, as a
+        // decision; "hasn't said anything" would be false under that card.
+        <p className="help">{ceo}'s latest is the question above, under Needs you.</p>
       ) : (
         <p className="help">
           {ceo} hasn't said anything yet. Open with the goal, the constraints, and how you want to work.
@@ -340,6 +513,10 @@ function CeoCard({ ctx, news }: { ctx: ProjectCtx; news: ReactNode[] }) {
   );
 }
 
+function validZone(zone: string): boolean {
+  try { new Intl.DateTimeFormat(undefined, { timeZone: zone }); return true; } catch { return false; }
+}
+
 /** The calendar, as a list: what happens next, coloured by who resolves it.
     The full strip — rhythms, every wake, the notes that explain its blanks —
     is one press away rather than half a screen of the first page. */
@@ -347,11 +524,14 @@ function ComingUp({ projectId }: { projectId: string }) {
   const [full, setFull] = useState(false);
   const { data } = usePoll(() => get<AgendaView>(`/observe/projects/${projectId}/agenda?days=14`), 60000);
   const now = Date.now();
-  const events = (data?.events ?? []).filter((e) => new Date(e.at).getTime() >= now - 3_600_000).slice(0, 7);
+  const events = (data?.events ?? []).filter((e) => new Date(e.at).getTime() >= now - 3_600_000).slice(0, 5);
+  // Said in the zone named beside the heading, not the browser's: the two
+  // disagreed by five hours on the same page as the health line.
+  const zone = data?.timezone && validZone(data.timezone) ? data.timezone : undefined;
   return (
     <section className="card ov-card">
       <div className="card-h">
-        <h3>Coming up</h3>
+        <h3>Next</h3>
         {data && <span className="help">{data.timezone}</span>}
         <span className="grow" />
         <button className="card-link" onClick={() => setFull(!full)}>{full ? "Hide the calendar" : "Full calendar"}</button>
@@ -361,8 +541,8 @@ function ComingUp({ projectId }: { projectId: string }) {
           {events.map((e, i) => (
             <li key={`${e.at}-${i}`} className={`ag-${e.tone}`}>
               <span className="ag-when">
-                <b>{new Date(e.at).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}</b>
-                <span>{new Date(e.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</span>
+                <b>{new Date(e.at).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: zone })}</b>
+                <span>{new Date(e.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", timeZone: zone })}</span>
               </span>
               <i className="ag-dot" />
               <span className="ag-what">{e.label}{e.detail && <span className="help"> — {clip(e.detail, 90)}</span>}</span>
@@ -371,14 +551,6 @@ function ComingUp({ projectId }: { projectId: string }) {
         </ul>
       ) : (
         <p className="help">{data ? (data.notes[0] ?? "Nothing is scheduled in the next fourteen days.") : "Loading…"}</p>
-      )}
-      {!full && (
-        <div className="ag-key">
-          <span className="k-consequence">Decides itself</span>
-          <span className="k-deadline">Deadline</span>
-          <span className="k-meeting">Meeting</span>
-          <span className="k-projection">Projection</span>
-        </div>
       )}
     </section>
   );
@@ -579,12 +751,21 @@ export default function Overview({
   const { projectId, dash } = ctx;
   const desk = useDesk();
   const [brief, setBrief] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
+  // Start can be refused (a check the server runs that the page cannot); the
+  // reason is said beside the button rather than leaving it to look unpressed.
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const start = async () => {
+    setStarting(true);
+    setStartError(null);
+    try {
+      await post(`/admin/projects/${projectId}/start`);
+      ctx.reload();
+    } catch (e) { setStartError((e as Error).message); } finally { setStarting(false); }
+  };
   const { data: flagsView, reload: reloadFlags } = usePoll(
     () => get<FlagsView>(`/observe/projects/${projectId}/flags`), 15000);
-  // A count, asked of the same index the Deliverables page reads.
-  const { data: shelf } = usePoll(
-    () => get<ShelfView>(`/observe/projects/${projectId}/files/browse/rows?state=published&limit=1&lean=true`),
-    30000);
 
   // The same rows the Inbox and the sidebar badge count, for this project. A
   // paused project is not counted there (pausing is a state, not a request),
@@ -696,27 +877,19 @@ export default function Overview({
     );
   }
 
-  const steer = dash.can_steer !== false;
+  const verdicts = new Set((deskProject?.awaiting_you.verdicts ?? []).map((v) => v.key));
+  const setupLeft = ctx.setup?.open ? ctx.setup.steps.filter((st) => st.state === "todo").length : 0;
+  const quietWait = dash.status === "running" && !dash.activity.brief.banner && dash.activity.brief.clears_at
+    ? dash.activity.brief : null;
 
   return (
     <>
       <header className="ov-head">
-        <div className="eyebrow">
-          <span className="chip">{dash.mode === "deliver" ? "Deliver" : dash.mode === "operate" ? "Operate" : "Explore"}</span>
-          {ctx.plan?.commitment?.deliver_by && <span>Due {fmtDate(ctx.plan.commitment.deliver_by)}</span>}
-          {dash.mode === "operate" && dash.cycle && (
-            cycleOverdue(dash.cycle)
-              ? <span style={{ color: "var(--serious)" }}>Cycle {dash.cycle.ordinal} · overdue to close since {fmtDate(dash.cycle.rolls_at)}</span>
-              : <span>Cycle {dash.cycle.ordinal} · {dash.cycle.due_at ? "due" : "closes"} {fmtRoll(dash.cycle.due_at ?? dash.cycle.rolls_at)}</span>
-          )}
-          {!ctx.plan?.commitment?.deliver_by && dash.deadline && <span>Window closes {fmtDate(dash.deadline)}</span>}
-          <span className="term-plain"><Term means={auto.means}>{auto.word}</Term></span>
-          {dash.my_role && <span>You are {dash.my_role === "chairman" ? "the chairman" : dash.my_role === "co_chair" ? "a co-chair" : "an observer"}</span>}
-        </div>
         <div className="ov-title-row">
           <div className="grow">
             <h1 className="ov-title">
-              {dash.name} {statusBadge(dash.status, unpaid)}
+              {dash.name} {verdictBadge(deskProject ?? { status: dash.status, unpaid },
+                deskProject ? needsYouCount(deskProject) : 0)}
               {dash.drought_active && (
                 <Badge tone="serious">
                   <Term means="Nothing outside this project has verified any of its claims for longer than your rules allow. Work carries on; new internal-only work is refused until proof lands.">
@@ -737,32 +910,52 @@ export default function Overview({
                 )}
               </p>
             )}
-            <p className="ov-goal">
-              {goalLead}{" "}
-              <button className="linkish inline" onClick={() => setBrief(!brief)} aria-expanded={brief}>
-                {brief ? "Hide the brief" : "Read the brief"}
-              </button>
-            </p>
+            {quietWait && (
+              <p className="help ov-wait" title={quietWait.detail}>
+                Resumes {fmtSoon(quietWait.clears_at!)} — {quietWait.headline}
+              </p>
+            )}
           </div>
           <div className="ov-acts">
-            {steer && dash.status !== "running" && dash.status !== "stopped" && (
-              // Starting a project nothing can pay for used to succeed and show
-              // "Running" while its first run died: the platform allows it (a
-              // keyless project is "not configured yet"), so the button says it.
+            {dash.can_steer !== false && dash.status !== "running" && dash.status !== "stopped" && (
               unpaid ? (
                 <Link to={`${base}/settings?s=money`} className="btnlink primary"
                   title="Agents cannot run without a billing credential">
                   <Icon name="play" size={15} />Add a key to start
                 </Link>
               ) : (
-                <Btn kind="primary" icon="play" onClick={async () => { await post(`/admin/projects/${projectId}/start`); ctx.reload(); }}>Start</Btn>
+                <button className="primary" disabled={starting} onClick={start}>
+                  <Icon name="play" size={15} />Start
+                </button>
               )
             )}
-            {steer && dash.status === "running" && <Btn icon="pause" onClick={onPause}>Pause the team</Btn>}
-            {steer && dash.status !== "stopped" && <Btn kind="danger" icon="stop" onClick={onStop}>Stop</Btn>}
-            <Link to={`${base}/chat`} className="btnlink primary"><Icon name="message" size={15} />Message {ceo}</Link>
+            <Link to={`${base}/chat`} className={`btnlink${dash.status === "running" ? " primary" : ""}`}>
+              <Icon name="message" size={15} />Message {ceo}</Link>
+            <MoreMenu ctx={ctx} onPause={onPause} onStop={onStop} unpaid={unpaid} />
+            {startError && <div className="error ov-start-error" role="alert">{startError}</div>}
           </div>
         </div>
+        <div className="eyebrow ov-meta">
+          <span className="chip">{dash.mode === "deliver" ? "Deliver" : dash.mode === "operate" ? "Operate" : "Explore"}</span>
+          {ctx.plan?.commitment?.deliver_by && <span>{ctx.plan.commitment.status === "proposed" ? "Proposed" : "Promised"} {fmtDate(ctx.plan.commitment.deliver_by)}</span>}
+          {dash.mode === "operate" && dash.cycle && (
+            cycleOverdue(dash.cycle)
+              ? <span style={{ color: "var(--serious)" }}>Cycle {dash.cycle.ordinal} · overdue to close since {fmtDate(dash.cycle.rolls_at)}</span>
+              : <span>Cycle {dash.cycle.ordinal} · {dash.cycle.due_at ? "due" : "closes"} {fmtRoll(dash.cycle.due_at ?? dash.cycle.rolls_at)}</span>
+          )}
+          {!ctx.plan?.commitment?.deliver_by && dash.deadline && <span>Window closes {fmtDate(dash.deadline)}</span>}
+          <span className="term-plain"><Term means={auto.means}>{auto.word}</Term></span>
+          {dash.my_role && <span>You are {dash.my_role === "chairman" ? "the chairman" : dash.my_role === "co_chair" ? "a co-chair" : "an observer"}</span>}
+          {setupLeft > 0 && !unpaid && (
+            <button className="linkish ov-setup-chip" onClick={() => setShowSetup(!showSetup)} aria-expanded={showSetup}>
+              Setup · {setupLeft} to go
+            </button>
+          )}
+          <button className="linkish" onClick={() => setBrief(!brief)} aria-expanded={brief}>
+            {brief ? "Hide the brief" : "Read the brief"}
+          </button>
+        </div>
+        <p className="ov-goal">{goalLead}</p>
         {brief && (
           <div className="briefbox">
             <strong style={{ color: "var(--ink)" }}>The brief every one of them works from</strong>
@@ -775,33 +968,42 @@ export default function Overview({
       <LateBanner ctx={ctx} />
       <FailoverBanner dash={dash} settingsLink={`${base}/settings?s=money`} />
 
-      <TeamFoot ctx={ctx} published={shelf?.matched ?? null} />
+      {/* Setup leads only when it is the reason nothing can run. Otherwise it
+          is a chip in the line above: on a running — or finished — project, a
+          six-step checklist above the decisions was configuration outranking
+          state. */}
+      {(unpaid || showSetup) && <ProjectSetup ctx={ctx} />}
 
-      <ProjectSetup ctx={ctx} />
+      {/* The project's home is what it needs from you first: this project's
+          decisions, whole, from the one list the Inbox decides from. */}
+      <ProjectDecisions projectId={projectId} desk={desk} />
 
-      {/* The project's home is what it needs from you: this project's rows
-          of the one Inbox, with their buttons, and what you should know. The
-          team itself is a page of its own — at eighteen people an org chart
-          is a place you go to, not a header you scroll past. */}
-      <InboxView project={projectId} />
+      <PathStrip ctx={ctx} verdicts={verdicts} />
+
+      <div className="ov-three">
+        <SinceYouLooked projectId={projectId} />
+        <ComingUp projectId={projectId} />
+        <MoneyCard ctx={ctx} />
+      </div>
+
+      <LatestResults ctx={ctx} />
 
       <div className="ov-grid">
         <div className="ov-col">
           <CeoCard ctx={ctx} news={news} />
+        </div>
+        <aside className="ov-col">
           {watch.length > 0 && (
             <section className="card ov-card">
               <div className="card-h">
                 <h3>Watching</h3>
                 <span className="count">{watch.length}</span>
                 <span className="grow" />
-                <span className="help">clocks {ceo} is handling — nothing here waits on you</span>
+                <span className="help">{ceo} is handling these</span>
               </div>
               <div className="wbox">{watch}</div>
             </section>
           )}
-        </div>
-        <aside className="ov-col">
-          <ComingUp projectId={projectId} />
         </aside>
       </div>
 

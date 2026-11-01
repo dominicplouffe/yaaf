@@ -687,10 +687,7 @@ export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
   return (
     <>
       <p className="subtitle">
-        Approvals expire to <strong>DENY</strong>. That is the whole design: a chairman who never
-        logs in slows the project down, but can never wedge it. Questions below them work the
-        other way round — nothing is blocked while one waits, and silence hands the decision
-        back to the CEO on the terms it wrote down before it asked.
+        Approvals expire to <strong>deny</strong>; questions fall back to the CEO's stated default.
       </p>
 
       {openAsks.length > 0 && (

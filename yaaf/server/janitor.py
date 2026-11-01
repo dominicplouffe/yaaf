@@ -87,8 +87,14 @@ from yaaf.server.notify import (
     Attention,
     boardroom_line,
     chairman_notify,
+    commitment_item,
     inbox_line,
+    inbox_link,
+    inbox_url,
     project_link,
+    scope_item,
+    signoff_item,
+    verdict_item,
 )
 from yaaf.server.policy import Refusal
 from yaaf.server.rows import approval_row, chairman_time, requirement_name
@@ -1201,20 +1207,27 @@ def check_delivery_ready(session: Session, project: Project) -> None:
     ))
     cons = effective(session, project.id)
     at = chairman_time(utcnow() + timedelta(hours=cons.complete_after_hours), cons.timezone)
-    closes = ("Confirm completion on the project page — it writes the delivery receipt "
-              "and closes the project down cleanly"
-              + (f" — or it completes itself {at} unless scope moves first. Either way "
-                 "you can reopen it for 14 days. "
-                 if cons.complete_after_hours > 0 else ". "))
-    body = (
-        f"Every requirement is settled and {len(met)} of them are true: "
-        f"{', '.join(r.key for r in met)}. {closes}"
-        "Nothing runs in the meantime: a delivered project stops waking for its "
-        "own agents' traffic, so it is not spending while it waits."
-        + project_link(project.id, "", "Open it")
-    )
-    chairman_notify(session, project, "ready to complete", body, attention=Attention.ACTION)
-    boardroom_line(session, project.id, body)
+
+    def ready(where: str) -> str:
+        return (
+            f"Every requirement is settled and {len(met)} of them are true: "
+            f"{', '.join(r.key for r in met)}. Confirm completion {where} — it writes the "
+            "delivery receipt and closes the project down cleanly"
+            + (f" — or it completes itself {at} unless scope moves first. Either way "
+               "you can reopen it for 14 days. "
+               if cons.complete_after_hours > 0 else ". ")
+            + "Nothing runs in the meantime: a delivered project stops waking for its "
+            "own agents' traffic, so it is not spending while it waits.")
+
+    # The mail is his alone, so it opens the sign-off row itself, where Complete
+    # is one click. The boardroom line is the CEO's reading too, and keeps its
+    # words.
+    chairman_notify(session, project, "ready to complete",
+                    ready("in your Inbox")
+                    + inbox_link(signoff_item(project.id), "Sign it off"),
+                    attention=Attention.ACTION)
+    boardroom_line(session, project.id,
+                   ready("on the project page") + project_link(project.id, "", "Open it"))
     _notice_ceo(
         session, project, NoticeKind.DELIVERY_READY,
         f"Delivery is complete: {len(met)} requirement(s) in scope are true and "
@@ -1267,11 +1280,17 @@ def _complete_itself(session: Session, project: Project, announced_at) -> bool:
         detail={**receipt, "voided_approvals": done["voided_approvals"]},
     ))
     money = f"${receipt['cost_usd']:,.2f}"
-    body = (f"Delivered: {receipt['met']} requirement(s) true, {receipt['cut']} cut, "
+    reqs = "requirement" if receipt["met"] == 1 else "requirements"
+    # Two links, because the sentence names two places: what was delivered, and
+    # the project page, where Reopen is. It linked only the first, so "reopen it
+    # on the project page" sent him somewhere Reopen was not.
+    body = (f"Delivered: {receipt['met']} {reqs} true, {receipt['cut']} cut, "
             f"{receipt['runs_total']} runs, {money}, {receipt['duration_days']} days. "
             f"It had stood finished since {told}, so it closed itself and wrote the "
-            f"receipt. If something is missing, reopen it on the project page within "
-            f"{REOPEN_DAYS} days." + project_link(project.id, "deliverables", "See what was delivered"))
+            f"receipt. If something is missing, reopen it from the project page within "
+            f"{REOPEN_DAYS} days."
+            + project_link(project.id, "details/deliverables", "See what was delivered")
+            + project_link(project.id, "", "Reopen it from the project page"))
     chairman_notify(session, project, "delivered and closed", body, attention=Attention.ACTION)
     boardroom_line(session, project.id, body)
     log.info("delivery %s completed itself", project.slug)
@@ -1314,14 +1333,18 @@ def _nag_delivery_ready(session: Session, project: Project) -> None:
     met = len([r for r in policy.scope_requirements(session, project.id)
                if r.status == RequirementStatus.MET])
     _touch_delivery_beat(session, project)
+    # The project page is right for both readers: the sign-off is the first
+    # card on it, with Complete, and the CEO reading this line knows the page.
     boardroom_line(
         session, project.id,
-        f"Still waiting on you: all {met} requirement(s) are true and this delivery "
-        "has not been confirmed. Complete it on the project page to write the receipt "
-        "and close it, or reopen scope if something is missing"
+        "Still waiting on you: "
+        + ("its one requirement is true" if met == 1 else f"all {met} requirements are true")
+        + " and this delivery has not been confirmed. Complete it on the project page "
+        "to write the receipt and close it, or reopen scope if something is missing"
         + (" — otherwise it closes itself when your rules say"
            if effective(session, project.id).complete_after_hours > 0 else "")
-        + ". The project is not spending while it waits.",
+        + ". The project is not spending while it waits."
+        + project_link(project.id, "", "Open it"),
     )
 
 
@@ -1329,6 +1352,9 @@ def _nag_delivery_ready(session: Session, project: Project) -> None:
 
 REVIEW_NAG_HOURS = 24       # an open review the chairman has not closed is chased once
 REVIEW_ESCALATE_HOURS = 72  # and chased harder here — but the work never stops for it
+#: Where the meeting is taken. A review is not an Inbox row — it is a meeting
+#: with levers, not a yes or no — so its chase links to the page that holds it.
+REVIEW_PAGE = "details/reviews"
 
 
 def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
@@ -1542,7 +1568,8 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
         "Take the meeting on the Status tab — your levers there are cut, add, "
         "reword, move the date, raise the budget, and accept the slip; each is "
         "recorded with your reason and shown at the next meeting beside what it "
-        "bought.",
+        "bought."
+        + project_link(project.id, REVIEW_PAGE, "Take the meeting"),
         attention=Attention.ACTION,
     )
     _notice_ceo(
@@ -1585,7 +1612,8 @@ def nag_reviews(session: Session, project: Project) -> None:
             + (" and the CEO's narrative is in" if review.narrative else
                " (the CEO has not filed its narrative yet)")
             + ". The project keeps working either way — but decisions deferred "
-              "are decisions the arithmetic makes for you.",
+              "are decisions the arithmetic makes for you."
+            + project_link(project.id, REVIEW_PAGE, "Take the meeting"),
             attention=Attention.ACTION,
         )
         review.nag_sent_at = now
@@ -1594,7 +1622,8 @@ def nag_reviews(session: Session, project: Project) -> None:
             session, project, f"status meeting #{review.number} has been open {age_hours / 24:.0f} days",
             "This is the second reminder; there will not be a third. Close it with "
             "no decisions if that is the decision — an explicit 'no change' is a "
-            "record, an open meeting is a hole.",
+            "record, an open meeting is a hole."
+            + project_link(project.id, REVIEW_PAGE, "Take the meeting"),
             attention=Attention.ACTION,
         )
         review.escalated_at = now
@@ -1710,9 +1739,10 @@ def draw_audit_samples(session: Session, project: Project, cons: ConstitutionDoc
                 f"  task: {task.title}\n"
                 f"  test: {(task.success_test or {}).get('target', '')[:300]}\n"
                 f"  claimed evidence: {(task.completion_evidence or '')[:500]}\n\n"
-                f"Confirm or fail it on the Work screen within "
+                f"Confirm or fail it on the Tasks page within "
                 f"{cons.audit_response_hours}h; after that it is recorded as "
-                "'not reviewed' and nothing blocks either way.",
+                "'not reviewed' and nothing blocks either way."
+                + project_link(project.id, "details/tasks", "Open it"),
                 attention=Attention.FYI,
             )
     return drawn
@@ -2214,8 +2244,10 @@ def nag_asks(session: Session, project: Project, cons: ConstitutionDoc) -> int:
             f"your CEO is waiting on you: {ask.title}",
             f"Your CEO asked you this on {chairman_time(ask.created_at, cons.timezone)}:"
             f"\n\n{ask.body[:4000]}\n\n"
-            f"Answer in the boardroom by {chairman_time(ask.answer_by, cons.timezone)}. "
-            f"If you say nothing, your CEO will: {ask.default_action}",
+            f"Answer it in your Inbox or the boardroom by "
+            f"{chairman_time(ask.answer_by, cons.timezone)}. "
+            f"If you say nothing, your CEO will: {ask.default_action}"
+            + inbox_link(ask.id, "Answer it"),
             attention=Attention.ACTION,
         )
         ask.nag_sent_at = now
@@ -2866,6 +2898,11 @@ def nag_observable_requirements(
     # Named the way he would name them, with the checker's sentence underneath
     # as what he is actually ruling on — the key told him nothing, and was the
     # only name the subject line had.
+    def judge(req) -> str:
+        # Each is its own row in the Inbox, so each gets its own link.
+        url = inbox_url(verdict_item(project.id, req.key))
+        return f"\n  Judge it: {url}" if url else ""
+
     detail = "\n\n".join(
         f"  {requirement_name(req)}\n"
         + (f"  What has to be true: {req.statement}\n"
@@ -2873,6 +2910,7 @@ def nag_observable_requirements(
         + f"  How to check: "
           f"{(req.acceptance_test or {}).get('target', 'look at what was produced')}"
         + ("" if first_for[req.id] else "\n  (a repeat — waiting since it entered checking)")
+        + judge(req)
         for req in due
     )
     subject = (f"waiting on your verdict: {_clip(requirement_name(due[0]), 80)}"
@@ -2983,7 +3021,8 @@ def nag_awaiting_chairman(
                 + "\n\nProposed scope is not scope. No work can be created against any "
                   "of these until you accept them, so the plan they belong to cannot "
                   "start. Open the Roadmap to accept, reword, or decline."
-                + ("" if not ever else "\n\nThis is a repeat — they are still waiting."),
+                + ("" if not ever else "\n\nThis is a repeat — they are still waiting.")
+                + inbox_link(scope_item(project.id), "Open it"),
                 attention=Attention.ACTION,
             )
             log.info("nagged chairman on %d proposed requirement(s) (%s)",
@@ -3011,7 +3050,8 @@ def nag_awaiting_chairman(
                 "is working without a promise, so no slip can freeze new scope and "
                 "nothing tells you when the date stops holding. Open the Roadmap to "
                 "sign it, or set your own."
-                + ("" if not ever else "\n\nThis is a repeat — it is still unsigned."),
+                + ("" if not ever else "\n\nThis is a repeat — it is still unsigned.")
+                + inbox_link(commitment_item(project.id), "Open it"),
                 attention=Attention.ACTION,
             )
             log.info("nagged chairman on an unsigned commitment (%s)", project.slug)

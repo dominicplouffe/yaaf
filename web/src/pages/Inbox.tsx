@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApprovalRow, AskRow, DeskProject, get, HeadsUpRow, HeldNote, post, splitWithout } from "../api";
 import { BriefBody, DeskBrief, ProjectBrief } from "../briefing";
-import { isLive, Item, ItemType, needsYou, SnoozeMenu, soonestClock, useDesk, wake } from "../desk";
+import { isLive, Item, ItemType, needsYou, ScopeAccept, SnoozeMenu, soonestClock, useDesk, wake } from "../desk";
 import { fmtWhen, usePoll } from "../hooks";
 import { clip, DecideButtons, fmtAgo, fmtSoon, NotedButton, SEND_HINT, sendOnEnter } from "../ui";
 import { holdDecision } from "../undo";
 import { Avatar, EmptyState, Seg } from "../ui/kit";
 import { Icon, IconName } from "../ui/Icon";
 import { flagPlain } from "../ui/project";
+import { Fact, Facts, Recommendation } from "../ui/signal";
 
 /** One place for everything that wants the chairman, across every project.
 
@@ -68,7 +69,7 @@ type Decided =
 
 const ICON: Record<ItemType, IconName> = {
   approval: "check", ask: "help", scope: "list", commitment: "calendar", verdict: "eye",
-  bet: "target", frozen: "alert", kill: "target", drought: "shield", budget: "wallet", noproof: "shield",
+  bet: "target", frozen: "alert", signoff: "flag", kill: "target", drought: "shield", budget: "wallet", noproof: "shield",
 };
 
 /** Why this one is the chairman's, in a clause — true at every dial setting,
@@ -91,25 +92,56 @@ function ProjectTag({ p }: { p: DeskProject }) {
 
 /** The full request behind an approval: the desk row carries the title and
     the clock, the project's approvals carry the case. Fetched when opened. */
+/** An approval in the one decision anatomy: the recommendation, then the
+    consequences as chips — the amount, what it does to the plan, whether a yes
+    can be taken back, what silence decides — then the verb. The full case is
+    one click down, folded rather than removed: nothing on it is hidden, and an
+    irreversible spend or an over-plan amount is a warning chip, never a line
+    at the bottom of a table. */
 function ApprovalCase({ item }: { item: Item }) {
   const { data } = usePoll(
     () => get<ApprovalRow[]>(`/observe/projects/${item.project.id}/approvals`), 30000,
     [item.project.id]);
   const row = data?.find((a) => a.id === item.approvalId);
   const [theCase, without] = row ? splitWithout(row.body) : ["", null];
+  const undo = row?.undo ?? item.approval?.undo ?? null;
+  const amount = item.amountUsd ?? null;
+  const b = item.project.budget;
+  const usd = b.unit === "usd";
+  const wall = b.cap * b.hard_stop_multiple;
+  const kind = item.approval?.kind ?? "";
+  // Only a purchase moves the month's spend; other kinds may carry an amount
+  // that is not money leaving the ledger.
+  const spend = kind === "spend";
+  const after = amount !== null && usd && spend ? b.spent + amount : null;
+  // The CEO's own sentence, never one guessed from the case.
+  const lead = row?.recommendation ?? item.approval?.recommendation ?? null;
   return (
-    <dl className="case">
-      <div><dt>Why it is yours</dt><dd>{whyYours(item.kind.toLowerCase())}</dd></div>
-      <div><dt>The case</dt><dd className="pre">{row ? theCase || "No case was written." : "Loading…"}</dd></div>
-      {without && <div><dt>If you say no</dt><dd className="pre">{without}</dd></div>}
-      {item.amountUsd !== null && item.amountUsd !== undefined && (
-        <div><dt>Amount</dt><dd>${item.amountUsd.toLocaleString()}</dd></div>
-      )}
-      <div className="silence"><dt>If you do nothing</dt><dd>{item.consequence}</dd></div>
-      {(row?.undo ?? item.approval?.undo) && (
-        <div><dt>Can you undo a yes?</dt><dd>{row?.undo ?? item.approval?.undo}</dd></div>
-      )}
-    </dl>
+    <>
+      {lead && <Recommendation who="The CEO">{lead}</Recommendation>}
+      <Facts>
+        {amount !== null && <Fact><b>${amount.toLocaleString()}</b>{spend ? " once" : ""}</Fact>}
+        {after !== null && (after >= wall
+          ? <Fact warn>reaches the <b>${wall.toLocaleString()}</b> hard stop</Fact>
+          : after > b.cap
+            ? <Fact warn>plan goes to <b>${Math.round(after).toLocaleString()} of ${b.cap.toLocaleString()}</b></Fact>
+            : <Fact>leaves <b>${Math.round(b.cap - after).toLocaleString()}</b> of plan</Fact>)}
+        {undo && (undo.startsWith("No")
+          ? <Fact warn><b>Can't be undone</b></Fact>
+          : <Fact>can be undone</Fact>)}
+        <Fact>if you do nothing: <b>{item.approval?.if_silent ?? "declined"}</b> {item.clocked ? fmtSoon(new Date(item.at).toISOString()) : ""}</Fact>
+      </Facts>
+      <details className="case-more">
+        <summary>Full case</summary>
+        <dl className="case">
+          <div><dt>Why it is yours</dt><dd>{whyYours(item.kind.toLowerCase())}</dd></div>
+          <div><dt>The case</dt><dd className="pre">{row ? theCase || "No case was written." : "Loading…"}</dd></div>
+          {without && <div><dt>If you say no</dt><dd className="pre">{without}</dd></div>}
+          <div className="silence"><dt>If you do nothing</dt><dd>{item.consequence}</dd></div>
+          {undo && <div><dt>Can you undo a yes?</dt><dd>{undo}</dd></div>}
+        </dl>
+      </details>
+    </>
   );
 }
 
@@ -150,15 +182,23 @@ function AskAnswer({ item, others, onDone }: { item: Item; others: number; onDon
     body: { body: `Re: “${item.title}” — ${option}` },
     after: onDone,
   });
+  const ownWords = (
+    <>
+      <textarea id="ib-answer" aria-label="Your answer" value={text} onChange={(e) => setText(e.target.value)}
+        onKeyDown={sendOnEnter(send, { disabled: busy || !text.trim() })}
+        placeholder="e.g. Split it out, and footnote the reconciliation to the filing." />
+      <div className="answer-acts">
+        <button className="primary small" disabled={busy || !text.trim()} onClick={send}>
+          <Icon name="send" size={13} /> Send answer
+        </button>
+        <span className="help">{SEND_HINT}</span>
+      </div>
+    </>
+  );
   return (
     <div className="answer">
       {options.length > 0 && (
         <div className="answer-options">
-          {item.ask?.recommendation && (
-            <p className="help" style={{ margin: "0 0 8px" }}>
-              The CEO recommends: {item.ask.recommendation}
-            </p>
-          )}
           <div className="answer-choices">
             {[...options].sort((x, y) => Number(recommended(y)) - Number(recommended(x))).map((o) => (
               <button key={o} className={`small${recommended(o) ? " primary" : ""}`}
@@ -169,18 +209,19 @@ function AskAnswer({ item, others, onDone }: { item: Item; others: number; onDon
           </div>
         </div>
       )}
-      <label className="field" htmlFor="ib-answer">
-        {options.length ? "Or answer in your own words" : "Your answer — it goes to the CEO in the chat"}
-      </label>
-      <textarea id="ib-answer" value={text} onChange={(e) => setText(e.target.value)}
-        onKeyDown={sendOnEnter(send, { disabled: busy || !text.trim() })}
-        placeholder="e.g. Split it out, and footnote the reconciliation to the filing." />
-      <div className="answer-acts">
-        <button className="primary small" disabled={busy || !text.trim()} onClick={send}>
-          <Icon name="send" size={13} /> Send answer
-        </button>
-        <span className="help">{SEND_HINT}</span>
-      </div>
+      {/* With options, the buttons are the answer and your own words are the
+          exception, one press away; without them, the box is the answer. */}
+      {options.length ? (
+        <details className="case-more">
+          <summary>Answer in your own words</summary>
+          {ownWords}
+        </details>
+      ) : (
+        <>
+          <label className="field" htmlFor="ib-answer">Your answer — it goes to the CEO in the chat</label>
+          {ownWords}
+        </>
+      )}
       {others > 0 && (
         <p className="help">
           The CEO has {others} other open question{others === 1 ? "" : "s"} on this project asked
@@ -192,7 +233,32 @@ function AskAnswer({ item, others, onDone }: { item: Item; others: number; onDon
   );
 }
 
-function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDesk> }) {
+/** The ask's case without the parts this card draws itself. The server files
+    one labelled string (body, why it matters, the options, the
+    recommendation) so the boardroom and the email read the same; here the
+    options are the buttons and the recommendation has its own line, so
+    printing them in the case as well said each thing twice. */
+function askContext(ask: { body: string; options: string[]; recommendation: string | null }): string {
+  let body = ask.body;
+  for (const [present, label] of [[ask.options.length > 0, "The options:"],
+    [!!ask.recommendation, "What I recommend:"]] as const) {
+    if (!present) continue;
+    const at = body.indexOf(`\n\n${label}`);
+    if (at < 0) continue;
+    const next = body.indexOf("\n\n", at + 2);
+    body = body.slice(0, at) + (next < 0 ? "" : body.slice(next));
+  }
+  return body.trim();
+}
+
+/** One decision, whole: what it is, its clock, the case, what silence does,
+    and the verb. The Inbox's detail pane and each project's page draw this
+    same card from the same list (`desk.mine`), so a decision is never two
+    different things in two places. `inProject` drops what the project page
+    already says — which project this is. */
+export function DecisionCard({ item, desk, inProject = false }: {
+  item: Item; desk: ReturnType<typeof useDesk>; inProject?: boolean;
+}) {
   const otherAsks = item.type === "ask"
     ? desk.items.filter((i) => i.type === "ask" && i.project.id === item.project.id && i.key !== item.key).length
     : 0;
@@ -201,20 +267,22 @@ function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDes
       <div className="ib-meta">
         <span className={`kind-ic k-${item.type}`}><Icon name={ICON[item.type]} size={15} /></span>
         <span className="ib-kind">{item.kind}</span>
-        <ProjectTag p={item.project} />
+        {!inProject && <ProjectTag p={item.project} />}
         <span className="grow" />
         <SnoozeMenu item={item} onDone={desk.reload} />
         {item.clocked && (
           <span className={`clockpill${item.at - Date.now() < 6 * 3_600_000 ? " warn" : ""}`}>
             <Icon name="clock" size={13} />
-            {item.type === "approval" ? "Denies itself" : item.type === "ask" ? "Falls back" : "Resolves"} {fmtSoon(new Date(item.at).toISOString())}
+            {item.type === "approval" ? "Denies itself" : item.type === "ask" ? "Falls back"
+              : item.type === "signoff" ? "Completes itself" : "Resolves"} {fmtSoon(new Date(item.at).toISOString())}
           </span>
         )}
       </div>
       <h2 className="ib-title">{item.what}</h2>
+      {item.ask?.recommendation && <Recommendation who="The CEO">{item.ask.recommendation}</Recommendation>}
       {item.type === "approval" ? <ApprovalCase item={item} /> : (
         <dl className="case">
-          {item.ask && <div><dt>The question</dt><dd className="pre">{item.ask.body || item.title}</dd></div>}
+          {item.ask && <div><dt>The question</dt><dd className="pre">{askContext(item.ask) || item.title}</dd></div>}
           {item.ask && <div><dt>If you say nothing</dt><dd>{item.ask.defaultAction}</dd></div>}
           {!item.ask && (
             <div className={item.yours ? "silence" : ""}>
@@ -236,12 +304,15 @@ function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDes
       {item.type === "ask" && <AskAnswer item={item} others={otherAsks} onDone={desk.reload} />}
       {item.type !== "approval" && item.type !== "ask" && (
         <div className="ib-acts">
-          <Link className={`btnlink${item.yours ? " primary" : ""}`} to={item.to}>{item.toLabel} <Icon name="arrow" size={13} /></Link>
+          {item.type === "scope" ? <ScopeAccept project={item.project} onDone={desk.reload} /> : item.actions}
+          <Link className={`btnlink${item.yours && !item.actions ? " primary" : ""}`} to={item.to}>{item.toLabel} <Icon name="arrow" size={13} /></Link>
         </div>
       )}
-      <p className="ib-foot-note help">
-        <Link className="ib-open-project" to={`/projects/${item.project.id}`}>Open {item.project.name} →</Link>
-      </p>
+      {!inProject && (
+        <p className="ib-foot-note help">
+          <Link className="ib-open-project" to={`/projects/${item.project.id}`}>Open {item.project.name} →</Link>
+        </p>
+      )}
     </div>
   );
 }
@@ -504,13 +575,12 @@ function AllClear({ projects, items }: { projects: DeskProject[]; items: Item[] 
       </div>
     );
   }
+  // No "Nothing needs you" headline here: the empty list beside this pane
+  // already says it, and the two side by side were one sentence twice. What
+  // this pane adds is the evidence, so it leads with that.
   return (
     <div className="quiet ok">
-      <div className="mark">Nothing needs you.</div>
-      <div className="sub">
-        No decision is blocked, nothing has stopped, and nothing is waiting on a
-        click from you. The proof it is actually working:
-      </div>
+      <div className="mark">It is working.</div>
       <div className="proof">
         <div className="pf"><div className="pv">{live.length}</div><div className="pl">project{live.length === 1 ? "" : "s"} working</div></div>
         <div className="pf"><div className="pv">{fmtAgo(latestRun(live))}</div><div className="pl">last run</div></div>
@@ -562,7 +632,7 @@ export function InboxView({ project }: { project?: string }) {
             </span>
           </>
         ),
-        detail: () => <ItemDetail item={it} desk={desk} />,
+        detail: () => <DecisionCard item={it} desk={desk} />,
       }))
     : tab === "updates" || tab === "ack"
       ? (tab === "ack" ? acks : news).map((u) => ({

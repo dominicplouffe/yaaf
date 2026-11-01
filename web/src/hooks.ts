@@ -80,6 +80,16 @@ const WHEN = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
 });
 
+/** "Sun 9:05 PM" within the last six days, "Oct 26, 9:05 PM" before that: a
+    weekday alone reads as the coming one once it is a week old. */
+export function fmtSince(iso: string): string {
+  const at = new Date(iso);
+  const recent = Date.now() - at.getTime() < 6 * 86_400_000;
+  return at.toLocaleString(undefined, recent
+    ? { weekday: "short", hour: "numeric", minute: "2-digit" }
+    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 export function fmtWhen(iso: string | null): string {
   if (!iso) return "—";
   return WHEN.format(new Date(iso));

@@ -72,7 +72,7 @@ def test_an_approval_that_is_not_a_grant_says_so(client):
     response = client.post("/agent/approvals", headers=headers,
                            json={"kind": "spend", "title": "Buy a data pull",
                                  "body": "Two months of category data.",
-                                 "if_declined": "We forecast from last year's data.",
+                                 "recommendation": "Approve it; the case says why.", "if_declined": "We forecast from last year's data.",
                                  "amount_usd": 40})
     assert response.status_code == 200, response.text
 

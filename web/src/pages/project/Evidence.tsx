@@ -106,11 +106,8 @@ export default function Evidence({ projectId }: { projectId: string }) {
   return (
     <>
       <p className="subtitle">
-        Every claim the agents made and what the platform could check about it, newest first.
-        Only verified or platform-attested external evidence counts toward the drought and the
-        external floor — agent claims are fetched, hashed and checked by the platform, never
-        taken at their word. Read-only: nothing here is waiting on you, and the platform's own
-        sampled audit is on the <Link to={`/projects/${projectId}/details/tasks`}>Tasks page</Link>.
+        Every claim the agents made, and what the platform could check. Spot audits are on
+        the <Link to={`/projects/${projectId}/details/tasks`}>Tasks page</Link>.
       </p>
       <Coverage rows={rows} />
       {/* Failed proof is not a footnote: the platform fetched what an agent

@@ -175,7 +175,7 @@ def test_an_approval_that_timed_out_is_reported_as_having_decided_itself(client)
     filed = client.post("/agent/approvals",
                         json={"kind": "spend", "title": "buy the data feed",
                               "body": "we need the quotes",
-                              "if_declined": "the model runs on yesterday's quotes",
+                              "recommendation": "Approve it; the case says why.", "if_declined": "the model runs on yesterday's quotes",
                               "amount_usd": 200.0},
                         headers=bearer(token))
     assert filed.status_code == 200, filed.text
@@ -872,3 +872,125 @@ def test_the_letter_leads_with_what_is_his_and_speaks_his_clock(client):
     assert text.index("Waiting on you") < text.index("Window:")
     assert "UTC" not in text
     assert ("EDT" in text) or ("EST" in text)
+
+
+# ── said the way he would say it ────────────────────────────────────────────────
+
+
+def test_a_rule_he_changed_is_named_the_way_his_settings_page_names_it(client):
+    """"you changed 7 rules (ceo_heartbeat_always, ceo_heartbeat_hours,
+    inbox_runs_per_project_per_hour…)" reached Home, the morning email and
+    `yaaf briefing` — field names from a schema he has never been shown."""
+    from tests.conftest import amend
+
+    project = make_project(client, slug="relabel")
+    amend(client, project["id"], ceo_heartbeat_always=True, ceo_heartbeat_hours=4,
+          inbox_runs_per_project_per_hour=5, queue_ceiling=6, hard_stop_multiple=2.0)
+
+    (line,) = [x for x in brief(client, project)["lines"] if x["kind"] == "rules_changed"]
+    # Semicolons, because a label carries commas of its own; and the ones past
+    # the fourth are counted rather than hidden behind an ellipsis.
+    assert line["text"] == (
+        "you changed 5 rules (hard stop, as a multiple of the budget; hours between "
+        "planning wakes; inbox runs per hour, whole project; open tasks at once; "
+        "and 1 more)")
+
+
+def test_a_rule_the_schema_does_not_know_still_reads_as_words():
+    from yaaf.core.constitution import rule_label
+
+    assert rule_label("queue_ceiling") == "open tasks at once"
+    assert rule_label("monthly_usd_cap") == "monthly budget (USD)"
+    assert rule_label("a_retired_rule") == "a retired rule"
+
+
+def _idle_seat(client, project: dict) -> None:
+    """A hired seat that has spent runs and closed nothing, flagged the way the
+    janitor flags it."""
+    from tests.selftest_invariants.test_stand_down_conditions import (
+        _ceo,
+        _evaluate,
+        _hire,
+        _spend_runs,
+    )
+
+    _hire(client, _ceo(project))
+    _spend_runs(project["id"], "Kit", 6)
+    _evaluate(project["id"])
+
+
+def _idle_line(client, project: dict) -> str:
+    (line,) = [x for x in brief(client, project)["lines"] if x["kind"] == "seats_idle"]
+    return line["text"]
+
+
+def test_a_young_project_s_idle_seat_is_dated_from_when_it_began(client):
+    """"spent runs and closed no work in 14 days" was said about a project
+    created five minutes earlier: the rule's look-back, printed as if it were
+    time that had passed."""
+    from yaaf.server.rows import chairman_time
+
+    project = make_project(client, slug="young-idle")
+    _idle_seat(client, project)
+
+    with db_session() as session:
+        born = session.get(Project, project["id"]).created_at
+    # The window cannot reach back past the project's birth.
+    assert _idle_line(client, project).endswith(
+        f"closed no work since {chairman_time(born, 'UTC').split(',')[0]}")
+
+
+def test_a_seat_idle_for_longer_than_the_window_is_said_in_days(client):
+    from yaaf.core import ids
+    from yaaf.core.models import Agent, Run, RunStatus
+
+    project = make_project(client, slug="old-idle")
+    with db_session() as session:
+        session.get(Project, project["id"]).created_at = utcnow() - timedelta(days=40)
+    _idle_seat(client, project)
+    with db_session() as session:
+        kit = session.query(Agent).filter(
+            Agent.project_id == project["id"], Agent.name == "Kit").one()
+        session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"], agent_id=kit.id,
+                        kind="agent_run", trigger={"type": "wake"}, status=RunStatus.DONE,
+                        created_at=utcnow() - timedelta(days=20)))
+
+    assert _idle_line(client, project).endswith("closed no work in 14 days")
+
+
+def test_a_seat_hired_into_an_old_project_is_dated_from_its_first_run(client):
+    """Nor past the seat's own first run: a role hired yesterday cannot have
+    been idle for two weeks, however old the project is."""
+    from yaaf.core.models import Agent, Run
+    from yaaf.server.rows import chairman_time
+
+    project = make_project(client, slug="new-seat")
+    with db_session() as session:
+        session.get(Project, project["id"]).created_at = utcnow() - timedelta(days=40)
+    _idle_seat(client, project)
+    with db_session() as session:
+        kit = session.query(Agent).filter(
+            Agent.project_id == project["id"], Agent.name == "Kit").one()
+        first = min(r.created_at for r in session.query(Run).filter(Run.agent_id == kit.id))
+
+    assert _idle_line(client, project).endswith(
+        f"closed no work since {chairman_time(first, 'UTC').split(',')[0]}")
+
+
+def test_the_flag_the_ceo_reads_dates_its_window_by_the_same_rule(client):
+    """The briefing was corrected to say "since" a young project's birth, and
+    the flag beside it — the text the CEO is asked to answer — still said
+    "6 runs in 14 days". One rule (staffing.idle_window_start) now says both."""
+    from yaaf.core.models import Flag, FlagKind
+
+    project = make_project(client, slug="young-idle-flag")
+    _idle_seat(client, project)
+    with db_session() as session:
+        flag = session.query(Flag).filter(
+            Flag.project_id == project["id"], Flag.kind == FlagKind.SEAT_IDLE).one()
+        summary, starts = flag.summary, (flag.arithmetic or {}).get("window_starts")
+    window = _idle_line(client, project).split("closed no work ", 1)[1]
+    assert window.startswith("since ")
+    assert f"runs {window} and closed no work" in summary
+    assert "in 14 days" not in summary
+    assert starts
