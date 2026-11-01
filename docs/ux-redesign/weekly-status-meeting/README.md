@@ -4,10 +4,16 @@
 a browser). The **Deliver / Operate / Explore** switch at the top shows the same meeting for each
 project shape. **Design notes** pins the reasoning to each section.
 
-> **Status: proposal.** Nothing here is built. It changes what the review *contains* and what the
-> CEO is made to file; it keeps every mechanism the review already has — opened by the janitor at
-> zero tokens, numbers frozen at open, six levers through the same routes they use anywhere else,
-> the green auto-close, the nag and the escalation.
+> **Status: step 1 of §8 is built** — the record (`yaaf/server/review_record.py`, frozen onto
+> `reviews.record` at open), the headline, the Explore tiles, and the fold on the numbers, with
+> no agent-visible change. Steps 2–5 are still proposal. The decisions in §7 were taken as
+> recommended: one meeting on Operate (at the roll), two replies per meeting, old filings
+> rendered the old way, "Status meeting" as the name.
+>
+> This proposal changes what the review *contains* and what the CEO is made to file; it keeps every
+> mechanism the review already has — opened by the janitor at zero tokens, numbers frozen at
+> open, six levers through the same routes they use anywhere else, the green auto-close, the nag
+> and the escalation.
 
 ---
 

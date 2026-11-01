@@ -1714,6 +1714,27 @@ export interface Decision { kind: string; reason: string; detail: string; at: st
 
 
 
+/** What was done in the meeting's window, from the record — composed by the
+    janitor at open and frozen beside the numbers. Null on meetings opened
+    before it existed. */
+export interface ReviewRecord {
+  since: string;
+  until: string;
+  requirements_met: { key: string; statement: string; how: "verified" | "judged" }[];
+  standing_honoured: { key: string; statement: string }[];
+  requirements_cut: { key: string; statement: string; reason: string | null }[];
+  deliverables: { name: string; version: number; requirements: string[] }[];
+  spot_checks: { considered: number; drawn: number; passed: number; failed: number;
+    expired: number };
+  tasks_closed: number;
+  runs: { total: number; dead: number; usd: number };
+  cycle: { ordinal: number; status: string; goal: string | null; accepted?: number;
+    met?: number; carried?: number; met_keys?: string[]; carried_keys?: string[] } | null;
+  bets: Record<"alive" | "added" | "killed" | "expired",
+    { id: string; statement: string; kill_date: string; status: string }[]>;
+  evidence: { verified: number; failed: number; pending: number };
+}
+
 export interface ReviewRow {
   id: string;
   number: number;
@@ -1721,6 +1742,10 @@ export interface ReviewRow {
   scheduled_for: string;
   opened_at: string;
   numbers: ReviewNumbers;
+  record: ReviewRecord | null;
+  /** One sentence in words from the frozen facts; composed server-side so the
+      screen, the reader tool and the opening mail say the same thing. */
+  headline: string;
   narrative: string | null;
   recommended: string | null;
   narrative_filed_at: string | null;

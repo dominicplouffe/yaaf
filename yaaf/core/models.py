@@ -1754,6 +1754,12 @@ class Review(Base):
     # screen reads; this is a frozen copy so the meeting's record cannot
     # drift as the week moves on.
     numbers: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # What was done in the window, from the record (`review_record.compose`):
+    # requirements made true and how they were checked, cuts and their
+    # reasons, deliverables, spot-checks, runs, the cycle, the bets. Frozen at
+    # open like the numbers, and for the same reason. Null on meetings opened
+    # before it existed; the screen says so rather than inventing one.
+    record: Mapped[dict | None] = mapped_column(JSONVariant)
     narrative: Mapped[str | None] = mapped_column(Text)
     recommended: Mapped[str | None] = mapped_column(Text)
     narrative_run_id: Mapped[str | None] = mapped_column(String(40))

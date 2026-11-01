@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import {
-  Decision, get, post, requirementName, RequirementMeta, ReviewNumbers, ReviewRow, ReviewsView,
+  Decision, get, post, requirementName, RequirementMeta, ReviewNumbers, ReviewRecord, ReviewRow,
+  ReviewsView,
 } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import { AsOf, ExportCsv, NoteAction, Skeleton, clip, downloadCsv } from "../../ui";
@@ -187,7 +188,188 @@ function DecisionList({ decisions }: { decisions: Decision[] }) {
   );
 }
 
-function NumbersTiles({ n }: { n: ReviewNumbers }) {
+/** A short, plain word for who the lines in a section came from. The record
+    is the platform's at zero tokens and cannot be argued with; the CEO's
+    words are the CEO's. A reader should never have to guess which. */
+function Source({ kind }: { kind: "record" | "ceo" }) {
+  const record = kind === "record";
+  return (
+    <span className={"chip " + (record ? "ok" : "accent")} title={record
+      ? "Composed by the platform from its own events when the meeting opened. No agent wrote it."
+      : "Filed by the CEO on a reserved governance run."}>
+      {record ? "from the record" : "CEO"}
+    </span>
+  );
+}
+
+function KeyedList({ rows, how }: {
+  rows: { key: string; statement: string; how?: string; reason?: string | null }[];
+  how?: boolean;
+}) {
+  return (
+    <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, fontSize: 13 }}>
+      {rows.map((r) => (
+        <li key={r.key} style={{ display: "flex", gap: 8, minWidth: 0 }}>
+          <span className="help" style={{ flex: "0 0 auto", fontFamily: "var(--mono)" }}>
+            {r.key}
+          </span>
+          <span style={{ minWidth: 0 }}>
+            {clip(r.statement, 110)}
+            {r.reason != null && <span className="help"> — {clip(r.reason, 90)}</span>}
+          </span>
+          {how && r.how && (
+            <span className="help" style={{ marginLeft: "auto", whiteSpace: "nowrap" }}>
+              {r.how}
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** What was done in the window, by name, before any number. Mode-shaped:
+    a Deliver project did requirements; an Operate project did a cycle; an
+    Explore project ran bets and collected evidence. */
+function RecordSection({ record, mode }: { record: ReviewRecord | null; mode: string }) {
+  if (!record) {
+    return (
+      <div>
+        <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+          <b style={{ fontSize: 13 }}>What was done</b><Source kind="record" />
+        </div>
+        <p className="help" style={{ marginTop: 4 }}>
+          This meeting opened before the platform kept a record of the period; only the
+          numbers below were frozen.
+        </p>
+      </div>
+    );
+  }
+  const cell = (n: string, label: string, body: ReactNode) => (
+    <div style={{ background: "var(--sunken)", borderRadius: "var(--radius-sm)",
+      padding: "10px 12px", minWidth: 0 }}>
+      <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.1,
+        fontVariantNumeric: "tabular-nums" }}>{n}</div>
+      <div className="help">{label}</div>
+      {body}
+    </div>
+  );
+  const cells: ReactNode[] = [];
+  if (mode === "explore") {
+    const b = record.bets;
+    cells.push(cell(
+      `${b.alive.length} alive`,
+      `bets — ${b.killed.length} killed, ${b.expired.length} expired this period`,
+      <KeyedList rows={[
+        ...b.alive.map((h) => ({ key: "alive", statement: h.statement,
+          how: `kill ${fmtDate(h.kill_date)}` })),
+        ...b.killed.map((h) => ({ key: "killed", statement: h.statement })),
+        ...b.expired.map((h) => ({ key: "expired", statement: h.statement })),
+      ]} how />));
+    cells.push(cell(
+      `${record.evidence.verified} / ${record.evidence.failed}`,
+      "evidence verified / refused by the platform",
+      record.evidence.pending > 0
+        ? <p className="help" style={{ marginTop: 6 }}>{record.evidence.pending} still waiting on the verifier</p>
+        : null));
+  } else {
+    if (mode === "operate" && record.cycle) {
+      const c = record.cycle;
+      cells.push(cell(
+        `${c.met ?? 0} of ${c.accepted ?? 0}`,
+        `cycle ${c.ordinal} scope met · closed ${c.status}`,
+        (c.carried_keys?.length ?? 0) > 0
+          ? <p className="help" style={{ marginTop: 6 }}>carried: {c.carried_keys!.join(", ")}</p>
+          : null));
+    }
+    cells.push(cell(
+      String(record.requirements_met.length),
+      "requirements made true",
+      record.requirements_met.length > 0
+        ? <KeyedList rows={record.requirements_met} how />
+        : <p className="help" style={{ marginTop: 6 }}>none this period</p>));
+    if (record.standing_honoured.length > 0) {
+      cells.push(cell(
+        String(record.standing_honoured.length),
+        "standing obligations honoured",
+        <KeyedList rows={record.standing_honoured} />));
+    }
+    if (record.requirements_cut.length > 0) {
+      cells.push(cell(
+        String(record.requirements_cut.length),
+        "requirements cut, with reasons",
+        <KeyedList rows={record.requirements_cut} />));
+    }
+  }
+  cells.push(cell(
+    String(record.deliverables.length),
+    "deliverables published",
+    record.deliverables.length > 0 ? (
+      <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, fontSize: 13 }}>
+        {record.deliverables.map((d) => (
+          <li key={d.name} style={{ display: "flex", gap: 8, minWidth: 0 }}>
+            <span className="help" style={{ fontFamily: "var(--mono)" }}>v{d.version}</span>
+            <span style={{ minWidth: 0 }}>{clip(d.name, 60)}
+              {d.requirements.length > 0 && (
+                <span className="help"> · claims {d.requirements.join(", ")}</span>)}
+            </span>
+          </li>))}
+      </ul>
+    ) : <p className="help" style={{ marginTop: 6 }}>nothing published</p>));
+  const s = record.spot_checks;
+  cells.push(cell(
+    `${s.drawn} of ${s.considered}`,
+    "closes spot-checked",
+    <p className="help" style={{ marginTop: 6 }}>
+      {s.failed > 0 ? `${s.failed} failed · ` : ""}
+      {s.expired > 0 ? `${s.expired} expired unanswered · ` : ""}
+      {record.runs.total} runs, {record.runs.dead} dead
+      {record.tasks_closed > 0 ? ` · ${record.tasks_closed} tasks closed` : ""}
+    </p>));
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+        <b style={{ fontSize: 13 }}>What was done since the last meeting</b>
+        <Source kind="record" />
+        <span className="help">{fmtDate(record.since)} → {fmtDate(record.until)}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+        gap: 10, marginTop: 8 }}>
+        {cells}
+      </div>
+    </div>
+  );
+}
+
+function NumbersTiles({ n, mode, record, requirements }: {
+  n: ReviewNumbers; mode: string; record: ReviewRecord | null;
+  requirements: RequirementOption[];
+}) {
+  // Explore has no requirements and no date: the first three tiles would read
+  // "—", "0" and nothing. Its scope is bets, and the bets were frozen onto the
+  // numbers all along without a tile to show them.
+  if (mode === "explore") {
+    const alive = n.hypotheses.filter((h) => h.status === "active");
+    const nextKill = alive.map((h) => h.kill_date).sort()[0];
+    return (
+      <div className="tiles" style={{ margin: "12px 0" }}>
+        <div className="tile">
+          <div className="label">Bets alive</div>
+          <div className="value">{alive.length}</div>
+          <div className="sub">{n.hypotheses.length - alive.length} expired, not yet killed</div>
+        </div>
+        <div className="tile">
+          <div className="label">Next kill date</div>
+          <div className="value" style={{ fontSize: 18 }}>{nextKill ? fmtDate(nextKill) : "—"}</div>
+          <div className="sub">{nextKill ? "a bet dies then unless you extend it" : "no live bet"}</div>
+        </div>
+        <BudgetTile n={n} />
+        <AuditTile n={n} record={record} />
+      </div>
+    );
+  }
+  const worst = n.velocity.worst_failure;
+  const worstRow = worst ? requirements.find((r) => r.key === worst.key) : null;
   return (
     <div className="tiles" style={{ margin: "12px 0" }}>
       <div className="tile">
@@ -234,30 +416,51 @@ function NumbersTiles({ n }: { n: ReviewNumbers }) {
           </div>
         </div>
       )}
-      <div className="tile">
-        <div className="label">Budget</div>
-        <div className="value">
-          {Math.round((n.budget.spent_mtd / Math.max(n.budget.cap, 1)) * 100)}<small>%</small>
-        </div>
-        <div className="sub">
-          {n.budget.spent_mtd.toLocaleString()} of {n.budget.cap.toLocaleString()} {n.budget.unit}
-        </div>
-      </div>
-      <div className="tile">
-        <div className="label">Audit coverage</div>
-        <div className="value">{n.audit_coverage.sampled}</div>
-        <div className="sub">
-          sampled · {n.audit_coverage.failed} failed ·
-          {" "}{n.audit_coverage.expired_unreviewed} expired unreviewed
-        </div>
-      </div>
-      {n.velocity.worst_failure && (
+      <BudgetTile n={n} />
+      <AuditTile n={n} record={record} />
+      {worst && (
         <div className="tile alert">
-          <div className="label">Worst offender</div>
-          <div className="value" style={{ fontSize: 18 }}>{n.velocity.worst_failure.key}</div>
-          <div className="sub">{n.velocity.worst_failure.failure_load} dead runs</div>
+          <div className="label">Most dead runs</div>
+          <div className="value" style={{ fontSize: 18 }}>{worst.failure_load}</div>
+          {/* The key alone sent the reader to the Roadmap to find out what
+              R-29 was. The statement is on the page already; say it. */}
+          <div className="sub">
+            on {worst.key}{worstRow ? ` · ${clip(requirementName(worstRow), 70)}` : ""}
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function BudgetTile({ n }: { n: ReviewNumbers }) {
+  return (
+    <div className="tile">
+      <div className="label">This month's spend</div>
+      <div className="value">
+        {Math.round((n.budget.spent_mtd / Math.max(n.budget.cap, 1)) * 100)}<small>% of plan</small>
+      </div>
+      <div className="sub">
+        {n.budget.spent_mtd.toLocaleString()} of {n.budget.cap.toLocaleString()} {n.budget.unit}
+      </div>
+    </div>
+  );
+}
+
+function AuditTile({ n, record }: { n: ReviewNumbers; record: ReviewRecord | null }) {
+  // "Audit coverage 0" read as a score. It is a count of closes that landed
+  // on the chairman's desk, out of the closes that could have; the record
+  // knows the denominator, the older snapshot does not.
+  const considered = record?.spot_checks.considered;
+  return (
+    <div className="tile">
+      <div className="label">Spot-checked</div>
+      <div className="value">
+        {n.audit_coverage.sampled}{considered != null && <small> of {considered} closes</small>}
+      </div>
+      <div className="sub">
+        {n.audit_coverage.failed} failed · {n.audit_coverage.expired_unreviewed} expired unanswered
+      </div>
     </div>
   );
 }
@@ -318,7 +521,16 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
               }} />
           </div>
 
-          <NumbersTiles n={open.numbers} />
+          {/* One sentence in words before any number: a reader who does not
+              live in the project knows where it stands by the second line. */}
+          <p style={{ fontFamily: "var(--font-display)", fontSize: 22, lineHeight: 1.3,
+            margin: "10px 0 14px", maxWidth: "60ch" }}>
+            {open.headline}
+          </p>
+
+          <div style={{ marginBottom: 16 }}>
+            <RecordSection record={open.record} mode={ctx.dash.mode} />
+          </div>
 
           {open.numbers.prior && open.numbers.prior.decisions.length > 0 && (
             <div style={{ marginBottom: 12 }}>
@@ -341,7 +553,9 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
               want from me" had to read all of it to find out the answer was
               "nothing". */}
           <div style={{ marginBottom: 12 }}>
-            <b style={{ fontSize: 13 }}>What your CEO says it will do</b>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+              <b style={{ fontSize: 13 }}>What your CEO says it will do</b><Source kind="ceo" />
+            </div>
             {open.narrative || open.recommended ? (
               <>
                 <p style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
@@ -402,6 +616,15 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
               unit={unit}
               onDone={() => { setLever(null); reload(); }} />
           )}
+
+          {/* The forecast's inputs, last. They opened the meeting for a year
+              and a reader who did not live in the project could not say
+              what "11 a week · 0.4 weeks at this rate" meant for him. */}
+          <details style={{ marginTop: 16 }}>
+            <summary style={{ fontSize: 13, fontWeight: 600 }}>The numbers behind this</summary>
+            <NumbersTiles n={open.numbers} mode={ctx.dash.mode} record={open.record}
+              requirements={requirements ?? []} />
+          </details>
         </div>
       )}
 
@@ -451,6 +674,7 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
                   {showHistory[r.number] ? "less" : "more"}
                 </button>
               </div>
+              <p className="help" style={{ margin: "4px 0 0" }}>{r.headline}</p>
               <DecisionList decisions={r.decisions} />
               {showHistory[r.number] && r.narrative && (
                 <p style={{ whiteSpace: "pre-wrap", fontSize: 13, marginTop: 8 }}>

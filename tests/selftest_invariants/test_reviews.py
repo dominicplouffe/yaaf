@@ -365,3 +365,118 @@ def test_a_failed_spot_check_is_a_meeting_worth_having(client):
     run_review_tick(project)
     with db_session() as session:
         assert session.get(Review, review["id"]).status == ReviewStatus.OPEN
+
+
+# ── what was done, from the record ─────────────────────────────────────────────
+
+
+def _open_view(client, project: dict) -> dict:
+    return client.get(f"/observe/projects/{project['id']}/reviews", headers=ADMIN).json()["open"]
+
+
+def test_the_meeting_opens_on_what_was_done_from_the_platforms_own_events(client):
+    """The first thing on the meeting is what happened, by name — requirements
+    the platform settled (and how), cuts with the reason the chairman gave —
+    and none of it was written by an agent. R-00 lifting is held out on the
+    grounds velocity holds it out: the plan starting to add up is not scope
+    landing."""
+    from tests.selftest_invariants.test_scope_verbs import settle
+
+    project = deliver_project(client, slug="recorded")
+    token = ceo_token(project)
+    done = propose(client, token, statement="The landing page converts a test signup")
+    accept(client, done["requirement_id"], project)
+    gone = propose(client, token, statement="A webinar is scheduled")
+    accept(client, gone["requirement_id"], project)
+    settle(done["requirement_id"])
+    cut = client.post(f"/admin/requirements/{gone['requirement_id']}/cut",
+                      json={"reason": "no audience to test on yet"}, headers=ADMIN)
+    assert cut.status_code == 200, cut.text
+
+    open_review(project)
+    view = _open_view(client, project)
+    record = view["record"]
+    met = {r["key"]: r for r in record["requirements_met"]}
+    assert done["key"] in met
+    assert met[done["key"]]["how"] == "verified"   # a command test: the platform ran it
+    assert "R-00" not in met
+    assert record["requirements_cut"] == [
+        {"key": gone["key"], "statement": "A webinar is scheduled",
+         "reason": "no audience to test on yet"}]
+    assert record["spot_checks"]["considered"] == 0
+    assert "requirements true" in view["headline"]
+    assert "spend" in view["headline"]
+
+    with db_session() as session:
+        frozen = session.query(Review).filter_by(project_id=project["id"]).one().record
+    assert frozen["requirements_met"] == record["requirements_met"]
+
+
+def test_the_record_stays_out_of_the_ceos_pack(client):
+    """The CEO explains the record; it is not handed it yet. Nothing here is
+    agent-visible, which is why no golden eval moved with this change, and a
+    test that pins it keeps the next change honest about when it does."""
+    from yaaf.core.models import Agent, Run, RunStatus
+    from yaaf.server.contextpack import build_context_pack
+
+    project = deliver_project(client, slug="unseen")
+    open_review(project)
+    with db_session() as session:
+        run = Run(id="run_" + project["id"][-8:], project_id=project["id"],
+                  agent_id=project["ceo_agent_id"], status=RunStatus.RUNNING,
+                  trigger={"reasons": []})
+        session.add(run)
+        session.flush()
+        pack = build_context_pack(
+            session, run, session.get(Agent, project["ceo_agent_id"]),
+            session.get(Project, project["id"]))
+    assert "record" not in pack["review"]
+    assert "record" not in pack["review"]["numbers"]
+    assert "headline" not in pack["review"]
+
+
+def test_a_meeting_opened_before_the_record_still_has_a_headline(client):
+    """Meetings from before this change carry numbers and no record. The
+    screen says so; the headline is a function of the numbers and still
+    speaks, rather than a record being invented after the fact."""
+    project = deliver_project(client, slug="older")
+    review = open_review(project)
+    with db_session() as session:
+        session.get(Review, review["id"]).record = None
+    view = _open_view(client, project)
+    assert view["record"] is None
+    assert view["headline"]
+
+
+def test_an_explore_meeting_speaks_of_bets_not_requirements(client):
+    """Explore has no requirements and no date, so the Deliver-shaped tiles
+    read "—". Its scope is bets: the record says which lived, which were
+    killed and which died on their date, and the headline counts them."""
+    project = make_project(client, slug="betting")  # explore
+    token = ceo_token(project)
+    kill = utcnow() + timedelta(days=3)
+
+    def bet(statement: str) -> str:
+        filed = client.post("/agent/hypotheses",
+                            json={"statement": statement,
+                                  "kill_condition": "under 10 replies in 200 sends",
+                                  "kill_date": kill.isoformat()},
+                            headers=bearer(token))
+        assert filed.status_code == 200, filed.text
+        return filed.json()["id"]
+
+    dead = bet("cold email converts at two percent")
+    alive = bet("accountants will pay forty-nine a month")
+    killed = client.post(f"/agent/hypotheses/{dead}/kill",
+                         json={"reason": "zero replies in two hundred sends"},
+                         headers=bearer(token))
+    assert killed.status_code == 200, killed.text
+
+    open_review(project)
+    view = _open_view(client, project)
+    bets = view["record"]["bets"]
+    assert [h["id"] for h in bets["alive"]] == [alive]
+    assert [h["id"] for h in bets["killed"]] == [dead]
+    assert len(bets["added"]) == 2
+    assert view["headline"].startswith("1 bet alive, 1 killed this period.")
+    assert "requirement" not in view["headline"]

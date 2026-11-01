@@ -703,11 +703,23 @@ Opened on schedule by the janitor, with zero tokens, regardless of budget or an
 empty board. A review with nothing on the board is the one you most need. An
 open review shows a banner on the project's Inbox and the Roadmap until you close it.
 
-- **The platform's numbers**, frozen at open: pace, requirements met since the
-  last review, the commitment's state with promised and projected dates,
-  budget, audit coverage, and the worst offender by dead runs.
+- **One sentence first**, in words, from the frozen facts: *"Behind the promise
+  by two days (Oct 31 → Nov 2). 11 of 15 requirements true, 3 this period. This
+  month's spend is 114% of plan — over it."* An Operate project reads its
+  cycle; an Explore project reads its bets.
+- **What was done since the last meeting, from the record** — requirements
+  the platform made true and *how* it checked them (verified / judged), cuts
+  with the reason given, deliverables published, closes spot-checked, runs
+  and dead runs; a cycle's scorecard on Operate; bets alive, killed and
+  expired on Explore. Composed by the janitor at open and frozen beside the
+  numbers; no agent writes a word of it. Meetings opened before this existed
+  say so rather than showing an invented one.
 - **The CEO's variance narrative** — why the numbers are what they are, filed
   on a reserved governance run — and what it recommends.
+- **The platform's numbers**, under a fold at the bottom, frozen at open: pace,
+  requirements met since the last review, the commitment's state with
+  promised and projected dates, this month's spend, closes spot-checked out
+  of closes considered, and the requirement with the most dead runs.
 - **Your six levers**: cut scope, add scope, reword, move the date, raise the
   budget, accept the slip. Each is recorded with your reason, disclosed to the
   CEO, and shown at the *next* review beside what it bought.

@@ -1427,6 +1427,43 @@ def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
     return numbers
 
 
+def _record_lines(record: dict) -> str:
+    """The record, for the opening mail: what was done, by name, before the
+    numbers — because a chairman who reads the mail and not the tab was
+    getting the forecast's inputs and nothing he could recognise."""
+    lines: list[str] = []
+    met = record.get("requirements_met") or []
+    if met:
+        lines.append(f"  made true ({len(met)}): "
+                     + "; ".join(f"{r['key']} {r['statement'][:80]} [{r['how']}]"
+                                 for r in met[:6])
+                     + (f"; and {len(met) - 6} more" if len(met) > 6 else ""))
+    cut = record.get("requirements_cut") or []
+    if cut:
+        lines.append(f"  cut ({len(cut)}): "
+                     + "; ".join(f"{r['key']} — {(r['reason'] or 'no reason recorded')[:80]}"
+                                 for r in cut[:6]))
+    published = record.get("deliverables") or []
+    if published:
+        lines.append(f"  published ({len(published)}): "
+                     + ", ".join(f"{d['name']} v{d['version']}" for d in published[:6]))
+    cycle = record.get("cycle")
+    if cycle:
+        lines.append(f"  cycle {cycle['ordinal']} closed {cycle['status']}: "
+                     f"{cycle.get('met', 0)} of {cycle.get('accepted', 0)} met")
+    bets = record.get("bets") or {}
+    if bets.get("alive") or bets.get("killed") or bets.get("expired"):
+        lines.append(f"  bets: {len(bets.get('alive') or [])} alive, "
+                     f"{len(bets.get('killed') or [])} killed, "
+                     f"{len(bets.get('expired') or [])} expired this period")
+    checks = record.get("spot_checks") or {}
+    runs = record.get("runs") or {}
+    lines.append(f"  spot-checks: {checks.get('drawn', 0)} of {checks.get('considered', 0)} "
+                 f"closes drawn, {checks.get('failed', 0)} failed; "
+                 f"runs: {runs.get('total', 0)}, {runs.get('dead', 0)} dead")
+    return "What was done since the last meeting:\n\n" + "\n".join(lines) + "\n\n"
+
+
 def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> Review | None:
     """Open the standing meeting when it is due — with zero tokens, regardless
     of budgets, board state, or anything else. A review with an empty board
@@ -1449,19 +1486,30 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
     if now < due:
         return None
 
+    from yaaf.server import review_record
+
     numbers = review_numbers(session, project, cons, latest)
+    # The window is the same one `review_numbers` counts "met since" over:
+    # from the previous meeting's opening, or the project's birth.
+    record = review_record.compose(
+        session, project,
+        since=latest.opened_at if latest is not None else project.created_at,
+        until=now,
+    )
     review = Review(
         id=ids.new_id(ids.REVIEW),
         project_id=project.id,
         number=number,
         scheduled_for=due,
         numbers=numbers,
+        record=record,
     )
     session.add(review)
     session.flush()
 
     velocity = numbers["velocity"]
     commitment = numbers["commitment"]
+    headline = review_record.headline(project.mode, numbers, record)
     prior_lines = ""
     if numbers.get("prior", {}).get("decisions"):
         bought = numbers["prior"]["bought"]
@@ -1474,7 +1522,9 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
         )
     chairman_notify(
         session, project, f"review #{number} is open",
-        f"The standing review for {project.name} is open. The numbers:\n\n"
+        f"The standing review for {project.name} is open. {headline}\n\n"
+        + _record_lines(record)
+        + "The numbers:\n\n"
         f"  goal: {project.goal[:300]}\n"
         f"  pace: {velocity['per_week_3w']}/wk (3w), {velocity['per_week_12w']}/wk (12w); "
         f"{velocity['remaining']} requirement(s) open\n"

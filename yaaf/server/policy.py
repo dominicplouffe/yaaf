@@ -999,6 +999,12 @@ OPEN_REQUIREMENT_STATUSES = (
 
 CLOSED_REQUIREMENT_STATUSES = (RequirementStatus.MET, RequirementStatus.CUT)
 
+#: Acceptance tests the platform runs itself. An observable is judged by a
+#: person or the CEO; it can be met, but it was never machine-checked. One
+#: tuple, because the Deliverables tab's proof label and the review's record
+#: must draw the same line.
+MACHINE_CHECKED_TESTS = ("command", "metric")
+
 
 _UNSET = object()
 

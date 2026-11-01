@@ -140,6 +140,13 @@ dates are its cycles' (§4).
   regardless of budget or an empty board — because a review with nothing on the
   board is the one you most need. It carries the platform's frozen numbers;
   the CEO files its variance narrative on a *reserved* governance run.
+- **It opens on what was done, from the record.** One sentence in words,
+  then the period by name: requirements the platform made true and how it
+  checked them, cuts with their reasons, deliverables published, closes
+  spot-checked, the cycle's scorecard, the bets that lived and died. The
+  platform composes it at open from events it wrote under its own rules —
+  the same rules the briefing counts by — and no agent writes a word of it.
+  The forecast's inputs sit under a fold at the bottom, where they belong.
 - **Six levers, each recorded with your reason**: cut scope, add scope, reword,
   move the date, raise the budget, accept the slip. Each is disclosed to the
   CEO and shown at the next review beside what it bought.
