@@ -392,8 +392,9 @@ function LatestResults({ ctx }: { ctx: ProjectCtx }) {
   );
 }
 
-/** Start, pause and stop: rare and consequential, so one press away rather
-    than three buttons beside the one you use every day. */
+/** Pause, Settings and Stop: rare and consequential, so one press away rather
+    than beside the button you use every day. Start is not here: on a project
+    that is not running it is the one thing to do, so it stays in view. */
 function MoreMenu({ ctx, onPause, onStop, unpaid }: {
   ctx: ProjectCtx; onPause: () => void; onStop: () => void; unpaid: boolean;
 }) {
@@ -404,12 +405,6 @@ function MoreMenu({ ctx, onPause, onStop, unpaid }: {
     <details className="ov-more">
       <summary aria-label="More actions"><Icon name="more" size={16} /></summary>
       <div className="ov-more-menu" role="menu">
-        {dash.status !== "running" && dash.status !== "stopped" && (unpaid ? (
-          <Link role="menuitem" to={`${base}/settings?s=money`}><Icon name="key" size={14} /> Add a key to start</Link>
-        ) : (
-          <button role="menuitem" onClick={async () => { await post(`/admin/projects/${projectId}/start`); ctx.reload(); }}>
-            <Icon name="play" size={14} /> Start</button>
-        ))}
         {dash.status === "running" && <button role="menuitem" onClick={onPause}><Icon name="pause" size={14} /> Pause the team…</button>}
         <Link role="menuitem" to={`${base}/settings`}><Icon name="gear" size={14} /> Settings</Link>
         {dash.status !== "stopped" && <button role="menuitem" className="danger" onClick={onStop}><Icon name="stop" size={14} /> Stop for good…</button>}
@@ -856,7 +851,20 @@ export default function Overview({
             )}
           </div>
           <div className="ov-acts">
-            <Link to={`${base}/chat`} className="btnlink primary"><Icon name="message" size={15} />Message {ceo}</Link>
+            {dash.can_steer !== false && dash.status !== "running" && dash.status !== "stopped" && (
+              unpaid ? (
+                <Link to={`${base}/settings?s=money`} className="btnlink primary"
+                  title="Agents cannot run without a billing credential">
+                  <Icon name="play" size={15} />Add a key to start
+                </Link>
+              ) : (
+                <button className="primary" onClick={async () => { await post(`/admin/projects/${projectId}/start`); ctx.reload(); }}>
+                  <Icon name="play" size={15} />Start
+                </button>
+              )
+            )}
+            <Link to={`${base}/chat`} className={`btnlink${dash.status === "running" ? " primary" : ""}`}>
+              <Icon name="message" size={15} />Message {ceo}</Link>
             <MoreMenu ctx={ctx} onPause={onPause} onStop={onStop} unpaid={unpaid} />
           </div>
         </div>

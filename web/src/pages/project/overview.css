@@ -84,9 +84,6 @@
   .ov-acts > .btnlink { flex: 1; justify-content: center; }
 }
 
-/* Embedded, the Inbox is as tall as its content up to most of a screen: a
-   fixed 760px held one decision in a column of white. */
-.inbox.embedded { height: auto; max-height: min(78vh, 760px); }
 .inbox.embedded.calm { height: auto; }
 .inbox.embedded.calm .ib-rows { min-height: 0; }
 .inbox.embedded.calm .ib-detail { padding: 16px 24px; }

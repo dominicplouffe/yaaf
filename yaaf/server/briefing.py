@@ -1085,8 +1085,9 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
     ).scalar_one()
     heads_ups = len(heads_up.unacknowledged(session, project.id))
     soonest = _aware(pending[0].expires_at) if pending else None
-    decisions = policy.needs_you(session, project, cons)
     signoff = policy.signoff_waiting(session, project, cons)
+    decisions = policy.needs_you(session, project, cons, awaiting=waiting,
+                                 approvals=len(pending), signoff=signoff)
     return {
         "approvals": len(pending),
         "soonest_expiry": soonest.isoformat() if soonest else None,
@@ -1110,6 +1111,8 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
         # beside a desk that said 2.
         "asks": decisions["asks"],
         "signoff": signoff,
+        "bets": decisions["bets"],
+        "frozen": decisions["frozen"],
         "total": decisions["total"],
         # Real, and worth saying — just not the same sentence. A thing to read
         # counted beside a thing that denies itself in six hours teaches the
@@ -1518,6 +1521,12 @@ def _waiting_lines(waiting: dict, when) -> list[str]:
             body.append(f"  · {waiting['verdicts']} observable close(s) only you can judge")
         if waiting["commitment"]:
             body.append("  · a delivery date to sign")
+        # Counted in the total, so listed under it: the count and the list
+        # disagreeing is the thing this letter must never do.
+        if waiting.get("bets"):
+            body.append(f"  · {waiting['bets']} bet(s) past the kill date — extend or let go")
+        if waiting.get("frozen"):
+            body.append("  · frozen thread(s) only you can release")
         if waiting["flags_raised"]:
             body.append(f"  · {waiting['flags_raised']} flag(s) the CEO raised with a "
                         "proposal")

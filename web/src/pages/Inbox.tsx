@@ -109,13 +109,20 @@ function ApprovalCase({ item }: { item: Item }) {
   const b = item.project.budget;
   const usd = b.unit === "usd";
   const wall = b.cap * b.hard_stop_multiple;
-  const after = amount !== null && usd ? b.spent + amount : null;
-  const lead = theCase ? clip(theCase.split(/(?<=[.!?])\s/)[0], 220) : null;
+  const kind = item.approval?.kind ?? "";
+  // Only a purchase moves the month's spend; other kinds may carry an amount
+  // that is not money leaving the ledger.
+  const spend = kind === "spend";
+  const after = amount !== null && usd && spend ? b.spent + amount : null;
+  // Filing these is asking for a yes. An assist, a legal question, an owner
+  // decision or a brief carries no recommendation of the CEO's to state.
+  const asksForYes = spend || kind === "tool_request" || kind === "capacity";
+  const lead = asksForYes && theCase ? clip(theCase.split(/(?<=[.!?])\s/)[0], 220) : null;
   return (
     <>
       {lead && <Recommendation who="The CEO">approving it. {lead}</Recommendation>}
       <Facts>
-        {amount !== null && <Fact><b>${amount.toLocaleString()}</b> once</Fact>}
+        {amount !== null && <Fact><b>${amount.toLocaleString()}</b>{spend ? " once" : ""}</Fact>}
         {after !== null && (after >= wall
           ? <Fact warn>reaches the <b>${wall.toLocaleString()}</b> hard stop</Fact>
           : after > b.cap

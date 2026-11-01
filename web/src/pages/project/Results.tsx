@@ -1,6 +1,7 @@
 import { ReactNode, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { get, post, ResultCheck, ResultRow, ResultsView } from "../../api";
+import { GoalChain } from "../../chain";
 import { WhatTheyDid } from "../../did";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { firstName, ProjectCtx } from "../../projectCtx";
@@ -109,7 +110,7 @@ function producedLine(row: ResultRow): string {
   return bits.join(" · ");
 }
 
-function WhyTrust({ ctx, row }: { ctx: ProjectCtx; row: ResultRow }) {
+function WhyTrust({ ctx, row, goal }: { ctx: ProjectCtx; row: ResultRow; goal: string }) {
   const ceo = firstName(ctx.ceoName);
   const [wrong, setWrong] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -147,6 +148,9 @@ function WhyTrust({ ctx, row }: { ctx: ProjectCtx; row: ResultRow }) {
       </ol>
       <div className="rs-serves">
         <h3 className="eyebrow-h">Serves</h3>
+        {/* What it is for, from the project's goal down: the question "why does
+            this file exist?" answered before the list of outcomes it serves. */}
+        <p className="rs-chain"><GoalChain goal={goal} serves={row.serves} task={row.task} /></p>
         {row.serves.length === 0 ? <span>No outcome on the roadmap.</span> : (
           <ul>
             {row.serves.map((s) => (
@@ -274,7 +278,7 @@ export default function Results({ ctx }: { ctx: ProjectCtx }) {
                 ))}
               </ul>
               <div className="rs-side" ref={side}>
-                {row && <WhyTrust key={row.key} ctx={ctx} row={row} />}
+                {row && <WhyTrust key={row.key} ctx={ctx} row={row} goal={data.goal} />}
               </div>
             </div>
           </div>

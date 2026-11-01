@@ -110,12 +110,14 @@ export function ScopeAccept({ project, onDone, compact = false }: {
   project: DeskProject; onDone: () => void; compact?: boolean;
 }) {
   const items = project.scope_items ?? [];
-  const [picked, setPicked] = useState<Set<string>>(() => new Set(items.map((i) => i.id)));
+  // What was left OUT, not what is in: a requirement proposed while this is
+  // on screen arrives checked, like the ones before it.
+  const [skipped, setSkipped] = useState<Set<string>>(() => new Set());
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!items.length) return null;
-  const chosen = items.filter((i) => picked.has(i.id));
+  const chosen = items.filter((i) => !skipped.has(i.id));
   const accept = async () => {
     setBusy(true);
     setError(null);
@@ -145,7 +147,7 @@ export function ScopeAccept({ project, onDone, compact = false }: {
         {items.map((it) => (
           <li key={it.id}>
             <label>
-              <input type="checkbox" checked={picked.has(it.id)} onChange={() => setPicked((cur) => {
+              <input type="checkbox" checked={!skipped.has(it.id)} onChange={() => setSkipped((cur) => {
                 const next = new Set(cur);
                 if (next.has(it.id)) next.delete(it.id); else next.add(it.id);
                 return next;
@@ -170,16 +172,18 @@ export function ScopeAccept({ project, onDone, compact = false }: {
     possible for 14 days, which is why it is not a typed confirmation. */
 function CompleteButtons({ projectId, onDone }: { projectId: string; onDone: () => void }) {
   const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
     <>
       {armed ? (
         <>
-          <button className="small primary" onClick={async () => {
+          <button className="small primary" disabled={busy} onClick={async () => {
+            setBusy(true);
             try {
               await post(`/admin/projects/${projectId}/complete`);
               onDone();
-            } catch (e) { setError((e as Error).message); }
+            } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
           }}>Yes, complete it</button>
           <button className="small" onClick={() => setArmed(false)}>Not yet</button>
         </>

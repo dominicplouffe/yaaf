@@ -69,3 +69,4 @@ button.rs-row.on { background: rgba(var(--accent-rgb), 0.07); box-shadow: inset 
 .rs-empty.delivered > svg { color: var(--good); }
 .rs-empty p { margin: 0; font-size: var(--t-body); }
 .rs-empty p + p { margin-top: 4px; font-size: var(--t-small); color: var(--ink-2); }
+.rs-chain { margin: 0 0 8px; font-size: var(--t-small); color: var(--ink-2); }

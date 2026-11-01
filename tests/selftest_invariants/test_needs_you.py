@@ -138,3 +138,46 @@ def test_a_milestone_is_a_date_the_platform_holds_or_none(client):
     and no window there is none, and the row says so rather than guessing."""
     project = make_project(client, slug="no-milestone", integrations={"runtime": "mock"})
     assert _row(client, project)["next_milestone"] is None
+
+
+def test_a_reopened_delivery_promises_no_close_it_will_not_make(client):
+    """A reopen switches auto-completion off until scope moves
+    (janitor._complete_itself), so the sign-off row may not name a close time:
+    it would be a date that passes with the project still open."""
+    project = delivered(client, "signoff-reopened")
+    amend(client, project["id"], complete_after_hours=24)
+    with db_session() as session:
+        janitor.check_delivery_ready(session, session.get(Project, project["id"]))
+    assert _row(client, project)["pending_signoff"]["closes_at"] is not None
+    assert client.post(f"/admin/projects/{project['id']}/complete",
+                       headers=ADMIN).status_code == 200
+    assert client.post(f"/admin/projects/{project['id']}/reopen",
+                       headers=ADMIN, json={}).status_code == 200
+    row = _row(client, project)
+    assert row["pending_signoff"] is not None
+    assert row["pending_signoff"]["closes_at"] is None
+    assert "closes itself" not in row["status_line"]["headline"]
+
+
+def test_the_letter_lists_everything_it_counts():
+    """The briefing's total includes expired bets and frozen threads, so the
+    list under it has to name them — a count and a list that disagree is what
+    this module set out to remove."""
+    waiting = {"total": 2, "approvals": 0, "soonest_expiry": None, "plan": 0,
+               "verdicts": 0, "commitment": False, "flags_raised": 0, "open_reviews": 0,
+               "heads_ups": 0, "to_read": 0, "asks": 0, "signoff": None,
+               "bets": 1, "frozen": 1}
+    lines = briefing._waiting_lines(waiting, lambda iso: iso)
+    assert lines[0] == "Waiting on you: 2"
+    assert any("bet" in line for line in lines[1:])
+    assert any("frozen" in line for line in lines[1:])
+
+
+def test_a_rule_label_keeps_capitals_only_for_an_acronym():
+    from yaaf.core.constitution import rule_label
+
+    assert rule_label("queue_ceiling")[0].islower()
+    assert not rule_label("unknown_key_here")[0].isupper()
+    # "A daily wake…" is not an acronym; mid-sentence it reads lower-case.
+    assert rule_label("ceo_daily_at") == "a daily wake at this time"
+    assert rule_label("brief_daily_at") == "a daily briefing at this time"

@@ -35,11 +35,13 @@ const RANK: Record<string, number> = {
 function stateCounts(projects: DeskProject[], decisions: number): string[] {
   const n = (vs: string[]) => projects.filter((p) => vs.includes(p.status_line?.verdict ?? "")).length;
   const out: string[] = [];
-  const trouble = n(["blocked", "failing", "late"]);
+  const trouble = n(["blocked", "failing"]);
+  const late = n(["late"]);
   const risk = n(["at_risk", "stalled", "spinning"]);
   const fine = n(["on_track"]);
   const idle = n(["idle"]);
-  if (trouble) out.push(`${trouble} stopped`);
+  if (trouble) out.push(`${trouble} blocked`);
+  if (late) out.push(`${late} late`);
   if (risk) out.push(`${risk} at risk`);
   if (fine) out.push(`${fine} on track`);
   if (idle) out.push(`${idle} idle`);

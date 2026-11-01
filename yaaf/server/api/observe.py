@@ -207,11 +207,13 @@ def projects(session: Session = Depends(db),
     ]
 
 
-def _awaiting_chairman(session: Session, project: Project, cons) -> dict:
+def _awaiting_chairman(session: Session, project: Project, cons,
+                       waiting: dict | None = None) -> dict:
     """The desk's view of policy.awaiting_chairman — same query, shaped for the
     wire. The definition itself lives in policy so the janitor's nags and this
     page can never disagree about what is waiting."""
-    waiting = policy.awaiting_chairman(session, project, cons)
+    if waiting is None:
+        waiting = policy.awaiting_chairman(session, project, cons)
     commitment = waiting["commitment"]
     return {
         "plan": len(waiting["plan"]),
@@ -366,6 +368,10 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
                 break
             failed_in_a_row += 1
         spinning = _spinning_runs(session, project, now)
+        # Each asked once: the row, the count and the status line all read them.
+        awaiting = policy.awaiting_chairman(session, project, cons)
+        signoff = policy.signoff_waiting(session, project, cons)
+        commitment = policy.live_commitment(session, project.id)
         projects_out.append({
             "id": project.id, "slug": project.slug, "name": project.name,
             "status": project.status, "status_reason": project.status_reason,
@@ -396,7 +402,7 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             # CEO holds it there is nothing waiting — it decides rather than
             # parking — so an autonomous project reads empty here, and the dial
             # itself rides the project dashboard for anyone who needs it.
-            "awaiting_you": _awaiting_chairman(session, project, cons),
+            "awaiting_you": _awaiting_chairman(session, project, cons, awaiting),
             # The reader's own, so each row says which boardroom has news.
             "boardroom_unread": boardroom_unread(session, project),
             "evidence_7d": policy.countable_external_evidence(session, project.id, week_ago),
@@ -418,13 +424,15 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             "pending_asks": pending_asks,
             # The finished delivery, as the decision it is: Complete, reopen, or
             # let it close itself at `closes_at`.
-            "pending_signoff": policy.signoff_waiting(session, project, cons),
+            "pending_signoff": signoff,
             # Every decision on this row, counted once (policy.needs_you), so
             # no reader re-adds the members and gets a different number.
-            "needs_you": policy.needs_you(session, project, cons),
+            "needs_you": policy.needs_you(session, project, cons, awaiting=awaiting,
+                                          approvals=len(pending), asks=len(pending_asks),
+                                          signoff=signoff),
             # Where the outcomes stand and what comes next, so a portfolio row
             # can draw progress as outcomes rather than tasks or runs.
-            **_path_and_next(session, project, hyps, aware),
+            **_path_and_next(session, project, hyps, aware, commitment),
             "expired_bets": expired_bets,
             "kill_dates_soon": kill_dates_soon,
             "audit": {"completed": int(completed), "audited": int(audited),
@@ -447,8 +455,8 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
         row = projects_out[-1]
         row["status_line"] = status_line(
             status=project.status, status_reason=project.status_reason,
-            unpaid=row["unpaid"], commitment=policy.live_commitment(session, project.id),
-            waiting=row["needs_you"]["total"], signoff=row["pending_signoff"],
+            unpaid=row["unpaid"], commitment=commitment,
+            waiting=row["needs_you"]["total"], signoff=signoff, timezone=cons.timezone,
             open_tasks=row["open_tasks"], runs_running=int(running), last_run_at=last_run_at,
             stall_hours=float(cons.stall_hours), unit=row["budget"]["unit"],
             spent=row["budget"]["spent"], cap=row["budget"]["cap"],
@@ -466,7 +474,8 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             "snoozed": snoozed}
 
 
-def _path_and_next(session: Session, project: Project, hyps: list, aware) -> dict:
+def _path_and_next(session: Session, project: Project, hyps: list, aware,
+                   live: Commitment | None) -> dict:
     """A project's outcomes, in order, and the next dated milestone.
 
     `path` is one entry per outcome — requirements in scope (proposed ones too,
@@ -501,7 +510,7 @@ def _path_and_next(session: Session, project: Project, hyps: list, aware) -> dic
     # The promise in force, else one waiting to be signed, else the one that
     # was kept: a delivered project's next date is the one it met, not a bet
     # some agent placed along the way.
-    commitment = policy.live_commitment(session, project.id) or session.execute(
+    commitment = live or session.execute(
         select(Commitment).where(Commitment.project_id == project.id,
                                  Commitment.status.in_((CommitmentStatus.PROPOSED,
                                                         CommitmentStatus.MET)))

@@ -456,9 +456,10 @@ function ProjectCard({ p }: { p: DeskProject }) {
         <Link to={`/projects/${p.id}`}>
           <strong style={{ fontSize: 15 }}>{p.name}</strong>
         </Link>
-        {/* The chip carries the count; a second "n waiting on you" chip beside
-            it said the same thing twice. */}
+        {/* The chip carries the count when it says "Needs you"; when a higher
+            rung wins (late, blocked…) the count still has to be said. */}
         {verdictBadge(p, needsYouCount(p))}
+        {p.status_line?.verdict !== "needs_you" && <WaitingChip p={p} />}
         <UnreadChip p={p} />
         <div className="spacer" />
         <span className="mono help">{p.slug}</span>

@@ -16,6 +16,7 @@ a broken promise before a decision waiting; a decision before "on track".
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from yaaf.core.models import CommitmentStatus, ProjectStatus, utcnow
 
@@ -58,7 +59,8 @@ def status_line(*, status: str, status_reason: str | None, unpaid: bool,
                 last_run_at: datetime | None, stall_hours: float,
                 unit: str, spent: float, cap: float,
                 failed_in_a_row: int = 0, last_error_kind: str | None = None,
-                spinning_runs: int = 0, signoff: dict | None = None) -> dict:
+                spinning_runs: int = 0, signoff: dict | None = None,
+                timezone: str | None = None) -> dict:
     """{verdict, headline, sentence} for one project, from the facts the desk
     holds. The headline is the verdict in words; the sentence adds the money,
     for a surface that has no money column of its own."""
@@ -67,7 +69,7 @@ def status_line(*, status: str, status_reason: str | None, unpaid: bool,
         waiting=waiting, open_tasks=open_tasks, runs_running=runs_running,
         last_run_at=last_run_at, stall_hours=stall_hours,
         failed_in_a_row=failed_in_a_row, last_error_kind=last_error_kind,
-        spinning_runs=spinning_runs, signoff=signoff)
+        spinning_runs=spinning_runs, signoff=signoff, timezone=timezone)
     sentence = f"{headline} {_money(unit, spent, cap)}" if with_money else headline
     return {"verdict": verdict, "headline": headline, "sentence": sentence}
 
@@ -75,7 +77,7 @@ def status_line(*, status: str, status_reason: str | None, unpaid: bool,
 def _verdict(*, status, status_reason, unpaid, commitment, waiting, open_tasks,
              runs_running, last_run_at, stall_hours, failed_in_a_row=0,
              last_error_kind=None, spinning_runs=0,
-             signoff=None) -> tuple[str, str, bool]:
+             signoff=None, timezone=None) -> tuple[str, str, bool]:
     if status == ProjectStatus.COMPLETED:
         return "done", "Finished.", True
     if status == ProjectStatus.STOPPED:
@@ -90,8 +92,11 @@ def _verdict(*, status, status_reason, unpaid, commitment, waiting, open_tasks,
         # at risk. It read "Nothing open right now." — true of the board, and
         # the opposite of the one thing the chairman had left to do.
         closes = signoff.get("closes_at")
-        when = (f", or it closes itself {_date(datetime.fromisoformat(closes))}"
-                if closes else "")
+        # The chairman's day, not UTC's: every other date he reads is local.
+        at = datetime.fromisoformat(closes) if closes else None
+        if at is not None and timezone:
+            at = at.astimezone(ZoneInfo(timezone))
+        when = f", or it closes itself {_date(at)}" if at is not None else ""
         others = waiting - 1
         more = (f" {others} more decision{'s' if others != 1 else ''} waiting."
                 if others > 0 else "")

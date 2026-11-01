@@ -664,7 +664,9 @@ def rule_label(key: str) -> str:
     """
     field = ConstitutionDoc.model_fields.get(key)
     label = (field.title if field is not None else None) or key.replace("_", " ")
-    return label if label[:2].isupper() else label[:1].lower() + label[1:]
+    first = label.split(" ", 1)[0]
+    acronym = len(first) > 1 and first.isupper()
+    return label if acronym else label[:1].lower() + label[1:]
 
 
 def effective(session: Session, project_id: str, at: datetime | None = None) -> ConstitutionDoc:

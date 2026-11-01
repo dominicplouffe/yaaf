@@ -11,6 +11,7 @@ import {
 import { usePoll } from "../../hooks";
 import { AsOf, ConfirmModal, ExportCsv, NoteAction, Skeleton, clip, downloadCsv } from "../../ui";
 import { ChartHead, plainStatus } from "../../ui/kit";
+import { chairmanDecides } from "../../ui/project";
 import type { ProjectCtx } from "../Project";
 import "./plan.css";
 
@@ -481,8 +482,14 @@ interface Counts {
   accepted: number;
 }
 
-function waitsOnYou(r: PlanRequirement): boolean {
-  return r.status === "proposed" || (r.status === "checking" && r.test_kind === "observable");
+/** Which decisions the dial left with the chairman. On an autonomous
+    project the CEO accepts its own scope and judges its own observables, so
+    neither is waiting on him. */
+interface Yours { scope: boolean; verdict: boolean }
+
+function waitsOnYou(r: PlanRequirement, yours: Yours): boolean {
+  return (r.status === "proposed" && yours.scope)
+    || (r.status === "checking" && r.test_kind === "observable" && yours.verdict);
 }
 
 function countsOf(
@@ -490,6 +497,7 @@ function countsOf(
   /** A proposed commitment is a decision of yours too; "nothing waiting on
       you" under its Accept button would be the page contradicting itself. */
   promiseProposed: boolean,
+  yours: Yours,
 ): Counts {
   const live = reqs.filter((r) => r.status !== "proposed" && r.status !== "cut");
   const useBurnup = !!burnup && burnup.scope_total > 0;
@@ -499,9 +507,9 @@ function countsOf(
     open: reqs.filter((r) => OPEN.has(r.status)).length,
     openMeasured: reqs.filter((r) => OPEN.has(r.status) && r.test_kind === "metric").length,
     inWork: reqs.filter((r) =>
-      (r.status === "in_progress" || r.status === "checking") && !waitsOnYou(r)).length,
+      (r.status === "in_progress" || r.status === "checking") && !waitsOnYou(r, yours)).length,
     notStarted: reqs.filter((r) => r.status === "pending").length,
-    waiting: reqs.filter(waitsOnYou).length + (promiseProposed ? 1 : 0),
+    waiting: reqs.filter((r) => waitsOnYou(r, yours)).length + (promiseProposed ? 1 : 0),
     accepted: reqs.filter((r) => r.status !== "proposed").length,
   };
 }
@@ -1342,7 +1350,10 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
   const commitment = data.commitment && data.commitment.status !== "void"
     ? data.commitment : null;
   const now = Date.now();
-  const counts = countsOf(reqs, data.burnup, commitment?.status === "proposed");
+  const counts = countsOf(reqs, data.burnup, commitment?.status === "proposed", {
+    scope: chairmanDecides(ctx.dash, "plan_authority"),
+    verdict: chairmanDecides(ctx.dash, "verdict_policy"),
+  });
   const projection = commitment ? projectionOf(commitment, data.velocity, now) : null;
   // The stage the server's gate holds work behind: the lowest one with open
   // work in it. None when nothing is open, rather than stage 1 by default.

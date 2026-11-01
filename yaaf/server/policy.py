@@ -1393,14 +1393,23 @@ def signoff_waiting(session: Session, project: Project, cons: ConstitutionDoc) -
                 AuditLog.action == "project.completion_ready")
             .order_by(AuditLog.at.desc()).limit(1)
         ).scalar_one_or_none()
-        if announced is not None:
+        # A reopen after the announcement switches the clock off until scope
+        # moves (janitor._complete_itself), so there is no close to promise.
+        reopened = announced is not None and session.execute(
+            select(func.count(AuditLog.id)).where(
+                AuditLog.project_id == project.id, AuditLog.action == "project.reopen",
+                AuditLog.at > announced)
+        ).scalar_one()
+        if announced is not None and not reopened:
             if announced.tzinfo is None:
                 announced = announced.replace(tzinfo=UTC)
             closes_at = announced + timedelta(hours=cons.complete_after_hours)
     return {"met": met, "closes_at": closes_at.isoformat() if closes_at else None}
 
 
-def needs_you(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
+def needs_you(session: Session, project: Project, cons: ConstitutionDoc, *,
+              awaiting: dict | None = None, approvals: int | None = None,
+              asks: int | None = None, signoff=_UNSET) -> dict:
     """Every decision waiting on the chairman for this project, counted once.
 
     The count was assembled by hand in four places — the desk's status line,
@@ -1412,17 +1421,23 @@ def needs_you(session: Session, project: Project, cons: ConstitutionDoc) -> dict
 
     Decisions only, the same line `awaiting_chairman` draws: flags, heads-ups
     and open reviews are things to read, and do not decide themselves.
+
+    A caller that already holds a member (the desk polls this per project
+    every few seconds) passes it rather than having it queried again.
     """
     from yaaf.server import asks as ask_lib
 
-    waiting = awaiting_chairman(session, project, cons)
-    approvals = int(session.execute(
-        select(func.count(Approval.id)).where(
-            Approval.project_id == project.id,
-            Approval.status == ApprovalStatus.PENDING)
-    ).scalar_one())
-    asks = ask_lib.open_count(session, project.id)
-    signoff = signoff_waiting(session, project, cons)
+    waiting = awaiting if awaiting is not None else awaiting_chairman(session, project, cons)
+    if approvals is None:
+        approvals = int(session.execute(
+            select(func.count(Approval.id)).where(
+                Approval.project_id == project.id,
+                Approval.status == ApprovalStatus.PENDING)
+        ).scalar_one())
+    if asks is None:
+        asks = ask_lib.open_count(session, project.id)
+    if signoff is _UNSET:
+        signoff = signoff_waiting(session, project, cons)
     # Two things only he can undo, which the dashboard always counted and the
     # status line never did: a bet past its kill date that he has not yet
     # extended (the one extension is his), and threads the pair breaker froze.
