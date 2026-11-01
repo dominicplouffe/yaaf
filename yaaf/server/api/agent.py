@@ -2155,6 +2155,12 @@ def file_review_narrative(
             "with the chairman now — his decisions arrive as notices.",
             status_code=409,
         )
+    # He reads both: `recommended` is the paragraph the Review tab leads with,
+    # so it is held to a boardroom message's limits; the narrative is the
+    # reasoning behind a fold, so it may run longer but not in run-on
+    # sentences. Same measure as the boardroom (`yaaf.server.plain`).
+    policy.check_plain_parts({"narrative": body.narrative})
+    policy.check_plain_message("recommended", body.recommended)
     review.narrative = body.narrative.strip()
     review.recommended = (body.recommended or "").strip() or None
     review.narrative_run_id = ctx.run.id

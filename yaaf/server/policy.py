@@ -2383,6 +2383,16 @@ def check_plain_parts(parts: dict[str, str | None]) -> None:
         raise Refusal(plain.refusal_text(found))
 
 
+def check_plain_message(name: str, text: str | None) -> None:
+    """One field he reads first and on its own, held to a whole boardroom
+    message's limits: sentence length and total length."""
+    from yaaf.server import plain
+
+    found = [f"In `{name}`: {problem}" for problem in plain.problems(text or "")]
+    if found:
+        raise Refusal(plain.refusal_text(found))
+
+
 def obligation_unmet(session: Session, project: Project, agent: Agent,
                       last_ceo: datetime | None) -> bool:
     """Does the CEO owe the chairman a sentence it has not yet said?
