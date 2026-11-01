@@ -763,31 +763,19 @@ def _staffing_lines(session: Session, project: Project, cons, since, until) -> l
 
 def _idle_window(session: Session, project: Project, cons: ConstitutionDoc,
                  idle: list[Flag]) -> str:
-    """How long the idle seats have really been idle, in words.
+    """How long the idle seats have really been idle, in words — the rule the
+    flag itself says it by (staffing.idle_window_start), so the line and the
+    flag cannot disagree. The earliest seat's start speaks for the list."""
+    from yaaf.server import staffing
 
-    The flag's arithmetic looks back `staffing_review_days`, and the line used
-    to print that number as if it were time elapsed: "spent runs and closed no
-    work in 14 days" about a project created five minutes earlier. The window
-    cannot reach back past the project's birth or the seat's first run, so a
-    younger one is said from the date it really starts.
-    """
-    days = cons.staffing_review_days
-    window = utcnow() - timedelta(days=days)
-    starts = []
-    for flag in idle:
-        agents = ([a.id for a in policy.team_agents(session, flag.subject_id)]
-                  if flag.subject_id else [])
-        first_run = _aware(session.execute(
-            select(func.min(Run.created_at)).where(
-                Run.project_id == project.id, Run.agent_id.in_(agents))
-        ).scalar_one()) if agents else None
-        starts.append(max(t for t in (window, _aware(project.created_at), first_run)
-                          if t is not None))
-    start = min(starts)
-    if start <= window:
-        return f"in {days} {_plural(days, 'day')}"
-    # The date half of `chairman_time`, so it reads like every other date he is given.
-    return f"since {chairman_time(start, cons.timezone).split(',', 1)[0]}"
+    since = utcnow() - timedelta(days=cons.staffing_review_days)
+    start = min(
+        staffing.idle_window_start(
+            session, project,
+            [a.id for a in policy.team_agents(session, f.subject_id)] if f.subject_id else [],
+            since)
+        for f in idle)
+    return staffing.idle_window_words(start, since, cons.staffing_review_days, cons.timezone)
 
 
 def _run_lines(session: Session, project: Project, since, until) -> list[dict]:

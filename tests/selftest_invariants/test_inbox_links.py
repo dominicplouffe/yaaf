@@ -283,3 +283,23 @@ def test_a_heads_up_mail_opens_it_where_it_is_noted(client, origin, monkeypatch)
     assert response.status_code == 200, response.text
     body = caught.about("Heads-up")
     assert f"{ORIGIN}/app/#/inbox?tab=ack&item=hu-{response.json()['heads_up_id']}" in body
+
+
+def test_the_delivered_mail_links_the_page_it_says_reopen_is_on(client, origin, sent):
+    """"If something is missing, reopen it on the project page" linked only to
+    Deliverables, where there is no Reopen. Each place the sentence names has
+    its link, and neither link decides anything by being opened."""
+    from tests.selftest_invariants.test_delivery_closes_itself import (
+        _age_announcement,
+        _finished,
+    )
+    from tests.selftest_invariants.test_modes import run_mode_tick
+
+    project = _finished(client, slug="mail-reopen")
+    _age_announcement(project, 25)
+    run_mode_tick(project)
+    body = sent.about("delivered and closed")
+    page = f"{ORIGIN}/app/#/projects/{project['id']}"
+    assert f"Reopen it from the project page: {page}\n" in body + "\n"
+    assert f"{page}/details/deliverables" in body
+    assert "requirement(s)" not in body

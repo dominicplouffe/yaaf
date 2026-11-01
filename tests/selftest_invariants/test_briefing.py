@@ -975,3 +975,22 @@ def test_a_seat_hired_into_an_old_project_is_dated_from_its_first_run(client):
 
     assert _idle_line(client, project).endswith(
         f"closed no work since {chairman_time(first, 'UTC').split(',')[0]}")
+
+
+def test_the_flag_the_ceo_reads_dates_its_window_by_the_same_rule(client):
+    """The briefing was corrected to say "since" a young project's birth, and
+    the flag beside it — the text the CEO is asked to answer — still said
+    "6 runs in 14 days". One rule (staffing.idle_window_start) now says both."""
+    from yaaf.core.models import Flag, FlagKind
+
+    project = make_project(client, slug="young-idle-flag")
+    _idle_seat(client, project)
+    with db_session() as session:
+        flag = session.query(Flag).filter(
+            Flag.project_id == project["id"], Flag.kind == FlagKind.SEAT_IDLE).one()
+        summary, starts = flag.summary, (flag.arithmetic or {}).get("window_starts")
+    window = _idle_line(client, project).split("closed no work ", 1)[1]
+    assert window.startswith("since ")
+    assert f"runs {window} and closed no work" in summary
+    assert "in 14 days" not in summary
+    assert starts

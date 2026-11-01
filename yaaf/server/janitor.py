@@ -1280,11 +1280,17 @@ def _complete_itself(session: Session, project: Project, announced_at) -> bool:
         detail={**receipt, "voided_approvals": done["voided_approvals"]},
     ))
     money = f"${receipt['cost_usd']:,.2f}"
-    body = (f"Delivered: {receipt['met']} requirement(s) true, {receipt['cut']} cut, "
+    reqs = "requirement" if receipt["met"] == 1 else "requirements"
+    # Two links, because the sentence names two places: what was delivered, and
+    # the project page, where Reopen is. It linked only the first, so "reopen it
+    # on the project page" sent him somewhere Reopen was not.
+    body = (f"Delivered: {receipt['met']} {reqs} true, {receipt['cut']} cut, "
             f"{receipt['runs_total']} runs, {money}, {receipt['duration_days']} days. "
             f"It had stood finished since {told}, so it closed itself and wrote the "
-            f"receipt. If something is missing, reopen it on the project page within "
-            f"{REOPEN_DAYS} days." + project_link(project.id, "deliverables", "See what was delivered"))
+            f"receipt. If something is missing, reopen it from the project page within "
+            f"{REOPEN_DAYS} days."
+            + project_link(project.id, "details/deliverables", "See what was delivered")
+            + project_link(project.id, "", "Reopen it from the project page"))
     chairman_notify(session, project, "delivered and closed", body, attention=Attention.ACTION)
     boardroom_line(session, project.id, body)
     log.info("delivery %s completed itself", project.slug)
@@ -1327,14 +1333,18 @@ def _nag_delivery_ready(session: Session, project: Project) -> None:
     met = len([r for r in policy.scope_requirements(session, project.id)
                if r.status == RequirementStatus.MET])
     _touch_delivery_beat(session, project)
+    # The project page is right for both readers: the sign-off is the first
+    # card on it, with Complete, and the CEO reading this line knows the page.
     boardroom_line(
         session, project.id,
-        f"Still waiting on you: all {met} requirement(s) are true and this delivery "
-        "has not been confirmed. Complete it on the project page to write the receipt "
-        "and close it, or reopen scope if something is missing"
+        "Still waiting on you: "
+        + ("its one requirement is true" if met == 1 else f"all {met} requirements are true")
+        + " and this delivery has not been confirmed. Complete it on the project page "
+        "to write the receipt and close it, or reopen scope if something is missing"
         + (" — otherwise it closes itself when your rules say"
            if effective(session, project.id).complete_after_hours > 0 else "")
-        + ". The project is not spending while it waits.",
+        + ". The project is not spending while it waits."
+        + project_link(project.id, "", "Open it"),
     )
 
 
