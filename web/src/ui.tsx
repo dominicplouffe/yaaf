@@ -323,7 +323,13 @@ export function spentOf(row: SpendBucket, usdMode: boolean): number {
 }
 
 export function fmtUnit(n: number, unit: "usd" | "tokens"): string {
-  if (unit === "usd") return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  // Whole dollars bare ("$60 plan"); anything with cents says both digits, so
+  // "$0.9" and "$52.1" never sit in a column beside "$22.08".
+  if (unit === "usd") {
+    return `$${n.toLocaleString(undefined, Number.isInteger(n)
+      ? { maximumFractionDigits: 0 }
+      : { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
   // Token budgets run to hundreds of millions — compact or they're unreadable.
   if (n >= 10_000) {
     return new Intl.NumberFormat(undefined, {
@@ -435,9 +441,11 @@ function EyeButton({ shown, onClick, busy }: {
 /** A value the chairman is *typing*: password-typed with an eye, so a mispaste
     is visible before it is saved rather than after an agent run fails on it. */
 export function SecretInput({
-  value, onChange, placeholder, defaultShown = false, disabled, readOnly, autoFocus, id,
+  value, onChange, placeholder, defaultShown = false, disabled, readOnly, autoFocus, id, label,
 }: {
   value: string;
+  /** Its accessible name, where no <label htmlFor> names it. */
+  label?: string;
   onChange?: (value: string) => void;
   placeholder?: string;
   /** An address is not a password: showing it is how a typo gets seen. */
@@ -453,6 +461,7 @@ export function SecretInput({
     <div className="secret-field">
       <input
         id={id}
+        aria-label={label}
         autoComplete="new-password"
         type={shown ? "text" : "password"}
         className={shown && readOnly ? "mono" : undefined}

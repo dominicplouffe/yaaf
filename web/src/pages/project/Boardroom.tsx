@@ -584,6 +584,7 @@ export default function Boardroom({ projectId, dash, org }: {
           )}
           <div className="composer">
             <textarea
+              aria-label={`Message to ${ceoFirst}`}
               value={draft}
               placeholder={`Tell ${ceoFirst} what you want changed…`}
               onChange={(e) => setDraft(e.target.value)}

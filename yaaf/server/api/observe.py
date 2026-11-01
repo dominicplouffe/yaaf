@@ -984,8 +984,13 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         checks.append({"key": key, "status": status, "detail": detail,
                        "where": where, "action": action})
 
-    # Billing: attached, and the credential matches the mode.
-    if not project.billing_secret_id:
+    # Billing: attached, and the credential matches the mode. The mock runtime
+    # pays nobody, which is why the desk's `unpaid` exempts it; a red "agents
+    # cannot run" here, beside a project visibly running, was the page
+    # contradicting itself.
+    if not project.billing_secret_id and integrations.get("runtime") == "mock":
+        add("billing", "ok", "runs on the mock runtime — there is nothing to pay", "settings")
+    elif not project.billing_secret_id:
         add("billing", "fail", "no billing credential attached — agents cannot run",
             "settings")
     else:
@@ -1308,9 +1313,11 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     if pending_asks:
         soonest = min(a.answer_by for a in pending_asks)
         add("asks", "ok",
-            f"{len(pending_asks)} question(s) from your CEO waiting on you, the first "
+            f"{len(pending_asks)} question{'' if len(pending_asks) == 1 else 's'} from your CEO "
+            "waiting on you, " + ("" if len(pending_asks) == 1 else "the first ") +
             f"stopping {chairman_time(soonest, effective(session, project.id).timezone)}. "
-            "Nothing is blocked: each says what the CEO will do if you don't answer.",
+            "Nothing is blocked: " + ("it says" if len(pending_asks) == 1 else "each says")
+            + " what the CEO will do if you don't answer.",
             "boardroom")
 
     # Liveness. Every other check on this page asks "is this project set up

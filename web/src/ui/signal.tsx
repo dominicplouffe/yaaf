@@ -165,7 +165,7 @@ export function Recommendation({ who, children }: { who: string; children: React
   return (
     <div className="sg-rec">
       <Icon name="message" size={14} />
-      <span><b>{who} recommends</b> {children}</span>
+      <span><b>{who} recommends:</b> {children}</span>
     </div>
   );
 }

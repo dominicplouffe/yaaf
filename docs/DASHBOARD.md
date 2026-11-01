@@ -240,13 +240,17 @@ Every row says the same three things in the same order: what happened, **what
 happens if you do nothing**, and the action. Open one and the right pane has
 the whole case:
 
-- **An approval** shows what was asked, by whom, the amount, the reason, and
-  the time left before it denies itself, with **Approve** and **Decline…** side
+- **An approval** opens on what the CEO recommends — one sentence the CEO
+  must file with every approval, so the card never guesses it from the case —
+  then what was asked, by whom, the amount, the reason, and the time left
+  before it denies itself, with **Approve** and **Decline…** side
   by side — declining asks for the reason the CEO re-plans from. Approving a
   spend asks once more, naming the amount, because a purchase cannot be taken
   back.
-- **A question from the CEO** shows the question, the default the CEO falls
-  back to if you stay silent, and a box to answer it. Your answer is posted to
+- **A question from the CEO** shows its recommendation once, the question,
+  and the default the CEO falls back to if you stay silent. Its options are
+  buttons, the recommended one first; your own words are one fold away (a box
+  is all there is when the CEO offered no options). Your answer is posted to
   the boardroom as a reply to that question, so the CEO reads it where it reads
   everything else from you; if other questions are still open on that project,
   the pane says so, because one boardroom message answers all of them.
@@ -478,15 +482,19 @@ its own absence is clutter. See [project shapes](#project-shapes) below.
 (with a link to the page that fixes it when something is wrong), and one line
 of facts: its shape, the date it promised, how much the CEO decides on its
 own, your role, **Setup · n to go** while setup is unfinished, and **Read the
-brief**. **Message** the CEO is the one button; **Start**, **Pause the
-team…**, **Settings** and **Stop for good…** are behind **⋯**, because they
-are rare and consequential. When the projection lands past the promised date,
+brief**. **Message** the CEO is the one button, with **Start** beside it while the
+project is not running — then it is the one thing to do, and a refused start
+says why right there. **Pause the team…**, **Settings** and **Stop for good…**
+are behind **⋯**, because they are rare and consequential. When the projection lands past the promised date,
 a banner says so in days, with your two levers: cut scope, or move the date.
 
 Under it, in the order you need it:
 
-1. **Inbox** — this project's rows of the one Inbox, with their buttons. With
-   nothing to decide it shrinks to a line.
+1. **Needs you** — this project's decisions from the one Inbox list, each as
+   the same decision card the Inbox opens: the CEO's recommendation, the case,
+   what happens if you do nothing, and the buttons, so a decision is taken
+   where it is drawn. Up to three, soonest consequence first, with a link to
+   the rest. With nothing to decide it shrinks to a line.
 2. **Where it stands** — the outcomes against the promise: one axis from the
    day it started through today and the platform's projection to the promised
    date, and under it every requirement by stage as a dot (verified, in work,
@@ -497,7 +505,8 @@ Under it, in the order you need it:
    the hard stop, with what the pace says about the month.
 4. **Latest results**, each with its seal (Verified, Judged, Agent's word). A
    delivery whose outcomes were verified without a published file says so.
-5. The CEO's last word, what it is **Watching**, and **Setup & health**.
+5. The CEO's last word (a question it is waiting on is already a card above,
+   so it is not repeated here), what it is **Watching**, and **Setup & health**.
 
 ### Finishing setup
 

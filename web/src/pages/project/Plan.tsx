@@ -710,7 +710,7 @@ function MoveDate({ c, onDone }: { c: PlanCommitment; onDone: () => void }) {
     <div className="plan-acts">
       <input type="date" aria-label="New delivery date" value={date}
         onChange={(e) => setDate(e.target.value)} />
-      <input type="text" className="plan-reason" value={reason}
+      <input type="text" className="plan-reason" aria-label="Why the date moves" value={reason}
         placeholder="Why the date moves — the CEO reads it"
         onChange={(e) => setReason(e.target.value)} />
       <button className="small" disabled={!date || reason.trim().length < 5}

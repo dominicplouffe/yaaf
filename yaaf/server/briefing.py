@@ -1513,7 +1513,7 @@ def _waiting_lines(waiting: dict, when) -> list[str]:
             body.append("  · a finished delivery to sign off"
                         + (f"; it closes itself {when(closes)}" if closes else ""))
         if waiting.get("asks"):
-            body.append(f"  · {waiting['asks']} question(s) from the CEO")
+            body.append(f"  · {waiting['asks']} {_plural(waiting['asks'], 'question')} from the CEO")
         if waiting["plan"]:
             body.append(f"  · {waiting['plan']} proposed requirement(s) to accept "
                         "— proposed scope is not scope")

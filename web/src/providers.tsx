@@ -366,15 +366,16 @@ export function KeyHelp({ provider, kind }: { provider: ProviderInfo | undefined
 
 /** A credential's value: a textarea where it is a file (a login, a service
     account), a masked input where it is a key. */
-export function KeyInput({ kind, value, onChange, placeholder, id, disabled }: {
+export function KeyInput({ kind, value, onChange, placeholder, id, disabled, label }: {
   kind: ProviderKind | undefined; value: string; onChange: (v: string) => void;
-  placeholder?: string; id?: string; disabled?: boolean;
+  placeholder?: string; id?: string; disabled?: boolean; label?: string;
 }) {
+  const name = label ?? (id ? undefined : kind?.label ?? "The key");
   if (kind?.multiline) {
-    return <textarea id={id} className="mono" rows={6} value={value} disabled={disabled}
+    return <textarea id={id} aria-label={name} className="mono" rows={6} value={value} disabled={disabled}
       spellCheck={false} autoComplete="off" placeholder={placeholder ?? "Paste the whole file"}
       onChange={(e) => onChange(e.target.value)} />;
   }
-  return <SecretInput id={id} value={value} onChange={onChange} disabled={disabled}
+  return <SecretInput id={id} label={name} value={value} onChange={onChange} disabled={disabled}
     placeholder={placeholder ?? (kind?.placeholder || "Paste the key")} />;
 }

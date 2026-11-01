@@ -15,7 +15,7 @@ import { ProjectBrief } from "../../briefing";
 import { FailoverBanner } from "../../fallback";
 import Agenda from "../../agenda";
 import { itemsFor, needsYou, needsYouCount, useDesk, WARN_VERDICTS } from "../../desk";
-import { fmtWhen, usePoll } from "../../hooks";
+import { fmtSince, fmtWhen, usePoll } from "../../hooks";
 import Markdown from "../../Markdown";
 import { firstName, ProjectCtx } from "../../projectCtx";
 import {
@@ -36,7 +36,7 @@ import { Icon } from "../../ui/Icon";
 import { chairmanDecides, deliveryVerdict, cycleOverdue, flagPlain, fmtDate, fmtRoll, fullyAutonomous } from "../../ui/project";
 import { MoneyMeter, NODE_WORD, PathNode, requirementNode, Seal, sealOf, verdictBadge } from "../../ui/signal";
 import "./overview.css";
-import { InboxView } from "../Inbox";
+import { DecisionCard } from "../Inbox";
 import { ProjectSetup } from "../../projectSetup";
 
 /** A project's home answers four questions, in the order they are asked:
@@ -316,7 +316,7 @@ function SinceYouLooked({ projectId }: { projectId: string }) {
     <section className="card ov-card">
       <div className="card-h">
         <h3>Since you looked</h3>
-        {data && <span className="help">{new Date(data.since).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}</span>}
+        {data && <span className="help">{fmtSince(data.since)}</span>}
         <span className="grow" />
         <Link className="card-link" to={`/projects/${projectId}/details/activity`}>Activity <Icon name="arrow" size={13} /></Link>
       </div>
@@ -392,6 +392,47 @@ function LatestResults({ ctx }: { ctx: ProjectCtx }) {
   );
 }
 
+/** What this project needs from you, as whole decision cards — the same
+    cards and the same list (`desk.mine`, the Inbox's Decide) as the Inbox.
+    It embedded the Inbox's two panes once, which put one decision in a
+    760px frame beside an empty column; the decisions are the page's first
+    zone now, and the Inbox is one link away for notes and updates. Three at
+    most: past that the Inbox, which sorts and filters them, is the place. */
+const SHOWN_HERE = 3;
+
+function ProjectDecisions({ projectId, desk }: { projectId: string; desk: ReturnType<typeof useDesk> }) {
+  const decisions = desk.mine.filter((i) => i.project.id === projectId);
+  const inbox = `/inbox?project=${encodeURIComponent(projectId)}`;
+  if (!desk.data) return null;
+  if (!decisions.length) {
+    return (
+      <div className="ov-clear">
+        <Icon name="check" size={15} />
+        <span><b>Nothing needs you here.</b></span>
+        <span className="grow" />
+        <Link className="card-link" to={`${inbox}&tab=ack`}>Notes and updates <Icon name="arrow" size={13} /></Link>
+      </div>
+    );
+  }
+  return (
+    <section className="ov-decisions" aria-label="Needs you">
+      <div className="ov-dec-h">
+        <h2>Needs you <span className="count warn">{decisions.length}</span></h2>
+        <span className="help">soonest consequence first</span>
+        <span className="grow" />
+        <Link className="card-link" to={inbox}>
+          {decisions.length > SHOWN_HERE ? `All ${decisions.length} in the Inbox` : "Inbox"} <Icon name="arrow" size={13} />
+        </Link>
+      </div>
+      {decisions.slice(0, SHOWN_HERE).map((item) => (
+        <div className="card ov-dcard" key={item.key}>
+          <DecisionCard item={item} desk={desk} inProject />
+        </div>
+      ))}
+    </section>
+  );
+}
+
 /** Pause, Settings and Stop: rare and consequential, so one press away rather
     than beside the button you use every day. Start is not here: on a project
     that is not running it is the one thing to do, so it stays in view. */
@@ -429,8 +470,10 @@ function CeoCard({ ctx, news }: { ctx: ProjectCtx; news: ReactNode[] }) {
     15000, [channelId],
   );
   // The CEO's own words only: a line the platform posted has no sender, and
-  // under a "From <CEO>" heading it read as the CEO saying it.
-  const last = [...(tail ?? [])].reverse().find((m) => !!m.from_agent);
+  // under a "From <CEO>" heading it read as the CEO saying it. And not an open
+  // question: that is a decision card at the top of this page already.
+  const asking = new Set(ctx.asks.filter((a) => a.status === "open").map((a) => a.asked_in_message_id));
+  const last = [...(tail ?? [])].reverse().find((m) => !!m.from_agent && !asking.has(m.id));
   const ceo = firstName(ctx.ceoName);
   return (
     <section className="card ov-card">
@@ -445,6 +488,10 @@ function CeoCard({ ctx, news }: { ctx: ProjectCtx; news: ReactNode[] }) {
           <Avatar name={ctx.ceoName} team="leadership" />
           <div className="ceo-body"><Markdown>{clipMarkdown(last.body, 420)}</Markdown></div>
         </div>
+      ) : (tail ?? []).some((m) => !!m.from_agent) ? (
+        // Everything it said lately is a question already drawn above, as a
+        // decision; "hasn't said anything" would be false under that card.
+        <p className="help">{ceo}'s latest is the question above, under Needs you.</p>
       ) : (
         <p className="help">
           {ceo} hasn't said anything yet. Open with the goal, the constraints, and how you want to work.
@@ -466,6 +513,10 @@ function CeoCard({ ctx, news }: { ctx: ProjectCtx; news: ReactNode[] }) {
   );
 }
 
+function validZone(zone: string): boolean {
+  try { new Intl.DateTimeFormat(undefined, { timeZone: zone }); return true; } catch { return false; }
+}
+
 /** The calendar, as a list: what happens next, coloured by who resolves it.
     The full strip — rhythms, every wake, the notes that explain its blanks —
     is one press away rather than half a screen of the first page. */
@@ -474,6 +525,9 @@ function ComingUp({ projectId }: { projectId: string }) {
   const { data } = usePoll(() => get<AgendaView>(`/observe/projects/${projectId}/agenda?days=14`), 60000);
   const now = Date.now();
   const events = (data?.events ?? []).filter((e) => new Date(e.at).getTime() >= now - 3_600_000).slice(0, 5);
+  // Said in the zone named beside the heading, not the browser's: the two
+  // disagreed by five hours on the same page as the health line.
+  const zone = data?.timezone && validZone(data.timezone) ? data.timezone : undefined;
   return (
     <section className="card ov-card">
       <div className="card-h">
@@ -487,8 +541,8 @@ function ComingUp({ projectId }: { projectId: string }) {
           {events.map((e, i) => (
             <li key={`${e.at}-${i}`} className={`ag-${e.tone}`}>
               <span className="ag-when">
-                <b>{new Date(e.at).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}</b>
-                <span>{new Date(e.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</span>
+                <b>{new Date(e.at).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: zone })}</b>
+                <span>{new Date(e.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", timeZone: zone })}</span>
               </span>
               <i className="ag-dot" />
               <span className="ag-what">{e.label}{e.detail && <span className="help"> — {clip(e.detail, 90)}</span>}</span>
@@ -698,6 +752,18 @@ export default function Overview({
   const desk = useDesk();
   const [brief, setBrief] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
+  // Start can be refused (a check the server runs that the page cannot); the
+  // reason is said beside the button rather than leaving it to look unpressed.
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const start = async () => {
+    setStarting(true);
+    setStartError(null);
+    try {
+      await post(`/admin/projects/${projectId}/start`);
+      ctx.reload();
+    } catch (e) { setStartError((e as Error).message); } finally { setStarting(false); }
+  };
   const { data: flagsView, reload: reloadFlags } = usePoll(
     () => get<FlagsView>(`/observe/projects/${projectId}/flags`), 15000);
 
@@ -858,7 +924,7 @@ export default function Overview({
                   <Icon name="play" size={15} />Add a key to start
                 </Link>
               ) : (
-                <button className="primary" onClick={async () => { await post(`/admin/projects/${projectId}/start`); ctx.reload(); }}>
+                <button className="primary" disabled={starting} onClick={start}>
                   <Icon name="play" size={15} />Start
                 </button>
               )
@@ -866,6 +932,7 @@ export default function Overview({
             <Link to={`${base}/chat`} className={`btnlink${dash.status === "running" ? " primary" : ""}`}>
               <Icon name="message" size={15} />Message {ceo}</Link>
             <MoreMenu ctx={ctx} onPause={onPause} onStop={onStop} unpaid={unpaid} />
+            {startError && <div className="error ov-start-error" role="alert">{startError}</div>}
           </div>
         </div>
         <div className="eyebrow ov-meta">
@@ -908,8 +975,8 @@ export default function Overview({
       {(unpaid || showSetup) && <ProjectSetup ctx={ctx} />}
 
       {/* The project's home is what it needs from you first: this project's
-          rows of the one Inbox, with their buttons. */}
-      <InboxView project={projectId} />
+          decisions, whole, from the one list the Inbox decides from. */}
+      <ProjectDecisions projectId={projectId} desk={desk} />
 
       <PathStrip ctx={ctx} verdicts={verdicts} />
 

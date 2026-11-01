@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { DeskProject, get } from "../api";
 import { DeskBrief } from "../briefing";
 import { Item, ItemActions, needsYouCount, soonestClock, useDesk, WARN_VERDICTS } from "../desk";
-import { usePoll } from "../hooks";
+import { fmtSince, usePoll } from "../hooks";
 import { useMe } from "../me";
 import { SetupChecklist } from "../setupChecklist";
 import { fmtSoon } from "../ui";
@@ -162,7 +162,7 @@ export default function Home() {
         <aside className="hm-sec">
           <div className="hm-h">
             <h2>Since you looked</h2>
-            {lastLooked && <span className="help">{new Date(lastLooked).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}</span>}
+            {lastLooked && <span className="help">{fmtSince(lastLooked)}</span>}
             <span className="grow" />
             <Link className="card-link" to="/inbox?tab=updates">Updates <Icon name="arrow" size={13} /></Link>
           </div>

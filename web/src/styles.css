@@ -97,8 +97,8 @@
   --accent-2: #c2643e;
   --accent2-rgb: 194, 100, 62;
 
-  --good: #12704a;      --good-rgb: 18, 112, 74;
-  --warning: #8a5a00;   --warning-rgb: 138, 90, 0;
+  --good: #0e6442;      --good-rgb: 14, 100, 66;
+  --warning: #7a4f00;   --warning-rgb: 122, 79, 0;
   --serious: #a64118;   --serious-rgb: 166, 65, 24;
   --critical: #b3261e;  --critical-rgb: 179, 38, 30;
   --on-critical: #ffffff;
@@ -137,8 +137,8 @@
   --accent-2: #c2643e;
   --accent2-rgb: 194, 100, 62;
 
-  --good: #12704a;      --good-rgb: 18, 112, 74;
-  --warning: #8a5a00;   --warning-rgb: 138, 90, 0;
+  --good: #0e6442;      --good-rgb: 14, 100, 66;
+  --warning: #7a4f00;   --warning-rgb: 122, 79, 0;
   --serious: #a64118;   --serious-rgb: 166, 65, 24;
   --critical: #b3261e;  --critical-rgb: 179, 38, 30;
   --on-critical: #ffffff;
@@ -2598,7 +2598,10 @@ button.linkish.inline { min-height: 0; padding: 0; border: 0; background: none; 
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: var(--s4); padding: 12px 16px;
   border: 1px solid var(--border); border-radius: var(--radius); font-size: 13.5px;
 }
-.hrow { display: flex; gap: 10px; align-items: baseline; padding: 5px 0; font-size: 13px; }
+.hrow { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 5px 0; font-size: 13px; }
+/* The sentence keeps a readable measure; on a phone the link and buttons drop
+   under it rather than squeezing it to a word a line. */
+.hrow > .grow { flex: 1 1 220px; min-width: 0; }
 .hrow > button.small { flex: none; }
 /* Where the header badge lands: a ring that fades, so the eye finds the card
    it was sent to without the card itself changing colour. */
@@ -2851,6 +2854,16 @@ pre.trace { max-height: 360px; overflow: auto; width: 100%; font-size: 12px; }
 /* A full sidebar scrolls; it never squeezes its rows to make them fit. */
 .sb-scroll > * { flex-shrink: 0; }
 .ib-head .seg button { white-space: nowrap; padding-left: 6px; padding-right: 6px; gap: 5px; }
+/* Five tabs in one row: "Done" alone on a second line read as a second
+   control. They share the row, and scroll before they ever wrap. */
+.ib-head .seg { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.ib-head .seg button { flex: 1 0 auto; padding-left: 5px; padding-right: 5px; font-size: var(--t-micro); }
+.ib-head .seg button .n { margin-left: 4px; }
+/* A phone has no room for one row: two even rows, so none of them is clipped. */
+@media (max-width: 480px) {
+  .ib-head .seg { flex-wrap: wrap; overflow-x: visible; }
+  .ib-head .seg button { flex: 1 1 30%; }
+}
 .tc-bet { align-items: flex-start; }
 .tc-bet svg { margin-top: 3px; }
 .tc-team { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
