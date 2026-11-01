@@ -1428,10 +1428,14 @@ def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
         },
     }
     if prior is not None:
+        from yaaf.server import review_record
+
         numbers["prior"] = {
             "number": prior.number,
             "opened_at": prior.opened_at.isoformat(),
             "decisions": prior.decisions or [],
+            # What the CEO said it would do, each item marked from the record.
+            "plan": review_record.plan_marks(session, project, prior),
             # What the week's levers bought, in the only currencies that
             # count here: things made true, and the pace they happened at.
             "bought": {
@@ -1441,6 +1445,43 @@ def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
             },
         }
     return numbers
+
+
+def _record_lines(record: dict) -> str:
+    """The record, for the opening mail: what was done, by name, before the
+    numbers — because a chairman who reads the mail and not the tab was
+    getting the forecast's inputs and nothing he could recognise."""
+    lines: list[str] = []
+    met = record.get("requirements_met") or []
+    if met:
+        lines.append(f"  made true ({len(met)}): "
+                     + "; ".join(f"{r['key']} {r['statement'][:80]} [{r['how']}]"
+                                 for r in met[:6])
+                     + (f"; and {len(met) - 6} more" if len(met) > 6 else ""))
+    cut = record.get("requirements_cut") or []
+    if cut:
+        lines.append(f"  cut ({len(cut)}): "
+                     + "; ".join(f"{r['key']} — {(r['reason'] or 'no reason recorded')[:80]}"
+                                 for r in cut[:6]))
+    published = record.get("deliverables") or []
+    if published:
+        lines.append(f"  published ({len(published)}): "
+                     + ", ".join(f"{d['name']} v{d['version']}" for d in published[:6]))
+    cycle = record.get("cycle")
+    if cycle:
+        lines.append(f"  cycle {cycle['ordinal']} closed {cycle['status']}: "
+                     f"{cycle.get('met', 0)} of {cycle.get('accepted', 0)} met")
+    bets = record.get("bets") or {}
+    if bets.get("alive") or bets.get("killed") or bets.get("expired"):
+        lines.append(f"  bets: {len(bets.get('alive') or [])} alive, "
+                     f"{len(bets.get('killed') or [])} killed, "
+                     f"{len(bets.get('expired') or [])} expired this period")
+    checks = record.get("spot_checks") or {}
+    runs = record.get("runs") or {}
+    lines.append(f"  spot-checks: {checks.get('drawn', 0)} of {checks.get('considered', 0)} "
+                 f"closes drawn, {checks.get('failed', 0)} failed; "
+                 f"runs: {runs.get('total', 0)}, {runs.get('dead', 0)} dead")
+    return "What was done since the last meeting:\n\n" + "\n".join(lines) + "\n\n"
 
 
 def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> Review | None:
@@ -1453,31 +1494,37 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
     ).scalar_one_or_none()
     if latest is not None and latest.status == ReviewStatus.OPEN:
         return None  # one meeting at a time; an unattended one nags instead
-    interval = timedelta(days=cons.review_interval_days)
-    if latest is None:
-        due = project.created_at + interval
-        number = 1
-    else:
-        due = max(latest.scheduled_for + interval,
-                  (latest.closed_at or latest.opened_at))
-        number = latest.number + 1
+    from yaaf.server import review_record
+
+    # One arithmetic for the janitor and the agenda: every interval on
+    # Deliver and Explore; at the roll on an Operate rhythm of a week or more.
+    due, number = review_record.review_due(session, project, cons, latest)
     now = utcnow()
-    if now < due:
+    if due is None or now < due:
         return None
 
     numbers = review_numbers(session, project, cons, latest)
+    # The window is the same one `review_numbers` counts "met since" over:
+    # from the previous meeting's opening, or the project's birth.
+    record = review_record.compose(
+        session, project,
+        since=latest.opened_at if latest is not None else project.created_at,
+        until=now,
+    )
     review = Review(
         id=ids.new_id(ids.REVIEW),
         project_id=project.id,
         number=number,
         scheduled_for=due,
         numbers=numbers,
+        record=record,
     )
     session.add(review)
     session.flush()
 
     velocity = numbers["velocity"]
     commitment = numbers["commitment"]
+    headline = review_record.headline(project.mode, numbers, record)
     prior_lines = ""
     if numbers.get("prior", {}).get("decisions"):
         bought = numbers["prior"]["bought"]
@@ -1489,8 +1536,10 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
               f"pace {bought['pace_then']} → {bought['pace_now']}/wk.\n"
         )
     chairman_notify(
-        session, project, f"review #{number} is open",
-        f"The standing review for {project.name} is open. The numbers:\n\n"
+        session, project, f"status meeting #{number} is open",
+        f"The status meeting for {project.name} is open. {headline}\n\n"
+        + _record_lines(record)
+        + "The numbers:\n\n"
         f"  goal: {project.goal[:300]}\n"
         f"  pace: {velocity['per_week_3w']}/wk (3w), {velocity['per_week_12w']}/wk (12w); "
         f"{velocity['remaining']} requirement(s) open\n"
@@ -1506,9 +1555,9 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
         f"{numbers['audit_coverage']['expired_unreviewed']} expired unreviewed\n"
         f"{prior_lines}\n"
         "The CEO is filing its variance narrative on a reserved governance run. "
-        "Take the meeting on the Review tab — your levers there are cut, add, "
+        "Take the meeting on the Status tab — your levers there are cut, add, "
         "reword, move the date, raise the budget, and accept the slip; each is "
-        "recorded with your reason and shown at the next review beside what it "
+        "recorded with your reason and shown at the next meeting beside what it "
         "bought."
         + project_link(project.id, REVIEW_PAGE, "Take the meeting"),
         attention=Attention.ACTION,
@@ -1548,7 +1597,7 @@ def nag_reviews(session: Session, project: Project) -> None:
         return
     if review.nag_sent_at is None and age_hours >= REVIEW_NAG_HOURS:
         chairman_notify(
-            session, project, f"review #{review.number} is waiting on you",
+            session, project, f"status meeting #{review.number} is waiting on you",
             f"It opened {age_hours:.0f}h ago"
             + (" and the CEO's narrative is in" if review.narrative else
                " (the CEO has not filed its narrative yet)")
@@ -1560,7 +1609,7 @@ def nag_reviews(session: Session, project: Project) -> None:
         review.nag_sent_at = now
     elif review.escalated_at is None and age_hours >= REVIEW_ESCALATE_HOURS:
         chairman_notify(
-            session, project, f"review #{review.number} has been open {age_hours / 24:.0f} days",
+            session, project, f"status meeting #{review.number} has been open {age_hours / 24:.0f} days",
             "This is the second reminder; there will not be a third. Close it with "
             "no decisions if that is the decision — an explicit 'no change' is a "
             "record, an open meeting is a hole."
@@ -1587,7 +1636,15 @@ def _review_needs_nobody(review: Review) -> str | None:
     Anything else — no narrative yet, a recommendation, a date at risk, a
     failed audit, an overrun — is a meeting worth having, and it chases him."""
     numbers = review.numbers or {}
-    if not review.narrative or review.recommended:
+    if not review.narrative:
+        return None
+    # A structured report says it outright; an older free-text filing says it
+    # by recommending nothing. One question, asked of whichever was filed.
+    asked_for_change = (
+        ((review.report.get("ask") or {}).get("kind") != "proceed")
+        if review.report else bool(review.recommended)
+    )
+    if asked_for_change:
         return None
     commitment = numbers.get("commitment") or {}
     if commitment.get("status") in (CommitmentStatus.AT_RISK, CommitmentStatus.BREACHED):
@@ -1615,12 +1672,12 @@ def _close_green_review(session: Session, project: Project, review: Review) -> N
         action="review.auto_close", entity="review", entity_id=review.id,
         detail={"number": review.number, "why": why}))
     chairman_notify(
-        session, project, f"review #{review.number} closed itself — nothing needed you",
-        f"Review #{review.number} closed with no changes after {REVIEW_NAG_HOURS}h: {why}. "
+        session, project, f"status meeting #{review.number} closed itself — nothing needed you",
+        f"Status meeting #{review.number} closed with no changes after {REVIEW_NAG_HOURS}h: {why}. "
         f"The CEO's account of the period:\n\n{(review.narrative or '')[:3000]}\n\n"
         "Nothing was decided for you. Every lever the meeting offered — cut, add, move "
         "the date, raise the budget — is still on the Roadmap and in Settings."
-        + project_link(project.id, "reviews", "Read the review"),
+        + project_link(project.id, "reviews", "Read the meeting"),
         attention=Attention.FYI,
     )
 

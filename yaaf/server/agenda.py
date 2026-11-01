@@ -229,21 +229,31 @@ def _review_event(session: Session, project: Project, cons: ConstitutionDoc,
         .order_by(Review.number.desc()).limit(1)
     ).scalar_one_or_none()
     if latest is not None and latest.status == ReviewStatus.OPEN:
-        return None, (f"Review #{latest.number} is open and unattended — the next one "
-                      "is not scheduled until you close it.")
-    interval = timedelta(days=cons.review_interval_days)
-    if latest is None:
-        due = _aware(project.created_at) + interval
-        number = 1
+        return None, (f"Status meeting #{latest.number} is open and unattended — the next "
+                      "one is not scheduled until you close it.")
+    from yaaf.server import review_record
+
+    due, number = review_record.review_due(session, project, cons, latest)
+    if due is None:
+        # At the roll on this rhythm: the meeting's time is the cycle's.
+        from yaaf.server import policy
+
+        cycle = policy.current_cycle(session, project.id)
+        if cycle is None:
+            return None, "No cycle is open, so no status meeting is scheduled."
+        from yaaf.server.janitor import next_cycle_roll
+
+        due = next_cycle_roll(_aware(cycle.opened_at), cons, cycle)
+        detail = ("opens when this cycle rolls — on this rhythm the roll is the "
+                  "meeting — costs nothing to run, and happens whether or not "
+                  "there is anything on the board")
     else:
-        due = max(_aware(latest.scheduled_for) + interval,
-                  _aware(latest.closed_at or latest.opened_at))
-        number = latest.number + 1
+        due = _aware(due)
+        detail = ("opens by itself, costs nothing to run, and happens whether or not "
+                  "there is anything on the board")
     return _event(
-        due, "review", f"Review #{number}", tz,
-        detail=("opens by itself, costs nothing to run, and happens whether or not "
-                "there is anything on the board"),
-        tone="meeting", where="review",
+        due, "review", f"Status meeting #{number}", tz,
+        detail=detail, tone="meeting", where="review",
     ), None
 
 

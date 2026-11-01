@@ -63,6 +63,8 @@ DOORS = frozenset({
 })
 KEPT_OFF = {
     "boardroom_post": "it is the boardroom: what he types there is the record itself",
+    "say_on_review": "it is the boardroom too, in the meeting's thread: what he says "
+                     "there is the record itself, and the CEO answers it there",
     "stop_project": "the project is over, and no CEO will run again to answer it",
     "extend_approval": "it moves a clock on his own desk; nothing changes for the CEO",
 }

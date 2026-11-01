@@ -162,7 +162,7 @@ def test_the_standing_meeting_is_on_the_calendar(client):
     project = make_project(client, slug="meeting")
     payload = agenda(client, project, days=14)
     review = next(e for e in payload["events"] if e["kind"] == "review")
-    assert review["label"] == "Review #1"
+    assert review["label"] == "Status meeting #1"
     assert review["tone"] == "meeting"
     # Seven days out by default, which is review_interval_days.
     due = datetime.fromisoformat(review["at"])

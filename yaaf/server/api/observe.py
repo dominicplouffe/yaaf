@@ -2683,11 +2683,6 @@ def _file_index(project: Project) -> file_index.Snapshot:
     return file_index.snapshot(project.id, _workspace_root(project), f"projects/{project.id}/")
 
 
-#: Acceptance tests the platform runs itself. An observable is judged by a
-#: person or the CEO; it can be met, but it was never machine-checked.
-_MACHINE_CHECKED = ("command", "metric")
-
-
 def _checked(satisfied: list) -> tuple[str | None, str | None]:
     """How the requirements a deliverable claims were settled, as one label.
 
@@ -2702,7 +2697,8 @@ def _checked(satisfied: list) -> tuple[str | None, str | None]:
     if any(r.status != RequirementStatus.MET for r in satisfied):
         unsettled = ", ".join(r.key for r in satisfied if r.status != RequirementStatus.MET)
         return "pending", f"{unsettled} not settled yet"
-    if all((r.acceptance_test or {}).get("type") in _MACHINE_CHECKED for r in satisfied):
+    if all((r.acceptance_test or {}).get("type") in policy.MACHINE_CHECKED_TESTS
+           for r in satisfied):
         return "verified", f"the platform ran the acceptance test for {keys}"
     return "judged", f"{keys} met by judgement — an observable no script can check"
 
@@ -3125,12 +3121,41 @@ def reviews(project_id: str, session: Session = Depends(db)) -> dict:
         .order_by(Review.number.desc()).limit(50)
     ).scalars())
 
+    from yaaf.server import review_record
+    from yaaf.server.dispatcher import review_thread_state
+
+    def thread(r: Review) -> dict | None:
+        state = review_thread_state(session, project, r)
+        if state is None:
+            return None
+        return {
+            "id": state["thread_id"],
+            "ceo_replies": state["ceo_replies"],
+            "unanswered": state["unanswered"],
+            "messages": [
+                {"id": m.id, "from": "ceo" if m.sender_agent_id else "you",
+                 "body": m.body, "at": m.created_at.isoformat()}
+                for m in state["messages"]
+            ],
+        }
+
     def view(r: Review) -> dict:
         return {
+            "thread": thread(r),
             "id": r.id, "number": r.number, "status": r.status,
             "scheduled_for": r.scheduled_for.isoformat(),
             "opened_at": r.opened_at.isoformat(),
             "numbers": r.numbers,
+            # What was done, from the record (None on meetings opened before
+            # it existed), and one sentence in words from the same frozen
+            # facts — composed here rather than stored, so it is a function
+            # of the record and cannot be edited into disagreeing with it.
+            "record": r.record,
+            "headline": review_record.headline(project.mode, r.numbers, r.record),
+            # The structured filing, or None on a meeting filed the old way —
+            # which the screen renders the old way rather than inventing a
+            # `next` list the CEO never wrote.
+            "report": r.report,
             "narrative": r.narrative,
             "recommended": r.recommended,
             "narrative_filed_at": (r.narrative_filed_at.isoformat()

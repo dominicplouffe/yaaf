@@ -1732,12 +1732,69 @@ export interface ReviewNumbers {
     number: number;
     decisions: Decision[];
     bought: { met_since: number; pace_then: number | null; pace_now: number };
+    /** What the CEO said it would do last meeting, each item marked from the
+        record at open. Absent on snapshots older than the report. */
+    plan?: PlanMark[];
   };
 }
 
-export interface Decision { kind: string; reason: string; detail: string; at: string }
+export interface PlanMark {
+  item: number; what: string; serves: string; by: string | null;
+  kind: "requirement" | "cycle" | "bet" | "unknown";
+  mark: string; says: string;
+}
+
+export interface Decision {
+  kind: string; reason: string; detail: string; at: string;
+  /** What the pull changed on the record — the projected finish, open scope,
+      the cap — read before and after. Absent on decisions older than this. */
+  effect?: string | null;
+}
+
+/** "Say something back" on a meeting: one boardroom thread per meeting. */
+export interface ReviewThread {
+  id: string;
+  ceo_replies: number;
+  unanswered: boolean;
+  messages: { id: string; from: "you" | "ceo"; body: string; at: string }[];
+}
 
 
+
+/** What was done in the meeting's window, from the record — composed by the
+    janitor at open and frozen beside the numbers. Null on meetings opened
+    before it existed. */
+export interface ReviewRecord {
+  since: string;
+  until: string;
+  requirements_met: { key: string; statement: string; how: "verified" | "judged" }[];
+  standing_honoured: { key: string; statement: string }[];
+  requirements_cut: { key: string; statement: string; reason: string | null }[];
+  deliverables: { name: string; version: number; requirements: string[] }[];
+  spot_checks: { considered: number; drawn: number; passed: number; failed: number;
+    expired: number };
+  tasks_closed: number;
+  runs: { total: number; dead: number; usd: number };
+  cycle: { ordinal: number; status: string; goal: string | null; accepted?: number;
+    met?: number; carried?: number; met_keys?: string[]; carried_keys?: string[] } | null;
+  bets: Record<"alive" | "added" | "killed" | "expired",
+    { id: string; statement: string; kill_date: string; status: string }[]>;
+  evidence: { verified: number; failed: number; pending: number };
+}
+
+/** The CEO's status report, structured. Null on a meeting filed the old way
+    (free-text narrative), which the screen renders the old way. */
+export interface ReviewReport {
+  done: string;
+  /** One line per item of last meeting's plan, by index into `prior.plan`. */
+  last_plan?: { item: number; outcome: "done" | "partly" | "not_done" | "dropped";
+    note: string | null }[];
+  variance: { what: string; largest_cause: string };
+  next: { what: string; serves: string; by: string | null }[];
+  goal_effect: string;
+  ask: { kind: "proceed" | "change"; levers: { kind: string; detail: string }[];
+    why: string | null };
+}
 
 export interface ReviewRow {
   id: string;
@@ -1746,6 +1803,12 @@ export interface ReviewRow {
   scheduled_for: string;
   opened_at: string;
   numbers: ReviewNumbers;
+  record: ReviewRecord | null;
+  report: ReviewReport | null;
+  thread: ReviewThread | null;
+  /** One sentence in words from the frozen facts; composed server-side so the
+      screen, the reader tool and the opening mail say the same thing. */
+  headline: string;
   narrative: string | null;
   recommended: string | null;
   narrative_filed_at: string | null;

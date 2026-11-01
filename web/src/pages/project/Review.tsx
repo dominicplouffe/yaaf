@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import {
-  Decision, get, post, requirementName, RequirementMeta, ReviewNumbers, ReviewRow, ReviewsView,
+  Decision, get, PlanMark, post, requirementName, RequirementMeta, ReviewNumbers, ReviewRecord,
+  ReviewReport, ReviewRow, ReviewsView,
 } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import { AsOf, ExportCsv, NoteAction, Skeleton, clip, downloadCsv } from "../../ui";
@@ -51,11 +52,13 @@ function field(style: object = {}) {
 
 /** One lever, one small form. Every form ends in the same two things — a
     reason and a button — because the reason IS the record. */
-function LeverForm({ review, kind, requirements, hasCommitment, unit, onDone }: {
+function LeverForm({ review, kind, requirements, hasCommitment, unit, onDone, initialReason }: {
   review: ReviewRow; kind: string; requirements: RequirementOption[];
-  hasCommitment: boolean; unit: string; onDone: () => void;
+  hasCommitment: boolean; unit: string; onDone: () => void; initialReason?: string;
 }) {
-  const [reason, setReason] = useState("");
+  // Agreeing with the CEO's ask is one press: its reason is already written.
+  // Edit it or keep it; either way it is recorded as yours.
+  const [reason, setReason] = useState(initialReason ?? "");
   const [requirementId, setRequirementId] = useState("");
   const [statement, setStatement] = useState("");
   const [testKind, setTestKind] = useState<"command" | "observable">("command");
@@ -178,7 +181,12 @@ function DecisionList({ decisions }: { decisions: Decision[] }) {
             <td style={{ whiteSpace: "nowrap" }}>
               <span className="chip">{LEVER_LABELS[d.kind] ?? d.kind.replaceAll("_", " ")}</span>
             </td>
-            <td>{d.detail}</td>
+            <td>
+              {d.detail}
+              {/* What the pull moved on the record, so the loop is seen to
+                  close here and not only on the Roadmap. */}
+              {d.effect && <div className="help" style={{ fontSize: 12 }}>{d.effect}</div>}
+            </td>
             <td className="help">{d.reason}</td>
           </tr>
         ))}
@@ -187,7 +195,437 @@ function DecisionList({ decisions }: { decisions: Decision[] }) {
   );
 }
 
-function NumbersTiles({ n }: { n: ReviewNumbers }) {
+/** A short, plain word for who the lines in a section came from. The record
+    is the platform's at zero tokens and cannot be argued with; the CEO's
+    words are the CEO's. A reader should never have to guess which. */
+function Source({ kind }: { kind: "record" | "ceo" }) {
+  const record = kind === "record";
+  return (
+    <span className={"chip " + (record ? "ok" : "accent")} title={record
+      ? "Composed by the platform from its own events when the meeting opened. No agent wrote it."
+      : "Filed by the CEO on a reserved governance run."}>
+      {record ? "from the record" : "CEO"}
+    </span>
+  );
+}
+
+function KeyedList({ rows, how }: {
+  rows: { key: string; statement: string; how?: string; reason?: string | null }[];
+  how?: boolean;
+}) {
+  return (
+    <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, fontSize: 13 }}>
+      {rows.map((r) => (
+        <li key={r.key} style={{ display: "flex", gap: 8, minWidth: 0 }}>
+          <span className="help" style={{ flex: "0 0 auto", fontFamily: "var(--mono)" }}>
+            {r.key}
+          </span>
+          <span style={{ minWidth: 0 }}>
+            {clip(r.statement, 110)}
+            {r.reason != null && <span className="help"> — {clip(r.reason, 90)}</span>}
+          </span>
+          {how && r.how && (
+            <span className="help" style={{ marginLeft: "auto", whiteSpace: "nowrap" }}>
+              {r.how}
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** What was done in the window, by name, before any number. Mode-shaped:
+    a Deliver project did requirements; an Operate project did a cycle; an
+    Explore project ran bets and collected evidence. */
+function RecordSection({ record, mode }: { record: ReviewRecord | null; mode: string }) {
+  if (!record) {
+    return (
+      <div>
+        <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+          <b style={{ fontSize: 13 }}>What was done</b><Source kind="record" />
+        </div>
+        <p className="help" style={{ marginTop: 4 }}>
+          This meeting opened before the platform kept a record of the period; only the
+          numbers below were frozen.
+        </p>
+      </div>
+    );
+  }
+  const cell = (n: string, label: string, body: ReactNode) => (
+    <div style={{ background: "var(--sunken)", borderRadius: "var(--radius-sm)",
+      padding: "10px 12px", minWidth: 0 }}>
+      <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.1,
+        fontVariantNumeric: "tabular-nums" }}>{n}</div>
+      <div className="help">{label}</div>
+      {body}
+    </div>
+  );
+  const cells: ReactNode[] = [];
+  if (mode === "explore") {
+    const b = record.bets;
+    cells.push(cell(
+      `${b.alive.length} alive`,
+      `bets — ${b.killed.length} killed, ${b.expired.length} expired this period`,
+      <KeyedList rows={[
+        ...b.alive.map((h) => ({ key: "alive", statement: h.statement,
+          how: `kill ${fmtDate(h.kill_date)}` })),
+        ...b.killed.map((h) => ({ key: "killed", statement: h.statement })),
+        ...b.expired.map((h) => ({ key: "expired", statement: h.statement })),
+      ]} how />));
+    cells.push(cell(
+      `${record.evidence.verified} / ${record.evidence.failed}`,
+      "evidence verified / refused by the platform",
+      record.evidence.pending > 0
+        ? <p className="help" style={{ marginTop: 6 }}>{record.evidence.pending} still waiting on the verifier</p>
+        : null));
+  } else {
+    if (mode === "operate" && record.cycle) {
+      const c = record.cycle;
+      cells.push(cell(
+        `${c.met ?? 0} of ${c.accepted ?? 0}`,
+        `cycle ${c.ordinal} scope met · closed ${c.status}`,
+        (c.carried_keys?.length ?? 0) > 0
+          ? <p className="help" style={{ marginTop: 6 }}>carried: {c.carried_keys!.join(", ")}</p>
+          : null));
+    }
+    cells.push(cell(
+      String(record.requirements_met.length),
+      "requirements made true",
+      record.requirements_met.length > 0
+        ? <KeyedList rows={record.requirements_met} how />
+        : <p className="help" style={{ marginTop: 6 }}>none this period</p>));
+    if (record.standing_honoured.length > 0) {
+      cells.push(cell(
+        String(record.standing_honoured.length),
+        "standing obligations honoured",
+        <KeyedList rows={record.standing_honoured} />));
+    }
+    if (record.requirements_cut.length > 0) {
+      cells.push(cell(
+        String(record.requirements_cut.length),
+        "requirements cut, with reasons",
+        <KeyedList rows={record.requirements_cut} />));
+    }
+  }
+  cells.push(cell(
+    String(record.deliverables.length),
+    "deliverables published",
+    record.deliverables.length > 0 ? (
+      <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, fontSize: 13 }}>
+        {record.deliverables.map((d) => (
+          <li key={d.name} style={{ display: "flex", gap: 8, minWidth: 0 }}>
+            <span className="help" style={{ fontFamily: "var(--mono)" }}>v{d.version}</span>
+            <span style={{ minWidth: 0 }}>{clip(d.name, 60)}
+              {d.requirements.length > 0 && (
+                <span className="help"> · claims {d.requirements.join(", ")}</span>)}
+            </span>
+          </li>))}
+      </ul>
+    ) : <p className="help" style={{ marginTop: 6 }}>nothing published</p>));
+  const s = record.spot_checks;
+  cells.push(cell(
+    `${s.drawn} of ${s.considered}`,
+    "closes spot-checked",
+    <p className="help" style={{ marginTop: 6 }}>
+      {s.failed > 0 ? `${s.failed} failed · ` : ""}
+      {s.expired > 0 ? `${s.expired} expired unanswered · ` : ""}
+      {record.runs.total} runs, {record.runs.dead} dead
+      {record.tasks_closed > 0 ? ` · ${record.tasks_closed} tasks closed` : ""}
+    </p>));
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+        <b style={{ fontSize: 13 }}>What was done since the last meeting</b>
+        <Source kind="record" />
+        <span className="help">{fmtDate(record.since)} → {fmtDate(record.until)}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+        gap: 10, marginTop: 8 }}>
+        {cells}
+      </div>
+    </div>
+  );
+}
+
+/** The CEO's status report, in the order a meeting is held: what the period
+    bought, what did not go to plan, what is next, the ask. The list of what
+    was done is the platform's and sits above this; the CEO explains it. */
+function ReportSections({ report }: { report: ReviewReport }) {
+  const head = (title: string) => (
+    <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+      <b style={{ fontSize: 13 }}>{title}</b><Source kind="ceo" />
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 12 }}>
+      <div>
+        {head("What it bought us")}
+        <p style={{ marginTop: 6, whiteSpace: "pre-wrap", maxWidth: "70ch" }}>{report.done}</p>
+      </div>
+      <div>
+        {head("What did not go to plan, and why")}
+        <p style={{ marginTop: 6, whiteSpace: "pre-wrap", maxWidth: "70ch" }}>
+          {report.variance.what}
+        </p>
+        <p className="help" style={{ marginTop: 4, maxWidth: "70ch" }}>
+          Largest cause: {report.variance.largest_cause}
+        </p>
+      </div>
+      <div>
+        {head("Next period — what it will do")}
+        <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, display: "flex",
+          flexDirection: "column", gap: 6 }}>
+          {report.next.map((item, i) => (
+            <li key={i} style={{ display: "flex", gap: 10, alignItems: "baseline",
+              flexWrap: "wrap", padding: "6px 10px", background: "var(--sunken)",
+              borderRadius: "var(--radius-sm)" }}>
+              <span style={{ flex: 1, minWidth: 200 }}>{item.what}</span>
+              <span className="help" style={{ fontFamily: "var(--mono)" }}>
+                {item.serves}
+              </span>
+              {item.by && <span className="help">by {fmtDate(item.by)}</span>}
+            </li>
+          ))}
+        </ul>
+        <p className="help" style={{ margin: "8px 0 0", borderLeft: "3px solid var(--accent)",
+          padding: "2px 10px", maxWidth: "70ch" }}>
+          How this moves the goal: {report.goal_effect}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** The ask, and the chairman's answer to it, in one place. The CEO's line
+    first; under it the lever it asked for, pre-filled so agreeing is one
+    press; the other five under a fold; then the thread. Under the fully
+    autonomous dial the CEO already holds these decisions, so the section
+    reads as what it decided and the levers fold under "Overrule". */
+function AskSection({ open, selfRunning, requirements, unit, onChanged }: {
+  open: ReviewRow; selfRunning: boolean; requirements: RequirementOption[];
+  unit: string; onChanged: () => void;
+}) {
+  const [lever, setLever] = useState<string | null>(null);
+  const [say, setSay] = useState("");
+  const [sayError, setSayError] = useState<string | null>(null);
+  const ask = open.report?.ask ?? null;
+  const asked = ask?.kind === "change" ? ask.levers : [];
+  const askedKinds = new Set(asked.map((l) => l.kind));
+  const reasonFor = (kind: string) => {
+    const l = asked.find((x) => x.kind === kind);
+    return l ? `Agreed: ${l.detail}${ask?.why ? ` — ${ask.why}` : ""}` : undefined;
+  };
+
+  async function send() {
+    setSayError(null);
+    try {
+      await post(`/admin/reviews/${open.id}/say`, { body: say });
+      setSay("");
+      onChanged();
+    } catch (e) {
+      setSayError((e as Error).message);
+    }
+  }
+
+  const title = selfRunning ? "What your CEO decided"
+    : !ask ? "Your decision"
+    : ask.kind === "proceed" ? "The ask: proceed" : "The ask: change something";
+
+  return (
+    <div style={{ border: "1px solid rgba(var(--accent-rgb), 0.45)", borderRadius: "var(--radius)",
+      padding: "12px 14px", background: "rgba(var(--accent-rgb), 0.05)",
+      display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+        <b style={{ fontSize: 13 }}>{title}</b>
+        {ask && <Source kind="ceo" />}
+      </div>
+
+      {ask ? (
+        ask.kind === "proceed" ? (
+          <p style={{ margin: 0 }}>
+            {selfRunning ? "It is proceeding as above; nothing here needed you."
+              : "Nothing needs you. Closing with no changes records that."}
+            {ask.why && <span className="help"> {ask.why}</span>}
+          </p>
+        ) : (
+          <div>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {asked.map((l, i) => (
+                <li key={i}><b>{LEVER_LABELS[l.kind] ?? l.kind}</b> — {l.detail}</li>
+              ))}
+            </ul>
+            {ask.why && <p className="help" style={{ margin: "4px 0 0", maxWidth: "70ch" }}>
+              {ask.why}</p>}
+          </div>
+        )
+      ) : (
+        <p className="help" style={{ margin: 0 }}>
+          {open.narrative
+            ? "Filed the old way, without a structured ask; its recommendation is above."
+            : "The CEO has not filed yet. You can still decide, or wait for its report."}
+        </p>
+      )}
+
+      {/* The levers: the asked-for ones first and pre-filled, the rest folded. */}
+      {!selfRunning && asked.length > 0 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {asked.map((l) => (
+            <button key={l.kind} className={"small" + (lever === l.kind ? "" : " primary")}
+              onClick={() => setLever(lever === l.kind ? null : l.kind)}>
+              {LEVER_LABELS[l.kind] ?? l.kind}
+            </button>
+          ))}
+          <span className="help">one press; the CEO's reason is pre-filled — edit it or keep it</span>
+        </div>
+      )}
+      <details>
+        <summary className="help" style={{ fontSize: 13 }}>
+          {selfRunning ? "Overrule" : asked.length > 0 ? "Something else" : "Change something"}
+        </summary>
+        <p className="help" style={{ margin: "4px 0 8px" }}>
+          {selfRunning
+            ? "Your CEO holds these decisions under the dial you set. Pulling one here is you "
+              + "taking it back for this meeting; it is recorded with your reason. "
+            : "Use one only if you want to change the plan. "}
+          Anything you do lands under “Decided this meeting” and stays there; the meeting ends
+          when you press <b>Close the meeting</b>, and closing with no changes is itself a decision.
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {Object.entries(LEVER_LABELS).filter(([k]) => selfRunning || !askedKinds.has(k))
+            .map(([kind, label]) => (
+              <button key={kind} className={"small" + (lever === kind ? " primary" : "")}
+                onClick={() => setLever(lever === kind ? null : kind)}>
+                {label}
+              </button>
+            ))}
+        </div>
+      </details>
+      {lever && (
+        <LeverForm key={lever} review={open} kind={lever} requirements={requirements}
+          hasCommitment={open.numbers.commitment != null} unit={unit}
+          initialReason={reasonFor(lever)}
+          onDone={() => { setLever(null); onChanged(); }} />
+      )}
+
+      {/* Say something back: one boardroom thread per meeting. */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div className="label" style={{ fontSize: 12, textTransform: "uppercase",
+          letterSpacing: ".06em", color: "var(--muted)", fontWeight: 600 }}>
+          Say something back
+        </div>
+        {open.thread?.messages.map((m) => (
+          <div key={m.id} style={{ background: "var(--surface-2)", borderRadius: "var(--radius-sm)",
+            padding: "6px 10px", fontSize: 13, maxWidth: "70ch", whiteSpace: "pre-wrap" }}>
+            <span className="help" style={{ marginRight: 6 }}>
+              {m.from === "you" ? "You" : "CEO"}, {fmtWhen(m.at)}
+            </span>{m.body}
+          </div>
+        ))}
+        {open.thread?.unanswered && (
+          <div className="help" style={{ fontSize: 12 }}>
+            Waiting on the CEO — it answers on the governance reserve, so it lands even on a
+            day the ordinary allowance is spent.
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          <input id={`say-${open.id}`} style={{ ...field(), flex: 1, minWidth: 0 }} value={say}
+            placeholder="Your words go to the CEO as a message on this meeting; it answers in the thread."
+            onChange={(e) => setSay(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && say.trim()) void send(); }} />
+          <button className="small" disabled={!say.trim()} onClick={send}>Send</button>
+        </div>
+        {sayError && <div className="error">{sayError}</div>}
+      </div>
+    </div>
+  );
+}
+
+const OUTCOME_LABELS: Record<string, string> = {
+  done: "done", partly: "partly", not_done: "not done", dropped: "dropped",
+};
+
+/** What the CEO said it would do last meeting, beside what happened. The
+    platform's column first — it cannot be argued with — and the CEO's line
+    second, where "done" against an open requirement was refused at filing. */
+function PlanVsActual({ plan, outcomes }: {
+  plan: PlanMark[]; outcomes: ReviewReport["last_plan"] | undefined;
+}) {
+  const said = new Map((outcomes ?? []).map((o) => [o.item, o]));
+  const tone = (m: PlanMark) =>
+    ["true", "completed"].includes(m.mark) ? "var(--good)"
+      : ["open", "missed"].includes(m.mark) ? "var(--critical)"
+      : "var(--muted)";
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+        <b style={{ fontSize: 13 }}>What it said it would do last meeting, and what happened</b>
+        <Source kind="record" /><Source kind="ceo" />
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ marginTop: 8 }}>
+          <thead>
+            <tr><th>Said it would</th><th>Serves</th><th>Platform says</th><th>CEO says</th></tr>
+          </thead>
+          <tbody>
+            {plan.map((m) => {
+              const o = said.get(m.item);
+              return (
+                <tr key={m.item}>
+                  <td>{m.what}</td>
+                  <td className="help" style={{ fontFamily: "var(--mono)", whiteSpace: "nowrap" }}>
+                    {m.serves}
+                  </td>
+                  <td style={{ color: tone(m), fontWeight: 600, whiteSpace: "nowrap" }}>
+                    {m.says}
+                  </td>
+                  <td>
+                    {o ? (
+                      <>
+                        <b>{OUTCOME_LABELS[o.outcome] ?? o.outcome}</b>
+                        {o.note && <span className="help"> — {o.note}</span>}
+                      </>
+                    ) : <span className="help">not filed yet</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function NumbersTiles({ n, mode, record, requirements }: {
+  n: ReviewNumbers; mode: string; record: ReviewRecord | null;
+  requirements: RequirementOption[];
+}) {
+  // Explore has no requirements and no date: the first three tiles would read
+  // "—", "0" and nothing. Its scope is bets, and the bets were frozen onto the
+  // numbers all along without a tile to show them.
+  if (mode === "explore") {
+    const alive = n.hypotheses.filter((h) => h.status === "active");
+    const nextKill = alive.map((h) => h.kill_date).sort()[0];
+    return (
+      <div className="tiles" style={{ margin: "12px 0" }}>
+        <div className="tile">
+          <div className="label">Bets alive</div>
+          <div className="value">{alive.length}</div>
+          <div className="sub">{n.hypotheses.length - alive.length} expired, not yet killed</div>
+        </div>
+        <div className="tile">
+          <div className="label">Next kill date</div>
+          <div className="value" style={{ fontSize: 18 }}>{nextKill ? fmtDate(nextKill) : "—"}</div>
+          <div className="sub">{nextKill ? "a bet dies then unless you extend it" : "no live bet"}</div>
+        </div>
+        <BudgetTile n={n} />
+        <AuditTile n={n} record={record} />
+      </div>
+    );
+  }
+  const worst = n.velocity.worst_failure;
+  const worstRow = worst ? requirements.find((r) => r.key === worst.key) : null;
   return (
     <div className="tiles" style={{ margin: "12px 0" }}>
       <div className="tile">
@@ -234,30 +672,51 @@ function NumbersTiles({ n }: { n: ReviewNumbers }) {
           </div>
         </div>
       )}
-      <div className="tile">
-        <div className="label">Budget</div>
-        <div className="value">
-          {Math.round((n.budget.spent_mtd / Math.max(n.budget.cap, 1)) * 100)}<small>%</small>
-        </div>
-        <div className="sub">
-          {n.budget.spent_mtd.toLocaleString()} of {n.budget.cap.toLocaleString()} {n.budget.unit}
-        </div>
-      </div>
-      <div className="tile">
-        <div className="label">Audit coverage</div>
-        <div className="value">{n.audit_coverage.sampled}</div>
-        <div className="sub">
-          sampled · {n.audit_coverage.failed} failed ·
-          {" "}{n.audit_coverage.expired_unreviewed} expired unreviewed
-        </div>
-      </div>
-      {n.velocity.worst_failure && (
+      <BudgetTile n={n} />
+      <AuditTile n={n} record={record} />
+      {worst && (
         <div className="tile alert">
-          <div className="label">Worst offender</div>
-          <div className="value" style={{ fontSize: 18 }}>{n.velocity.worst_failure.key}</div>
-          <div className="sub">{n.velocity.worst_failure.failure_load} dead runs</div>
+          <div className="label">Most dead runs</div>
+          <div className="value" style={{ fontSize: 18 }}>{worst.failure_load}</div>
+          {/* The key alone sent the reader to the Roadmap to find out what
+              R-29 was. The statement is on the page already; say it. */}
+          <div className="sub">
+            on {worst.key}{worstRow ? ` · ${clip(requirementName(worstRow), 70)}` : ""}
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function BudgetTile({ n }: { n: ReviewNumbers }) {
+  return (
+    <div className="tile">
+      <div className="label">This month's spend</div>
+      <div className="value">
+        {Math.round((n.budget.spent_mtd / Math.max(n.budget.cap, 1)) * 100)}<small>% of plan</small>
+      </div>
+      <div className="sub">
+        {n.budget.spent_mtd.toLocaleString()} of {n.budget.cap.toLocaleString()} {n.budget.unit}
+      </div>
+    </div>
+  );
+}
+
+function AuditTile({ n, record }: { n: ReviewNumbers; record: ReviewRecord | null }) {
+  // "Audit coverage 0" read as a score. It is a count of closes that landed
+  // on the chairman's desk, out of the closes that could have; the record
+  // knows the denominator, the older snapshot does not.
+  const considered = record?.spot_checks.considered;
+  return (
+    <div className="tile">
+      <div className="label">Spot-checked</div>
+      <div className="value">
+        {n.audit_coverage.sampled}{considered != null && <small> of {considered} closes</small>}
+      </div>
+      <div className="sub">
+        {n.audit_coverage.failed} failed · {n.audit_coverage.expired_unreviewed} expired unanswered
+      </div>
     </div>
   );
 }
@@ -268,7 +727,6 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
     () => get<ReviewsView>(`/observe/projects/${projectId}/reviews`), 10000);
   const { data: requirements } = usePoll<RequirementOption[]>(
     () => get<RequirementOption[]>(`/admin/projects/${projectId}/requirements`), 30000);
-  const [lever, setLever] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState<Record<number, boolean>>({});
 
   if (!data) return <Skeleton rows={5} />;
@@ -284,11 +742,12 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
         <p className="subtitle" style={{ margin: 0, flex: 1 }}>
           {selfRunning
-            ? "Your CEO's standing report. You left the decisions to it, so nothing here is "
-              + "waiting on you — read it, say anything you want said back, and close it."
-            : "The standing meeting: the platform brings the numbers, the CEO explains the "
-              + "variance, you decide. Every lever is recorded with your reason and shown at "
-              + "the next review beside what it bought."}
+            ? "Your CEO's status report. You left the decisions to it, so nothing here is "
+              + "waiting on you — read what it did and what it will do, say anything you want "
+              + "said back, and close it."
+            : "The status meeting: the platform brings what was done, the CEO explains what "
+              + "it bought and what is next, and asks for what it needs. Every lever is "
+              + "recorded with your reason and shown at the next meeting beside what it bought."}
         </p>
         <AsOf at={at} error={error} />
       </div>
@@ -296,34 +755,48 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
       {!open ? (
         <div className="card" style={{ maxWidth: 640 }}>
           <p className="help" style={{ margin: 0 }}>
-            No review is open. The platform opens one on the schedule you set
-            (Settings → Rules in force → “Days between status reviews”) — with zero
-            tokens, whatever the board or the budget looks like — and emails you when
-            it does.
+            No status meeting is open. The platform opens one on the schedule you set
+            (Settings → Rules in force → “Days between status meetings”; on an Operate
+            rhythm of a week or more, at the cycle roll) — with zero tokens, whatever
+            the board or the budget looks like — and emails you when it does.
           </p>
         </div>
       ) : (
         <div className="card" style={{ padding: "14px 18px", marginBottom: 18 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-            <h2 style={{ margin: 0 }}>Review #{open.number}</h2>
+            <h2 style={{ margin: 0 }}>Status meeting #{open.number}</h2>
             <span className="help">opened {fmtWhen(open.opened_at)}</span>
             <span className="sp" style={{ flex: 1 }} />
-            <NoteAction label="Close the review" className="small primary"
+            <NoteAction label="Close the meeting" className="small primary"
               placeholder="Closing note (optional) — 'no change' is a decision too"
               confirmLabel="Close"
               onSubmit={async (note) => {
                 await post(`/admin/reviews/${open.id}/close`, { note });
-                setLever(null);
                 reload();
               }} />
           </div>
 
-          <NumbersTiles n={open.numbers} />
+          {/* One sentence in words before any number: a reader who does not
+              live in the project knows where it stands by the second line. */}
+          <p style={{ fontFamily: "var(--font-display)", fontSize: 22, lineHeight: 1.3,
+            margin: "10px 0 14px", maxWidth: "60ch" }}>
+            {open.headline}
+          </p>
+
+          <div style={{ marginBottom: 16 }}>
+            <RecordSection record={open.record} mode={ctx.dash.mode} />
+          </div>
+
+          {open.numbers.prior?.plan && open.numbers.prior.plan.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <PlanVsActual plan={open.numbers.prior.plan} outcomes={open.report?.last_plan} />
+            </div>
+          )}
 
           {open.numbers.prior && open.numbers.prior.decisions.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <b style={{ fontSize: 13 }}>
-                Last review's decisions, beside what they bought
+                Last meeting's decisions, beside what they bought
               </b>
               <div className="help">
                 {open.numbers.prior.bought.met_since} requirement(s) met since ·
@@ -340,8 +813,13 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
               in small grey type underneath. A reader looking for "what do you
               want from me" had to read all of it to find out the answer was
               "nothing". */}
+          {open.report ? (
+            <ReportSections report={open.report} />
+          ) : (
           <div style={{ marginBottom: 12 }}>
-            <b style={{ fontSize: 13 }}>What your CEO says it will do</b>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+              <b style={{ fontSize: 13 }}>What your CEO says it will do</b><Source kind="ceo" />
+            </div>
             {open.narrative || open.recommended ? (
               <>
                 <p style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
@@ -363,59 +841,45 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
               </p>
             )}
           </div>
+          )}
 
           {open.decisions.length > 0 && (
             <div style={{ marginBottom: 12 }}>
-              <b style={{ fontSize: 13 }}>Decided this review</b>
+              <b style={{ fontSize: 13 }}>Decided this meeting</b>
               <DecisionList decisions={open.decisions} />
             </div>
           )}
 
-          {/* Said out loud because the buttons look like a to-do list and are
-              not one. Pressing one opens a form; using it files a decision
-              into "Decided this review" above and leaves the meeting open,
-              because the meeting ends when you close it and not before. A row
-              of buttons where nothing visibly resolves is a row of buttons a
-              reader concludes is broken. */}
-          <b style={{ fontSize: 13 }}>Change something — optional</b>
-          <p className="help" style={{ margin: "4px 0 0" }}>
-            {selfRunning
-              ? "You do not have to use any of these: your CEO already holds these decisions. "
-              : "Use one only if you want to change the plan. "}
-            Anything you do lands under “Decided this review” above and stays there; the meeting
-            itself ends when you press <b>Close the review</b>, and closing with no changes is
-            itself a recorded decision.
-          </p>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-            {Object.entries(LEVER_LABELS).map(([kind, label]) => (
-              <button key={kind}
-                className={"small" + (lever === kind ? " primary" : "")}
-                onClick={() => setLever(lever === kind ? null : kind)}>
-                {label}
-              </button>
-            ))}
-          </div>
-          {lever && (
-            <LeverForm review={open} kind={lever}
-              requirements={requirements ?? []}
-              hasCommitment={open.numbers.commitment != null}
-              unit={unit}
-              onDone={() => { setLever(null); reload(); }} />
-          )}
+          {/* The ask and the answer to it, in one place: the levers sit under
+              the CEO's ask rather than in a row at the bottom that read as a
+              to-do list. Pulling one files a decision into "Decided this
+              review" above and leaves the meeting open; it ends when you
+              close it and not before. */}
+          <AskSection open={open} selfRunning={selfRunning} requirements={requirements ?? []}
+            unit={unit} onChanged={reload} />
+
+          {/* The forecast's inputs, last. They opened the meeting for a year
+              and a reader who did not live in the project could not say
+              what "11 a week · 0.4 weeks at this rate" meant for him. */}
+          <details style={{ marginTop: 16 }}>
+            <summary style={{ fontSize: 13, fontWeight: 600 }}>The numbers behind this</summary>
+            <NumbersTiles n={open.numbers} mode={ctx.dash.mode} record={open.record}
+              requirements={requirements ?? []} />
+          </details>
         </div>
       )}
 
       {data.history.length > 0 && (
         <>
           <div style={{ display: "flex", alignItems: "baseline", gap: "var(--s3)" }}>
-            <h2 style={{ flex: 1 }}>Past reviews</h2>
+            <h2 style={{ flex: 1 }}>Past meetings</h2>
             {/* What you decided, and what it bought — the one record a
                 chairman is most likely to want outside this screen. */}
             <ExportCsv
               onClick={() =>
                 downloadCsv(
-                  "reviews.csv",
-                  ["Review", "Opened", "Closed", "Settled since the last one",
+                  "status-meetings.csv",
+                  ["Meeting", "Opened", "Closed", "Settled since the last one",
                    "Settling per week", "Still open", "What you decided", "Why"],
                   data.history.flatMap((r) => {
                     const facts = [
@@ -451,6 +915,7 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
                   {showHistory[r.number] ? "less" : "more"}
                 </button>
               </div>
+              <p className="help" style={{ margin: "4px 0 0" }}>{r.headline}</p>
               <DecisionList decisions={r.decisions} />
               {showHistory[r.number] && r.narrative && (
                 <p style={{ whiteSpace: "pre-wrap", fontSize: 13, marginTop: 8 }}>

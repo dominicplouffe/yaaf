@@ -1754,6 +1754,24 @@ class Review(Base):
     # screen reads; this is a frozen copy so the meeting's record cannot
     # drift as the week moves on.
     numbers: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # What was done in the window, from the record (`review_record.compose`):
+    # requirements made true and how they were checked, cuts and their
+    # reasons, deliverables, spot-checks, runs, the cycle, the bets. Frozen at
+    # open like the numbers, and for the same reason. Null on meetings opened
+    # before it existed; the screen says so rather than inventing one.
+    record: Mapped[dict | None] = mapped_column(JSONVariant)
+    # The CEO's status report, structured: what the period bought (`done`),
+    # what moved against the plan and its largest cause (`variance`), what it
+    # will do next and what each item serves (`next`, `goal_effect`), and the
+    # ask (`proceed`, or `change` with the levers it wants). Filing one also
+    # renders `narrative` and `recommended` below, so every reader of the
+    # old free-text filing — the green rule, the cycle narrative, the closing
+    # mail — keeps reading one thing. Null on meetings filed the old way.
+    report: Mapped[dict | None] = mapped_column(JSONVariant)
+    # The boardroom thread this meeting's "say something back" runs in: the
+    # id of the chairman's first message on it, set when he first speaks.
+    # One thread per meeting, so the reply cap and the record have an edge.
+    thread_id: Mapped[str | None] = mapped_column(String(40))
     narrative: Mapped[str | None] = mapped_column(Text)
     recommended: Mapped[str | None] = mapped_column(Text)
     narrative_run_id: Mapped[str | None] = mapped_column(String(40))

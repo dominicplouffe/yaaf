@@ -1043,11 +1043,11 @@ def _meeting_lines(session: Session, project: Project, since, until) -> list[dic
             Review.opened_at <= until,
         ).order_by(Review.number)
     ).scalars():
-        filed = "the CEO has filed its variance narrative" if review.narrative else \
-            "the CEO has not filed its narrative yet"
+        filed = "the CEO has filed its report" if review.narrative else \
+            "the CEO has not filed its report yet"
         lines.append(_line(
             "review_opened",
-            f"review #{review.number} opened — {filed}",
+            f"status meeting #{review.number} opened — {filed}",
             count=1, where="review",
         ))
     return lines

@@ -332,10 +332,14 @@ def commitment_decide(principal: Principal, session: Session, arguments: dict) -
     scope="steer",
     description=(
         "Work an open review: pull a lever (cut, add, reword, move_date, raise_budget, "
-        "accept_slip) or close it. The two honest ways out of a commitment at risk."
+        "accept_slip), say something back to the CEO on the meeting's thread (`say`, with "
+        "`body`), or close it. The two honest ways out of a commitment at risk, and the "
+        "one way to ask the CEO about them first."
     ),
     input_schema=_schema(["verb"],
-                         verb={"type": "string", "enum": ["lever", "close"]},
+                         verb={"type": "string", "enum": ["lever", "say", "close"]},
+                         body={"type": "string",
+                               "description": "For `say`: the person's words to the CEO"},
                          review={"type": "string", "description": "Review id"},
                          kind={"type": "string",
                                "enum": ["cut", "add", "reword", "move_date",
@@ -378,6 +382,10 @@ def review_decide(principal: Principal, session: Session, arguments: dict) -> di
                             deliver_by=(_when(arguments["deliver_by"])
                                         if arguments.get("deliver_by") else None),
                             amount=arguments.get("amount")),
+                        session=session)
+    elif verb == "say":
+        outcome = _call(principal, admin.say_on_review, review_id=row.id,
+                        body=admin.ReviewSay(body=str(required(arguments, "body"))),
                         session=session)
     else:
         raise ToolRefusal(f"unknown verb {verb!r}")
