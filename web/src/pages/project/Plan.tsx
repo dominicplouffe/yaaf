@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   get,
   post,
@@ -10,14 +10,20 @@ import {
 } from "../../api";
 import { usePoll } from "../../hooks";
 import { AsOf, ConfirmModal, ExportCsv, NoteAction, Skeleton, clip, downloadCsv } from "../../ui";
-import { Badge, ChartHead, EmptyState, plainStatus } from "../../ui/kit";
+import { ChartHead, plainStatus } from "../../ui/kit";
 import type { ProjectCtx } from "../Project";
+import "./plan.css";
 
 /** The visual plan the chairman asked for — twice — before it was twice
     deferred and dropped. Two views over one dataset, so they cannot disagree:
     the stage board answers "when will I have it", the dependency graph answers
     "what is blocking what". The critical path arrives computed from the
-    server, from the same arithmetic the refusals quote. */
+    server, from the same arithmetic the refusals quote.
+
+    The top of it is one sentence, one chart and one quiet line. It used to be
+    eight tiles, most reading 0 or a dash with a sentence under each explaining
+    the zero, and then a second card that printed the promised date three
+    times. Those numbers are all still here, under "More numbers" at the foot. */
 
 function statusBadge(status: string) {
   const cls =
@@ -352,93 +358,463 @@ function isoDay(iso: string): string {
   return iso.slice(0, 10);
 }
 
-/** The CEO asked to promise a date it did not get to pick. The chairman takes
-    it, replaces it with his own, or declines — nothing binds until he acts. */
-function ProposedCommitment({ c, onDone }: { c: PlanCommitment; onDone: () => void }) {
-  const [date, setDate] = useState(isoDay(c.deliver_by));
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * DAY_MS;
+
+/** Mirrors `velocity.MIN_MET_FOR_PACE`. Below this many settled in a window
+    the server will not call what it measured a pace, and neither does this
+    page. */
+const MIN_MET_FOR_PACE = 2;
+
+/** The requirement states the server's stage gate counts as open work
+    (`policy.OPEN_REQUIREMENT_STATUSES`). Proposed is not in force yet. */
+const OPEN = new Set(["pending", "in_progress", "checking"]);
+
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** Two dates as one span, "Nov 17 – 19", or one date when they share a day. */
+function fmtSpan(lo: number, hi: number): string {
+  const a = fmtDay(new Date(lo).toISOString());
+  const b = fmtDay(new Date(hi).toISOString());
+  if (a === b) return b;
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" })
+    .formatRange(new Date(lo), new Date(hi));
+}
+
+function spansDays(lo: number, hi: number): boolean {
+  return fmtDay(new Date(lo).toISOString()) !== fmtDay(new Date(hi).toISOString());
+}
+
+type Velocity = NonNullable<PlanView["velocity"]>;
+
+interface Pace { weeks: 3 | 12; perWeek: number; met: number }
+
+/** The windows `commitment_projection` divides by, in the order it tries
+    them: the trailing three weeks, then the trailing twelve. A window with
+    too few settled in it, or too short to hold a week, is not a pace. */
+function measuredPaces(v: Velocity | undefined): Pace[] {
+  if (!v) return [];
+  const out: Pace[] = [];
+  if (v.per_week_3w > 0 && v.met_3w >= MIN_MET_FOR_PACE) {
+    out.push({ weeks: 3, perWeek: v.per_week_3w, met: v.met_3w });
+  }
+  if (v.per_week_12w > 0 && v.met_12w >= MIN_MET_FOR_PACE) {
+    out.push({ weeks: 12, perWeek: v.per_week_12w, met: v.met_12w });
+  }
+  return out;
+}
+
+/** "the pace of the last 12 days (2 settled)". A young project's three-week
+    window is only as long as the project, and says so. */
+function paceWords(p: Pace, v: Velocity): string {
+  if (p.weeks === 12) return `the pace of the last 12 weeks (${p.met} settled)`;
+  const days = v.measured_over_days;
+  const window = days >= 20.5 ? "3 weeks" : plural(Math.max(1, Math.round(days)), "day");
+  return `the pace of the last ${window} (${p.met} settled)`;
+}
+
+/** Why there is no date, in a sentence. Only reached when neither window
+    holds a pace, so each branch is one of the server's own refusals to
+    divide. */
+function whyNoPace(v: Velocity | undefined): string {
+  if (!v) return "There is no pace to measure yet.";
+  const young = v.measured_over_days < 20.5;
+  const met = Math.max(v.met_3w, v.met_12w);
+  if (met === 0) {
+    return young ? "Nothing has settled yet." : "Nothing has settled in the last 12 weeks.";
+  }
+  if (met < MIN_MET_FOR_PACE) {
+    return `Only ${met} has settled ${young ? "so far" : "in the last 12 weeks"}; a pace needs at least ${MIN_MET_FOR_PACE}.`;
+  }
+  return `${plural(met, "requirement")} settled in ${plural(Math.max(1, Math.round(v.measured_over_days)), "day")}; a pace needs at least a week.`;
+}
+
+/** Where the open work lands, as a span. One end is the server's own date:
+    the pace it chose, the one the janitor stamps and the refusals quote. The
+    other end is the same division by the other window's pace, when that
+    window holds one too, so the width of the span is how far the two measured
+    paces disagree. Nothing goes into it that the server did not measure.
+
+    Null whenever the server's date did not come from a measured pace. Its
+    fallback is the plan's own arithmetic at the daily cap, a best case rather
+    than a forecast, and this page does not print a best case as a date. */
+interface Projection {
+  lo: number;
+  hi: number;
+  /** What the span was divided from, as a noun phrase. */
+  from: string;
+}
+
+function projectionOf(c: PlanCommitment, v: Velocity | undefined, now: number): Projection | null {
+  const paces = measuredPaces(v);
+  if (!v || v.remaining === 0 || !c.projected_done_at || paces.length === 0) return null;
+  const own = new Date(c.projected_done_at).getTime();
+  const [first, second] = paces;
+  const other = second && second.perWeek !== first.perWeek
+    ? now + (v.remaining / second.perWeek) * WEEK_MS
+    : own;
+  const lo = Math.min(own, other);
+  const hi = Math.max(own, other);
+  const from = second && spansDays(lo, hi)
+    ? `the pace of the last 3 weeks and of the last 12 (${first.met} and ${second.met} settled)`
+    : paceWords(first, v);
+  return { lo, hi, from };
+}
+
+/** What the page counts, once, so the sentence, the quiet line under the
+    chart and the stage labels are all read off the same tally. */
+interface Counts {
+  /** The burn-up's own pair when it has one, so this line and the chart agree. */
+  settled: number;
+  scope: number;
+  /** Accepted and not yet settled — the server's open statuses. */
+  open: number;
+  /** Of those, the ones a number settles rather than work. */
+  openMeasured: number;
+  inWork: number;
+  notStarted: number;
+  /** Levers only you can pull: accept or cut, a verdict, or a proposed promise. */
+  waiting: number;
+  /** Everything past proposed, settled or not. */
+  accepted: number;
+}
+
+function waitsOnYou(r: PlanRequirement): boolean {
+  return r.status === "proposed" || (r.status === "checking" && r.test_kind === "observable");
+}
+
+function countsOf(
+  reqs: PlanRequirement[], burnup: PlanBurnup | null | undefined,
+  /** A proposed commitment is a decision of yours too; "nothing waiting on
+      you" under its Accept button would be the page contradicting itself. */
+  promiseProposed: boolean,
+): Counts {
+  const live = reqs.filter((r) => r.status !== "proposed" && r.status !== "cut");
+  const useBurnup = !!burnup && burnup.scope_total > 0;
+  return {
+    settled: useBurnup ? burnup!.settled : live.filter((r) => r.status === "met").length,
+    scope: useBurnup ? burnup!.scope_total : live.length,
+    open: reqs.filter((r) => OPEN.has(r.status)).length,
+    openMeasured: reqs.filter((r) => OPEN.has(r.status) && r.test_kind === "metric").length,
+    inWork: reqs.filter((r) =>
+      (r.status === "in_progress" || r.status === "checking") && !waitsOnYou(r)).length,
+    notStarted: reqs.filter((r) => r.status === "pending").length,
+    waiting: reqs.filter(waitsOnYou).length + (promiseProposed ? 1 : 0),
+    accepted: reqs.filter((r) => r.status !== "proposed").length,
+  };
+}
+
+type Tone = "good" | "plain" | "ask" | "warn" | "critical";
+
+/** The one sentence at the top of the Roadmap: a bold claim and its basis. */
+interface Status { tone: Tone; lead: string; basis: string }
+
+const FROZEN = "New scope is frozen until the promise holds again: cut requirements below, or move the date.";
+
+/** Will the work be finished by the date you signed? Answered once, in words.
+
+    This replaces eight tiles and a second card that printed the promised date
+    three times. Every case reads the commitment's status (the janitor's,
+    which owns the transitions) for the verb, and the measured pace for the
+    date, and says "too early to project" rather than print a date the pace
+    cannot support. */
+function deliveryStatus(
+  c: PlanCommitment | null, v: Velocity | undefined, k: Counts, now: number,
+): Status {
+  const allSettled = k.open === 0 && k.accepted > 0;
+
+  if (c === null) {
+    if (allSettled) {
+      return { tone: "good", lead: "Everything in the plan is settled.", basis: "No delivery date was promised." };
+    }
+    const pace = measuredPaces(v)[0];
+    if (pace && v && v.remaining > 0) {
+      const weeks = Math.round((v.remaining / pace.perWeek) * 10) / 10;
+      return {
+        tone: "plain",
+        lead: "No delivery date promised yet.",
+        basis: `At ${paceWords(pace, v)}, the open work takes about ${plural(weeks, "week")}.`,
+      };
+    }
+    const why = whyNoPace(v);
+    return {
+      tone: "plain",
+      lead: "No delivery date promised yet.",
+      basis: `Too early to project: ${why.charAt(0).toLowerCase()}${why.slice(1)}`,
+    };
+  }
+
+  const promised = fmtDay(c.deliver_by);
+  const deliverBy = new Date(c.deliver_by).getTime();
+  const proj = projectionOf(c, v, now);
+  const span = proj ? fmtSpan(proj.lo, proj.hi) : "";
+  const daysLate = proj ? Math.ceil((proj.hi - deliverBy) / DAY_MS) : 0;
+
+  if (c.status === "proposed") {
+    const what = c.scope_snapshot.length > 0
+      ? plural(c.scope_snapshot.length, "requirement") : "the accepted scope";
+    const date = proj
+      ? `The work lands about ${span}, projected from ${proj.from}.`
+      : v && v.remaining === 0
+        ? ""
+        : "Too early to project from a pace, so the date is the plan's best case: "
+          + "the most work you allow in a day, with nothing going wrong.";
+    return {
+      tone: "ask",
+      lead: `Proposed: ${what} by ${promised}.`,
+      basis: `Nothing binds until you accept.${date ? ` ${date}` : ""}`,
+    };
+  }
+
+  if (c.status === "met") {
+    const on = c.met_at ? fmtDay(c.met_at) : null;
+    return {
+      tone: "good",
+      lead: on === null ? `Delivered, promised ${promised}.`
+        : on === promised ? `Delivered ${on}, the day promised.`
+        : `Delivered ${on}, promised ${promised}.`,
+      basis: "Every requirement in the promise is proven true.",
+    };
+  }
+
+  if (c.status === "breached") {
+    return {
+      tone: "critical",
+      lead: `The promise of ${promised} passed ${dayGap(deliverBy, now)} with ${k.open} still open.`,
+      basis: (proj
+        ? `The rest lands about ${span}, projected from ${proj.from}.`
+        : "Too early to project when the rest lands.") + ` ${FROZEN}`,
+    };
+  }
+
+  if (c.status === "at_risk") {
+    if (!proj) {
+      return {
+        tone: "warn",
+        lead: `At risk: even the best case misses the promise of ${promised}.`,
+        basis: "Too early to project a date, but at the most work you allow in a day "
+          + `the open work still runs past it. ${FROZEN}`,
+      };
+    }
+    return {
+      tone: "warn",
+      lead: !spansDays(proj.lo, proj.hi) && daysLate > 0
+        ? `At risk: now expected ${span}, ${plural(daysLate, "day")} past the promise of ${promised}.`
+        : `At risk: now expected ${span}, promised ${promised}.`,
+      basis: `Projection from ${proj.from}. ${FROZEN}`,
+    };
+  }
+
+  // Accepted: the promise holds, as far as the janitor last looked.
+  if (allSettled) {
+    return {
+      tone: "good",
+      lead: now <= deliverBy
+        ? `Everything is settled, inside the promise of ${promised}.`
+        : `Everything is settled, promised ${promised}.`,
+      basis: "",
+    };
+  }
+  if (v && v.remaining === 0 && k.openMeasured > 0) {
+    return {
+      tone: "plain",
+      lead: `The work is settled, promised ${promised}.`,
+      basis: `${plural(k.openMeasured, "measured target")} still open; `
+        + `${k.openMeasured === 1 ? "it settles" : "they settle"} when the number does.`,
+    };
+  }
+  if (proj) {
+    const late = proj.lo > deliverBy;
+    return {
+      tone: late ? "warn" : "good",
+      lead: late
+        ? `Now expected ${span}, promised ${promised}.`
+        : `On course for ${span}, promised ${promised}.`,
+      basis: `Projection from ${proj.from}; it firms up as more settle.`
+        + (!late && daysLate > 0
+          ? ` The late end runs ${plural(daysLate, "day")} past the promise.` : ""),
+    };
+  }
+  return { tone: "plain", lead: `Too early to project, promised ${promised}.`, basis: whyNoPace(v) };
+}
+
+/** The sentence, and under it whatever levers the sentence hands you. A
+    promise that needs you is boxed; one that does not is just said. */
+function PlanStatus({ s, children }: { s: Status; children?: ReactNode }) {
+  const box = s.tone === "critical" ? " strip critical"
+    : s.tone === "warn" ? " strip serious"
+    : s.tone === "ask" ? " strip"
+    : "";
   return (
-    <div className="strip" style={{ marginBottom: 14 }}>
+    <div className={`plan-status${box}`}>
       <div className="grow">
-        <b>The CEO proposes to commit: {c.scope_snapshot.length > 0
-          ? `${c.scope_snapshot.length} requirements` : "the accepted scope"} by {fmtDay(c.deliver_by)}.</b>
-        <div className="sb">
-          The date is the platform's own projection — {c.projection_basis ?? "computed from the plan"}.
-          {c.note ? <> The CEO adds: “{c.note}”</> : null}
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
-          <label className="help" htmlFor="cmt-date">deliver by</label>
-          <input id="cmt-date" type="date" value={date} min={isoDay(new Date().toISOString())}
-            onChange={(e) => setDate(e.target.value)}
-            style={{ font: "inherit", fontSize: 13, padding: "3px 6px",
-              background: "var(--surface)", color: "var(--ink)",
-              border: "1px solid var(--border)", borderRadius: 5 }} />
-          <button className="small primary" onClick={async () => {
-            const body = date !== isoDay(c.deliver_by)
-              ? { deliver_by: `${date}T23:59:59Z` } : {};
-            await post(`/admin/commitments/${c.id}/accept`, body);
-            onDone();
-          }}>✓ Accept the commitment</button>
-          <NoteAction
-            label="Decline…"
-            className="small danger"
-            placeholder="Why not — the CEO reads it and keeps working the plan"
-            confirmLabel="✗ Decline"
-            requireNote
-            onSubmit={async (note) => {
-              await post(`/admin/commitments/${c.id}/decline`, { reason: note });
-              onDone();
-            }}
-          />
-        </div>
+        <p className="plan-lede">
+          <b>{s.lead}</b>{s.basis ? ` ${s.basis}` : ""}
+        </p>
+        {children}
       </div>
     </div>
+  );
+}
+
+/** The CEO asked to promise a date it did not get to pick. The chairman takes
+    it, replaces it with his own, or declines — nothing binds until he acts.
+    The proposal itself is said by the sentence above; these are its levers. */
+function ProposedLevers({ c, onDone }: { c: PlanCommitment; onDone: () => void }) {
+  const [date, setDate] = useState(isoDay(c.deliver_by));
+  return (
+    <>
+      {c.note && <p className="plan-note">The CEO adds: “{c.note}”</p>}
+      <div className="plan-acts">
+        <label className="help" htmlFor="cmt-date">deliver by</label>
+        <input id="cmt-date" type="date" value={date} min={isoDay(new Date().toISOString())}
+          onChange={(e) => setDate(e.target.value)} />
+        <button className="small primary" onClick={async () => {
+          const body = date !== isoDay(c.deliver_by)
+            ? { deliver_by: `${date}T23:59:59Z` } : {};
+          await post(`/admin/commitments/${c.id}/accept`, body);
+          onDone();
+        }}>✓ Accept the commitment</button>
+        <NoteAction
+          label="Decline…"
+          className="small danger"
+          placeholder="Why not — the CEO reads it and keeps working the plan"
+          confirmLabel="✗ Decline"
+          requireNote
+          onSubmit={async (note) => {
+            await post(`/admin/commitments/${c.id}/decline`, { reason: note });
+            onDone();
+          }}
+        />
+      </div>
+    </>
   );
 }
 
 /** A promise that stopped holding. New scope is already frozen server-side —
-    this shows the arithmetic and hands the chairman his levers. */
-function SlippingCommitment({ c, onDone }: { c: PlanCommitment; onDone: () => void }) {
+    the sentence above says so and shows the arithmetic; this is the lever. */
+function MoveDate({ c, onDone }: { c: PlanCommitment; onDone: () => void }) {
   const [date, setDate] = useState("");
   const [reason, setReason] = useState("");
-  const breached = c.status === "breached";
   return (
-    <div className={`strip ${breached ? "critical" : "serious"}`} style={{ marginBottom: 14 }}>
-      <div className="grow">
-        <b>
-          {breached
-            ? `The commitment is breached: ${fmtDay(c.deliver_by)} has passed.`
-            : `The commitment is at risk: promised ${fmtDay(c.deliver_by)}, projected ${c.projected_done_at ? fmtDay(c.projected_done_at) : "unknown"}.`}
-        </b>
-        <div className="sb">
-          {c.status_reason ?? ""} New scope is frozen for the CEO — existing work continues.
-          Your levers: cut requirements below, or move the date with a reason.
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-            style={{ font: "inherit", fontSize: 13, padding: "3px 6px",
-              background: "var(--surface)", color: "var(--ink)",
-              border: "1px solid var(--border)", borderRadius: 5 }} />
-          <input type="text" value={reason} placeholder="Why the date moves — the CEO reads it"
-            onChange={(e) => setReason(e.target.value)}
-            style={{ font: "inherit", fontSize: 13, padding: "3px 8px", minWidth: 280,
-              background: "var(--surface)", color: "var(--ink)",
-              border: "1px solid var(--border)", borderRadius: 5 }} />
-          <button className="small" disabled={!date || reason.trim().length < 5}
-            onClick={async () => {
-              await post(`/admin/commitments/${c.id}/move`,
-                { deliver_by: `${date}T23:59:59Z`, reason });
-              onDone();
-            }}>Move the date</button>
-        </div>
-      </div>
+    <div className="plan-acts">
+      <input type="date" aria-label="New delivery date" value={date}
+        onChange={(e) => setDate(e.target.value)} />
+      <input type="text" className="plan-reason" value={reason}
+        placeholder="Why the date moves — the CEO reads it"
+        onChange={(e) => setReason(e.target.value)} />
+      <button className="small" disabled={!date || reason.trim().length < 5}
+        onClick={async () => {
+          await post(`/admin/commitments/${c.id}/move`,
+            { deliver_by: `${date}T23:59:59Z`, reason });
+          onDone();
+        }}>Move the date</button>
     </div>
   );
 }
 
+/** Three facts at most, in one quiet line under the chart. A zero is left
+    out rather than printed, except the one that is good news. */
+function PlanFacts({ k }: { k: Counts }) {
+  const facts: string[] = [];
+  if (k.scope > 0) facts.push(`${k.settled} of ${k.scope} settled`);
+  if (k.inWork > 0) facts.push(`${k.inWork} in work`);
+  else if (k.notStarted > 0) facts.push(`${k.notStarted} not started`);
+  facts.push(k.waiting > 0 ? `${k.waiting} waiting on you` : "nothing waiting on you");
+  return (
+    <p className="plan-facts">
+      {facts.map((f) => <span key={f}>{f}</span>)}
+    </p>
+  );
+}
+
+function MoreRow({ label, value, children }: {
+  label: string; value?: string; children: ReactNode;
+}) {
+  return (
+    <div className="pm-row">
+      <span className="pm-l">{label}</span>
+      <b className="pm-v">{value ?? ""}</b>
+      <span className="pm-why">{children}</span>
+    </div>
+  );
+}
+
+/** The numbers that used to be tiles at the top. All of them still exist and
+    are still right; most of them answer a question nobody asks first, so they
+    wait one click down instead of each explaining its own zero up top. */
+function MoreNumbers({ data, c }: { data: PlanView; c: PlanCommitment | null }) {
+  const sums = data.plan!.arithmetic;
+  const v = data.velocity;
+  const runs = v?.runs_3w;
+  return (
+    <details className="plan-more">
+      <summary>More numbers</summary>
+      <div className="pm-list">
+        {/* `plan_arithmetic.requirements` counts the LIVE ones — settled and
+            cut are out, which is what makes the jobs beside it mean "work
+            left". */}
+        <MoreRow label="Work it should take" value={plural(sums.adjusted_runs, "job")}>
+          for the {plural(sums.requirements, "requirement")} still open
+          {data.burnup && data.burnup.scope_total > 0 ? ` of ${data.burnup.scope_total} in the plan` : ""}
+          {sums.multiplier > 1 ? `, padded ×${sums.multiplier} because this CEO has been running over` : ""}
+        </MoreRow>
+        {sums.days_at_the_daily_cap != null && (
+          <MoreRow label="If nothing went wrong" value={plural(sums.days_at_the_daily_cap, "day")}>
+            at the most work you allow in one day
+          </MoreRow>
+        )}
+        {v && (
+          /* A rate, or a dash. Printing `0 a week` for a project that has
+             not been alive a week says its team has achieved nothing, which
+             is a different claim from "there is nothing to measure yet". */
+          <MoreRow label="Requirements settled" value={v.pace_known ? `${v.per_week_3w} a week` : "—"}>
+            {v.pace_known
+              ? (v.weeks_left_at_pace != null
+                  ? `${v.remaining} still open, about ${plural(v.weeks_left_at_pace, "week")} at this rate`
+                  : `${v.remaining} still open`)
+              : `${v.remaining} still open; too little has settled to call this a pace`}
+          </MoreRow>
+        )}
+        {v && runs && runs.total > 0 && (
+          <MoreRow label="Spend that bought nothing" value={`${Math.round(runs.failure_share * 100)}%`}>
+            {runs.dead} of {runs.total} jobs ended with nothing to show
+            {v.worst_failure ? `, worst on “${clip(v.worst_failure.statement, 44)}”` : ""}
+          </MoreRow>
+        )}
+        {runs && runs.total > 0 && runs.inbox + runs.noop > 0 && (
+          /* What the project spent talking to itself. Its own broadcasts
+             generate this traffic, so it is the one cost that can be priced
+             before it is paid. */
+          <MoreRow label="Overhead"
+            value={`${Math.round(((runs.inbox + runs.noop) / runs.total) * 100)}%`}>
+            {runs.inbox} reading the inbox, {runs.noop} that changed nothing, of {runs.total} runs
+          </MoreRow>
+        )}
+        {sums.budget.known ? (
+          <MoreRow label="Affordable" value={plural(sums.budget.runs ?? 0, "run")}>
+            ${sums.budget.usd_remaining} left, at ${sums.budget.usd_per_run} a run
+          </MoreRow>
+        ) : (
+          <MoreRow label="What the rest of the budget buys" value="—">
+            {sums.budget.why}
+          </MoreRow>
+        )}
+        {c?.projection_basis && (
+          <MoreRow label="How the platform works out the date">{c.projection_basis}</MoreRow>
+        )}
+      </div>
+    </details>
+  );
+}
+
+// ── the burn-up ─────────────────────────────────────────────────────────────────
+
 /** The burn-up: what has become true, against the promise and the projection.
-    Server data only — the two markers are the commitment (his) and the
-    projection (the platform's), which is the whole conversation. */
-/** Is the work going to be finished by the date you signed?
+    Server data only — the marks are the commitment (his) and the projection
+    (the platform's), which is the whole conversation.
  *
  * The chart that was here drew two lines and told you nothing you could read
  * off it: no y-axis, so a point had no value; no gridlines, so no point had a
@@ -446,9 +822,9 @@ function SlippingCommitment({ c, onDone }: { c: PlanCommitment; onDone: () => vo
  * other or for the edge of the picture — which is how a shipped screenshot
  * came to say "projected Oc", clipped mid-word at the frame.
  *
- * It states its question, its window and its unit; every mark is inside the
- * frame; and where two dates land close enough to collide they are drawn as
- * one label rather than two on top of each other. */
+ * Every mark is inside the frame, and where two dates land close enough to
+ * collide they are drawn as one label rather than two on top of each other.
+ * The question it answers is asked and answered by the sentence above it. */
 
 const CW = 760, CH = 268, CL = 46, CR = 18, CT = 20, CB = 56;
 
@@ -481,11 +857,11 @@ const HORIZON = 1.6;
     promise and the projection, which is all the old test asked. */
 const LABEL_W = 96;
 
-/** Below any of these there is no shape to draw, so the card states the
-    numbers instead. A line through two points is the number above it said
-    twice, with a slope nobody can check; a two-requirement scale makes every
-    step half the plot height; and a set of marks written inside one morning
-    is a moment, not a window. */
+/** Below any of these there is no shape to draw, so the card says so instead.
+    A line through two points is the number above it said twice, with a slope
+    nobody can check; a two-requirement scale makes every step half the plot
+    height; and a set of marks written inside one morning is a moment, not a
+    window. */
 const MIN_POINTS = 3, MIN_SCOPE = 3, MIN_SPREAD_MS = 24 * 60 * 60 * 1000;
 
 /** Keeps a label inside the frame and points it away from the wall it is
@@ -532,8 +908,8 @@ function mergeMarks(marks: Mark[], x: (t: number) => number): Mark[] {
     // But the label keeps BOTH dates. Collapsing "promised Oct 2" and
     // "expected Oct 4" into a single "Oct 4 — you promised · now expected"
     // moves the promise three days to the right and puts the chart at odds
-    // with the tile above it, which still reads Oct 2. Two dates close enough
-    // to share a label are not the same date.
+    // with the sentence above it, which still reads Oct 2. Two dates close
+    // enough to share a label are not the same date.
     const day = fmtDay(new Date(m.at).toISOString());
     if (!prev.top.split(" → ").includes(day)) prev.top = `${prev.top} → ${day}`;
     prev.at = Math.max(prev.at, m.at);
@@ -557,20 +933,22 @@ function yTicks(scope: number): number[] {
 interface BurnupFacts {
   scope: number;
   settled: number;
-  open: number | null;
   points: { t: number; n: number }[];
   deliverBy: number;
-  projected: number | null;
+  /** The span the sentence above states, or null when it states none. */
+  range: { lo: number; hi: number } | null;
   late: boolean;
-  daysLate: number | null;
   drawable: boolean;
   /** Empty when drawable. Why not, in the words the card prints. */
   why: string;
 }
 
-/** The numbers both renderings read, computed once so the picture and the
-    tiles can never say different things about the same promise. */
-function burnupFacts(c: PlanCommitment, burnup: PlanBurnup, open: number | null): BurnupFacts {
+/** The numbers the picture reads, computed once, from the same projection the
+    sentence above it quotes — so the two can never say different things
+    about the same promise. */
+function burnupFacts(
+  c: PlanCommitment, burnup: PlanBurnup, range: BurnupFacts["range"],
+): BurnupFacts {
   const scope = Math.max(burnup.scope_total, 1);
   // The server builds the line from the same set it counts the ceiling from,
   // so this clamp is a belt: if that ever drifts again the chart flattens at
@@ -579,116 +957,62 @@ function burnupFacts(c: PlanCommitment, burnup: PlanBurnup, open: number | null)
     t: new Date(p.at).getTime(), n: Math.min(p.count, scope),
   }));
   const deliverBy = new Date(c.deliver_by).getTime();
-  const projected = c.projected_done_at ? new Date(c.projected_done_at).getTime() : null;
-  const late = projected !== null && projected > deliverBy;
   const spread = points.length ? points[points.length - 1].t - points[0].t : 0;
 
   const why =
-    points.length === 0 ? "nothing has settled yet"
-    : points.length < MIN_POINTS
-      ? `only ${points.length} thing${points.length === 1 ? " has" : "s have"} settled so far`
-    : scope < MIN_SCOPE ? `a plan of ${scope} has no shape to show`
-    : spread < MIN_SPREAD_MS ? "everything so far settled inside one day"
+    scope < MIN_SCOPE ? `A plan of ${scope} has no shape to draw.`
+    : points.length < MIN_POINTS ? `The line is drawn once ${MIN_POINTS} have settled.`
+    : spread < MIN_SPREAD_MS ? "Everything so far settled inside one day; the line is drawn once the work spans more."
     : "";
 
   return {
-    scope, settled: Math.min(burnup.settled, scope), open, points, deliverBy, projected, late,
-    daysLate: late ? Math.ceil((projected! - deliverBy) / 86400000) : null,
+    scope, settled: Math.min(burnup.settled, scope), points, deliverBy, range,
+    late: c.status === "at_risk" || c.status === "breached"
+      || (range !== null && range.lo > deliverBy),
     drawable: why === "", why,
   };
 }
 
-/** Will the work be finished by the date you signed? The card either draws the
-    shape or states the numbers — never a line through one or two points, which
-    is the number said twice and a slope that cannot be read. */
-function Burnup({ c, burnup, open }: {
-  c: PlanCommitment; burnup: PlanBurnup; open: number | null;
+/** Requirements settled over time, under the sentence that says what they
+    add up to. It either draws the shape or says why there is none yet —
+    never a line through one or two points, which is the number said twice
+    and a slope that cannot be read. */
+function Burnup({ c, burnup, range }: {
+  c: PlanCommitment; burnup: PlanBurnup; range: BurnupFacts["range"];
 }) {
-  const f = burnupFacts(c, burnup, open);
-  return f.drawable ? <BurnupChart c={c} f={f} /> : <BurnupSummary c={c} f={f} />;
+  const f = burnupFacts(c, burnup, range);
+  return f.drawable ? <BurnupChart c={c} f={f} /> : <BurnupSummary f={f} />;
 }
 
-function BurnupSummary({ c, f }: { c: PlanCommitment; f: BurnupFacts }) {
-  const now = Date.now();
+function BurnupSummary({ f }: { f: BurnupFacts }) {
   return (
-    <div className="card" style={{ marginBottom: "var(--s4)" }}>
-      <ChartHead
-        question="Will the work be finished by the date you signed?"
-        meta={`Requirements settled, against all ${f.scope} in the plan · as at ${fmtDay(new Date(now).toISOString())}`}
-      />
-      <div className="tiles" style={{ marginTop: 0 }}>
-        <div className="tile">
-          <div className="label">Settled</div>
-          <div className="value">{f.settled} of {f.scope}</div>
-          <div className="sub">
-            {f.open === null ? "requirements proven true"
-              : f.open === 0 ? "nothing still open" : `${f.open} still open`}
-          </div>
-        </div>
-        <div className="tile">
-          <div className="label">You promised</div>
-          <div className="value">{fmtDay(c.deliver_by)}</div>
-          <div className="sub">{dayGap(f.deliverBy, now)}</div>
-        </div>
-        {f.projected !== null && (
-          <div className={`tile${c.status === "breached" ? " alert" : ""}`}>
-            <div className="label">{f.late ? "Now expected" : "On course for"}</div>
-            <div className="value">{fmtDay(new Date(f.projected).toISOString())}</div>
-            <div className="sub">
-              <Badge tone={f.late ? "serious" : "good"}>
-                {f.late
-                  ? `${f.daysLate} day${f.daysLate === 1 ? "" : "s"} past the promise`
-                  : "inside the promise"}
-              </Badge>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {f.points.length === 0 ? (
-        <EmptyState
-          icon="target"
-          title="Nothing has settled yet"
-          foot={c.projection_basis
-            ? `Any date above is arithmetic, not a promise anybody made — ${c.projection_basis}`
-            : undefined}
-        >
-          The promise stands and the work is under way. The moment requirements
-          start being proven true there is a line worth drawing here.
-        </EmptyState>
-      ) : (
-        <p className="help" style={{ margin: "var(--s3) 0 0" }}>
-          {/* Said rather than drawn. The chart that used to be here drew a line
-              through one point, which is how it came to be a vertical bar at
-              the left edge and nothing else. */}
-          Too little has happened to draw a line worth reading — {f.why}.
-          {c.projection_basis
-            ? ` The date is arithmetic, not a promise anybody made — ${c.projection_basis}.`
-            : ""}
-        </p>
-      )}
+    <div className="card plan-chart">
+      <ChartHead question="Requirements settled over time" meta={f.why} />
     </div>
   );
 }
 
 function BurnupChart({ c, f }: { c: PlanCommitment; f: BurnupFacts }) {
   const now = Date.now();
-  const { scope, points, settled, deliverBy, projected, late } = f;
+  const { scope, points, settled, deliverBy, range, late } = f;
   const projColour = late ? "var(--serious)" : "var(--good)";
+  const span = range !== null && spansDays(range.lo, range.hi);
 
   // The window is the data's, padded on both sides, floored to a week, and
   // capped so a runaway projection cannot squeeze the work into the origin.
   const opened = c.accepted_at ? new Date(c.accepted_at).getTime() : points[0].t;
   const lo0 = Math.min(opened, points[0].t, now);
   const cap = deliverBy + Math.max(deliverBy - lo0, MIN_SPAN_MS) * HORIZON;
-  const offFrame = projected !== null && projected > cap;
-  const hi0 = Math.max(now, deliverBy, offFrame ? cap : (projected ?? 0));
-  const span = Math.max(hi0 - lo0, MIN_SPAN_MS);
-  const lo = lo0 - span * PAD_LEFT;
-  const hi = lo0 + span * (1 + PAD_RIGHT);
+  const offFrame = range !== null && range.hi > cap;
+  const hi0 = Math.max(now, deliverBy, offFrame ? cap : (range?.hi ?? 0));
+  const width = Math.max(hi0 - lo0, MIN_SPAN_MS);
+  const lo = lo0 - width * PAD_LEFT;
+  const hi = lo0 + width * (1 + PAD_RIGHT);
 
   const x = (t: number) => CL + ((t - lo) / (hi - lo)) * (CW - CL - CR);
   const y = (n: number) => CH - CB - (n / scope) * (CH - CB - YTOP);
+  /** Where a projection meets the top of the plan, held inside the frame. */
+  const reach = (t: number) => Math.min(x(Math.min(t, cap)), CW - CR);
 
   let line = `M ${x(lo0)} ${y(0)}`;
   let lastN = 0;
@@ -697,6 +1021,8 @@ function BurnupChart({ c, f }: { c: PlanCommitment; f: BurnupFacts }) {
     lastN = p.n;
   }
   line += ` L ${x(Math.min(now, hi))} ${y(lastN)}`;
+  const tipX = x(Math.min(now, hi));
+  const tipY = y(lastN);
 
   const marks = mergeMarks([
     { at: now, top: fmtDay(new Date(now).toISOString()), bottom: "today",
@@ -704,24 +1030,27 @@ function BurnupChart({ c, f }: { c: PlanCommitment; f: BurnupFacts }) {
     { at: deliverBy, top: fmtDay(c.deliver_by), bottom: "you promised",
       colour: c.status === "breached" ? "var(--critical)" : "var(--ink-2)",
       weight: 1.5, dashed: false },
-    ...(projected === null ? [] : [{
-      at: offFrame ? cap : projected,
-      top: fmtDay(new Date(projected).toISOString()),
+    ...(range === null ? [] : [{
+      at: offFrame ? cap : range.hi,
+      top: fmtSpan(range.lo, range.hi),
       bottom: offFrame ? "expected beyond this window" : late ? "now expected" : "on course for",
       colour: projColour, weight: 1.5, dashed: true,
     }]),
   ], x);
 
   return (
-    <div className="card" style={{ marginBottom: "var(--s4)" }}>
+    <div className="card plan-chart">
       <ChartHead
-        question="Will the work be finished by the date you signed?"
-        meta={`Requirements settled, against all ${scope} in the plan · ${fmtDay(new Date(lo0).toISOString())} to ${fmtDay(new Date(hi0).toISOString())}`}
+        question="Requirements settled over time"
+        meta={`${fmtDay(new Date(lo0).toISOString())} to ${fmtDay(new Date(hi0).toISOString())}`}
         legend={
           <>
             <span><i />Settled so far</span>
-            {projected !== null && lastN < scope && (
-              <span><i className="dash" style={{ borderTopColor: projColour }} />If the pace holds</span>
+            {range !== null && lastN < scope && (
+              <span>
+                <i className="dash" style={{ borderTopColor: projColour }} />
+                {span ? "Projection range" : "If the pace holds"}
+              </span>
             )}
           </>
         }
@@ -730,7 +1059,7 @@ function BurnupChart({ c, f }: { c: PlanCommitment; f: BurnupFacts }) {
         viewBox={`0 0 ${CW} ${CH}`}
         style={{ display: "block", width: "100%" }}
         role="img"
-        aria-label={`${settled} of ${scope} requirements are settled. You promised ${fmtDay(c.deliver_by)}${projected !== null ? `; the platform projects ${fmtDay(new Date(projected).toISOString())}` : ""}.`}
+        aria-label={`${settled} of ${scope} requirements are settled. You promised ${fmtDay(c.deliver_by)}${range !== null ? `; the platform projects ${fmtSpan(range.lo, range.hi)}` : ""}.`}
       >
         {yTicks(scope).map((v) => (
           <g key={v}>
@@ -762,10 +1091,23 @@ function BurnupChart({ c, f }: { c: PlanCommitment; f: BurnupFacts }) {
           );
         })}
 
-        {projected !== null && lastN < scope && (
-          <line x1={x(Math.min(now, hi))} y1={y(lastN)}
-            x2={Math.min(x(offFrame ? cap : projected), CW - CR)} y2={y(scope)}
-            stroke={projColour} strokeDasharray="6 5" strokeWidth={2} strokeLinecap="round" />
+        {/* The projection, from today's tip to the top of the plan: one dashed
+            line when the two measured paces land on the same day, and the
+            span between them shaded when they do not. */}
+        {range !== null && lastN < scope && (
+          <g>
+            {span && (
+              <path
+                d={`M ${tipX} ${tipY} L ${reach(range.lo)} ${y(scope)} L ${reach(range.hi)} ${y(scope)} Z`}
+                fill={projColour} fillOpacity={0.14} stroke="none" />
+            )}
+            {span && (
+              <line x1={tipX} y1={tipY} x2={reach(range.lo)} y2={y(scope)}
+                stroke={projColour} strokeDasharray="6 5" strokeWidth={2} strokeLinecap="round" />
+            )}
+            <line x1={tipX} y1={tipY} x2={reach(range.hi)} y2={y(scope)}
+              stroke={projColour} strokeDasharray="6 5" strokeWidth={2} strokeLinecap="round" />
+          </g>
         )}
         <path d={line} fill="none" stroke="var(--accent)" strokeWidth={2.5}
           strokeLinecap="round" strokeLinejoin="round" />
@@ -774,11 +1116,6 @@ function BurnupChart({ c, f }: { c: PlanCommitment; f: BurnupFacts }) {
             fill="var(--accent)" stroke="var(--surface)" strokeWidth={2} />
         ))}
       </svg>
-      {c.projection_basis && (
-        <p className="help" style={{ margin: 0, borderTop: "1px solid var(--border)", paddingTop: "var(--s3)" }}>
-          The dashed line is arithmetic, not a promise anybody made — {c.projection_basis}
-        </p>
-      )}
     </div>
   );
 }
@@ -937,7 +1274,7 @@ function CycleHistory({ projectId }: { projectId: string }) {
             <span className={`badge ${c.status === "completed" ? "good"
               : c.status === "skipped" ? "critical" : "serious"}`}>{c.status}</span>
             <span className="help">
-              {c.opened_at.slice(0, 10)} → {c.closed_at?.slice(0, 10) ?? "—"}
+              {fmtDay(c.opened_at)} → {c.closed_at ? fmtDay(c.closed_at) : "—"}
             </span>
             <span className="sp" style={{ flex: 1 }} />
             {c.narrative && (
@@ -956,6 +1293,20 @@ function CycleHistory({ projectId }: { projectId: string }) {
       ))}
     </section>
   );
+}
+
+/** What a stage heading says, read off its own rows. A stage is settled when
+    everything in force in it is met or cut — which is what "Stage 1 · open"
+    sitting above a requirement marked "Proven true" got wrong: the label came
+    from the server's open stage, which reads 1 when nothing is open at all. */
+function stageState(rows: PlanRequirement[]): { label: string; tone: string } {
+  const inForce = rows.filter((r) => r.status !== "proposed");
+  if (inForce.length === 0) return { label: "proposed", tone: "serious" };
+  if (inForce.every((r) => SETTLED.has(r.status))) return { label: "settled", tone: "good" };
+  if (inForce.some((r) => r.status === "in_progress" || r.status === "checking" || r.status === "met")) {
+    return { label: "in work", tone: "accent" };
+  }
+  return { label: "not started", tone: "" };
 }
 
 export default function Plan({ ctx }: { ctx: ProjectCtx }) {
@@ -985,27 +1336,34 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
   const reqs = data.requirements ?? [];
   const critical = data.critical_path?.keys ?? [];
   const reqNames = new Map(reqs.map((r) => [r.key, requirementName(r)]));
-  const sums = plan.arithmetic;
   const stages = [...new Set(reqs.map((r) => r.stage))].sort((a, b) => a - b);
-  const commitment = data.commitment ?? null;
+  // A void commitment binds nothing (an Operate project's leftover), so it
+  // is no promise to talk about.
+  const commitment = data.commitment && data.commitment.status !== "void"
+    ? data.commitment : null;
+  const now = Date.now();
+  const counts = countsOf(reqs, data.burnup, commitment?.status === "proposed");
+  const projection = commitment ? projectionOf(commitment, data.velocity, now) : null;
+  // The stage the server's gate holds work behind: the lowest one with open
+  // work in it. None when nothing is open, rather than stage 1 by default.
+  const openStages = reqs.filter((r) => OPEN.has(r.status)).map((r) => r.stage);
+  const firstOpen = openStages.length > 0 ? Math.min(...openStages) : null;
+  const status = data.mode === "deliver" && (commitment !== null || (plan.holds && reqs.length > 0))
+    ? deliveryStatus(commitment, data.velocity, counts, now)
+    : null;
 
   return (
-    <div>
+    <div className="plan">
       {ctx.dash.mode === "operate" && ctx.dash.cycle && (
-        <p className="help" style={{ margin: "0 0 10px" }}>
-          Cycle {ctx.dash.cycle.ordinal} — this board is this cycle's plan. Each cycle
-          plans fresh; unfinished scope carries forward when the rhythm rolls.
-        </p>
-      )}
-      {commitment?.status === "proposed" && (
-        <ProposedCommitment c={commitment} onDone={reload} />
-      )}
-      {commitment && (commitment.status === "at_risk" || commitment.status === "breached") && (
-        <SlippingCommitment c={commitment} onDone={reload} />
+        <PlanStatus s={{
+          tone: "plain",
+          lead: `Cycle ${ctx.dash.cycle.ordinal} — this board is this cycle's plan.`,
+          basis: "Each cycle plans fresh; unfinished scope carries forward when the rhythm rolls.",
+        }} />
       )}
       {/* R-00, translated. When the plan does not hold the reasons are the
           platform's own words — the same list the CEO reads in its refusal. */}
-      {!plan.holds ? (
+      {!plan.holds && (
         <div className="strip serious" style={{ marginBottom: 14 }}>
           <div className="grow">
             <b>The plan does not hold yet — the board is closed.</b>
@@ -1020,124 +1378,28 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
             )}
           </div>
         </div>
-      ) : (
-        <div className="tiles" style={{ marginBottom: 14 }}>
-          {commitment && !["proposed", "at_risk", "breached"].includes(commitment.status) && (
-            <div className="tile">
-              <div className="label">Commitment</div>
-              <div className="value">{fmtDay(commitment.deliver_by)}</div>
-              <div className="sub">
-                {commitment.status === "met"
-                  ? `delivered ${commitment.met_at ? fmtDay(commitment.met_at) : ""} — every requirement true`
-                  : commitment.projected_done_at
-                    ? `projected ${fmtDay(commitment.projected_done_at)} — holds`
-                    : "accepted — no projection yet"}
-              </div>
-            </div>
-          )}
-          <div className="tile">
-            <div className="label">Still to do</div>
-            <div className="value">{sums.requirements}</div>
-            {/* `plan_arithmetic.requirements` counts the LIVE ones — settled
-                and cut are out, which is what makes the runs beside it mean
-                "work left". Labelling it "requirements in the plan" had it
-                disagreeing with the card below, which counts the whole plan. */}
-            <div className="sub">
-              requirement{sums.requirements === 1 ? "" : "s"} still open
-              {data.burnup && data.burnup.scope_total > 0
-                ? ` of ${data.burnup.scope_total} in the plan`
-                : ""}
-            </div>
-          </div>
-          <div className="tile">
-            <div className="label">Work it should take</div>
-            <div className="value">{sums.adjusted_runs}</div>
-            <div className="sub">
-              jobs{sums.multiplier > 1 ? ` — padded ×${sums.multiplier}, because this CEO has been running over` : ""}
-            </div>
-          </div>
-          {sums.days_at_the_daily_cap != null && (
-            <div className="tile">
-              <div className="label">If nothing went wrong</div>
-              <div className="value">{sums.days_at_the_daily_cap}<small> days</small></div>
-              <div className="sub">days, at the most work you allow in one day</div>
-            </div>
-          )}
-          {data.velocity && (
-            <div className="tile">
-              <div className="label">Requirements settled</div>
-              {/* A rate, or a dash. Printing `0 a week` for a project that has
-                  not been alive a week says its team has achieved nothing,
-                  which is a different claim from "there is nothing to measure
-                  yet" and one the arithmetic cannot support. */}
-              <div className="value">
-                {data.velocity.pace_known
-                  ? <>{data.velocity.per_week_3w}<small> a week</small></>
-                  : "—"}
-              </div>
-              <div className="sub">
-                {data.velocity.pace_known
-                  ? (data.velocity.weeks_left_at_pace != null
-                      ? `${data.velocity.remaining} still open — about ${data.velocity.weeks_left_at_pace} weeks at this rate`
-                      : `${data.velocity.remaining} still open`)
-                  : `${data.velocity.remaining} still open — too little has settled to call this a pace`}
-              </div>
-            </div>
-          )}
-          {data.velocity && data.velocity.runs_3w.total > 0 && (
-            <div className="tile">
-              <div className="label">Spend that bought nothing</div>
-              <div className="value">
-                {Math.round(data.velocity.runs_3w.failure_share * 100)}<small>%</small>
-              </div>
-              <div className="sub">
-                {data.velocity.runs_3w.dead} of {data.velocity.runs_3w.total} jobs ended with
-                nothing to show
-                {data.velocity.worst_failure
-                  ? ` — worst on "${clip(data.velocity.worst_failure.statement, 44)}"`
-                  : ""}
-              </div>
-            </div>
-          )}
-          {data.velocity && data.velocity.runs_3w.total > 0 &&
-           data.velocity.runs_3w.inbox + data.velocity.runs_3w.noop > 0 && (
-            /* What the project spent talking to itself. Its own broadcasts
-               generate this traffic, so it is the one cost that can be priced
-               before it is paid — and until it was counted, 57% of every run
-               one project ever spent was an agent reading a message. */
-            <div className="tile">
-              <div className="label">Overhead</div>
-              <div className="value">
-                {Math.round(
-                  ((data.velocity.runs_3w.inbox + data.velocity.runs_3w.noop) /
-                    data.velocity.runs_3w.total) * 100,
-                )}
-                <small>%</small>
-              </div>
-              <div className="sub">
-                {data.velocity.runs_3w.inbox} reading the inbox,{" "}
-                {data.velocity.runs_3w.noop} that changed nothing — of{" "}
-                {data.velocity.runs_3w.total} runs
-              </div>
-            </div>
-          )}
-          {sums.budget.known ? (
-            <div className="tile">
-              <div className="label">Affordable</div>
-              <div className="value">{sums.budget.runs}</div>
-              <div className="sub">
-                runs — ${sums.budget.usd_remaining} at ${sums.budget.usd_per_run}/run
-              </div>
-            </div>
-          ) : (
-            <div className="tile">
-              <div className="label">What the rest of the budget buys</div>
-              <div className="value">—</div>
-              <div className="sub">{sums.budget.why}</div>
-            </div>
-          )}
-        </div>
       )}
+      {status && (
+        <PlanStatus s={status}>
+          {commitment?.status === "proposed" && (
+            <ProposedLevers c={commitment} onDone={reload} />
+          )}
+          {commitment && (commitment.status === "at_risk" || commitment.status === "breached") && (
+            <MoveDate c={commitment} onDone={reload} />
+          )}
+        </PlanStatus>
+      )}
+
+      {/* Deliver only. Work that comes round again does not burn up — the
+          shape that carries the information for an Operate project is the
+          record below, and drawing both put a chart that cannot be right
+          beside the one that is. */}
+      {data.mode === "deliver" && commitment && commitment.status !== "proposed"
+        && data.burnup && (
+        <Burnup c={commitment} burnup={data.burnup} range={projection} />
+      )}
+
+      {reqs.length > 0 && <PlanFacts k={counts} />}
 
       {data.standing && data.standing.length > 0 && (
         /* The operating record. A standing obligation is owed again every
@@ -1177,17 +1439,7 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
         </div>
       )}
 
-      {/* Deliver only. Work that comes round again does not burn up — the
-          shape that carries the information for an Operate project is the
-          record above, and drawing both put a chart that cannot be right
-          underneath the one that is. */}
-      {data.mode === "deliver" && commitment && commitment.status !== "proposed"
-        && data.burnup && (
-        <Burnup c={commitment} burnup={data.burnup}
-          open={data.velocity?.remaining ?? null} />
-      )}
-
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
         <div className="seg" style={{ display: "inline-flex", border: "1px solid var(--border)",
           borderRadius: 6, overflow: "hidden" }}>
           {(["stages", "graph"] as const).map((v) => (
@@ -1245,23 +1497,29 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
           </p>
         </div>
       ) : view === "stages" ? (
-        stages.map((stage) => (
-          <section key={stage} style={{ marginBottom: 18 }}>
-            <h2 style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
-              Stage {stage}
-              {stage === data.open_stage && <span className="badge accent">open</span>}
-              {stage > (data.open_stage ?? 1) && (
-                <span className="help">work here is refused until stage {data.open_stage} settles</span>
-              )}
-            </h2>
-            <div style={{ marginTop: 8 }}>
-              {reqs.filter((r) => r.stage === stage).map((r) => (
+        stages.map((stage) => {
+          const rows = reqs.filter((r) => r.stage === stage);
+          const st = stageState(rows);
+          // Refused only behind an EARLIER stage with open work, and only
+          // said where there is something left here to refuse.
+          const behind = firstOpen !== null && firstOpen < stage && st.label !== "settled"
+            ? firstOpen : null;
+          return (
+            <section key={stage} className="plan-stage">
+              <h2 className="plan-stage-h">
+                Stage {stage}
+                <span className={`badge ${st.tone}`}>{st.label}</span>
+                {behind !== null && (
+                  <span className="help">work here is refused until stage {behind} settles</span>
+                )}
+              </h2>
+              {rows.map((r) => (
                 <RequirementCard key={r.id} r={r} names={reqNames}
                   onCritical={critical.includes(r.key)} onDone={reload} />
               ))}
-            </div>
-          </section>
-        ))
+            </section>
+          );
+        })
       ) : (
         <div className="card" style={{ padding: 18 }}>
           <Graph reqs={reqs} critical={critical} />
@@ -1275,6 +1533,8 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
       )}
 
       {ctx.dash.mode === "operate" && <CycleHistory projectId={projectId} />}
+
+      {plan.holds && <MoreNumbers data={data} c={commitment} />}
     </div>
   );
 }

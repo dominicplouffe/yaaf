@@ -1,75 +1,171 @@
-import { useState } from "react";
+import { ReactNode, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { get, post, ResultRow, ResultsView } from "../../api";
-import { GoalChain } from "../../chain";
+import { get, post, ResultCheck, ResultRow, ResultsView } from "../../api";
 import { WhatTheyDid } from "../../did";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { firstName, ProjectCtx } from "../../projectCtx";
 import { clip, fmtAgo, Skeleton } from "../../ui";
 import { PageHead } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
+import { Seal, sealOf } from "../../ui/signal";
+import "./results.css";
 
-/** What the team has delivered, and who checked it.
+/** What the team has delivered, and how far each piece can be trusted.
 
     The second question anyone asks of a team, after "who is on it?", is
     "what have they made?" — and the answer used to be a file explorer that
     put this morning's published report beside forty working files. Results
-    is the published shelf only: one row per deliverable, who made it, and
-    who or what looked at it before it reached you, in the platform's words
-    (a judgement is never shown as a verification). Drafts and working files
-    stay in Details › Deliverables. */
+    is the published shelf only: one row per deliverable, each with its seal
+    (Verified, Judged, Agent's word — never merged into a score), and beside it
+    why that seal was earned, in the platform's words. A judgement is never
+    shown as a verification. Drafts and working files stay in Details ›
+    Deliverables. */
 
-const CHECK_WORD: Record<ResultRow["checked"], string> = {
-  platform: "verified by YAAF",
-  reviewer: "read by a second agent",
-  judged: "met by judgement",
-  unchecked: "not checked",
+/** Strongest first: what the platform ran, then who read it, then a
+    judgement, then a claim that has not settled. */
+const CHECK_ORDER: Record<ResultCheck["kind"], number> = { platform: 0, reviewer: 1, judged: 2, pending: 3 };
+
+const MARK: Record<ResultCheck["kind"], StepMark> = {
+  platform: "verified", reviewer: "judged", judged: "judged", pending: "open",
 };
 
-function checkLine(r: ResultRow): string {
-  const strongest = r.checks.find((c) => c.kind === r.checked);
-  return strongest ? strongest.label : "not checked";
+type StepMark = "verified" | "judged" | "open";
+
+function sentence(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function Evidence({ ctx, row, goal }: { ctx: ProjectCtx; row: ResultRow; goal: string }) {
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+/** The project says it is done: closed, or a Deliver project with nothing
+    left between it and the chairman's confirmation. */
+function hasDelivered(ctx: ProjectCtx): boolean {
+  const { dash } = ctx;
+  return dash.status === "completed"
+    || (dash.mode === "deliver" && Array.isArray(dash.delivery_outstanding) && dash.delivery_outstanding.length === 0);
+}
+
+function SealCounts({ data }: { data: ResultsView }) {
+  const { counts } = data;
+  return (
+    <div className="rs-counts">
+      <span className="rs-seals">
+        {/* Strings, not numbers: a bare 0 as a child would print without its separator. */}
+        <Seal level="verified">{String(counts.platform)}</Seal>
+        <Seal level="judged">{String(counts.reviewer + counts.judged)}</Seal>
+        <Seal level="word">{String(counts.unchecked)}</Seal>
+      </span>
+      {data.total > data.listed && <span className="help">newest {data.listed} of {data.total}</span>}
+      <span className="rs-trust">Three levels of trust, never merged into a score.</span>
+    </div>
+  );
+}
+
+function ResultLine({ row, on, onPick }: { row: ResultRow; on: boolean; onPick: () => void }) {
+  const strongest = row.checks.find((c) => c.kind === row.checked);
+  return (
+    <li>
+      <button type="button" className={`rs-row${on ? " on" : ""}`} aria-pressed={on} aria-controls="rs-why"
+        onClick={onPick}>
+        <Icon name="file" size={18} />
+        <span className="rs-row-main">
+          <span className="rs-row-name">{row.name}</span>
+          <span className="rs-row-sub">
+            {row.made_by?.name ?? "maker not recorded"}
+            {" · "}<span title={fmtWhen(row.published_at)}>{fmtAgo(row.published_at)}</span>
+            {row.serves.length > 0 && ` · for ${row.serves.map((s) => s.key).join(", ")}`}
+          </span>
+        </span>
+        <span title={strongest ? sentence(strongest.label) : "Nothing outside the agent checked it"}>
+          <Seal level={sealOf(row.checked)} />
+        </span>
+      </button>
+    </li>
+  );
+}
+
+function Step({ mark, title, children }: { mark: StepMark; title: ReactNode; children?: ReactNode }) {
+  return (
+    <li className="rs-step">
+      <span className={`rs-mark ${mark}`} aria-hidden>{mark !== "open" && <Icon name="check" size={11} />}</span>
+      <div className="rs-step-body">
+        <span className="rs-step-t">{title}</span>
+        {children}
+      </div>
+    </li>
+  );
+}
+
+function producedLine(row: ResultRow): string {
+  const bits: string[] = [];
+  if (row.cost.runs > 0) {
+    bits.push(plural(row.cost.runs, "run") + (row.cost.failed > 0 ? `, ${row.cost.failed} failed` : ""));
+    bits.push(fmtUsd(row.cost.usd));
+  }
+  if (row.task) bits.push(`task ${clip(row.task.title, 90)}`);
+  if (row.versions > 1) bits.push(`version ${row.version} of ${row.versions}`);
+  return bits.join(" · ");
+}
+
+function WhyTrust({ ctx, row }: { ctx: ProjectCtx; row: ResultRow }) {
   const ceo = firstName(ctx.ceoName);
   const [wrong, setWrong] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const open = `/projects/${ctx.projectId}/details/deliverables?open=${encodeURIComponent(row.key)}`;
+  const roadmap = `/projects/${ctx.projectId}/details/roadmap`;
+  const checks = [...row.checks].sort((a, b) => CHECK_ORDER[a.kind] - CHECK_ORDER[b.kind]);
+  const produced = producedLine(row);
   return (
-    <section className="card results-evidence" aria-label={`${row.name} — the evidence`}>
-      <h3>{row.name} — the evidence</h3>
-      <dl className="kv">
-        <dt>Made by</dt>
-        <dd>{row.made_by ? <button className="linkish inline" onClick={() => ctx.openAgent(row.made_by!.id)}>{row.made_by.name}</button> : "—"}
-          {row.versions > 1 ? ` · version ${row.version} of ${row.versions}` : ""}</dd>
-        <dt>Checked</dt>
-        <dd>
-          {row.checks.length === 0 ? "Nothing checked it before it reached you." : (
-            <ul className="plain">
-              {row.checks.map((c, i) => (
-                <li key={i}><b>{c.label}</b>{c.note ? ` — “${clip(c.note, 240)}”` : ""}</li>
-              ))}
-            </ul>
-          )}
-        </dd>
-        <dt>For</dt>
-        <dd><GoalChain goal={goal} serves={row.serves} task={row.task} /></dd>
-        <dt>Cost to make</dt>
-        <dd>
-          {row.cost.runs === 0 ? "—" : `${fmtUsd(row.cost.usd)} · ${row.cost.runs} run${row.cost.runs === 1 ? "" : "s"}`}
-          {row.cost.failed > 0 && `, ${row.cost.failed} of them failed`}
-        </dd>
-      </dl>
-      {row.run_id && <WhatTheyDid runId={row.run_id} projectId={ctx.projectId} label="What they did to make it" />}
-      <div className="actions">
-        <Link className="btnlink small primary" to={open}><Icon name="file" size={13} /> Open it</Link>
-        {ctx.dash.can_steer !== false && wrong === null && !sent && (
-          <button className="small" onClick={() => setWrong("")}>Wrong because…</button>
+    <section className="card rs-why" id="rs-why" aria-labelledby="rs-why-h">
+      <header className="rs-why-head">
+        <h2 id="rs-why-h">Why you can trust {row.name}</h2>
+        <Link className="btnlink small" to={open}><Icon name="file" size={13} /> Open file</Link>
+      </header>
+      <ol className="rs-trail">
+        {checks.map((c, i) => c.kind === "pending" ? (
+          // An unsettled claim names what is unsettled ("R-04 not settled yet").
+          <Step key={i} mark="open" title={sentence(c.note || c.label)} />
+        ) : (
+          <Step key={i} mark={MARK[c.kind]} title={sentence(c.label)}>
+            {c.note && (
+              <span className="rs-step-x">
+                {c.kind === "reviewer" ? `“${clip(c.note, 240)}”` : sentence(clip(c.note, 240))}
+              </span>
+            )}
+          </Step>
+        ))}
+        {sealOf(row.checked) === "word" && <Step mark="open" title="Nothing outside the agent checked this." />}
+        <Step mark="open" title={<>Produced by {row.made_by
+          ? <button className="linkish inline" onClick={() => ctx.openAgent(row.made_by!.id)}>{row.made_by.name}</button>
+          : "an agent not recorded"}</>}>
+          {produced && <span className="rs-step-x">{produced}</span>}
+          {row.run_id && <WhatTheyDid runId={row.run_id} projectId={ctx.projectId} label="What they did to make it" />}
+        </Step>
+      </ol>
+      <div className="rs-serves">
+        <h3 className="eyebrow-h">Serves</h3>
+        {row.serves.length === 0 ? <span>No outcome on the roadmap.</span> : (
+          <ul>
+            {row.serves.map((s) => (
+              <li key={s.key}><Link className="mono" to={roadmap}>{s.key}</Link>{clip(s.statement, 140)}</li>
+            ))}
+          </ul>
         )}
-        {sent && <span className="help">Sent to {ceo} in Chat.</span>}
       </div>
+      {row.checked === "platform" && (
+        <p className="rs-limit">Verified means the check passed, not that it is what you wanted. That part is yours.</p>
+      )}
+      {(ctx.dash.can_steer !== false || sent) && (
+        <div className="actions">
+          {ctx.dash.can_steer !== false && wrong === null && !sent && (
+            <button className="small" onClick={() => setWrong("")}>Wrong because…</button>
+          )}
+          {sent && <span className="help">Sent to {ceo} in Chat.</span>}
+        </div>
+      )}
       {wrong !== null && (
         <div className="reason-form">
           <input autoFocus value={wrong} onChange={(e) => setWrong(e.target.value)}
@@ -97,59 +193,91 @@ function Evidence({ ctx, row, goal }: { ctx: ProjectCtx; row: ResultRow; goal: s
   );
 }
 
+/** Nothing published. On a project that has delivered, that is not "nothing
+    yet": the outcomes were checked on the workspace and no file was the
+    product, and the page says so instead of contradicting the project's state. */
+function NothingPublished({ ctx }: { ctx: ProjectCtx }) {
+  if (!hasDelivered(ctx)) {
+    return (
+      <div className="card rs-empty">
+        <Icon name="file" size={16} />
+        <div>
+          <p><b>Nothing published yet.</b></p>
+          <p>Each result will show who made it and what checked it.</p>
+        </div>
+      </div>
+    );
+  }
+  if (!ctx.plan) return <Skeleton rows={1} />;
+  const met = (ctx.plan.requirements ?? []).filter((r) => r.status === "met").length;
+  if (met === 0) {
+    return (
+      <div className="card rs-empty">
+        <Icon name="file" size={16} />
+        <div>
+          <p><b>Delivered, no file published.</b></p>
+          <p>Drafts and working files are in{" "}
+            <Link to={`/projects/${ctx.projectId}/details/deliverables`}>Details › Deliverables</Link>.</p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="card rs-empty delivered">
+      <Icon name="shield" size={16} />
+      <div>
+        <p><b>{plural(met, "outcome")} verified, no file published.</b></p>
+        <p>The checks ran on the project's workspace.{" "}
+          <Link to={`/projects/${ctx.projectId}/details/roadmap`}>See what was checked</Link></p>
+      </div>
+    </div>
+  );
+}
+
 export default function Results({ ctx }: { ctx: ProjectCtx }) {
   const { projectId } = ctx;
   const { data, error } = usePoll(() => get<ResultsView>(`/observe/projects/${projectId}/results`), 30000, [projectId]);
   const [picked, setPicked] = useState<string | null>(null);
+  const side = useRef<HTMLDivElement>(null);
   const rows = data?.results ?? [];
   const row = rows.find((r) => r.key === picked) ?? rows[0];
+
+  function pick(key: string) {
+    setPicked(key);
+    // Stacked on a narrow screen, the panel sits under the whole list: bring it
+    // to the reader. Side by side it is already in view and nothing moves.
+    requestAnimationFrame(() => {
+      const el = side.current;
+      if (!el) return;
+      const box = el.getBoundingClientRect();
+      if (box.top < window.innerHeight - 120 && box.bottom > 0) return;
+      const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      el.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "start" });
+    });
+  }
+
   return (
     <>
       <PageHead title="Results" lede={<>
-        The deliverables your team has published, newest first: who made each one, and who checked it
-        before it reached you. Drafts and working files are in{" "}
+        What the team published, newest first. Drafts are in{" "}
         <Link to={`/projects/${projectId}/details/deliverables`}>Details › Deliverables</Link>.
       </>} />
       {error && <div className="error">{error}</div>}
-      {!data ? <Skeleton rows={5} /> : rows.length === 0 ? (
-        <div className="card quiet-line">
-          <span>
-            <b>Nothing published yet.</b>{" "}
-            <span className="help">Results appear here the moment the team publishes one, with who made it and who checked it.</span>
-          </span>
-        </div>
-      ) : (
+      {!data ? <Skeleton rows={5} /> : rows.length === 0 ? <NothingPublished ctx={ctx} /> : (
         <>
-          <div className="results-counts">
-            {(["platform", "reviewer", "judged", "unchecked"] as const).filter((k) => data.counts[k] > 0).map((k) => (
-              <span key={k} className={`chip results-${k}`}>{data.counts[k]} {CHECK_WORD[k]}</span>
-            ))}
-            {data.total > data.listed && <span className="help">newest {data.listed} of {data.total}</span>}
-          </div>
-          <div className="card results-table" role="table" aria-label="Results">
-            <div className="rt-row rt-head" role="row">
-              <span role="columnheader">Result</span>
-              <span role="columnheader">Made by · checked by</span>
-              <span role="columnheader">Updated</span>
+          <SealCounts data={data} />
+          <div className="rs">
+            <div className="rs-grid">
+              <ul className="card rs-list" aria-label="Results">
+                {rows.map((r) => (
+                  <ResultLine key={r.key} row={r} on={row?.key === r.key} onPick={() => pick(r.key)} />
+                ))}
+              </ul>
+              <div className="rs-side" ref={side}>
+                {row && <WhyTrust key={row.key} ctx={ctx} row={row} />}
+              </div>
             </div>
-            {rows.map((r) => (
-              <button key={r.key} type="button" role="row"
-                className={`rt-row${row?.key === r.key ? " on" : ""}`} onClick={() => setPicked(r.key)}>
-                <span role="cell" className="rt-name">
-                  <b>{r.name}</b>
-                  <span className="help">
-                    v{r.version}{r.serves.length > 0 && ` · for ${r.serves.map((s) => s.key).join(", ")}`}
-                  </span>
-                </span>
-                <span role="cell">
-                  <b>{r.made_by?.name ?? "—"}</b>{" "}
-                  <span className={`rt-check results-${r.checked}`}>· {r.checked !== "unchecked" ? "✓ " : ""}{checkLine(r)}</span>
-                </span>
-                <span role="cell" className="help" title={fmtWhen(r.published_at)}>{fmtAgo(r.published_at)}</span>
-              </button>
-            ))}
           </div>
-          {row && <Evidence ctx={ctx} row={row} goal={data.goal} />}
         </>
       )}
     </>
