@@ -49,12 +49,12 @@ unit of work, and go back to sleep. Everything is recorded.
 
 There is one way to start a project: **+ New project**, at the top of the
 sidebar and on the Projects page. It opens a fork, not a form, and asks the one
-question that decides everything after it:
+question that decides everything after it — *What do you want to exist?*:
 
-- **Describe it, and yaaf drafts it** — you write a paragraph, the Founder
+- **Describe it** — you write a paragraph, the Founder
   writes the project. Choose this for a first project, or whenever you know the
   outcome you want but not the org that gets you there.
-- **Fill it in myself** — the four-step form below. Choose this when you have
+- **Fill in the form** — the four-step form below. Choose this when you have
   done it before, or you already know the goal and the roster.
 
 Neither is a commitment. Both end on the same review screen, nothing is created
@@ -101,15 +101,18 @@ Two things worth knowing:
 
 ## Step 1 — Create the project
 
-Choose **Fill it in myself**. It runs in four steps — the job, the org, the
+Choose **Fill in the form**. It runs in four steps — the job, the org, the
 money and the rules, then review — because those are the four decisions that
 need you; everything else is derived, set by a preset, or something you can do
 later in Settings. Nothing is hidden behind a step: **All on one page** shows
 the whole thing as one scroll whenever you want it, and the choice sticks.
 
-**Name.** Anything you like. The slug — the short lowercase ID
-(`ppc-audit`) — is picked for you from the name and deduped against your
-existing projects; edit it only if you care what it says.
+**Name.** Picked from your goal's opening clause while you type ("Book our
+February trip — I want a confirmation number" becomes "Book our February
+trip") until you type over it; the server makes the same pick if a name
+arrives blank. The slug — the short lowercase ID (`ppc-audit`) — follows the
+name and is deduped against your existing projects; edit it only if you care
+what it says.
 
 **The goal — spend your time here.** This is the single most important field.
 The CEO plans everything from it, so write it the way you'd brief a
@@ -169,11 +172,11 @@ tokens). The credential decides the budget's unit; nothing is pasted here and
 no value ever enters a sandbox. Leave it unselected and the project can be
 created but not started: agents cannot run keyless. A draft from the Founder
 arrives with this already chosen when the Founder asked you, or when there
-was only one credential to choose. (The mock runtime, under **advanced…**, is
+was only one credential to choose. (The mock runtime, under **More: one model for every seat, another provider, a test run**, is
 the $0 exception for tire-kicking the platform itself.)
 
-**Who runs it? / How does it run?** Two rows of preset cards. The first is
-the authority dial — who holds the plan, scope, commitment and verdict verbs.
+**How much may it decide without you?** A row of preset cards: the
+authority dial — who holds the plan, scope, commitment and verdict verbs.
 **Autonomous is selected for you**: the CEO accepts its own plan, signs the
 platform's projected date and judges its own unverifiable closes, every one
 audited, mailed to you and reversible. Pick **Supervised** if you would rather

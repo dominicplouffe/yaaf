@@ -1331,6 +1331,32 @@ def _project_role_slugs(session: Session, project_id: str) -> set[str]:
     ).scalars().all())
 
 
+#: Where a goal's opening clause ends. Mirrored by `nameFromGoal` in
+#: web/src/pages/NewProject.tsx, which shows the same pick while you type.
+_CLAUSE_END = re.compile(
+    r"[,;:(]|\s[—–-]\s|\s(?:and|so|then|but|because|which|that|while)\s", re.IGNORECASE)
+_TRAILING_FILLER = {"a", "an", "the", "of", "to", "for", "and", "or", "in", "on", "with",
+                    "from", "by", "at", "as", "into", "about", "our", "my", "your", "its",
+                    "their", "his", "her", "this"}
+
+
+def name_from_goal(goal: str) -> str:
+    """A project name picked from the opening of its goal.
+
+    The form promised "picked for you" and then refused Create until the
+    chairman typed one, and every other door would store a blank name and show
+    an empty heading on every screen. A goal is required and always says what
+    the project is for, so its first clause is the honest pick: "Book our
+    February trip — I want a confirmation number" is "Book our February trip".
+    """
+    first = re.split(r"(?<=[.!?])\s|\n", goal.strip(), maxsplit=1)[0]
+    words = _CLAUSE_END.split(first, maxsplit=1)[0].split()[:8]
+    while words and words[-1].lower() in _TRAILING_FILLER:
+        words.pop()
+    name = " ".join(words).rstrip(".,;:!?—–- ")
+    return name[:1].upper() + name[1:] if name else "New project"
+
+
 def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamSpec],
                        *, solo: bool = False) -> None:
     """A project that asks for an independent read must hire someone who can
@@ -1444,6 +1470,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         raise HTTPException(status_code=422,
                             detail="billing mode must match the selected credential")
     chairman = _founding_chairman(session, body.chairman_email)
+    body.name = body.name.strip() or name_from_goal(body.goal)
     if session.execute(select(Project).where(Project.slug == body.slug)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="project slug already exists")
     if body.solo and (len(body.teams) != 1 or body.teams[0].employees):

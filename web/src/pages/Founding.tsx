@@ -9,12 +9,14 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ApiError, del, get, post, ProjectBundle, put } from "../api";
+import { ApiError, ConstitutionField, del, get, post, ProjectBundle, put,
+  RoleSummary } from "../api";
 import Markdown from "../Markdown";
 import { BaseUrlFields, DEFAULT_PROVIDER, KeyHelp, KeyInput, useProviders } from "../providers";
 import { SEND_HINT, sendOnEnter } from "../ui";
 import { Badge } from "../ui/kit";
 import type { Credential } from "../llmCredentials";
+import { Why } from "./NewProject";
 import {
   Aligned,
   Answer,
@@ -187,10 +189,11 @@ function CredentialGate({ onSaved }: { onSaved: () => void }) {
   return (
     <div className="card">
       <h2>The Founder needs a key</h2>
-      <p className="muted">
+      <p className="muted">It pays for drafting only.</p>
+      <Why>
         It pays for drafting — conversations like this one — and is never handed
         to a project's agents. Every project still pays its own way.
-      </p>
+      </Why>
       {existing.length > 0 && (
         <>
           <p><strong>Use a key you already added</strong></p>
@@ -223,12 +226,12 @@ function CredentialGate({ onSaved }: { onSaved: () => void }) {
       <KeyInput kind={kind} value={value} onChange={setValue} disabled={busy}
         placeholder={seller?.local ? "Leave blank — it takes no key" : undefined} />
       <KeyHelp provider={seller} kind={kind} />
-      <p className="muted">
+      <Why label="Which model?">
         The Founder drafts on {seller?.label ?? "this provider"}&apos;s most capable model —
         its Frontier class{seller?.lineup.frontier ? <>, <code>{seller.lineup.frontier}</code></> : ""}{" "}
         — unless you name another in Settings. Pasting a key where another kind belongs is
         refused here rather than failing on your first message.
-      </p>
+      </Why>
       {error && <p className="error">{error}</p>}
       <button className="primary"
         disabled={busy || (!seller?.local && value.trim().length < 8)
@@ -237,11 +240,13 @@ function CredentialGate({ onSaved }: { onSaved: () => void }) {
         {busy ? "Saving…" : "Save and start"}
       </button>
       <p className="muted">
-        You can also <a href="#/projects/new/form">fill the form yourself</a>{" "}
-        instead — the fire drill runs for nothing either way. Once the key is
-        set, it lives in <a href="#/settings?section=founder">Settings</a>, where you can test,
-        rotate or remove it.
+        Or <a href="#/projects/new/form">fill in the form yourself</a>.
       </p>
+      <Why>
+        The fire drill runs for nothing either way. Once the key is set, it lives
+        in <a href="#/settings?section=founder">Settings</a>, where you can test, rotate or
+        remove it.
+      </Why>
     </div>
   );
 }
@@ -253,28 +258,47 @@ function Moved({ on }: { on: boolean }) {
   return on ? <> <Badge tone="accent">Updated</Badge></> : null;
 }
 
-function DraftPanel({ bundle, changed = [] }: { bundle: ProjectBundle | null; changed?: string[] }) {
+/** A rule's value as words: `independent_read` reads "independent read".
+    Only an identifier is rewritten — "America/New_York" is a name, not a key. */
+function plainValue(value: unknown): string {
+  return typeof value === "string" && /^[a-z]+(?:_[a-z]+)+$/.test(value)
+    ? value.replace(/_/g, " ") : String(value);
+}
+
+function DraftPanel({ bundle, changed = [], rules = [], roles = [] }: {
+  bundle: ProjectBundle | null;
+  changed?: string[];
+  /** The constitution's own labels, so a rule reads as words and not a key. */
+  rules?: ConstitutionField[];
+  roles?: RoleSummary[];
+}) {
   if (!bundle) {
     return (
       <div className="card muted">
         <h3>No draft yet</h3>
-        <p>
-          The project the Founder proposes will appear here — the goal, the
-          shape, who it hires, and the rules it runs under. Nothing on this page
-          creates anything or spends anything.
-        </p>
+        <p>The goal, the shape, who it hires and its rules will appear here.</p>
       </div>
     );
   }
   const p = bundle.project;
   const headcount = (p.teams ?? []).reduce((n, t) => n + (t.employees?.length ?? 0), 0);
   const knobs = Object.keys(p.constitution ?? {});
+  const ruleLabel = (key: string) =>
+    rules.find((f) => f.key === key)?.label ?? key.replace(/_/g, " ");
+  const roleName = (slug: string) =>
+    roles.find((r) => r.slug === slug)?.name
+      ?? bundle.roles?.find((r) => r.slug === slug)?.name ?? slug.replace(/-/g, " ");
+  const by = p.deadline
+    ? new Date(p.deadline).toLocaleDateString(undefined,
+        { month: "short", day: "numeric", year: "numeric" })
+    : null;
   return (
     <div className="card">
       <h3>{p.name}</h3>
       <p className="muted">
-        {p.mode} · {p.teams?.length ?? 0} teams · {headcount} people
-        {p.deadline ? ` · by ${p.deadline.slice(0, 10)}` : ""}
+        {p.mode} · {p.teams?.length ?? 0} {(p.teams?.length ?? 0) === 1 ? "team" : "teams"}
+        {" "}· {headcount} {headcount === 1 ? "person" : "people"}
+        {by ? ` · by ${by}` : ""}
         <Moved on={changed.includes("shape")} />
       </p>
 
@@ -292,7 +316,7 @@ function DraftPanel({ bundle, changed = [] }: { bundle: ProjectBundle | null; ch
       <ul>
         {(p.teams ?? []).map((t) => (
           <li key={t.name}>
-            <strong>{t.name}</strong> — {t.role_slug} ({(t.employees ?? []).join(", ")})
+            <strong>{t.name}</strong> — {roleName(t.role_slug)} ({(t.employees ?? []).join(", ")})
           </li>
         ))}
       </ul>
@@ -307,7 +331,7 @@ function DraftPanel({ bundle, changed = [] }: { bundle: ProjectBundle | null; ch
           <ul>
             {knobs.map((k) => (
               <li key={k}>
-                {k}: {String((p.constitution as Record<string, unknown>)[k])}
+                {ruleLabel(k)}: {plainValue((p.constitution as Record<string, unknown>)[k])}
               </li>
             ))}
           </ul>
@@ -339,6 +363,14 @@ export default function Founding() {
   // "Something's off" is what opens it.
   const [reopening, setReopening] = useState(false);
   const composer = useRef<HTMLTextAreaElement | null>(null);
+
+  // Labels for the draft panel: rule names and role names as words.
+  const [rules, setRules] = useState<ConstitutionField[]>([]);
+  const [roles, setRoles] = useState<RoleSummary[]>([]);
+  useEffect(() => {
+    get<ConstitutionField[]>("/admin/constitution/schema").then(setRules).catch(() => {});
+    get<RoleSummary[]>("/admin/roles").then(setRoles).catch(() => {});
+  }, []);
 
   async function loadStatus() {
     try {
@@ -577,11 +609,13 @@ export default function Founding() {
           <Link className="crumb" to="/projects/new">&larr; Both ways to start</Link>
           <h1>Describe it, and yaaf drafts it</h1>
           <p className="subtitle">
-            Describe what you want. The Founder drafts the whole thing — goal,
-            shape, roster, rules — then asks about everything it had to guess,
-            a few questions at a time, with its own answer already picked.
-            Nothing is created until you say so on the next screen.
+            Describe what you want. yaaf drafts the project, then asks about what it guessed.
           </p>
+          <Why>
+            The Founder drafts the whole thing — goal, shape, roster, rules — then asks
+            about everything it had to guess, a few questions at a time, with its own answer
+            already picked. Nothing is created until you say so on the next screen.
+          </Why>
         </div>
         <div className="founding-head-acts">
           {thread && (
@@ -604,12 +638,12 @@ export default function Founding() {
           {turns.length === 0 && !busy && (
             <div className="card muted">
               <h3>Start anywhere</h3>
-              <p>
-                A paragraph is plenty. Say what should be true at the end, who
-                it is for, and roughly what you are willing to spend. Whatever
-                you leave out, the Founder asks about — with its recommended
-                answer already chosen, so agreeing is one click.
-              </p>
+              <p>A paragraph is plenty.</p>
+              <Why label="What to say">
+                Say what should be true at the end, who it is for, and roughly what you are
+                willing to spend. Whatever you leave out, the Founder asks about — with its
+                recommended answer already chosen, so agreeing is one click.
+              </Why>
             </div>
           )}
           {turns.map((turn, i) => {
@@ -706,7 +740,8 @@ export default function Founding() {
           {ledgerRound && (
             <Ledger settled={ledgerRound.settled} open={openCount} onReopen={reopen} />
           )}
-          <DraftPanel bundle={thread?.draft_bundle ?? null} changed={busy ? [] : lastChanged} />
+          <DraftPanel bundle={thread?.draft_bundle ?? null} changed={busy ? [] : lastChanged}
+            rules={rules} roles={roles} />
           {thread?.draft_bundle && (
             <button className={asking || aligned ? "" : "primary"} onClick={review} disabled={busy}>
               Review &amp; create →
@@ -717,8 +752,7 @@ export default function Founding() {
               {openCount
                 ? `${openCount} ${openCount === 1 ? "question is" : "questions are"} still open. ` +
                   "You can review now — the draft uses the Founder's picks for them."
-                : "This opens the New Project screen with everything filled in, where " +
-                  "you can change anything, run the fire drill for nothing, and create it."}
+                : "Opens the form with everything filled in. Nothing is created yet."}
             </p>
           )}
         </aside>

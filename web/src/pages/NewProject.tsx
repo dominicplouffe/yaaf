@@ -5,8 +5,9 @@ import {
   CLASS_ORDER, DEFAULT_PROVIDER, isPriced, ModelSelect, parseRef, providerOf as refProvider,
   resolveRef, useModels, useProviders,
 } from "../providers";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import "./newproject.css";
 import { CrewSummary, get, McpServerEntry, post, ProjectBundle,
   RehearsalReport, RoleSummary, SlackProvision } from "../api";
 import Drill from "../drill";
@@ -54,6 +55,139 @@ interface CredentialDraft {
 
 function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
+}
+
+const SLUG_OK = /^[a-z0-9-]{2,64}$/;
+
+/** Where a goal's opening clause ends, and the small words a name should not
+    end on. Mirrors `name_from_goal` in yaaf/server/api/admin.py, which picks
+    the same name for any other door that sends none. */
+const CLAUSE_END = /[,;:(]|\s[—–-]\s|\s(?:and|so|then|but|because|which|that|while)\s/i;
+const TRAILING_FILLER = new Set(["a", "an", "the", "of", "to", "for", "and", "or", "in", "on",
+  "with", "from", "by", "at", "as", "into", "about", "our", "my", "your", "its", "their", "his",
+  "her", "this"]);
+
+/** A project name picked from the opening of its goal. The form said "picked
+    for you" and then refused Create until the chairman typed a name himself;
+    the goal is the one thing he has always written by then, and its first
+    clause is the honest pick. */
+export function nameFromGoal(goal: string): string {
+  const first = goal.trim().split(/(?<=[.!?])\s|\n/)[0];
+  const words = first.split(CLAUSE_END)[0].split(/\s+/).filter(Boolean).slice(0, 8);
+  while (words.length && TRAILING_FILLER.has(words[words.length - 1].toLowerCase())) words.pop();
+  const name = words.join(" ").replace(/[.,;:!?—–\-\s]+$/, "");
+  return name ? name[0].toUpperCase() + name.slice(1) : "";
+}
+
+/** The reasons behind a one-line label, one click down. Every card on this
+    form used to open with its paragraph, so choosing between two cards meant
+    reading four; the paragraphs are all still here, folded beside the line
+    they explain. */
+export function Why({ label = "Why?", children }: { label?: string; children: ReactNode }) {
+  return (
+    <details className="np-why">
+      <summary>{label}</summary>
+      <div className="np-why-body">{children}</div>
+    </details>
+  );
+}
+
+/** What each card in a row does, in full — the words the cards used to carry
+    on their faces, listed once below them instead. */
+function Compare({ cards, children }: {
+  cards: { value: string; label: string; blurb: string; example?: string }[];
+  children?: ReactNode;
+}) {
+  if (!cards.length) return null;
+  return (
+    <Why label="Compare">
+      <dl>
+        {cards.map((c) => (
+          <div key={c.value}>
+            <dt>{c.label}</dt>
+            <dd>{c.blurb}{c.example && <em>{c.example}</em>}</dd>
+          </div>
+        ))}
+      </dl>
+      {children}
+    </Why>
+  );
+}
+
+/** A row of pick-one cards, each a name and at most two short lines. */
+function Cards({ label, options, value, onPick }: {
+  label: string;
+  options: { value: string; label: string; headline?: string; line?: string }[];
+  value: string;
+  onPick: (value: string) => void;
+}) {
+  return (
+    <div className="np-cards" role="radiogroup" aria-label={label}>
+      {options.map((o) => (
+        <button key={o.value} type="button" role="radio" aria-checked={value === o.value}
+          className={`textblock np-card${value === o.value ? " on" : ""}`}
+          onClick={() => onPick(o.value)}>
+          <span className="np-card-t">{value === o.value ? "◉" : "○"} {o.label}</span>
+          {o.headline && <span className="np-card-h">{o.headline}</span>}
+          {o.line && <span className="np-card-l">{o.line}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** A card's opening clause: enough to choose by, with the rest under Compare. */
+function lead(text: string): string {
+  const first = text.split(/(?<=[.!?])\s/)[0];
+  const cut = first.split(/:\s|\s—\s/)[0];
+  return cut === first ? first : `${cut}.`;
+}
+
+/** The roster's half of the second-check rule, said where the roster is
+    chosen.
+
+    Every quality card asks for the work to be read by somebody who did not
+    write it, and the server refuses a roster that asks for that and hires
+    nobody who can — rightly. The form used to say so on the money step, after
+    the roster was settled, in a paragraph; and on an install with no checking
+    role it let Create run straight into the refusal. Here it is one line on
+    the step that picks the people, with both answers one click each. */
+function ReviewSeat({ card, reader, skipped, onAdd, onSkip, onUndo }: {
+  card: string;
+  /** The checking role Create would hire, or null when the install has none. */
+  reader: string | null;
+  skipped: boolean;
+  onAdd: () => void;
+  onSkip: () => void;
+  onUndo: () => void;
+}) {
+  if (skipped) {
+    return (
+      <div className="np-note quiet">
+        No second check: only the agent that wrote a deliverable reads it before you.{" "}
+        <button type="button" className="linkish inline" onClick={onUndo}>Turn it back on</button>
+      </div>
+    );
+  }
+  return (
+    <div className="np-note" role="status">
+      <b>{card}</b> has a second agent check the work.{" "}
+      {reader
+        ? <>A reviewer ({reader}) joins at Create unless you skip it.</>
+        : "This install has no role that can."}
+      <div className="np-note-acts">
+        {reader && <button type="button" className="small" onClick={onAdd}>Add the {reader} now</button>}
+        <button type="button" className="small" onClick={onSkip}>Skip the check</button>
+      </div>
+      <Why>
+        <p>Without a reviewer, the only reader of a deliverable before you would be the agent
+          that wrote it. A project that asks for the check and hires nobody who can give it is
+          refused at create, so the form names the gap here rather than there.</p>
+        {!reader && <p>Add a role whose discipline is challenge to the library (the shipped
+          roles include an editor), or skip the check for this project.</p>}
+      </Why>
+    </div>
+  );
 }
 
 const MODES = [
@@ -180,6 +314,9 @@ export default function NewProject() {
   const [slug, setSlug] = useState("");
   // Chosen for you from the name until you touch it — then it is yours.
   const [slugEdited, setSlugEdited] = useState(false);
+  // The name is chosen the same way, one step earlier: from the goal, until
+  // you type one of your own.
+  const [nameEdited, setNameEdited] = useState(false);
   const [existingSlugs, setExistingSlugs] = useState<string[]>([]);
   const [goal, setGoal] = useState("");
   const [billingMode, setBillingMode] = useState("api_key");
@@ -210,7 +347,6 @@ export default function NewProject() {
   useEffect(() => {
     get<typeof modelTable>("/admin/settings/model-prices").then(setModelTable).catch(() => {});
   }, []);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [mode, setMode] = useState("explore");
   // Set when a loaded setup file could not answer the shape question itself —
   // the one prefill that must never be guessed silently, because a project's
@@ -358,6 +494,34 @@ export default function NewProject() {
       .catch(() => {});
   }, []);
 
+  /** The goal, and the name and address that follow it until either is
+      typed over. A loaded file or a Founder draft has named itself already. */
+  function changeGoal(next: string) {
+    setGoal(next);
+    if (nameEdited || bundle) return;
+    const picked = nameFromGoal(next);
+    setName(picked);
+    if (!slugEdited) setSlug(dedupedSlug(slugify(picked)));
+  }
+
+  function changeName(next: string) {
+    setName(next);
+    setNameEdited(true);
+    if (!slugEdited && !bundle) setSlug(dedupedSlug(slugify(next)));
+  }
+
+  function changeSlug(next: string) {
+    setSlug(next);
+    setSlugEdited(true);
+  }
+
+  // The taken addresses arrive on their own fetch; an address picked before
+  // they landed is checked again once they do.
+  useEffect(() => {
+    if (!slugEdited && !bundle && slug) setSlug(dedupedSlug(slug));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingSlugs]);
+
   function dedupedSlug(base: string): string {
     if (!base || !existingSlugs.includes(base)) return base;
     for (let n = 2; ; n++) {
@@ -437,7 +601,9 @@ export default function NewProject() {
       // Neither button is it, so say which rules the file carries and leave the
       // selection alone rather than rounding it to a preset.
       setAutonomyNotice(
-        `This setup file sets ${named.map((k) => `${k}: ${authority[k]}`).join(", ")}, ` +
+        `This setup file sets ${named.map((k) =>
+          `${k.replace(/_/g, " ")}: ${/^[a-z]+(?:_[a-z]+)+$/.test(String(authority[k]))
+            ? String(authority[k]).replace(/_/g, " ") : authority[k]}`).join(", ")}, ` +
         "which is not either preset. Picking one below replaces all five rules — " +
         "or create it as-is and adjust in Settings → Rules in force.",
       );
@@ -490,35 +656,62 @@ export default function NewProject() {
   const needsReviewSeat =
     craft.deliverable_review === "independent_read" && !solo && !hasReviewSeat;
 
+  // `editor` is the seat written for prose; anything else in the discipline
+  // reads work too, so the first one installed will do.
+  const reviewer = reviewRoles.find((r) => r.slug === "editor") ?? reviewRoles[0];
+  const reviewerName = reviewer ? reviewer.name.split(" / ")[0] : null;
+
   function addReviewTeam() {
-    // `editor` is the seat written for prose; anything else in the discipline
-    // reads work too, so the first one installed will do.
-    const pick = reviewRoles.find((r) => r.slug === "editor") ?? reviewRoles[0];
-    if (!pick) return;
+    if (!reviewer) return;
     setTeams((prev) => [...prev,
-      { role_slug: pick.slug, name: "Review", employees: "Juno", lead: "" }]);
+      { role_slug: reviewer.slug, name: "Review", employees: "Juno", lead: "" }]);
   }
 
-  // What Create will actually hire. Two gaps used to be silent: a team with a
-  // role and no names was dropped at submit, so a chairman who hired a
-  // Researcher got a project with nobody on it; and a preset asking for an
-  // independent read with no reader on the roster was refused at the very
-  // end. Both are filled here, in the open — the review step lists every seat
-  // this adds, and the read can be turned off there instead.
-  const autoReview = needsReviewSeat && reviewRoles.length > 0;
+  // The card's own answer, so skipping the check can be undone without
+  // re-picking the card and losing every number edited since.
+  const cardWantsRead = barPresets.find((p) => p.value === barPreset)
+    ?.constitution.deliverable_review === "independent_read";
+  const checkSkipped = cardWantsRead && !solo
+    && craft.deliverable_review !== "independent_read";
+  const skipCheck = () => setCraft((prev) => ({ ...prev, deliverable_review: "none" }));
+  const restoreCheck = () =>
+    setCraft((prev) => ({ ...prev, deliverable_review: "independent_read" }));
+
+  // What Create will actually hire. Three gaps used to be silent: a team with
+  // a role and no names was dropped at submit, so a chairman who hired a
+  // Researcher got a project with nobody on it; a team whose name had been
+  // cleared was dropped the same way; and a preset asking for an independent
+  // read with no reader on the roster was refused at the very end. All three
+  // are filled here, in the open — the roster step says what it will add, the
+  // review step lists every seat, and the check can be skipped from either.
+  const autoReview = needsReviewSeat && !!reviewer;
   const effectiveTeams: (TeamDraft & { named?: boolean; added?: boolean })[] = (() => {
-    const staffed = teams.filter((t) => t.role_slug && t.name.trim());
+    const staffed = teams.filter((t) => t.role_slug);
     const taken = new Set(staffed.flatMap((t) => t.employees.split(",").map((n) => n.trim())));
     const fresh = () => {
       const n = SEAT_NAMES.find((x) => !taken.has(x)) ?? `Seat ${taken.size + 1}`;
       taken.add(n);
       return n;
     };
-    const out: (TeamDraft & { named?: boolean; added?: boolean })[] = staffed.map((t) =>
-      solo || t.employees.trim() ? t : { ...t, employees: fresh(), named: true });
-    if (autoReview) {
-      const pick = reviewRoles.find((r) => r.slug === "editor") ?? reviewRoles[0];
-      out.push({ role_slug: pick.slug, name: "Review", employees: fresh(), lead: "", added: true });
+    // A team nobody named is named after its role, as the hire panel names
+    // it; two of the same role are told apart by a number.
+    const titles = new Set(staffed.map((t) => t.name.trim()).filter(Boolean));
+    const unique = (base: string) => {
+      let candidate = base;
+      for (let n = 2; titles.has(candidate); n++) candidate = `${base} ${n}`;
+      titles.add(candidate);
+      return candidate;
+    };
+    const roleTitle = (slug: string) =>
+      (roles.find((r) => r.slug === slug)?.name ?? slug).split(" / ")[0];
+    const out: (TeamDraft & { named?: boolean; added?: boolean })[] = staffed.map((t) => {
+      const titled = t.name.trim() ? t : { ...t, name: unique(roleTitle(t.role_slug)) };
+      return solo || titled.employees.trim()
+        ? titled : { ...titled, employees: fresh(), named: true };
+    });
+    if (autoReview && reviewer) {
+      out.push({ role_slug: reviewer.slug, name: unique("Review"), employees: fresh(),
+                 lead: "", added: true });
     }
     return out;
   })();
@@ -527,8 +720,9 @@ export default function NewProject() {
     setTeams((prev) => prev.map((t, j) => (j === i ? { ...t, ...patch } : t)));
   }
 
-  // Roles actually used by the drafted teams — the only sensible grant targets.
-  const usedRoleSlugs = [...new Set(teams.map((t) => t.role_slug).filter(Boolean))];
+  // Roles actually used by the teams Create will hire — the only sensible
+  // grant targets, and what the cost estimate on the review step adds up.
+  const usedRoleSlugs = [...new Set(effectiveTeams.map((t) => t.role_slug))];
   const hiredRoles = usedRoleSlugs
     .map((slug) => roles.find((r) => r.slug === slug))
     .filter(Boolean) as RoleSummary[];
@@ -557,8 +751,12 @@ export default function NewProject() {
       chairman finding out at submit after twenty-eight fields. */
   function problemsOn(n: number): string | null {
     if (n === 1) {
-      if (!name.trim()) return "This project needs a name";
       if (goal.trim().length < 10) return "The CEO plans from the goal — it cannot be empty";
+      if (!name.trim()) return "This project needs a name";
+      // Said here rather than by the browser's own bubble on Create, which
+      // was the only word a chairman used to get about a bad address.
+      if (!SLUG_OK.test(slug)) return "The address takes 2 to 64 lower-case letters, numbers or dashes";
+      if (existingSlugs.includes(slug)) return "Another project already uses this address";
       return null;
     }
     if (n === 2) {
@@ -566,8 +764,15 @@ export default function NewProject() {
         return `This install's library has no ${missingRoleSlugs.join(", ")}`;
       }
       if (!ceoSlug && !bundle?.project.ceo_role_slug) return "Nobody is running this project";
-      const staffed = teams.filter((t) => t.role_slug && t.name.trim());
-      if (!staffed.length) return "Nobody is doing the work";
+      // A row with people typed into it and no role would be dropped at
+      // submit, and the people with it.
+      if (teams.some((t) => !t.role_slug && (t.name.trim() || t.employees.trim()))) {
+        return "A team has no role yet: choose one, or remove the team";
+      }
+      if (!teams.some((t) => t.role_slug)) return "Nobody is doing the work";
+      // The one shape the form cannot fill for you: a card that wants a second
+      // check, on an install with no role that gives one.
+      if (rolesLoaded && needsReviewSeat && !reviewer) return "Nobody on this install can check the work";
       return null;
     }
     if (n === 3) {
@@ -872,8 +1077,7 @@ export default function NewProject() {
     const ceoModel = bundle?.project.ceo_model_override
       ?? roles.find((r) => r.slug === chosenCeo)?.model ?? "";
     const out = [{ who: "the CEO", model: ceoModel }];
-    for (const t of teams) {
-      if (!t.role_slug) continue;
+    for (const t of effectiveTeams) {
       const fromBundle = bundle?.project.teams.find((bt) => bt.name === t.name.trim());
       for (const person of t.employees.split(",").map((s) => s.trim()).filter(Boolean)) {
         out.push({ who: person, model: fromBundle?.model_overrides?.[person]
@@ -1305,10 +1509,9 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
       <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 260 }}>
           <Link className="crumb" to="/projects/new">&larr; Both ways to start</Link>
-          <h1>Fill it in myself</h1>
+          <h1>Fill in the form</h1>
           <p className="subtitle" style={{ marginBottom: 0 }}>
-            A small project that works while you're away. You can change everything
-            afterwards except its shape.
+            Four decisions. Nothing exists until you press Create.
           </p>
         </div>
         {/* The wizard is a view, not a replacement: same state, same submit. */}
@@ -1341,15 +1544,138 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         </nav>
       <form onSubmit={submit} className="stepbody">
         {on(1) && <>
-        <div className="card" style={{ marginBottom: 10 }} ref={fileCard}>
-          <label className="field">Start from a setup file (optional)</label>
-          <p className="help" style={{ marginTop: 0 }}>
-            Downloaded from a project's Settings → Setup file. Everything below prefills — review
-            it, pick a slug, enter credential values, then create.
-          </p>
-          <input type="file" accept=".json,application/json" onChange={loadBundle} />
+        <div className="card" style={{ marginBottom: 10 }}>
+          <label className="field" htmlFor="np-goal">Goal: what should exist when this is done?</label>
+          <div className="goalwrap">
+            <div>
+              <textarea id="np-goal" value={goal} onChange={(e) => changeGoal(e.target.value)}
+                required minLength={10} className="goalbox"
+                placeholder="e.g. Audit the customer's Amazon PPC account and produce a plain-English deck a non-technical business owner can act on: where money is being wasted, which campaigns to fix first, and expected savings. The account data comes from the connected &quot;ppc&quot; data source. Final deck by August 20th." />
+              <Why>
+                The CEO plans from this and nothing else, so it is worth more of your
+                time than everything below it put together. Brief it the way you would
+                brief a competent human running the project for you.
+              </Why>
+            </div>
+            <div className="brief">
+              <div className="bt">Does your brief say…</div>
+              <ul>
+                {briefChecks(goal).map((c) => (
+                  <li key={c.label} className={c.ok ? "ok" : ""}>
+                    <b>{c.ok ? "✓" : "○"}</b>{c.label}
+                  </li>
+                ))}
+              </ul>
+              {/* The other way in, offered at the one moment it is actually
+                  wanted. A chairman who cannot get four ticks on his own brief
+                  is exactly who the Founder was built for, and the checklist
+                  above is where he finds that out — not the sidebar he read
+                  ten minutes ago. */}
+              <p className="help" style={{ marginTop: 8 }}>
+                Stuck? <Link to="/projects/new/describe">Let yaaf draft it</Link>
+              </p>
+              <Why>
+                Advisory only — you can create with none of these ticked. A weak goal
+                ("analyze the PPC data") gets you a project that putters. Describe it
+                instead and yaaf drafts the whole project; it comes back here, filled in.
+              </Why>
+            </div>
+          </div>
+        </div>
+
+        <div className="card" style={{ marginBottom: 10 }}>
+          <div className="row">
+            <div>
+              <label className="field" htmlFor="np-name">
+                Name{!nameEdited && !bundle ? " — picked from your goal" : ""}
+              </label>
+              <input id="np-name" value={name} onChange={(e) => changeName(e.target.value)}
+                placeholder="Write the goal first" />
+            </div>
+            <div>
+              <label className="field" htmlFor="np-slug">
+                Address{!slugEdited && !bundle ? " — picked for you" : ""}
+              </label>
+              <input id="np-slug" value={slug} onChange={(e) => changeSlug(e.target.value)}
+                placeholder="Follows the name" />
+              <Why>
+                Lower case, numbers and dashes. It appears in this project’s web address.
+                We make it unique for you; change it if you would rather.
+              </Why>
+            </div>
+          </div>
+          {/* This used to be two fields — "Chairman email (you)" and a display
+              name — that created an account on submit and remembered what you
+              typed. A project is chaired by the person who founds it now, so
+              there is nothing to type: you are signed in, and that is who you
+              are. Somebody else to share it with is added afterwards, by email,
+              from the project's own Settings. */}
+          <p className="np-line">You chair it.</p>
+          <Why>
+            Its decisions are yours, and so is who else may make them. Add co-chairs and
+            observers from its Settings → People once it exists.
+          </Why>
+        </div>
+
+        <div className="card" style={{ marginBottom: 10 }}>
+          <label className="field">What kind of project is this?</label>
+          <Cards label="What kind of project is this?" value={mode}
+            onPick={(value) => { setMode(value); setModeNotice(null); }}
+            options={MODES.map((m) => ({ value: m.value, label: m.label, line: m.blurb }))} />
+          {modeNotice && (
+            <p className="help" style={{ marginTop: 10, color: "var(--warning)" }}>
+              {modeNotice}
+            </p>
+          )}
+          {/* The one answer on this form that cannot be amended afterwards.
+              The Founder is required to argue the shape call for exactly this
+              reason; the form said nothing at all, so a chairman learned it
+              from the Duplicate section weeks later, if ever. */}
+          <p className="np-line"><b>Set once.</b> The shape cannot be changed later.</p>
+          <Why label="Why, and examples">
+            <p>It decides whether the project has requirements at all, so it cannot be amended
+              later like the rest of the rules — a project that turns out to be the wrong shape
+              is rebuilt from its setup file rather than converted. Everything else on this
+              form, including how often it runs and what it may spend, you can change whenever
+              you like.</p>
+            <dl>
+              {MODES.map((m) => <div key={m.value}><dt>{m.label}</dt><dd>{m.example}</dd></div>)}
+            </dl>
+            {mode !== "explore" && (
+              <p>This project starts owing a plan: the CEO proposes requirements,
+                {autonomy === "autonomous"
+                  ? " accepts them itself under the authority you grant on the money step,"
+                  : " you accept them on the Roadmap,"}{" "}
+                and no work may be created until the plan holds and adds up against the
+                budget.</p>
+            )}
+          </Why>
+          {mode === "explore" && (
+            <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "baseline",
+              flexWrap: "wrap" }}>
+              <label className="field" style={{ margin: 0 }} htmlFor="np-window">
+                Window (optional)
+              </label>
+              <input id="np-window" type="date" value={exploreDeadline}
+                onChange={(e) => setExploreDeadline(e.target.value)}
+                style={{ width: 170 }} />
+              <Why>
+                Open scope, bounded time — “one sale in the next 60 days.” When it
+                passes you are told and the judgment is yours; nothing pauses itself.
+              </Why>
+            </div>
+          )}
+        </div>
+
+        <div className="card np-file" style={{ marginBottom: 10 }} ref={fileCard}>
+          <label className="field" htmlFor="np-file">Or start from a setup file</label>
+          <input id="np-file" type="file" accept=".json,application/json" onChange={loadBundle} />
+          <Why>
+            Downloaded from a project's Settings → Setup file. Everything prefills — review
+            it, pick an address, enter credential values, then create.
+          </Why>
           {bundle && (
-            <p className="help">
+            <p className="help" style={{ flexBasis: "100%", margin: 0 }}>
               Loaded "{bundle.project.name}" (exported from {bundle.source_slug}).
               {bundle.secrets.length > 0 &&
                 (bundle.values_included
@@ -1369,183 +1695,40 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             </p>
           )}
         </div>
-        <div className="card">
-          <div className="row">
-            <div>
-              <label className="field">Name</label>
-              <input
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  if (!slugEdited && !bundle) setSlug(dedupedSlug(slugify(e.target.value)));
-                }}
-                required
-              />
-            </div>
-            <div>
-              <label className="field">Short name — picked for you</label>
-              <input
-                value={slug}
-                onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }}
-                pattern="[a-z0-9\-]{2,64}"
-                required
-              />
-              <div className="help" style={{ marginTop: 4 }}>
-                Lower case, numbers and dashes. It appears in this project’s web address. We make it unique for you; change it if you would rather.
-              </div>
-            </div>
-          </div>
-          {/* This used to be two fields — "Chairman email (you)" and a display
-              name — that created an account on submit and remembered what you
-              typed. A project is chaired by the person who founds it now, so
-              there is nothing to type: you are signed in, and that is who you
-              are. Somebody else to share it with is added afterwards, by email,
-              from the project's own Settings. */}
-          <p className="help" style={{ marginTop: "var(--s3)" }}>
-            You will chair this project: its decisions are yours, and so is who else may
-            make them. Add co-chairs and observers from its Settings → People once it exists.
-          </p>
-        </div>
-
-
-        <div className="card" style={{ marginBottom: 10 }}>
-          <label className="field">
-            Goal — what this project exists to achieve
-          </label>
-          <p className="help" style={{ margin: "0 0 6px" }}>
-            The CEO plans from this and nothing else, so it is worth more of your
-            time than everything below it put together. Brief it the way you would
-            brief a competent human running the project for you.
-          </p>
-          <div className="goalwrap">
-            <textarea value={goal} onChange={(e) => setGoal(e.target.value)}
-              required minLength={10} className="goalbox"
-              placeholder="Audit the customer's Amazon PPC account and produce a plain-English deck a non-technical business owner can act on: where money is being wasted, which campaigns to fix first, and expected savings. The account data comes from the connected &quot;ppc&quot; data source. Final deck by August 20th." />
-            <div className="brief">
-              <div className="bt">Does your brief say…</div>
-              <ul>
-                {briefChecks(goal).map((c) => (
-                  <li key={c.label} className={c.ok ? "ok" : ""}>
-                    <b>{c.ok ? "✓" : "○"}</b>{c.label}
-                  </li>
-                ))}
-              </ul>
-              <p className="help" style={{ marginTop: 8 }}>
-                Advisory only — you can create with none of these ticked. A weak
-                goal ("analyze the PPC data") gets you a project that putters.
-              </p>
-              {/* The other way in, offered at the one moment it is actually
-                  wanted. A chairman who cannot get four ticks on his own brief
-                  is exactly who the Founder was built for, and the checklist
-                  above is where he finds that out — not the sidebar he read
-                  ten minutes ago. */}
-              <p className="help" style={{ marginTop: 8 }}>
-                Stuck on the wording?{" "}
-                <Link to="/projects/new/describe">
-                  Describe it and let yaaf draft the whole project
-                </Link>{" "}
-                — it comes back here, filled in.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card" style={{ marginBottom: 10 }}>
-          <label className="field">What kind of project is this?</label>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-            gap: 10, marginTop: 6 }}>
-            {MODES.map((m) => (
-              <button key={m.value} type="button"
-                onClick={() => { setMode(m.value); setModeNotice(null); }}
-                className="textblock"
-                style={{
-                  font: "inherit", textAlign: "left", cursor: "pointer",
-                  background: mode === m.value ? "rgba(var(--accent-rgb), 0.09)" : "var(--surface)",
-                  border: mode === m.value
-                    ? "1px solid var(--accent)" : "1px solid var(--border)",
-                  borderRadius: 8, padding: "12px 14px",
-                }}>
-                <div style={{ fontWeight: 650, fontSize: 15, color: "var(--ink)" }}>
-                  {mode === m.value ? "◉" : "○"} {m.label}
-                </div>
-                <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 6 }}>{m.blurb}</div>
-                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, fontStyle: "italic",
-                  borderTop: "1px solid var(--grid, var(--border))", paddingTop: 7 }}>
-                  {m.example}
-                </div>
-              </button>
-            ))}
-          </div>
-          {modeNotice && (
-            <p className="help" style={{ marginTop: 10, color: "var(--warning)" }}>
-              {modeNotice}
-            </p>
-          )}
-          {/* The one answer on this form that cannot be amended afterwards.
-              The Founder is required to argue the shape call for exactly this
-              reason; the form said nothing at all, so a chairman learned it
-              from the Duplicate section weeks later, if ever. */}
-          <p className="help" style={{ marginTop: 10 }}>
-            <b>This one is frozen at creation.</b> It decides whether the project has
-            requirements at all, so it cannot be amended later like the rest of the
-            rules — a project that turns out to be the wrong shape is rebuilt from its
-            setup file rather than converted. Everything else on this form, including
-            how often it runs and what it may spend, you can change whenever you like.
-          </p>
-          {mode !== "explore" ? (
-            <p className="help" style={{ marginTop: 10 }}>
-              This project starts owing a plan: the CEO proposes requirements,
-              {autonomy === "autonomous"
-                ? " accepts them itself under the authority you grant below,"
-                : " you accept them on the Plan tab,"}{" "}
-              and no work may be created until the plan holds and adds up against the
-              budget.
-            </p>
-          ) : (
-            <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "baseline",
-              flexWrap: "wrap" }}>
-              <label className="field" style={{ margin: 0 }}>
-                Window (optional)
-              </label>
-              <input type="date" value={exploreDeadline}
-                onChange={(e) => setExploreDeadline(e.target.value)}
-                style={{ width: 170 }} />
-              <span className="help">
-                Open scope, bounded time — “one sale in the next 60 days.” When it
-                passes you are told and the judgment is yours; nothing pauses itself.
-              </span>
-            </div>
-          )}
-        </div>
         </>}
 
         {on(2) && <>
-        <h2>The project</h2>
+        <div className="np-head">
+          <h2>Who runs it</h2>
+          <Why>
+            The CEO owns the plan, is the only agent that speaks to you, and the only one
+            that creates top-level work. Frozen once the project starts.
+          </Why>
+        </div>
         <div className="card" style={{ marginBottom: 10 }}>
-          <label className="field">Who runs it — the only agent that speaks to you</label>
-          <p className="help" style={{ margin: "0 0 8px" }}>
-            The CEO owns the plan and is the only agent that creates top-level
-            work. Frozen once the project starts.
-          </p>
           <CeoPicker roles={roles} value={ceoSlug} onChange={setCeoSlug} />
         </div>
         <h2>Teams</h2>
         {missingRoleSlugs.length > 0 && (
-          <p className="help" style={{ color: "var(--warning)" }}>
+          <div className="np-note">
             This setup file hires {missingRoleSlugs.length === 1 ? "a role" : "roles"} this
-            install does not have: <strong>{missingRoleSlugs.join(", ")}</strong>. The examples
-            hire from the role library by slug rather than carrying their prompts, so a role
-            added to the repository after this install was seeded is not here yet. Load the
-            missing ones from your checkout — <code>deploy/update_single_server.sh</code>, or{" "}
-            <code>yaaf seed-roles roles/ --only-missing</code> — then reload this page and load
-            the file again. Until then, pick a role this install does have for each team.
+            install does not have: <strong>{missingRoleSlugs.join(", ")}</strong>. Pick a role
+            this install has for each team, or load the missing ones.
             {missingRoleSlugs.includes(bundleCeoSlug) && (
               <>
                 {" "}<strong>{bundleCeoSlug}</strong> is the CEO's role, which this form has no
                 picker for — the project cannot be created until the library has it.
               </>
             )}
-          </p>
+            <Why label="How">
+              The examples hire from the role library by slug rather than carrying their
+              prompts, so a role added to the repository after this install was seeded is not
+              here yet. Load the missing ones from your checkout
+              — <code>deploy/update_single_server.sh</code>, or{" "}
+              <code>yaaf seed-roles roles/ --only-missing</code> — then reload this page and
+              load the file again.
+            </Why>
+          </div>
         )}
         {solo && (
           <p className="subtitle">
@@ -1591,21 +1774,24 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               </div>
               <div>
                 <label className="field">Team name</label>
-                <input value={team.name} onChange={(e) => setTeam(i, { name: e.target.value })} />
+                <input value={team.name} onChange={(e) => setTeam(i, { name: e.target.value })}
+                  placeholder={team.role_slug
+                    ? roleLabel(team.role_slug).split(" / ")[0] : "Named after its role"} />
               </div>
             </div>
             <div className="row">
               <div>
-                <label className="field">Employees (comma-separated names)</label>
+                <label className="field">Employees, comma-separated</label>
                 <input
                   value={team.employees}
                   onChange={(e) => setTeam(i, { employees: e.target.value })}
-                  placeholder="Ada, Lin"
+                  placeholder={solo ? "The CEO, working alone" : "Blank: one is named for you"}
                 />
               </div>
               <div>
-                <label className="field">Lead (defaults to first; a sole employee leads itself)</label>
-                <input value={team.lead} onChange={(e) => setTeam(i, { lead: e.target.value })} />
+                <label className="field">Lead</label>
+                <input value={team.lead} onChange={(e) => setTeam(i, { lead: e.target.value })}
+                  placeholder="The first one listed" />
               </div>
             </div>
             <div className="actions">
@@ -1626,6 +1812,12 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         >
           + Add team
         </button>
+        {rolesLoaded && (needsReviewSeat || checkSkipped) && (
+          <ReviewSeat
+            card={barPresets.find((p) => p.value === barPreset)?.label ?? "This quality card"}
+            reader={reviewerName} skipped={checkSkipped}
+            onAdd={addReviewTeam} onSkip={skipCheck} onUndo={restoreCheck} />
+        )}
 
         </>}
 
@@ -1635,17 +1827,23 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             billingPick.current++; setBillingCredentialId(id); setBillingMode(mode);
             setBillingProvider(provider);
           }} />
-          <p className="help">The selected credential determines the budget unit. Without a credential, the project can be saved as a draft but cannot run models.</p>
+          <p className="np-line">Pays for every run, and sets the budget&apos;s unit.</p>
+          <Why>
+            The selected credential determines the budget unit. Without a credential, the
+            project can be saved as a draft but cannot run models.
+          </Why>
           {billingCredentialId && runtime !== "mock" && <ProviderReadinessInline provider={billingProvider}
             onChanged={() => setCatalogNonce((n) => n + 1)} />}
           {billingCredentialId && runtime !== "mock" && <div className="wiz-fallback">
             <label className="field" htmlFor="wiz-fallback">Fallback credential <span className="help">optional</span></label>
             <FallbackPicker id="wiz-fallback" value={fallbackId} onChange={setFallbackId}
               billingProvider={billingProvider} billingMode={billingMode} />
-            <p className="help">If {registry.find((r) => r.name === billingProvider)?.label ?? "the billing provider"} keeps
+            <Why>
+              If {registry.find((r) => r.name === billingProvider)?.label ?? "the billing provider"} keeps
               failing, class seats move here until it recovers; seats pinned to a model wait. It must be
               another provider&apos;s credential, metered the same way, with a model for every class the
-              team names — the project is refused at create otherwise, with the reason.</p>
+              team names — the project is refused at create otherwise, with the reason.
+            </Why>
           </div>}
           {Object.entries(otherCredentials).map(([provider]) => (
             <div key={provider} style={{ marginTop: 6 }}>
@@ -1658,16 +1856,6 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 })} />
             </div>
           ))}
-          <label className="field" style={{ maxWidth: 380 }}>Also pay another provider
-            <select value={otherProvider} onChange={(e) => {
-              const chosen = e.target.value;
-              setOtherProvider("");
-              if (chosen) setOtherCredentials((prev) => ({ ...prev, [chosen]: prev[chosen] ?? "" }));
-            }}>
-              <option value="">— for seats pinned to another provider&apos;s models —</option>
-              {registry.filter((r) => !(r.name in otherCredentials))
-                .map((r) => <option key={r.name} value={r.name}>{r.label}</option>)}
-            </select></label>
           {(() => {
             const labelOf = (p: string) => registry.find((r) => r.name === p)?.label ?? p;
             const paid = [billingProvider, ...Object.entries(otherCredentials)
@@ -1678,107 +1866,97 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               const model = resolveRef(`@${cls}`, billingProvider, catalog);
               return { cls, model, priced: model ? pricedModel(model) : null };
             });
+            const gap = lineup.some((l) => !l.model)
+              || (dollars && lineup.some((l) => l.priced === false));
             const effective = seatModel ? resolveRef(seatModel, billingProvider, catalog) : null;
             const active = runtime !== "mock" && !!billingCredentialId;
             const seats = seatModel ? [] : seatModels().filter((s) => s.model);
             const unmodelled = active ? seats.filter((s) => !resolveRef(s.model, billingProvider, catalog)) : [];
             const unpaid = active ? seats.filter((s) => resolveRef(s.model, billingProvider, catalog)
               && !paid.includes(providerOf(s.model))) : [];
+            // What is wrong stays in the open; the controls that put it right,
+            // and the lineup they choose from, fold under one line.
             return <>
-              {billingCredentialId && <p className="help">
-                On {labelOf(billingProvider)} the roles&apos; classes run on:{" "}
-                {lineup.map((l, i) => <span key={l.cls}>{i > 0 && " · "}
-                  {l.cls} → {l.model ? <code>{l.model}</code> : <b>none set</b>}
-                  {dollars && l.model && l.priced === false ? " (no price yet)" : ""}</span>)}.
-                {(lineup.some((l) => !l.model) || (dollars && lineup.some((l) => l.priced === false))) && <>
-                  {" "}A seat on an unset class, or on an unpriced model under an API key, is refused:{" "}
-                  set the lineup on <Link to={`/settings?section=providers&provider=${billingProvider}`} target="_blank"
-                    rel="noreferrer">{labelOf(billingProvider)}&apos;s card in Settings → Providers ↗</Link> and import prices under{" "}
-                  <Link to="/settings?section=prices" target="_blank"
-                    rel="noreferrer">Settings → Model prices ↗</Link>.</>}
-              </p>}
-              <label className="field" style={{ maxWidth: 480 }}>Run every seat on
-                <ModelSelect value={seatModel} onChange={setSeatModel} info={catalog}
-                  registry={registry} primary={billingProvider} providersShown={paid}
-                  qualified={paid.length > 1} empty="each role's own model" />
-              </label>
-              {seatModel && !effective && <p className="help">
-                {labelOf(parseRef(seatModel).provider ?? billingProvider)} has no model set for
-                that class — choose another, or set one on its card under Settings → Providers.</p>}
-              {effective && dollars && pricedModel(effective) === false && <p className="help">
-                {effective} has no price on this install, and a seat metered in dollars
-                needs one: import or set it under <Link to="/settings?section=prices" target="_blank"
-                rel="noreferrer">Settings → Model prices ↗</Link> first.</p>}
+              {billingCredentialId && gap && <p className="notice-box">
+                A seat on an unset class, or on an unpriced model under an API key, is refused:{" "}
+                set the lineup on <Link to={`/settings?section=providers&provider=${billingProvider}`} target="_blank"
+                  rel="noreferrer">{labelOf(billingProvider)}&apos;s card in Settings → Providers ↗</Link> and import prices under{" "}
+                <Link to="/settings?section=prices" target="_blank"
+                  rel="noreferrer">Settings → Model prices ↗</Link>.</p>}
               {unmodelled.length > 0 && <p className="notice-box">
                 {unmodelled.slice(0, 4).map((s) => s.who).join(", ")}
                 {unmodelled.length > 4 ? ` and ${unmodelled.length - 4} more` : ""}{" "}
                 {unmodelled.length === 1 ? "names a class" : "name classes"}{" "}
                 {labelOf(billingProvider)} has no model for. Pick one on its card under
-                Settings → Providers, or run every seat on a model above.</p>}
+                Settings → Providers, or run every seat on one model, under More below.</p>}
               {unpaid.length > 0 && <p className="notice-box">
                 This project pays {paid.map(labelOf).join(" and ")}, and{" "}
                 {unpaid.slice(0, 4).map((s) => `${s.who} (${s.model})`).join(", ")}
                 {unpaid.length > 4 ? ` and ${unpaid.length - 4} more` : ""} run on{" "}
                 {[...new Set(unpaid.map((s) => labelOf(providerOf(s.model))))].join(" and ")}{" "}
-                models it does not pay. Run every seat on one of {labelOf(billingProvider)}&apos;s
-                classes or models above, or pay {[...new Set(unpaid.map((s) => labelOf(providerOf(s.model))))]
-                  .join(" and ")} too.</p>}
+                models it does not pay. Under More below, run every seat on one of{" "}
+                {labelOf(billingProvider)}&apos;s classes or models, or pay{" "}
+                {[...new Set(unpaid.map((s) => labelOf(providerOf(s.model))))].join(" and ")} too.</p>}
+              <details className="np-more"
+                open={!!seatModel || unmodelled.length > 0 || unpaid.length > 0 || runtime === "mock"}>
+                <summary>More: one model for every seat, another provider, a test run</summary>
+                {billingCredentialId && <p className="help">
+                  On {labelOf(billingProvider)} the roles&apos; classes run on:{" "}
+                  {lineup.map((l, i) => <span key={l.cls}>{i > 0 && " · "}
+                    {l.cls} → {l.model ? <code>{l.model}</code> : <b>none set</b>}
+                    {dollars && l.model && l.priced === false ? " (no price yet)" : ""}</span>)}.
+                </p>}
+                <label className="field" style={{ maxWidth: 480 }}>Run every seat on
+                  <ModelSelect value={seatModel} onChange={setSeatModel} info={catalog}
+                    registry={registry} primary={billingProvider} providersShown={paid}
+                    qualified={paid.length > 1} empty="each role's own model" />
+                </label>
+                {seatModel && !effective && <p className="help">
+                  {labelOf(parseRef(seatModel).provider ?? billingProvider)} has no model set for
+                  that class — choose another, or set one on its card under Settings → Providers.</p>}
+                {effective && dollars && pricedModel(effective) === false && <p className="help">
+                  {effective} has no price on this install, and a seat metered in dollars
+                  needs one: import or set it under <Link to="/settings?section=prices" target="_blank"
+                  rel="noreferrer">Settings → Model prices ↗</Link> first.</p>}
+                <label className="field" style={{ maxWidth: 380 }}>Also pay another provider
+                  <select value={otherProvider} onChange={(e) => {
+                    const chosen = e.target.value;
+                    setOtherProvider("");
+                    if (chosen) setOtherCredentials((prev) => ({ ...prev, [chosen]: prev[chosen] ?? "" }));
+                  }}>
+                    <option value="">— for seats pinned to another provider&apos;s models —</option>
+                    {registry.filter((r) => !(r.name in otherCredentials))
+                      .map((r) => <option key={r.name} value={r.name}>{r.label}</option>)}
+                  </select></label>
+                <label className="field" style={{ maxWidth: 380 }}>Runtime
+                  <select value={runtime} onChange={(e) => setRuntime(e.target.value)}>
+                    <option value="agent_sdk">real — each seat on its own harness, in the sandbox</option>
+                    <option value="mock">mock — scripted, $0 (CI / tire-kicking)</option>
+                  </select></label>
+                <p className="help">
+                  Mock runs no model and needs no key — for testing the platform itself.
+                </p>
+              </details>
             </>;
           })()}
-          <button type="button" className="small" style={{ marginTop: 4 }}
-            onClick={() => setShowAdvanced((v) => !v)}>
-            {showAdvanced ? "hide advanced" : "advanced…"}
-          </button>
-          {showAdvanced && (
-            <div style={{ marginTop: 8, maxWidth: 380 }}>
-              <label className="field">Runtime</label>
-              <select value={runtime} onChange={(e) => setRuntime(e.target.value)}>
-                <option value="agent_sdk">real — each seat on its own harness, in the sandbox</option>
-                <option value="mock">mock — scripted, $0 (CI / tire-kicking)</option>
-              </select>
-              <p className="help">
-                Mock runs no model and needs no key — for testing the platform itself.
-              </p>
-            </div>
-          )}
         </div>
 
         <div className="card" style={{ marginBottom: 10 }}>
-          <label className="field">Who runs it?</label>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-            gap: 10, marginTop: 6 }}>
-            {autonomyPresets.map((p) => (
-              <button key={p.value} type="button"
-                onClick={() => { setAutonomy(p.value); setAutonomyNotice(null); }}
-                className="textblock"
-                style={{
-                  font: "inherit", textAlign: "left", cursor: "pointer",
-                  background: autonomy === p.value ? "rgba(var(--accent-rgb), 0.09)" : "var(--surface)",
-                  border: autonomy === p.value
-                    ? "1px solid var(--accent)" : "1px solid var(--border)",
-                  borderRadius: 8, padding: "12px 14px",
-                }}>
-                <div style={{ fontWeight: 650, fontSize: 15, color: "var(--ink)" }}>
-                  {autonomy === p.value ? "◉" : "○"} {p.label}
-                </div>
-                <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 6 }}>{p.blurb}</div>
-                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, fontStyle: "italic",
-                  borderTop: "1px solid var(--grid, var(--border))", paddingTop: 7 }}>
-                  {p.example}
-                </div>
-              </button>
-            ))}
-          </div>
+          <label className="field">How much may it decide without you?</label>
+          <Cards label="How much may it decide without you?" value={autonomy}
+            onPick={(value) => { setAutonomy(value); setAutonomyNotice(null); }}
+            options={autonomyPresets.map((p) => ({
+              value: p.value, label: p.label, line: lead(p.example ?? p.blurb) }))} />
           {autonomyNotice && (
             <p className="help" style={{ marginTop: 10, color: "var(--warning)" }}>
               {autonomyNotice}
             </p>
           )}
-          <p className="help" style={{ marginTop: 10 }}>
-            A preset is five rules in the constitution's Autonomy group — each one editable
-            individually later in Settings → Rules in force, with a written reason, binding
-            from the next agent call. Turning the dial up or back is always yours.
-          </p>
+          <Compare cards={autonomyPresets}>
+            <p>A preset is five rules in the constitution&apos;s Autonomy group — each one editable
+              individually later in Settings → Rules in force, with a written reason, binding
+              from the next agent call. Turning the dial up or back is always yours.</p>
+          </Compare>
         </div>
         {/* How often it thinks. Its own card, and its own question, because
             for as long as these were one card the answer to "make it cheaper"
@@ -1787,153 +1965,97 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             them has ever been asked about at creation. */}
         <div className="card" style={{ marginBottom: 10 }}>
           <label className="field">How often should it think?</label>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-            gap: 10, marginTop: 6 }}>
-            {tempoPresets.map((p) => (
-              <button key={p.value} type="button"
-                onClick={() => applyTempoPreset(p.value)}
-                className="textblock"
-                style={{
-                  font: "inherit", textAlign: "left", cursor: "pointer",
-                  background: tempo === p.value ? "rgba(var(--accent-rgb), 0.09)" : "var(--surface)",
-                  border: tempo === p.value
-                    ? "1px solid var(--accent)" : "1px solid var(--border)",
-                  borderRadius: 8, padding: "12px 14px",
-                }}>
-                <div style={{ fontWeight: 650, fontSize: 15, color: "var(--ink)" }}>
-                  {tempo === p.value ? "◉" : "○"} {p.label}
-                </div>
-                {p.headline && (
-                  <div style={{ fontSize: 12.5, color: "var(--accent)", marginTop: 4,
-                    fontVariantNumeric: "tabular-nums" }}>{p.headline}</div>
-                )}
-                <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 6 }}>{p.blurb}</div>
-                {p.example && (
-                  <div style={{ fontSize: 12, color: "var(--ink-2)", marginTop: 6,
-                    fontStyle: "italic" }}>{p.example}</div>
-                )}
-              </button>
-            ))}
-          </div>
-          <p className="help" style={{ marginTop: 10 }}>
-            {tempoTouched
-              ? "Thirteen rules — the daily and hourly run ceilings, how often each agent "
-                + "may wake, whether agents buy a run just to read each other's messages, "
-                + "how often the CEO plans, and how far ahead work may be scheduled."
-              : `Pre-selected from the shape you picked above (${
-                  MODES.find((m) => m.value === mode)?.label ?? mode}). Change it here if `
-                + "that is wrong — it is thirteen rules, and every one of them is "
-                + "editable later in Settings → Rules in force."}
-          </p>
-          <p className="help" style={{ marginTop: 6 }}>
-            {/* Runs, not dollars. The break-even inversion the rehearsal report
-                already uses: this box knows what a run has cost it and cannot
-                know what this project's runs will cost. */}
-            {(() => {
-              // Both lanes. The inbox ceiling is a SEPARATE additive allowance,
-              // so a Live project's real ceiling is 190 runs a day and not 150
-              // — counting only the work lane understated this by a quarter.
-              const work = Number(tempoKnobs.runs_per_project_per_day ?? 0);
-              const perDay = work + Number(tempoKnobs.inbox_runs_per_project_per_day ?? 0);
-              if (!perDay) return null;
-              const seen = status?.avg_usd_per_run;
-              return seen
-                ? `At ${perDay} runs a day — ${work} of work plus ${perDay - work} of `
-                  + `reading — and the $${seen.toFixed(2)} a run this install has `
-                  + `averaged, that is up to $${Math.round(perDay * 30 * seen)
-                    .toLocaleString()} a month — a ceiling, not a forecast.`
-                : `That is a ceiling of ${(perDay * 30).toLocaleString()} runs a month, `
-                  + `${work * 30} of work and ${(perDay - work) * 30} of reading. This `
-                  + "install has never priced a run, so there is nothing to turn that "
-                  + "into money with yet.";
-            })()}
-          </p>
+          <Cards label="How often should it think?" value={tempo}
+            onPick={(value) => applyTempoPreset(value)}
+            options={tempoPresets.map((p) => ({ value: p.value, label: p.label, headline: p.headline }))} />
+          {(() => {
+            // Runs, not dollars. The break-even inversion the rehearsal report
+            // already uses: this box knows what a run has cost it and cannot
+            // know what this project's runs will cost. Both lanes count — the
+            // inbox ceiling is a SEPARATE additive allowance, so a Live
+            // project's real ceiling is 190 runs a day and not 150.
+            const work = Number(tempoKnobs.runs_per_project_per_day ?? 0);
+            const perDay = work + Number(tempoKnobs.inbox_runs_per_project_per_day ?? 0);
+            const seen = status?.avg_usd_per_run;
+            const shape = MODES.find((m) => m.value === mode)?.label ?? mode;
+            return <>
+              {(!tempoTouched || (perDay > 0 && seen)) && <p className="np-line">
+                {!tempoTouched && `Picked to suit ${shape}. `}
+                {perDay > 0 && seen
+                  ? `At this install's average run, up to $${Math.round(perDay * 30 * seen)
+                      .toLocaleString()} a month.` : ""}
+              </p>}
+              <Compare cards={tempoPresets}>
+                <p>{tempoTouched
+                  ? "Thirteen rules — the daily and hourly run ceilings, how often each agent "
+                    + "may wake, whether agents buy a run just to read each other's messages, "
+                    + "how often the CEO plans, and how far ahead work may be scheduled."
+                  : `Pre-selected from the shape you picked on the first step (${shape}). Change `
+                    + "it here if that is wrong — it is thirteen rules, and every one of them is "
+                    + "editable later in Settings → Rules in force."}</p>
+                {perDay > 0 && <p>{seen
+                  ? `At ${perDay} runs a day — ${work} of work plus ${perDay - work} of `
+                    + `reading — and the $${seen.toFixed(2)} a run this install has `
+                    + `averaged, that is up to $${Math.round(perDay * 30 * seen)
+                      .toLocaleString()} a month — a ceiling, not a forecast.`
+                  : `That is a ceiling of ${(perDay * 30).toLocaleString()} runs a month, `
+                    + `${work * 30} of work and ${(perDay - work) * 30} of reading. This `
+                    + "install has never priced a run, so there is nothing to turn that "
+                    + "into money with yet."}</p>}
+              </Compare>
+            </>;
+          })()}
         </div>
         <div className="card" style={{ marginBottom: 10 }}>
           <label className="field">How good does it have to be, and what may it spend?</label>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-            gap: 10, marginTop: 6 }}>
-            {barPresets.map((p) => (
-              <button key={p.value} type="button"
-                onClick={() => applyBarPreset(p.value)}
-                className="textblock"
-                style={{
-                  font: "inherit", textAlign: "left", cursor: "pointer",
-                  background: barPreset === p.value ? "rgba(var(--accent-rgb), 0.09)" : "var(--surface)",
-                  border: barPreset === p.value
-                    ? "1px solid var(--accent)" : "1px solid var(--border)",
-                  borderRadius: 8, padding: "12px 14px",
-                }}>
-                <div style={{ fontWeight: 650, fontSize: 15, color: "var(--ink)" }}>
-                  {barPreset === p.value ? "◉" : "○"} {p.label}
-                </div>
-                <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 6 }}>{p.blurb}</div>
-              </button>
-            ))}
-          </div>
-          {needsReviewSeat && (
-            <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8,
-              border: "1px solid var(--warning)",
-              background: "rgba(var(--warning-rgb), 0.09)", fontSize: 13 }}>
-              This preset asks for the work to be read by somebody who did not write it,
-              and no team on your roster does that — so the only reader of a deliverable
-              before you would be the agent that wrote it.
-              {reviewRoles.length > 0 && " Create will hire a reviewer for you unless you choose otherwise."}
-              {reviewRoles.length ? (
-                <>
-                  {" "}
-                  <button type="button" className="small" onClick={addReviewTeam}
-                    style={{ marginTop: 8 }}>
-                    add a Review team ({(reviewRoles.find((r) => r.slug === "editor")
-                      ?? reviewRoles[0]).name})
-                  </button>
-                </>
-              ) : (
-                " This install has no reviewing role installed, so there is nobody to "
-                + "hire — seed the role library, or turn the read off here."
-              )}
-              {" "}
-              <button type="button" className="small" style={{ marginTop: 8 }}
-                onClick={() => setCraft((prev) => ({ ...prev, deliverable_review: "none" }))}>
-                turn the read off for this project
-              </button>
-              {/* The escape has to be IN the form. The card sets this rule and
-                  the form renders no field for it, so the only way out of the
-                  refusal used to be editing the constitution after creating a
-                  project the server would not create. */}
-            </div>
+          <Cards label="How good does it have to be, and what may it spend?" value={barPreset}
+            onPick={(value) => applyBarPreset(value)}
+            options={barPresets.map((p) => ({ value: p.value, label: p.label, line: lead(p.blurb) }))} />
+          {/* On the guided view the roster step is behind you, so its note is
+              not on screen; on one page it is, a screen up, and saying it
+              twice is how a page gets skimmed. */}
+          {!onePage && rolesLoaded && needsReviewSeat && (
+            <p className="np-line">
+              {reviewer
+                ? `Every card adds a reviewer (${reviewerName}) to check the work.`
+                : "Every card needs a role that checks the work, and none is installed."}{" "}
+              <button type="button" className="linkish inline" onClick={skipCheck}>
+                Skip the check</button>
+            </p>
           )}
-          <p className="help" style={{ marginTop: 10 }}>
-            Money, proof and how finished the work has to be. A card fills in the numbers
-            in the Constitution section below; change any of them there, now or later in
-            Settings. Every card has the work read by someone who did not write it, so a
-            review team is added if you have none. <b>Full send</b> also hires the writing
-            and checking seats on the strongest model and allows longer runs.
-          </p>
-          <p className="help" style={{ marginTop: 6 }}>
-            {/* The rehearsal's own argument, reused: do not invent a price, invert
-                the question. This box knows what a run has cost it and cannot know
-                what this project's runs will cost. */}
-            {(() => {
-              if (tokensMode) {
-                return `Metered in tokens against the selected subscription: the cap is ` +
-                  `${monthlyTokenCap.toLocaleString()} tokens a month, and the plan's own session ` +
-                  "and weekly windows apply before it does.";
-              }
-              const perRun = usdCap / Math.max(1, queueCeiling * 8);
-              const seen = status?.avg_usd_per_run;
-              return seen
-                ? `Your $${usdCap.toLocaleString()} cap holds if a run averages under ` +
-                  `$${perRun.toFixed(2)}. Runs on this install have averaged ` +
-                  `$${seen.toFixed(2)}.`
-                : `Your $${usdCap.toLocaleString()} cap holds if a run averages under ` +
-                  `$${perRun.toFixed(2)}. This install has never priced a run, so there ` +
-                  "is nothing to check that against yet.";
-            })()}
-          </p>
+          {(() => {
+            // The rehearsal's own argument, reused: do not invent a price,
+            // invert the question.
+            if (tokensMode) {
+              return <p className="np-line">
+                Capped at {monthlyTokenCap.toLocaleString()} tokens a month, metered against the
+                selected subscription; the plan&apos;s own session and weekly windows apply first.
+              </p>;
+            }
+            const perRun = usdCap / Math.max(1, queueCeiling * 8);
+            const seen = status?.avg_usd_per_run;
+            return <p className="np-line">
+              Your ${usdCap.toLocaleString()} cap holds if a run averages under ${perRun.toFixed(2)}
+              {seen ? `; runs on this install have averaged $${seen.toFixed(2)}.` : "."}
+            </p>;
+          })()}
+          <Compare cards={barPresets}>
+            <p>Money, proof and how finished the work has to be. A card fills in the numbers
+              below; change any of them there, now or later in Settings. Every card has the
+              work read by someone who did not write it, so a review team is added if you have
+              none. <b>Full send</b> also hires the writing and checking seats on the strongest
+              model and allows longer runs.</p>
+            {!tokensMode && !status?.avg_usd_per_run && <p>This install has never priced a
+              run, so there is nothing to check the cap against yet.</p>}
+          </Compare>
         </div>
-        <h2>Constitution (frozen at creation)</h2>
-        <div className="card">
+
+        <details className="card np-more" style={{ marginBottom: 10 }}>
+          <summary>Fine-tune the numbers: budget cap, approvals, reports, time zone, proof</summary>
+          <Why>
+            A card above fills these in. They are rules in the project&apos;s constitution: set
+            here, and changed afterwards by amendment in Settings → Rules in force.
+          </Why>
           <div className="row">
             <div>
               <label className="field">Queue ceiling (open team tasks)</label>
@@ -2028,63 +2150,53 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             </div>
           </div>
             <label className="field">
-              Controlled domains (comma-separated) — evidence from these can never count as external
+              Your own domains, comma-separated
             </label>
             <input
               value={controlledDomains}
               onChange={(e) => setControlledDomains(e.target.value)}
               placeholder="myproject.example, github.com/myorg"
             />
-            <div className="help" style={{ marginTop: 4 }}>
-              Your own website, <code>github:your-account</code>. Agents must prove
-              progress with evidence from outside the project, and anything on a
-              property you control cannot count as outside.
-            </div>
+            <Why>
+              Evidence from these can never count as external: your own website,{" "}
+              <code>github:your-account</code>. Agents must prove progress with evidence from
+              outside the project, and anything on a property you control cannot count as
+              outside.
+            </Why>
           <p className="help">
             {bundle
               ? "Everything else (external-evidence floor, wake caps, memory caps, refusal caps…) " +
                 "comes from the setup file, and every rule is editable later in Settings."
               : "Everything else (external-evidence floor, wake caps, memory caps, refusal caps…) " +
-                "takes the lana-derived defaults, and every rule is editable later in Settings."}
+                "takes its default, and every rule is editable later in Settings."}
           </p>
-        </div>
+        </details>
 
         </>}
 
         {on(4) && <>
         <h2>Review &amp; create</h2>
-        <p className="subtitle">
-          This is the project that will exist. Everything here is still editable —
-          step back, or switch to <strong>All on one page</strong>.
-        </p>
-        <div className="card" style={{ marginBottom: 10 }}>
-          {/* Name and address live here too, not only on step 1: a loaded setup
-              file lands straight on this step, and picking a slug that does not
-              collide is the one thing that user must still do. */}
+        <p className="subtitle">Everything here is still editable.</p>
+        {/* Name and address live here too, not only on step 1: a loaded setup
+            file lands straight on this step, and picking a slug that does not
+            collide is the one thing that user must still do. On one page the
+            first step is a screen up, so this would be the same fields twice. */}
+        {!onePage && <div className="card" style={{ marginBottom: 10 }}>
           <div className="row">
             <div>
-              <label className="field">Name</label>
-              <input value={name} onChange={(e) => {
-                setName(e.target.value);
-                if (!slugEdited && !bundle) setSlug(dedupedSlug(slugify(e.target.value)));
-              }} required />
+              <label className="field" htmlFor="np-name-4">Name</label>
+              <input id="np-name-4" value={name} onChange={(e) => changeName(e.target.value)} />
             </div>
             <div>
-              <label className="field">Address</label>
-              <input value={slug} pattern="[a-z0-9\-]{2,64}" required
-                onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }} />
-              <div className="help" style={{ marginTop: 4 }}>
-                {existingSlugs.includes(slug)
-                  ? "A project already uses this address — pick another."
-                  : "Deduped against your existing projects."}
-              </div>
+              <label className="field" htmlFor="np-slug-4">Address</label>
+              <input id="np-slug-4" value={slug} onChange={(e) => changeSlug(e.target.value)} />
             </div>
           </div>
           <label className="field" style={{ marginTop: 12 }}>Goal</label>
           <div className="help" style={{ whiteSpace: "pre-wrap" }}>
             {goal.trim() || "Nothing written yet — the CEO plans from this and nothing else."}
           </div>
-        </div>
+        </div>}
 
         <div className="card" style={{ marginBottom: 10 }}>
           <div className="orgline">
@@ -2100,11 +2212,9 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 {t.employees.trim() || "the CEO, working alone"}
                 {t.named && " — named for you"}
                 {t.added && <>
-                  {" — added because this preset has the work read by somebody who did "}
-                  {"not write it. "}
-                  <button type="button" className="small"
-                    onClick={() => setCraft((prev) => ({ ...prev, deliverable_review: "none" }))}>
-                    turn the read off instead
+                  {" — added so a second agent checks the work. "}
+                  <button type="button" className="linkish inline" onClick={skipCheck}>
+                    Skip the check instead
                   </button>
                 </>}
               </span>
@@ -2113,7 +2223,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           <div className="orgline">
             <strong>Shape</strong>
             <span className="chip">{MODES.find((m) => m.value === mode)?.label ?? mode}</span>
-            <span className="help">{MODES.find((m) => m.value === mode)?.blurb}</span>
+            <span className="help">cannot be changed after Create</span>
           </div>
           {/* The two questions the summary did not answer: how much it does
               without asking, and who reads the work before you do. */}
@@ -2122,7 +2232,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <span className="chip">
               {autonomyPresets.find((p) => p.value === autonomy)?.label ?? autonomy}</span>
             <span className="help">
-              {clip(autonomyPresets.find((p) => p.value === autonomy)?.blurb ?? "", 160)}</span>
+              {clip(lead(autonomyPresets.find((p) => p.value === autonomy)?.blurb ?? ""), 160)}</span>
           </div>
           <div className="orgline">
             <strong>Checked</strong>
@@ -2216,11 +2326,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         <details className="opt-sec" open={requiredScopes.length > 0 || credentials.length > 0}>
         <summary><h2>Secrets &amp; variables (optional)</h2>
           <span className="help">keys for WordPress, GitHub, Stripe… — or add them later in Settings</span></summary>
-        <p className="subtitle">
+        <Why label="How keys are kept">
           Keys your agents will need for outside services (WordPress, GitHub, Stripe…). Encrypted
           at rest and injected only into the sandboxes of roles you tick — agents are told the
           variable's name, never shown the value. You can also add these later in Settings.
-        </p>
+        </Why>
         {credentials.map((cred, i) => {
           const source = dataSourceUrls.get(cred.name.trim());
           const badUrl = source !== undefined && !!cred.value.trim() && !isFullUrl(cred.value);
@@ -2354,12 +2464,12 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <button type="button" onClick={rehearse} disabled={drilling}>
               {drilling ? "Running the drill…" : "Run a fire drill"}
             </button>
-            <span className="help">
-              Runs this exact spec as a project on scripted agents — no model calls,
-              no money, nothing created. Tells you whether it gets off the ground,
-              how often it will stop and wait for you, and what paces it.
-            </span>
+            <span className="help">No model calls, no money, nothing created.</span>
           </div>
+          <Why label="What it tells you">
+            It runs this exact spec as a project on scripted agents, and tells you whether it
+            gets off the ground, how often it will stop and wait for you, and what paces it.
+          </Why>
           {drillError && <div className="error" style={{ marginTop: 10 }}>{drillError}</div>}
           {drill && <Drill report={drill} />}
         </div>
@@ -2382,6 +2492,10 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           <div className="spacer" />
           {missing.length > 0 && (
             <span className="help serious">Still needed: {missing.join("; ")}.</span>
+          )}
+          {/* The one blocker with a one-click answer that is not on this step. */}
+          {rolesLoaded && needsReviewSeat && !reviewer && (
+            <button type="button" className="small" onClick={skipCheck}>Skip the check</button>
           )}
           <button className="primary" disabled={busy || missing.length > 0}>
             {busy ? "Creating…" : "Create project"}

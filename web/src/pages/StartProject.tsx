@@ -17,6 +17,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { get } from "../api";
+import { Why } from "./NewProject";
 
 /** One card on the new-project form: a named bundle of constitution rules,
     with the words that explain it. Served rather than mirrored — these used to
@@ -60,52 +61,32 @@ export default function StartProject() {
   const keyed = status?.credential_configured ?? false;
   const unknown = !status && !statusFailed;
 
+  // One question, asked the way the chairman would answer it, and two ways to
+  // answer it in a few words each. The trade each side makes — what it costs,
+  // when to pick it, where it ends — is all still here, under "Which one?",
+  // because it is what you read once and not every time you start a project.
   return (
     <>
-      <h1>Start a project</h1>
-      <p className="subtitle">
-        Two ways in, one destination: both end on the same review screen, and
-        nothing exists — or costs anything — until you sign it there.
-      </p>
+      <h1 className="start-q">What do you want to exist?</h1>
+      <p className="subtitle">Nothing is created or charged until you review it.</p>
 
-      <div className="startpick">
+      <div className="startpick np-two">
         <button
           type="button"
           className="startcard rec"
           onClick={() => navigate("/projects/new/describe")}
         >
           <div className="sc-head">
-            <h2>Describe it, and yaaf drafts it</h2>
+            <h2>Describe it</h2>
             {unknown ? null : keyed ? (
               <span className="chip accent">recommended</span>
             ) : (
               <span className="chip warn">needs a key first</span>
             )}
           </div>
-          <p className="sc-lede">
-            Write a paragraph about what you want to exist. The Founder comes
-            back with the whole project — the goal, the shape, who it hires,
-            what it may spend, the rules it runs under — and tells you what it
-            assumed. You argue with it until it is right.
-          </p>
-          <ul className="sc-facts">
-            <li>
-              <b>Choose this if</b> it is your first project, or you know the
-              outcome you want but not the org that gets you there.
-            </li>
-            <li>
-              <b>Costs</b> a few minutes of the Founder's thinking per draft,
-              on the platform key — never a project's budget.
-            </li>
-            <li>
-              <b>Ends</b> on the same form, filled in, where you change anything
-              you like before creating it.
-            </li>
-          </ul>
+          <p className="sc-lede">A paragraph is enough. yaaf drafts the rest.</p>
           <span className="sc-go">
-            {keyed || unknown
-              ? "Describe it →"
-              : "Set up the key, then describe it →"}
+            {keyed || unknown ? "Start writing →" : "Set up the key, then write →"}
           </span>
         </button>
 
@@ -115,48 +96,57 @@ export default function StartProject() {
           onClick={() => navigate("/projects/new/form")}
         >
           <div className="sc-head">
-            <h2>Fill it in myself</h2>
+            <h2>Fill in the form</h2>
           </div>
-          <p className="sc-lede">
-            The form, in four steps: the job, the org, the money and the rules,
-            then review. Defaults everywhere, a fire drill before you commit,
-            and everything on one page whenever you would rather see it all.
-          </p>
-          <ul className="sc-facts">
-            <li>
-              <b>Choose this if</b> you have run a project here before, or you
-              already know the goal and who you want on it.
-            </li>
-            <li>
-              <b>Costs</b> nothing but your time — about ten minutes, most of
-              it on the goal.
-            </li>
-            <li>
-              <b>Ends</b> on review, with the fire drill run for free against
-              what you wrote.
-            </li>
-          </ul>
+          <p className="sc-lede">Four steps, with defaults.</p>
           <span className="sc-go">Open the form &rarr;</span>
         </button>
       </div>
+
+      <Why label="Which one?">
+        <p>Two ways in, one destination: both end on the same review screen, and nothing
+          exists — or costs anything — until you sign it there.</p>
+        <dl>
+          <dt>Describe it</dt>
+          <dd>
+            Write a paragraph about what you want to exist. The Founder comes back with the
+            whole project — the goal, the shape, who it hires, what it may spend, the rules it
+            runs under — and tells you what it assumed. You argue with it until it is right.
+            Choose this if it is your first project, or you know the outcome you want but not
+            the org that gets you there. It costs a few minutes of the Founder&apos;s thinking
+            per draft, on the platform key — never a project&apos;s budget — and ends on the
+            same form, filled in, where you change anything you like before creating it.
+          </dd>
+          <dt>Fill in the form</dt>
+          <dd>
+            The form, in four steps: the job, the org, the money and the rules, then review.
+            Defaults everywhere, a fire drill before you commit, and everything on one page
+            whenever you would rather see it all. Choose this if you have run a project here
+            before, or you already know the goal and who you want on it. It costs nothing but
+            your time — about ten minutes, most of it on the goal — and ends on review, with
+            the fire drill run for free against what you wrote.
+          </dd>
+        </dl>
+      </Why>
 
       {/* A third way in, and a rarer one: it is not a way of *deciding* what
           the project should be, it is a project already decided somewhere
           else. Giving it a card of equal size would have made the real
           question a three-way one. */}
       <p className="startalt">
-        Already have a setup file exported from another project?{" "}
-        <Link to="/projects/new/form?start=file">Load it into the form</Link> —
-        everything prefills and you review it.
+        Have a setup file?{" "}
+        <Link to="/projects/new/form?start=file">Load it into the form</Link>
       </p>
 
       {status && !keyed && (
-        <p className="help startnote">
-          The Founder needs a key, set once — one you already added for
-          projects will do. It pays for drafting and is never handed to a
-          project's agents; every project still pays its own way. You can set
-          it on the way in, or in <Link to="/settings">Settings</Link>.
-        </p>
+        <div className="help startnote">
+          {/* The card already says it needs a key; this only says why. */}
+          <Why label="Why does describing it need a key?">
+            One you already added for projects will do. It pays for drafting and is never
+            handed to a project&apos;s agents; every project still pays its own way. You can set
+            it on the way in, or in <Link to="/settings">Settings</Link>.
+          </Why>
+        </div>
       )}
     </>
   );
