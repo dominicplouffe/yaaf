@@ -4,3 +4,5 @@ web/dist/
 e2e/.auth/
 test-results/
 playwright-report/
+# TypeScript incremental-build cache: `tsc -b` rewrites it on every build
+tsconfig.tsbuildinfo
