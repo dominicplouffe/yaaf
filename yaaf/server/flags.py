@@ -258,6 +258,10 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     for requirement, result, ordinal in _last_cycle_results(session, project):
         if result.status == RequirementStatus.MET:
             continue
+        # Cut is a decision, not a miss: three cut versions of one report each
+        # raised "owed every cycle and closed without it" every week.
+        if RequirementStatus.CUT in (result.status, requirement.status):
+            continue
         # A daily obligation spoke on each day it missed (1b); the week's
         # verdict is in the cycle flag's sentence.
         if standing.is_daily(requirement):
