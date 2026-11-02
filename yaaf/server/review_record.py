@@ -45,7 +45,7 @@ from yaaf.core.models import (
     TaskStatus,
     VerificationStatus,
 )
-from yaaf.server import policy, velocity
+from yaaf.server import policy, scorecard, velocity
 
 #: How much of a statement the record carries. The meeting lists things by
 #: name; the Roadmap holds the whole text.
@@ -254,11 +254,10 @@ def headline(mode: str, numbers: dict, record: dict | None) -> str:
     if mode == ProjectMode.OPERATE:
         cycle = record.get("cycle")
         if cycle:
-            parts.append(
-                f"Cycle {cycle['ordinal']} closed with {cycle.get('met', 0)} of "
-                f"{cycle.get('accepted', 0)} met"
-                + (f", {cycle['carried']} carried forward." if cycle.get("carried")
-                   else "."))
+            # Names what it counts. "0 of 4 met" once headlined a week in which
+            # the one thing owed — a daily report — landed on time every day:
+            # three of the four were cut, and the fourth was never checked.
+            parts.append(f"Cycle {cycle['ordinal']}: {scorecard.sentence(cycle)}")
         else:
             parts.append("No cycle closed this period.")
         honoured = len(record.get("standing_honoured") or [])
@@ -404,9 +403,8 @@ def plan_marks(session: Session, project: Project, prior) -> list[dict]:
                 mark, says = "open", "no cycle has closed since"
             else:
                 mark = cycle.status
-                card = cycle.scorecard or {}
-                says = (f"cycle {cycle.ordinal} closed {cycle.status}, "
-                        f"{card.get('met', 0)} of {card.get('accepted', 0)} met")
+                says = (f"cycle {cycle.ordinal} closed {cycle.status}: "
+                        f"{scorecard.sentence(cycle.scorecard)}")
         elif serves in requirements:
             r = requirements[serves]
             kind = "requirement"

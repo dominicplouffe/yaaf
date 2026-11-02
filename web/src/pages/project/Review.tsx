@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from "react";
 import {
-  Decision, get, PlanMark, post, requirementName, RequirementMeta, ReviewNumbers, ReviewRecord,
+  CycleObligation, Decision, get, PlanMark, post, requirementName, RequirementMeta, ReviewNumbers,
+  ReviewRecord,
   ReviewReport, ReviewRow, ReviewsView,
 } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
@@ -235,6 +236,17 @@ function KeyedList({ rows, how }: {
   );
 }
 
+/** One obligation's verdict in a few words — days, for a daily one. */
+function obligationHow(o: CycleObligation): string {
+  if (o.days_due != null) {
+    if (o.verdict === "unchecked") return `not checked (${o.days_due} days)`;
+    const extra = o.days_unchecked ? `, ${o.days_unchecked} not checked` : "";
+    return `on time ${o.days_met ?? 0} of ${o.days_due} days${extra}`;
+  }
+  return { honoured: "done", missed: "not done", unchecked: "never checked",
+    not_due: "not due yet" }[o.verdict];
+}
+
 /** What was done in the window, by name, before any number. Mode-shaped:
     a Deliver project did requirements; an Operate project did a cycle; an
     Explore project ran bets and collected evidence. */
@@ -282,12 +294,24 @@ function RecordSection({ record, mode }: { record: ReviewRecord | null; mode: st
   } else {
     if (mode === "operate" && record.cycle) {
       const c = record.cycle;
+      // Name every row the number counts. "0 of 4" with nothing under it
+      // was a count the chairman could not look up.
+      const rows = c.standing
+        ? [
+            ...c.standing.filter((o) => o.verdict !== "not_due").map((o) => ({
+              key: o.key, statement: o.name, how: obligationHow(o) })),
+            ...(c.carried_keys ?? []).map((k) => ({
+              key: k, statement: "one-off, still open", how: "carried forward" })),
+          ]
+        : [];
       cells.push(cell(
         `${c.met ?? 0} of ${c.accepted ?? 0}`,
-        `cycle ${c.ordinal} scope met · closed ${c.status}`,
-        (c.carried_keys?.length ?? 0) > 0
-          ? <p className="help" style={{ marginTop: 6 }}>carried: {c.carried_keys!.join(", ")}</p>
-          : null));
+        `cycle ${c.ordinal}: what was owed, done · closed ${c.status}`,
+        rows.length > 0
+          ? <KeyedList rows={rows} how />
+          : (c.carried_keys?.length ?? 0) > 0
+            ? <p className="help" style={{ marginTop: 6 }}>carried: {c.carried_keys!.join(", ")}</p>
+            : null));
     }
     cells.push(cell(
       String(record.requirements_met.length),

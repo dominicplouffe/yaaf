@@ -221,6 +221,16 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
 
     if queued.kind == RunKind.REQUIREMENT_CHECK:
         requirement = session.get(Requirement, queued.requirement_id)
+        # A daily obligation is judged at its deadline, not on the CHECKING
+        # transition: its status stays wherever its work has it (see
+        # `yaaf.server.standing`). Cut means no longer owed.
+        standing = (queued.trigger or {}).get("type") == "standing_check"
+        if requirement is not None and standing \
+                and requirement.status != RequirementStatus.CUT:
+            job.check_command = (requirement.acceptance_test or {}).get("command", "")
+            job.requirement_id = requirement.id
+            job.timeout_s = min(cons.run_timeout_s, 300)
+            return job
         if requirement is None or requirement.status != RequirementStatus.CHECKING:
             run.status = RunStatus.FAILED
             run.summary = "requirement check job with no requirement in checking state"
@@ -1150,6 +1160,9 @@ def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult
     failure load, which is what lets a review say the rate fell because one
     requirement ate fifty runs rather than that the project got slower.
     """
+    if (job.trigger or {}).get("type") == "standing_check":
+        _finalize_standing_check(session, job, result)
+        return
     requirement = session.get(Requirement, job.requirement_id)
     if requirement is None or requirement.status != RequirementStatus.CHECKING:
         return
@@ -1210,6 +1223,40 @@ def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult
         f"{result.check_exit_code}) even though every task under it closed. That gap is "
         f"the thing worth looking at — the work was reported done and the requirement is "
         f"still false.\n\nWhat the test printed:\n{output[:1200]}",
+    )
+
+
+def _finalize_standing_check(session: Session, job: RunJob, result: RunResult) -> None:
+    """One deadline of a daily obligation, judged. A pass is quiet — it is the
+    normal day. A miss tells the CEO at once, with what the test printed: the
+    flag that makes it tell the chairman is opened by the janitor's next pass.
+    A check that died without an exit code is no verdict at all; the janitor
+    re-runs it, and records the day as not checked if it never answers."""
+    from zoneinfo import ZoneInfo
+
+    from yaaf.server import standing
+
+    if result.check_exit_code is None:
+        return
+    check = standing.record(session, (job.trigger or {}).get("standing_check_id", ""),
+                            result.check_exit_code, result.check_output or "", job.run_id)
+    if check is None or check.status != standing.MISSED:
+        return
+    requirement = session.get(Requirement, check.requirement_id)
+    if requirement is None:
+        return
+    try:
+        tz = effective(session, requirement.project_id).timezone
+    except LookupError:
+        tz = "UTC"
+    local = check.due_at.astimezone(ZoneInfo(tz))
+    _notice_ceo_requirement(
+        session, requirement,
+        f"{requirement.key} MISSED its {local:%a %d %b %H:%M} deadline: the platform ran "
+        f"its acceptance test after the deadline and it failed (exit "
+        f"{result.check_exit_code}). This is owed every day; one miss is news the "
+        f"chairman hears from you, with what happened and what you are doing about it."
+        f"\n\nWhat the test printed:\n{(check.check_output or '')[:1200]}",
     )
 
 

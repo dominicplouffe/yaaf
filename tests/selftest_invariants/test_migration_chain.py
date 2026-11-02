@@ -101,10 +101,12 @@ PROVIDERS_COLUMNS = (
 )
 # 0056: a person's sidebar pins, and a project's setup checklist.
 SHORTCUTS_COLUMNS = (("users", "pins"), ("projects", "setup"))
+# 0063: a daily obligation judged at each deadline.
+STANDING_CHECK_TABLES = ("standing_checks",)
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
                   + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES + RUNTIMES_TABLES
-                  + PEOPLE_TABLES + PROVIDERS_TABLES)
+                  + PEOPLE_TABLES + PROVIDERS_TABLES + STANDING_CHECK_TABLES)
 REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
                    + STAGE_10_COLUMNS + RUNTIMES_COLUMNS + PEOPLE_COLUMNS + PROVIDERS_COLUMNS
                    + SHORTCUTS_COLUMNS

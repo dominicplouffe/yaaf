@@ -66,7 +66,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import acting, activity, policy, typing_state
+from yaaf.server import acting, activity, policy, standing, typing_state
 from yaaf.server.contextpack import _speaker
 from yaaf.server.deps import RunContext, db, run_auth
 from yaaf.server.notify import (
@@ -1593,6 +1593,7 @@ def propose_requirement(
             "the project could never satisfy.",
             status_code=422,
         )
+    standing.validate(body.acceptance_test, body.recurrence)
     cycle = policy.current_cycle(session, ctx.project.id)
     requirement = Requirement(
         id=ids.new_id(ids.REQUIREMENT),
@@ -1636,6 +1637,13 @@ def propose_requirement(
            "that closes without it raises a flag — so the pattern is a fact rather "
            "than a claim. It never counts toward delivery pace: an obligation met "
            "on its rhythm is not progress toward an end."
+           + (" Daily: the platform runs its test after every "
+              f"{body.acceptance_test['due_daily_at']} deadline, whatever the work "
+              "queue looks like, and the cycle reports it in days."
+              if standing.is_daily(requirement) else
+              " Owed more often than once a cycle? Add due_daily_at to its test, or "
+              "it is judged only when all its work closes."
+              if body.acceptance_test.get("type") == "command" else "")
            if requirement.recurrence == Recurrence.STANDING else ""),
     }
 

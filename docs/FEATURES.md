@@ -136,6 +136,13 @@ dates are its cycles' (§4).
   the CEO the last three cycles' narratives verbatim. Two consecutive cycles
   with nothing accepted pause the project: a rhythm nobody dances to is a bill,
   not a project.
+- **A standing obligation is owed every cycle; a daily one is judged every
+  day.** A standing command test may name its deadline (`due_daily_at:
+  "08:00"`, local time). After each deadline the platform runs the test itself,
+  whatever work is still open, and records the verdict. The cycle's scorecard
+  then reads "Daily report: on time 6 of 7 days, missed 2026-10-28". A missed
+  morning opens a flag that day. Cut scope leaves the count and stays in the
+  cycle it was cut in.
 - **The status meeting is opened by the janitor with zero tokens**, on
   schedule, regardless of budget or an empty board — because a meeting with
   nothing on the board is the one you most need. Every `review_interval_days`
