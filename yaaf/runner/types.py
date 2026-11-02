@@ -47,7 +47,7 @@ class RunJob:
     # than the whole context pack beside it. Never enforcement: the 403s are
     # unchanged and are still the only thing that decides who may do what.
     agent_kind: str = "ceo"
-    timeout_s: int = 1800
+    timeout_s: int = 5400
     # Hard per-run ceiling handed to the agent SDK. 0 = unbounded.
     max_usd: float = 0.0
     # Constitution run_token_budget: the model is told its token budget so it

@@ -184,7 +184,7 @@ BALANCED_CARD = {
     "queue_ceiling": 8, "drought_hours": 24, "monthly_usd_cap": 1000,
     "approval_threshold_usd": 250, "require_evidence_verification": False,
     "stakes": "normal", "deliverable_review": "independent_read",
-    "max_usd_per_run": 20, "run_timeout_s": 1800,
+    "max_usd_per_run": 20, "run_timeout_s": 5400,
 }
 
 
