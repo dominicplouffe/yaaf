@@ -56,7 +56,7 @@ def _project_on_deepseek(client, credential: str) -> dict:
         assert client.post("/admin/roles", headers=ADMIN, json={
             "slug": slug, "name": slug.title(), **ROLE_MIN, "model": model,
             "is_ceo_role": slug == "chief"}).status_code == 200
-    for model in ("deepseek-chat", "deepseek-reasoner"):
+    for model in ("deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"):
         client.put(f"{PRICES}/{model}", headers=ADMIN, json={"input": 0.3, "output": 0.5})
     created = client.post("/admin/projects", headers=ADMIN, json={
         "slug": "on-deepseek", "name": "On DeepSeek", "goal": "Prove the framework works.",
@@ -79,12 +79,13 @@ def test_a_seat_on_a_model_the_key_no_longer_lists_is_on_the_health_checklist(
     project = _project_on_deepseek(client, credential)
     assert not [k for k in _health(client, project) if k.startswith("model-served:")], \
         "no list read yet: nothing to say"
-    _serves(monkeypatch, "deepseek-chat", "deepseek-v4")
+    # A key never given the frontier model: its seats are named, the rest not.
+    _serves(monkeypatch, "deepseek-v4-flash", "deepseek-v9")
     assert client.get(f"{CREDENTIALS}/{credential}/models", headers=ADMIN).status_code == 200
     health = _health(client, project)
-    retired = health["model-served:deepseek-reasoner"]
-    assert retired["status"] == "warn" and "CEO" in retired["detail"]
-    assert "model-served:deepseek-chat" not in health
+    named = health["model-served:deepseek-v4-pro"]
+    assert named["status"] == "warn" and "CEO" in named["detail"]
+    assert "model-served:deepseek-v4-flash" not in health
     # A list from a month ago says little: it is not held against a seat.
     with db_session() as session:
         row = session.query(PlatformSetting).filter_by(
@@ -119,8 +120,12 @@ def test_an_unlisted_model_that_still_answers_stays_named_but_is_not_called_refu
     tells a chairman something a check just proved false."""
     make_project(client, start=False)
     credential = _deepseek(client)
+    # An install that set its frontier to the retired name, as installs did.
+    assert client.put(f"{MODELS}/lineup", headers=ADMIN, json={
+        "provider": "deepseek", "class": "frontier",
+        "model": "deepseek-reasoner"}).status_code == 200
     project = _project_on_deepseek(client, credential)
-    _serves(monkeypatch, "deepseek-chat", "deepseek-v4")
+    _serves(monkeypatch, "deepseek-v4-flash", "deepseek-v4-pro")
     # A check from before the list says nothing about a name since dropped,
     # and one whose every call was refused is no answer at all.
     _checked(credential, "deepseek-reasoner", ago=timedelta(days=3), answered=True)
@@ -236,7 +241,7 @@ def test_an_unreachable_provider_or_feed_is_recorded_not_raised(client, monkeypa
 def test_the_models_screen_shows_the_evidence_beside_each_choice(client, monkeypatch):
     make_project(client, start=False)
     credential = _deepseek(client)
-    _serves(monkeypatch, "deepseek-chat")
+    _serves(monkeypatch, "deepseek-v4-flash")
     client.get(f"{CREDENTIALS}/{credential}/models", headers=ADMIN)
     deepseek = next(r for r in client.get(MODELS, headers=ADMIN).json()["lineups"]
                     if r["provider"] == "deepseek")

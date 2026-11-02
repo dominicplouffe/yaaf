@@ -100,7 +100,7 @@ def test_regrading_runs_on_the_founders_model_not_a_default_claude(client, monke
     monkeypatch.setattr("yaaf.founder.grade.grade_goal", grade)
     response = client.post(f"/admin/projects/{project['id']}/regrade-goal", headers=ADMIN)
     assert response.status_code == 200, response.text
-    assert graded["model"] == "deepseek-reasoner"
+    assert graded["model"] == "deepseek-v4-pro"
     assert graded["env"] == {"DEEPSEEK_API_KEY": "sk-deepseek-platform"}
 
 

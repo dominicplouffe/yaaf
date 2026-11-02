@@ -554,9 +554,9 @@ def test_a_key_is_enough_where_the_provider_has_a_frontier_model(client):
     installed = client.put(PLATFORM, headers=ADMIN, json={
         "provider": "deepseek", "value": "sk-deepseek-platform"})
     assert installed.status_code == 200, installed.text
-    assert installed.json()["model"] == "deepseek-reasoner"
+    assert installed.json()["model"] == "deepseek-v4-pro"
     shown = client.get("/admin/settings", headers=ADMIN).json()["anthropic"]
-    assert (shown["model"], shown["model_ref"]) == ("deepseek-reasoner", "@frontier")
+    assert (shown["model"], shown["model_ref"]) == ("deepseek-v4-pro", "@frontier")
 
 
 def test_a_provider_with_no_frontier_model_needs_the_founders_model_named(client):

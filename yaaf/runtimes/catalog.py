@@ -113,10 +113,21 @@ MODELS: tuple[Model, ...] = (
           web_tools="20260209"),
     Model("claude-fable-5-1", "anthropic", 6,
           Price(10.00, 50.00, 0.25, 12.50, 20.00, _AS_OF)),
-    # The names DeepSeek's API keeps pointed at its current chat and reasoning
-    # models. Unpriced, for the reason above.
+    # DeepSeek's V4 pair, by the names its API lists. Unpriced, for the
+    # reason above. No effort dial is declared: V4 takes one in thinking mode,
+    # but how a chat-completions call turns thinking on was not checkable
+    # from DeepSeek's own docs, and a dial yaaf sends that does nothing is a
+    # seat run cheaper than it was hired at (R6). Declare one once the
+    # provider check's effort probe passes on it.
+    Model("deepseek-v4-flash", "deepseek", 2, effort=False),
+    Model("deepseek-v4-pro", "deepseek", 3, effort=False),
+    # The names DeepSeek pointed at V4 Flash's two modes, retired 2026-07-24
+    # and since left off its model list. Still catalogued: a seat pinned to
+    # one must still be routed to DeepSeek — an unknown name falls to the
+    # default provider — and named on the health checklist, not billed
+    # elsewhere. Ranked below V4, so a producing seat on one is lifted off it.
     Model("deepseek-chat", "deepseek", 1, effort=False),
-    Model("deepseek-reasoner", "deepseek", 2, effort=False),
+    Model("deepseek-reasoner", "deepseek", 1, effort=False),
     # OpenAI's, as the Codex CLI the sandbox pins (0.162.1) lists them in its
     # own model presets, best last here, with the reasoning efforts each
     # preset declares. Unpriced: OpenAI's list was not reachable to check.
@@ -139,8 +150,8 @@ MODELS: tuple[Model, ...] = (
     Model("gemini-3.8-flash", "google", 3, efforts=("low", "high")),
     Model("gemini-2.5-pro", "google", 4, efforts=("high",)),
     Model("gemini-3.1-pro-preview", "google", 5, efforts=("low", "high")),
-    # The names Mistral keeps pointed at its current model of each size, as
-    # DeepSeek does. Unpriced, for the reason above; no effort dial on the
+    # The names Mistral keeps pointed at its current model of each size.
+    # Unpriced, for the reason above; no effort dial on the
     # chat API.
     Model("mistral-small-latest", "mistral", 1, effort=False),
     Model("mistral-medium-latest", "mistral", 2, effort=False),

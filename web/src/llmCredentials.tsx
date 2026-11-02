@@ -1308,7 +1308,7 @@ export function ModelPrices() {
       <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
         <label className="field">Model<input required value={draft.model} maxLength={128}
           onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-          placeholder="deepseek-chat" /></label>
+          placeholder="deepseek-v4-flash" /></label>
         <div className="price-fields">
           <label className="field">Input $/M<input name="input" required type="number" min={0} step="any"
             value={draft.input} onChange={(e) => setDraft({ ...draft, input: e.target.value })} /></label>

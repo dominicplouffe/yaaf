@@ -378,12 +378,13 @@ def _chat(name: str, label: str, base_url: str, env_var: str, markers: tuple[str
                     console_url=console_url, **extra)
 
 
-#: DeepSeek keeps two names pointed at its current chat and reasoning models.
+#: DeepSeek's V4 pair: Pro is the frontier, Flash the rest. Its old
+#: `deepseek-chat` / `deepseek-reasoner` names were retired 2026-07-24.
 DEEPSEEK = _chat("deepseek", "DeepSeek", "https://api.deepseek.com/v1", "DEEPSEEK_API_KEY",
                  ("authentication fails", "insufficient balance"),
                  "https://platform.deepseek.com/api_keys",
-                 lineup={"frontier": "deepseek-reasoner", "balanced": "deepseek-chat",
-                         "fast": "deepseek-chat"})
+                 lineup={"frontier": "deepseek-v4-pro", "balanced": "deepseek-v4-flash",
+                         "fast": "deepseek-v4-flash"})
 
 #: Hundreds of models from every vendor behind one key: there is no one ladder
 #: to climb, so no lineup ships — an install names one, from its list.
