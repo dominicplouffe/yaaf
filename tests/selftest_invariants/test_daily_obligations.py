@@ -255,3 +255,33 @@ def test_met_since_last_counts_requirements_and_never_the_plan(client):
         row = session.get(Project, project["id"])
         numbers = janitor.review_numbers(session, row, effective(session, row.id), None)
     assert numbers["scope"]["met_since_last_review"] == 1
+
+
+def test_a_cut_obligation_raises_no_missed_flag(client):
+    """The roll used to write a cycle result for cut obligations, and each one
+    raised "owed every cycle and closed without it" — 21 flags in seven weeks
+    for three cut versions of one report."""
+    from yaaf.core.models import RequirementCycleResult, RequirementStatus
+
+    project = operate_project(client, slug="cut-no-flag")
+    token = ceo_token(project)
+    proposed = propose(client, token, statement="Every week, the digest goes out",
+                       test={"type": "command", "command": "python3 check_digest.py --sent"},
+                       recurrence="standing")
+    accept(client, proposed["requirement_id"], project)
+    rid = proposed["requirement_id"]
+    assert client.post(f"/admin/requirements/{rid}/cut", json={"reason": "replaced"},
+                       headers=ADMIN).status_code == 200
+    with db_session() as session:
+        cycle = _open_cycle(session, project["id"])
+        session.add(RequirementCycleResult(
+            id=ids.new_id(ids.REQUIREMENT_RESULT), project_id=project["id"],
+            requirement_id=rid, cycle_id=cycle.id, status=RequirementStatus.CUT))
+        cycle.status = CycleStatus.MISSED
+        cycle.closed_at = utcnow()
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        flags.evaluate(session, row, effective(session, row.id))
+        missed = [f for f in flags.open_flags(session, row.id)
+                  if f.kind == FlagKind.STANDING_MISSED]
+    assert missed == [], [f.summary for f in missed]
