@@ -588,10 +588,12 @@ class ConstitutionDoc(BaseModel):
 
     # Runs
     run_timeout_s: int = _rule(
-        1800, ge=60, group="Runs", label="Run timeout (seconds)",
+        5400, ge=60, group="Runs", label="Run timeout (seconds)",
         help="A run past this is reaped and its task claim released. The CEO's "
              "resident chat session is exempt — it is meant to stay open for "
-             "hours and dies only when its heartbeat stops.")
+             "hours and dies only when its heartbeat stops. It was 30 minutes until "
+             "that line killed 90 runs in one week, most of them a few minutes from "
+             "done; the per-run dollar cap is what stops a run that is looping.")
     run_token_budget: int = _rule(
         0, ge=0, group="Runs", label="Tokens one run may spend",
         help="Handed to the model as a task budget so it paces itself and wraps up "
@@ -800,7 +802,7 @@ BAR_PRESETS: dict[str, dict[str, Any]] = {
         "stakes": "high", "deliverable_review": "independent_read",
         "monthly_usd_cap": 5000.0, "hard_stop_multiple": 3.0,
         "approval_threshold_usd": 1000.0, "max_usd_per_run": 50.0,
-        "run_timeout_s": 3600, "require_evidence_verification": False,
+        "run_timeout_s": 10800, "require_evidence_verification": False,
         "drought_hours": 72,
     },
     "balanced": {
@@ -808,7 +810,7 @@ BAR_PRESETS: dict[str, dict[str, Any]] = {
         "stakes": "normal", "deliverable_review": "independent_read",
         "monthly_usd_cap": 1000.0, "hard_stop_multiple": 3.0,
         "approval_threshold_usd": 250.0, "max_usd_per_run": 20.0,
-        "run_timeout_s": 1800, "require_evidence_verification": False,
+        "run_timeout_s": 5400, "require_evidence_verification": False,
         "drought_hours": 24,
     },
     "frugal": {
@@ -823,7 +825,7 @@ BAR_PRESETS: dict[str, dict[str, Any]] = {
         # written for a card that says "nothing spared".
         "hard_stop_multiple": 2.0,
         "approval_threshold_usd": 50.0, "max_usd_per_run": 20.0,
-        "run_timeout_s": 1800, "require_evidence_verification": False,
+        "run_timeout_s": 5400, "require_evidence_verification": False,
         "drought_hours": 48,
     },
     "show_me_proof": {
@@ -831,7 +833,7 @@ BAR_PRESETS: dict[str, dict[str, Any]] = {
         "stakes": "normal", "deliverable_review": "independent_read",
         "monthly_usd_cap": 1000.0, "hard_stop_multiple": 3.0,
         "approval_threshold_usd": 250.0, "max_usd_per_run": 20.0,
-        "run_timeout_s": 1800, "require_evidence_verification": True,
+        "run_timeout_s": 5400, "require_evidence_verification": True,
         "drought_hours": 24,
     },
 }

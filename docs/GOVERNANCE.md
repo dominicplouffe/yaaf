@@ -299,7 +299,7 @@ for you to confirm; the CEO cannot call it standing without drafting one.
 
 | Rule | Default | What it does |
 |---|---|---|
-| `run_timeout_s` | 1800 | A run past this is reaped and its task claim released. The CEO's resident chat session is exempt — it dies only when its heartbeat stops. |
+| `run_timeout_s` | 5400 | A run past this is reaped and its task claim released. The CEO's resident chat session is exempt — it dies only when its heartbeat stops. It was 1800 until that line killed 90 runs in one week, most a few minutes from done; `max_usd_per_run` is what stops a looping run. |
 | `run_token_budget` | 0 | Handed to the model as a task budget so it paces itself and wraps up before the line instead of being cut off mid-thought. 0 turns it off. |
 
 ---
