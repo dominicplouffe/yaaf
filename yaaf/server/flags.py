@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -75,15 +76,14 @@ def _scoreline(cycle) -> str:
     whether nine of ten requirements landed or none did. The CEO on the desk
     that prompted this re-explained that distinction to its chairman six times
     in five days, by hand, out of its own run allowance. The numbers were always
-    on the row; they were just never in the sentence.
+    on the row; they were just never in the sentence — and the sentence is the
+    scorecard's own, so the flag and the headline cannot disagree.
     """
-    card = cycle.scorecard or {}
-    if not card.get("accepted"):
+    from yaaf.server import scorecard
+
+    if not cycle.scorecard:
         return "."
-    met, accepted = card.get("met", 0), card["accepted"]
-    carried = ", ".join(card.get("carried_keys") or []) or "none"
-    return (f": {met} of {accepted} met, {card.get('carried', 0)} carried forward "
-            f"({carried}).")
+    return ": " + scorecard.sentence(cycle.scorecard)
 
 
 def open_flag(session: Session, project: Project, kind: str, summary: str,
@@ -224,6 +224,24 @@ def _last_cycle_results(session: Session, project: Project):
     return out
 
 
+def _daily_misses(session: Session, project: Project):
+    """Each missed deadline in the open cycle, with its requirement."""
+    from yaaf.core.models import StandingCheck
+    from yaaf.server import standing
+
+    cycle = policy.current_cycle(session, project.id)
+    if cycle is None:
+        return []
+    return list(session.execute(
+        select(StandingCheck, Requirement)
+        .join(Requirement, Requirement.id == StandingCheck.requirement_id)
+        .where(StandingCheck.project_id == project.id,
+               StandingCheck.cycle_id == cycle.id,
+               StandingCheck.status == standing.MISSED,
+               Requirement.status != RequirementStatus.CUT)
+    ).all())
+
+
 def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     """Recompute every trip condition. Returns how many flags were opened."""
     from yaaf.server.capacity import capacity_forecast
@@ -235,8 +253,14 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     #    There is no "blocked" status to read: what makes this knowable is the
     #    per-cycle record, which is the whole reason it exists. A memo owed 38
     #    times and shipped once used to be one row reading MET.
+    from yaaf.server import standing
+
     for requirement, result, ordinal in _last_cycle_results(session, project):
         if result.status == RequirementStatus.MET:
+            continue
+        # A daily obligation spoke on each day it missed (1b); the week's
+        # verdict is in the cycle flag's sentence.
+        if standing.is_daily(requirement):
             continue
         if open_flag(
             session, project, FlagKind.STANDING_MISSED,
@@ -248,6 +272,23 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
                         "failure_load": requirement.failure_load,
                         "check_output": (result.check_output or "")[:1000]},
             subject_id=result.id,
+        ):
+            opened += 1
+
+    # 1b. A daily obligation that missed a deadline in the open cycle. The
+    #     per-cycle row above arrives a week late for a report owed every
+    #     morning; this is the same news on the day it happens.
+    for check, requirement in _daily_misses(session, project):
+        if open_flag(
+            session, project, FlagKind.STANDING_MISSED,
+            f"{requirement.key} is owed every day and missed its deadline of "
+            f"{check.due_at.astimezone(ZoneInfo(cons.timezone)):%a %d %b %H:%M %Z}: "
+            f"{requirement.statement[:300]}",
+            arithmetic={"requirement": requirement.key,
+                        "due_at": check.due_at.isoformat(),
+                        "exit_code": check.exit_code,
+                        "check_output": (check.check_output or "")[:1000]},
+            subject_id=check.id,
         ):
             opened += 1
 

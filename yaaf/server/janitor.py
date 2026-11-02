@@ -82,7 +82,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import asks as ask_lib
-from yaaf.server import briefing, metrics, plain, policy, staffing
+from yaaf.server import briefing, metrics, plain, policy, scorecard, staffing, standing
 from yaaf.server.notify import (
     Attention,
     boardroom_line,
@@ -193,6 +193,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     stand_down_due_teams(session, project)
     check_plan(session, project, cons)
     check_finished_requirements(session, project, cons)
+    judge_standing(session, project, cons)
     check_stalled_requirements(session, project)
     nag_observable_requirements(session, project, cons)
     nag_awaiting_chairman(session, project, cons)
@@ -768,6 +769,11 @@ def check_finished_requirements(session: Session, project: Project,
         # one thing a measured number never needs. See `settle_metrics`.
         if metrics.is_metric(requirement.acceptance_test):
             continue
+        # A daily obligation is judged at each deadline, by `judge_standing`.
+        # Its work never all closes — tomorrow's run is always queued — and a
+        # pass here would mark it MET, which refuses tomorrow's work.
+        if standing.is_daily(requirement):
+            continue
         tasks = session.execute(
             select(Task).where(Task.requirement_id == requirement.id)
         ).scalars().all()
@@ -835,6 +841,22 @@ def check_finished_requirements(session: Session, project: Project,
     if moved:
         notify(session, "yaaf_run_queue", project.id)
     return moved
+
+
+def judge_standing(session: Session, project: Project, cons: ConstitutionDoc) -> int:
+    """Run each daily obligation's acceptance test after its deadline passes.
+
+    Here and not on work closing, for the reason `yaaf.server.standing` gives:
+    a report owed every morning always has tomorrow's run open, so the trigger
+    every other requirement uses never fires for it.
+    """
+    if project.mode != ProjectMode.OPERATE:
+        return 0
+    queued = standing.judge_due(session, project.id,
+                                policy.current_cycle(session, project.id), cons.timezone)
+    if queued:
+        notify(session, "yaaf_run_queue", project.id)
+    return queued
 
 
 # ── the Operate rhythm: cycles roll here, and the learning loop rides them ──────
@@ -934,10 +956,19 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
         return
 
     scope = policy.scope_requirements(session, project.id)  # the open cycle's
-    accepted = [r for r in scope if r.status != RequirementStatus.PROPOSED]
-    unsettled = [r for r in accepted
-                 if r.status not in policy.CLOSED_REQUIREMENT_STATUSES]
-    met = [r for r in accepted if r.status == RequirementStatus.MET]
+    card = scorecard.build(session, cycle, scope, cons.timezone, now)
+    # What is in force: cut scope was decided, not missed, and is not in the
+    # denominator. Three cut versions of one daily report rode along in it for
+    # seven cycles, so "0 of 4" was really one obligation, never checked.
+    accepted = [r for r in scope
+                if r.status not in (RequirementStatus.PROPOSED, RequirementStatus.CUT)]
+    met_keys = set(card["met_keys"])
+    met = [r for r in accepted if r.key in met_keys]
+    # Not made true this cycle: one-off scope still open (carried forward), and
+    # standing obligations not honoured (owed again next cycle regardless). A
+    # daily obligation accepted after the cycle's last deadline is neither.
+    short = set(card["carried_keys"]) | set(card["missed_keys"])
+    unsettled = [r for r in accepted if r.key in short]
 
     if unsettled:
         cycle.status = CycleStatus.MISSED
@@ -949,22 +980,14 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
     # made nine of ten things true and one that made none is invisible in all
     # three. Kept here so the flag, the brief and the chairman all read the same
     # numbers, and so nobody has to reconstruct them by hand a week later.
-    cycle.scorecard = {
-        "accepted": len(accepted),
-        "met": len(met),
-        "carried": len(unsettled),
-        "met_keys": [r.key for r in met],
-        "carried_keys": [r.key for r in unsettled],
-    }
+    cycle.scorecard = card
     cycle.closed_at = now
     if not cycle.narrative:
         # No review wrote one this cycle; the platform leaves an honest stub
         # so the next cycle's pack never carries a silent gap.
         cycle.narrative = (
-            f"Cycle {cycle.ordinal} closed {cycle.status}: "
-            f"{len(met)} met" + (f" ({', '.join(r.key for r in met)})" if met else "")
-            + f", {len(unsettled)} carried forward. No review narrative was "
-              "written this cycle."
+            f"Cycle {cycle.ordinal} closed {cycle.status}: {scorecard.sentence(card)} "
+            "No review narrative was written this cycle."
         )
 
     chairman_notify(
@@ -1011,27 +1034,39 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
     # starts again. Without this an Operate project that owes the same thing
     # every week had one row, met once, and looked finished after the first —
     # while the platform had no way to check the other thirty-seven.
-    standing = [r for r in accepted if r.recurrence == Recurrence.STANDING]
-    for requirement in standing:
+    # `accepted` already leaves cut ones out: an obligation the chairman cut
+    # is not owed next cycle, and is not carried there to be counted again.
+    obligations = [r for r in accepted if r.recurrence == Recurrence.STANDING]
+    days = {row["key"]: row for row in card["standing"]}
+    for requirement in obligations:
+        daily = days.get(requirement.key, {})
+        honoured = requirement.key in met_keys
         session.add(RequirementCycleResult(
             id=ids.new_id(ids.REQUIREMENT_RESULT),
             project_id=project.id,
             requirement_id=requirement.id,
             cycle_id=cycle.id,
-            status=requirement.status,
+            # A daily obligation's own status is its work, not its verdict.
+            status=(RequirementStatus.MET if honoured
+                    else RequirementStatus.IN_PROGRESS
+                    if requirement.status == RequirementStatus.MET
+                    else requirement.status),
             met_at=requirement.met_at,
             met_by_run_id=requirement.met_by_run_id,
-            check_output=(requirement.check_output or "")[:4000] or None,
+            check_output=(scorecard.sentence({"standing": [daily]})
+                          if "days_due" in daily
+                          else (requirement.check_output or "")[:4000] or None),
         ))
 
     new = _open_cycle(session, project, cycle.ordinal + 1)
-    carried = unsettled + [r for r in scope if r.status == RequirementStatus.PROPOSED]
+    carried = [r for r in unsettled if r.recurrence != Recurrence.STANDING] + [
+        r for r in scope if r.status == RequirementStatus.PROPOSED]
     for requirement in carried:
         requirement.cycle_id = new.id
 
     # Reopened, not re-proposed: the chairman accepted this obligation once and
     # it stays accepted. What resets is whether it has been honoured THIS turn.
-    for requirement in standing:
+    for requirement in obligations:
         requirement.cycle_id = new.id
         if requirement.status == RequirementStatus.MET:
             requirement.status = RequirementStatus.PENDING
@@ -1054,9 +1089,7 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
 
     _notice_ceo(
         session, project, NoticeKind.CYCLE_ROLLED,
-        f"Cycle {cycle.ordinal} closed {cycle.status.upper()} "
-        f"({len(met)} met, {len(unsettled)} carried forward"
-        + (f": {', '.join(r.key for r in unsettled)}" if unsettled else "") + "). "
+        f"Cycle {cycle.ordinal} closed {cycle.status.upper()}: {scorecard.sentence(card)} "
         f"Cycle {new.ordinal} is open. Your FIRST act: read the last three cycles' "
         "narratives in your pack, then plan — R-00 reopened, and no work may be "
         "created until the new cycle's plan holds. A lesson still true several "

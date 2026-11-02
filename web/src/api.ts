@@ -1763,6 +1763,21 @@ export interface ReviewThread {
 
 
 
+/** One standing obligation on a closed cycle's scorecard. A daily one is
+    judged at each deadline and carries the days. */
+export interface CycleObligation {
+  key: string;
+  name: string;
+  title: string | null;
+  verdict: "honoured" | "missed" | "unchecked" | "not_due";
+  due_daily_at?: string;
+  days_due?: number;
+  days_met?: number;
+  days_missed?: number;
+  days_unchecked?: number;
+  missed_days?: string[];
+}
+
 /** What was done in the meeting's window, from the record — composed by the
     janitor at open and frozen beside the numbers. Null on meetings opened
     before it existed. */
@@ -1778,7 +1793,10 @@ export interface ReviewRecord {
   tasks_closed: number;
   runs: { total: number; dead: number; usd: number };
   cycle: { ordinal: number; status: string; goal: string | null; accepted?: number;
-    met?: number; carried?: number; met_keys?: string[]; carried_keys?: string[] } | null;
+    met?: number; carried?: number; met_keys?: string[]; carried_keys?: string[];
+    missed_keys?: string[]; cut_keys?: string[];
+    /** Absent on cycles closed before the scorecard named its rows. */
+    standing?: CycleObligation[] } | null;
   bets: Record<"alive" | "added" | "killed" | "expired",
     { id: string; statement: string; kill_date: string; status: string }[]>;
   evidence: { verified: number; failed: number; pending: number };

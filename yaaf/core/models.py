@@ -1482,6 +1482,48 @@ class RequirementCycleResult(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
+class StandingCheck(Base):
+    """One daily obligation, judged by the platform at one deadline.
+
+    A standing requirement is owed every cycle, and `RequirementCycleResult`
+    records each cycle's verdict. That is the right grain for a weekly memo and
+    the wrong one for a report owed every morning inside a weekly cycle: the
+    only check such a requirement ever got was the one that fires when all its
+    work closes, and a daily pipeline always has tomorrow's run queued — so it
+    never closed, never ran, and seven straight cycles closed "0 of 4 met"
+    while the report landed every single day.
+
+    So a standing command test may carry `due_daily_at` ("08:00", in the
+    constitution's timezone). The janitor runs the acceptance test after each
+    deadline, whatever the work queue looks like, and writes one of these. The
+    cycle's verdict is then a count of days, not a reading of a status column.
+    Written only by the platform, like `met_at`.
+    """
+
+    __tablename__ = "standing_checks"
+    __table_args__ = (
+        UniqueConstraint("requirement_id", "due_at"),
+        Index("ix_standing_checks_project_cycle", "project_id", "cycle_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
+    cycle_id: Mapped[str] = mapped_column(String(40))
+    # The deadline this verdict is about, in UTC.
+    due_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    # pending (queued, no verdict yet), met, or missed.
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    run_id: Mapped[str | None] = mapped_column(String(40))
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    exit_code: Mapped[int | None] = mapped_column(Integer)
+    check_output: Mapped[str | None] = mapped_column(Text)
+    judged_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow,
+                                                 onupdate=utcnow)
+
+
 class Measurement(Base):
     """One reading of one metric, at one moment.
 
