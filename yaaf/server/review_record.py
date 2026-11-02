@@ -248,6 +248,7 @@ def headline(mode: str, numbers: dict, record: dict | None) -> str:
     screen, the reader tool and the opening mail cannot say three things."""
     parts: list[str] = []
     numbers = numbers or {}
+    kept = record is not None
     record = record or {}
     scope = numbers.get("scope") or {}
 
@@ -258,8 +259,10 @@ def headline(mode: str, numbers: dict, record: dict | None) -> str:
             # the one thing owed — a daily report — landed on time every day:
             # three of the four were cut, and the fourth was never checked.
             parts.append(f"Cycle {cycle['ordinal']}: {scorecard.sentence(cycle)}")
-        else:
+        elif kept:
             parts.append("No cycle closed this period.")
+        # A meeting opened before the record existed says nothing about cycles:
+        # "No cycle closed" headlined three meetings during which seven did.
         honoured = len(record.get("standing_honoured") or [])
         if honoured:
             parts.append(f"{honoured} standing {_plural(honoured, 'obligation')} honoured.")

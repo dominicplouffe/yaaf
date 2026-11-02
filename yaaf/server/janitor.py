@@ -1423,11 +1423,16 @@ def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
         select(AuditSample).where(AuditSample.project_id == project.id,
                                   AuditSample.drawn_at >= since)
     ).scalars().all()
+    # Requirements, not events, and never R-00: the plan re-closes itself at
+    # every Operate roll, which put "Met since last: 1" over "0 met".
     met_since = session.execute(
-        select(func.count(RequirementEvent.id)).where(
+        select(func.count(func.distinct(RequirementEvent.requirement_id)))
+        .join(Requirement, Requirement.id == RequirementEvent.requirement_id)
+        .where(
             RequirementEvent.project_id == project.id,
             RequirementEvent.to_status == RequirementStatus.MET,
             RequirementEvent.at >= since,
+            Requirement.key != policy.PLAN_KEY,
         )
     ).scalar_one()
 

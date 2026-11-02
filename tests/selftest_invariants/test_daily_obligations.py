@@ -225,3 +225,33 @@ def test_deadlines_follow_the_local_clock_across_a_clock_change():
                              datetime(2026, 10, 31, 0, tzinfo=UTC),
                              datetime(2026, 11, 2, 23, tzinfo=UTC))
     assert [d.hour for d in due] == [12, 13, 13]
+
+
+def test_a_meeting_from_before_the_record_does_not_say_no_cycle_closed():
+    """Three meetings opened before records existed headlined "No cycle closed
+    this period" while seven cycles closed under them."""
+    line = review_record.headline("operate", {}, None)
+    assert "No cycle closed" not in line, line
+    assert "No cycle closed" in review_record.headline("operate", {}, {"cycle": None})
+
+
+def test_met_since_last_counts_requirements_and_never_the_plan(client):
+    """R-00 re-closes itself at every Operate roll; it put "Met since last: 1"
+    over "0 met" on a week where nothing was met."""
+    from yaaf.core.models import RequirementEvent, RequirementStatus
+    from yaaf.server import janitor
+
+    project = operate_project(client, slug="met-since-plan")
+    rid, _ = _daily(client, project)
+    with db_session() as session:
+        plan = session.execute(select(Requirement).where(
+            Requirement.project_id == project["id"], Requirement.key == "R-00")).scalar_one()
+        for requirement_id in (plan.id, plan.id, rid, rid):
+            session.add(RequirementEvent(
+                id=ids.new_id(ids.REQUIREMENT_EVENT), project_id=project["id"],
+                requirement_id=requirement_id, from_status=RequirementStatus.CHECKING,
+                to_status=RequirementStatus.MET, actor="platform"))
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        numbers = janitor.review_numbers(session, row, effective(session, row.id), None)
+    assert numbers["scope"]["met_since_last_review"] == 1

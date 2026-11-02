@@ -304,9 +304,18 @@ function RecordSection({ record, mode }: { record: ReviewRecord | null; mode: st
               key: k, statement: "one-off, still open", how: "carried forward" })),
           ]
         : [];
+      // "closed missed" over a week the platform never once checked accused
+      // a report that had landed every day. Say which it was.
+      const shortfall = c.standing?.filter((o) => o.verdict === "missed" || o.verdict === "unchecked") ?? [];
+      const closed = c.status === "missed" && shortfall.length > 0
+        && shortfall.every((o) => o.verdict === "unchecked") && (c.carried_keys?.length ?? 0) === 0
+        ? "closed without being checked"
+        : ({ completed: "closed, all done", missed: "closed short",
+             skipped: "closed with nothing owed" } as Record<string, string>)[c.status ?? ""]
+          ?? `closed ${c.status}`;
       cells.push(cell(
         `${c.met ?? 0} of ${c.accepted ?? 0}`,
-        `cycle ${c.ordinal}: what was owed, done · closed ${c.status}`,
+        `cycle ${c.ordinal}: what was owed, done · ${closed}`,
         rows.length > 0
           ? <KeyedList rows={rows} how />
           : (c.carried_keys?.length ?? 0) > 0
