@@ -423,11 +423,12 @@ class ConstitutionDoc(BaseModel):
         help="Two agents talking this many times in one thread with nothing landing are "
              "talking, not working; the thread freezes.")
     max_usd_per_run: float = _rule(
-        2.0, ge=0, group="Wake-loop brakes", label="Most one run may spend",
+        20.0, ge=0, group="Wake-loop brakes", label="Most one run may spend",
         help="USD. A single run that spends this much has stopped working and started "
              "looping; it is told as it approaches and stopped at the line. 0 turns it "
              "off. One task once cost $8.05 across 53 runs, and nothing bounded any of "
-             "them individually.")
+             "them individually. It was $2 until that line killed 1,224 working runs: "
+             "an ordinary run is cents, a big healthy one about $13.")
     refusal_cap_per_run: int = _rule(
         5, ge=1, group="Wake-loop brakes", label="Refusals a run may hit",
         help="Past this the run's token is revoked. Rephrasing a refused request is not a "
@@ -798,7 +799,7 @@ BAR_PRESETS: dict[str, dict[str, Any]] = {
         "chairman_report_interval_hours": 1.0,
         "stakes": "high", "deliverable_review": "independent_read",
         "monthly_usd_cap": 5000.0, "hard_stop_multiple": 3.0,
-        "approval_threshold_usd": 1000.0, "max_usd_per_run": 8.0,
+        "approval_threshold_usd": 1000.0, "max_usd_per_run": 50.0,
         "run_timeout_s": 3600, "require_evidence_verification": False,
         "drought_hours": 72,
     },
@@ -806,7 +807,7 @@ BAR_PRESETS: dict[str, dict[str, Any]] = {
         "chairman_report_interval_hours": 1.0,
         "stakes": "normal", "deliverable_review": "independent_read",
         "monthly_usd_cap": 1000.0, "hard_stop_multiple": 3.0,
-        "approval_threshold_usd": 250.0, "max_usd_per_run": 2.0,
+        "approval_threshold_usd": 250.0, "max_usd_per_run": 20.0,
         "run_timeout_s": 1800, "require_evidence_verification": False,
         "drought_hours": 24,
     },
@@ -821,7 +822,7 @@ BAR_PRESETS: dict[str, dict[str, Any]] = {
         # arithmetic. A card that says "cheap" should not inherit a wall
         # written for a card that says "nothing spared".
         "hard_stop_multiple": 2.0,
-        "approval_threshold_usd": 50.0, "max_usd_per_run": 2.0,
+        "approval_threshold_usd": 50.0, "max_usd_per_run": 20.0,
         "run_timeout_s": 1800, "require_evidence_verification": False,
         "drought_hours": 48,
     },
@@ -829,7 +830,7 @@ BAR_PRESETS: dict[str, dict[str, Any]] = {
         "chairman_report_interval_hours": 1.0,
         "stakes": "normal", "deliverable_review": "independent_read",
         "monthly_usd_cap": 1000.0, "hard_stop_multiple": 3.0,
-        "approval_threshold_usd": 250.0, "max_usd_per_run": 2.0,
+        "approval_threshold_usd": 250.0, "max_usd_per_run": 20.0,
         "run_timeout_s": 1800, "require_evidence_verification": True,
         "drought_hours": 24,
     },
