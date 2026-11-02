@@ -1511,7 +1511,9 @@ export interface ProjectBundle {
     teams: {
       role_slug: string;
       name: string;
-      employees: string[];
+      /** Optional on the wire: TeamSpec defaults it to [], so a Founder draft
+          or a hand-written file may leave it out. Read it with `?? []`. */
+      employees?: string[];
       lead: string | null;
       /** "HH:MM" daily wakes, keyed by employee name. */
       schedules?: Record<string, string>;

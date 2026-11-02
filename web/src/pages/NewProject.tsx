@@ -868,7 +868,7 @@ export default function NewProject() {
           ? p.teams.map((t) => ({
               role_slug: t.role_slug,
               name: t.name,
-              employees: t.employees.join(", "),
+              employees: (t.employees ?? []).join(", "),
               lead: t.lead ?? "",
             }))
           : [{ role_slug: "", name: "", employees: "", lead: "" }],
