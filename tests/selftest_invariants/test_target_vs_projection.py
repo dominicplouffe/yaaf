@@ -190,3 +190,18 @@ def test_the_founder_prompt_states_the_measured_pace():
     assert "under a day" in prompt
     assert "127" in prompt, "the measured record, not an adjective"
     assert "do not write a date at all" in prompt
+
+
+def test_a_draft_team_always_names_its_employees():
+    """TeamSpec lets a team leave `employees` out, but the review screen reads
+    it on every team. A Founder draft without it crashed the form with
+    "Cannot read properties of undefined (reading 'join')" and left no roles
+    picked — so the draft spells it out, the way an export does."""
+    from yaaf.founder.tools import as_bundle
+
+    bundle = as_bundle({"slug": "x", "name": "X", "goal": "g", "teams": [
+        {"role_slug": "engineer", "name": "Engineering"},
+        {"role_slug": "qa", "name": "QA", "employees": ["Ana"]},
+    ]})
+
+    assert [t["employees"] for t in bundle["project"]["teams"]] == [[], ["Ana"]]

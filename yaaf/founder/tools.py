@@ -577,6 +577,15 @@ def as_bundle(project: dict) -> dict:
     validation — it fails later, in the browser, reading a field that is not
     there.
     """
+    # A team may leave `employees` out — TeamSpec defaults it to [] — but the
+    # review screen reads it on every team, and a draft without it crashed the
+    # form halfway through filling, leaving no roles picked. Spelled out here so
+    # the draft is the shape an export is.
+    teams = project.get("teams")
+    if isinstance(teams, list):
+        project = {**project, "teams": [
+            {**t, "employees": t.get("employees") or []} if isinstance(t, dict) else t
+            for t in teams]}
     return {
         "yaaf_bundle": 1,
         "kind": "project_setup",
