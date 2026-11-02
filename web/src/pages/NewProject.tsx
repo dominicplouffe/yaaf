@@ -371,7 +371,7 @@ export default function NewProject() {
   // edited in Settings → Rules in force afterwards.
   const [craft, setCraft] = useState<Record<string, unknown>>({
     stakes: "normal", deliverable_review: "independent_read",
-    max_usd_per_run: 2, run_timeout_s: 1800, hard_stop_multiple: 3,
+    max_usd_per_run: 20, run_timeout_s: 1800, hard_stop_multiple: 3,
   });
   // How often the project thinks. Thirteen rules, none of which has ever had a
   // form field, so the whole bundle rides the card exactly as the craft half
