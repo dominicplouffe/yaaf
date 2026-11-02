@@ -51,11 +51,11 @@ def test_every_gap_is_named_with_its_fix_and_agrees_with_the_doors(client):
     assert deepseek["ready"] is False
     assert issues["unpriced"]["severity"] == "block"
     assert issues["unpriced"]["fix"] == {"action": "import_prices",
-                                         "models": ["deepseek-reasoner", "deepseek-chat"]}
+                                         "models": ["deepseek-v4-pro", "deepseek-v4-flash"]}
     assert issues["no_search"]["fix"] == {"action": "web_search"}
     assert "1 of the 2 roles" in issues["no_search"]["text"]
     assert [t["model"] for t in deepseek["tiers"]] == [
-        "deepseek-reasoner", "deepseek-chat", "deepseek-chat"]
+        "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash"]
     # Named here is refused there, for the same reasons: this project's CEO
     # browses, so the missing search refuses it before the missing price does.
     refused = _create(client, credential)

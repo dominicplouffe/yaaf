@@ -198,8 +198,8 @@ def test_a_fallback_metered_in_another_unit_is_accepted(world):
 
 def test_a_fallback_whose_seats_could_not_run_there_is_refused_at_the_door(world):
     deepseek = _credential(world["client"], "DeepSeek", "deepseek", "sk-deepseek-failover")
-    world["client"].delete("/admin/settings/model-prices/deepseek-reasoner", headers=ADMIN)
-    world["client"].delete("/admin/settings/model-prices/deepseek-chat", headers=ADMIN)
+    world["client"].delete("/admin/settings/model-prices/deepseek-v4-pro", headers=ADMIN)
+    world["client"].delete("/admin/settings/model-prices/deepseek-v4-flash", headers=ADMIN)
     refused = _fallback(world, deepseek)
     assert refused.status_code == 422, refused.text
     assert "cannot be this project's fallback: on DeepSeek" in refused.text

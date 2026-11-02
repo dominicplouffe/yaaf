@@ -1093,13 +1093,26 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     paying = {name: secret.id for name, secret in project_credentials.held(session, project).items()}
     for model, found in model_upkeep.not_served(session, sorted(resolved), paying).items():
         names = resolved[model]
-        add(f"model-served:{model}", "warn",
-            f"{model} is not in the models {found['provider']} listed for its key on "
-            f"{found['at'][:10]} — {', '.join(names[:3])}"
-            f"{f' and {len(names) - 3} more' if len(names) > 3 else ''} would be refused "
-            "by the provider. Check the key's access, or move the class to a model it "
-            "lists (its card in Settings → Providers).",
-            "providers")
+        seats = (f"{', '.join(names[:3])}"
+                 f"{f' and {len(names) - 3} more' if len(names) > 3 else ''}")
+        listed = f"{model} is not in the models {found['provider']} listed for its key on " \
+                 f"{found['at'][:10]}"
+        # Still a warning when a check has since had it answer: an unlisted
+        # name that answers is a retired alias not yet switched off, and the
+        # day it is, every one of these seats is refused at once. What the
+        # answer changes is the claim — not "would be refused" (it is not),
+        # but "may stop without notice" (yaaf.core.model_upkeep.answered_since).
+        detail = (
+            f"{listed}, though it still answered a check on that key on "
+            f"{found['answered'][:10]} — the provider honours a name it no longer "
+            f"lists, usually a retired one, and can stop without notice. {seats} "
+            "run on it. Move the class to a model the key lists (its card in "
+            "Settings → Providers) before that happens."
+            if found.get("answered") else
+            f"{listed} — {seats} would be refused by the provider. Check the key's "
+            "access, or move the class to a model it lists (its card in Settings → "
+            "Providers).")
+        add(f"model-served:{model}", "warn", detail, "providers")
     for gap in price_gaps(session, sorted(metered)):
         price = catalog.price(gap["model"])
         over = gap["drift"] > 0

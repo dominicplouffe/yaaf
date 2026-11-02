@@ -108,18 +108,19 @@ def test_what_a_key_can_call_is_discoverable_by_the_names_a_seat_uses(client, mo
     created = _credential(client, "DeepSeek", "deepseek", "sk-deepseek-test")
     assert created.status_code == 201, created.text
     monkeypatch.setattr(wire, "TRANSPORT", httpx.MockTransport(lambda r: httpx.Response(
-        200, json={"data": [{"id": "deepseek-chat"}, {"id": "deepseek-v9"}]})))
+        200, json={"data": [{"id": "deepseek-v4-flash"}, {"id": "deepseek-v9"}]})))
     listed = client.get(f"{CREDENTIALS}/{created.json()['id']}/models", headers=ADMIN)
     assert listed.status_code == 200, listed.text
     assert listed.json()["models"] == [
-        {"id": "deepseek-chat", "name": "deepseek-chat", "listed": True, "in_lineup": True},
+        {"id": "deepseek-v4-flash", "name": "deepseek-v4-flash", "listed": True,
+         "in_lineup": True},
         {"id": "deepseek/deepseek-v9", "name": "deepseek-v9", "listed": False,
          "in_lineup": False}]
     # The lineup beside the list: a class whose model the key cannot call is
     # visible before a seat on it is refused.
     lineup = listed.json()["lineup"]
-    assert lineup["fast"] == {"model": "deepseek-chat", "served": True}
-    assert lineup["frontier"] == {"model": "deepseek-reasoner", "served": False}
+    assert lineup["fast"] == {"model": "deepseek-v4-flash", "served": True}
+    assert lineup["frontier"] == {"model": "deepseek-v4-pro", "served": False}
 
 
 # ── the credential door ─────────────────────────────────────────────────────────

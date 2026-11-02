@@ -37,7 +37,7 @@ PROVIDERS = {
     "openai": ("sk-proj-acceptance", True, {"gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"}),
     "google": ("AIza-acceptance-key", True,
                {"gemini-3.1-pro-preview", "gemini-3.8-flash", "gemini-2.5-flash"}),
-    "deepseek": ("sk-deepseek-acceptance", False, {"deepseek-reasoner", "deepseek-chat"}),
+    "deepseek": ("sk-deepseek-acceptance", False, {"deepseek-v4-pro", "deepseek-v4-flash"}),
 }
 
 

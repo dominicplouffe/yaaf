@@ -83,8 +83,17 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
             if price_feed.lookup(snapshot, model) is not None:
                 importable.append(model)
         if names is not None and catalog.api_name(model) not in names:
+            # Answered since the list was read: not a refusal yet, but a name
+            # the provider stopped advertising (model_upkeep.answered_since).
+            answered = model_upkeep.answered_since(
+                session, listed.get("credential_id"), model, listed["at"])
             issues.append(_issue(
                 "not_served", "warn",
+                f"{model} is not among the models {seller.label} lists for this key, though "
+                f"it still answered a check on {answered[:10]} — a name the provider no "
+                "longer lists is usually retired, and can stop answering without notice. "
+                "Move the class to a model the key lists."
+                if answered else
                 f"{model} is not among the models {seller.label} lists for this key — the "
                 "key may lack access, or the model was retired.",
                 {"action": "set_lineup", "class": cls}))

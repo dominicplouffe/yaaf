@@ -201,8 +201,8 @@ def test_a_class_on_a_provider_with_no_lineup_is_refused_and_a_lineup_fixes_it(c
 
 def test_unsetting_a_lineup_says_which_live_seats_it_strands(client):
     _library(client)
-    _price(client, "deepseek-chat")
-    _price(client, "deepseek-reasoner")
+    _price(client, "deepseek-v4-flash")
+    _price(client, "deepseek-v4-pro")
     deepseek = _credential(client, "DeepSeek", "deepseek", "sk-deepseek-test")
     created = client.post("/admin/projects", headers=ADMIN, json=_body("on-deepseek", deepseek))
     assert created.status_code == 200, created.text
@@ -325,9 +325,9 @@ def test_a_project_that_pays_nobody_yet_resolves_on_the_install_default(client):
     # The classes resolve on DeepSeek, so its models need a price to be hired
     # at all (R3) — a draft is held to the rules its seats will run under.
     unpriced = client.post("/admin/projects", headers=ADMIN, json=_body("draft"))
-    assert unpriced.status_code == 422 and "deepseek-reasoner has no price" in unpriced.text
-    _price(client, "deepseek-chat")
-    _price(client, "deepseek-reasoner")
+    assert unpriced.status_code == 422 and "deepseek-v4-pro has no price" in unpriced.text
+    _price(client, "deepseek-v4-flash")
+    _price(client, "deepseek-v4-pro")
     created = client.post("/admin/projects", headers=ADMIN, json=_body("draft"))
     assert created.status_code == 200, created.text
     overview = client.get(f"{MODELS}", headers=ADMIN).json()
@@ -337,7 +337,7 @@ def test_a_project_that_pays_nobody_yet_resolves_on_the_install_default(client):
 
     with db_session() as session:
         project = session.get(Project, created.json()["id"])
-        assert model_policy.resolve(session, "@balanced", project) == "deepseek-chat"
+        assert model_policy.resolve(session, "@balanced", project) == "deepseek-v4-flash"
     refused = client.put(f"{MODELS}/default-provider", headers=ADMIN, json={"provider": "x"})
     assert refused.status_code == 422
 
@@ -347,8 +347,8 @@ def test_a_provider_at_its_ceiling_leaves_its_runs_queued_and_only_its_runs(clie
     the box. At its ceiling, that provider's next run waits for a later tick —
     and a run on another provider behind it in the queue is not held up."""
     _library(client)
-    _price(client, "deepseek-chat")
-    _price(client, "deepseek-reasoner")
+    _price(client, "deepseek-v4-flash")
+    _price(client, "deepseek-v4-pro")
     deepseek = _credential(client, "DeepSeek", "deepseek", "sk-deepseek-test")
     claude = _credential(client, "Claude", "anthropic", "sk-ant-api03-claude-test")
     on_deepseek = client.post("/admin/projects", headers=ADMIN,

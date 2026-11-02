@@ -6,6 +6,9 @@ A lineup and a price list rot. The promises:
 - a seat whose model the provider no longer lists for its key is named on its
   project's health checklist — and a provider with no fresh list says
   nothing, because no list is not evidence of absence;
+- a model the list leaves out but that has since answered a check on the same
+  key stays named — an unlisted name that answers is a retired alias not yet
+  switched off — but is no longer said to "be refused", because it is not;
 - the daily pass is off until an administrator switches it on; on, it re-reads
   every key's model list and refreshes prices — moving only prices that came
   from a feed, adding ones a seat needs, never an administrator's own, and
@@ -23,7 +26,7 @@ import httpx
 from tests.conftest import ADMIN, ROLE_MIN, headers_of, make_project, person
 from yaaf.core import model_upkeep, price_feed
 from yaaf.core.db import db_session
-from yaaf.core.models import AuditLog, PlatformSetting
+from yaaf.core.models import AuditLog, PlatformSetting, ProviderCheck
 from yaaf.runtimes import wire
 
 CREDENTIALS = "/admin/settings/llm-credentials"
@@ -53,7 +56,7 @@ def _project_on_deepseek(client, credential: str) -> dict:
         assert client.post("/admin/roles", headers=ADMIN, json={
             "slug": slug, "name": slug.title(), **ROLE_MIN, "model": model,
             "is_ceo_role": slug == "chief"}).status_code == 200
-    for model in ("deepseek-chat", "deepseek-reasoner"):
+    for model in ("deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"):
         client.put(f"{PRICES}/{model}", headers=ADMIN, json={"input": 0.3, "output": 0.5})
     created = client.post("/admin/projects", headers=ADMIN, json={
         "slug": "on-deepseek", "name": "On DeepSeek", "goal": "Prove the framework works.",
@@ -76,12 +79,13 @@ def test_a_seat_on_a_model_the_key_no_longer_lists_is_on_the_health_checklist(
     project = _project_on_deepseek(client, credential)
     assert not [k for k in _health(client, project) if k.startswith("model-served:")], \
         "no list read yet: nothing to say"
-    _serves(monkeypatch, "deepseek-chat", "deepseek-v4")
+    # A key never given the frontier model: its seats are named, the rest not.
+    _serves(monkeypatch, "deepseek-v4-flash", "deepseek-v9")
     assert client.get(f"{CREDENTIALS}/{credential}/models", headers=ADMIN).status_code == 200
     health = _health(client, project)
-    retired = health["model-served:deepseek-reasoner"]
-    assert retired["status"] == "warn" and "CEO" in retired["detail"]
-    assert "model-served:deepseek-chat" not in health
+    named = health["model-served:deepseek-v4-pro"]
+    assert named["status"] == "warn" and "CEO" in named["detail"]
+    assert "model-served:deepseek-v4-flash" not in health
     # A list from a month ago says little: it is not held against a seat.
     with db_session() as session:
         row = session.query(PlatformSetting).filter_by(
@@ -90,6 +94,71 @@ def test_a_seat_on_a_model_the_key_no_longer_lists_is_on_the_health_checklist(
         found["at"] = (model_upkeep.utcnow() - timedelta(days=30)).isoformat()
         row.value = json.dumps(found)
     assert "model-served:deepseek-reasoner" not in _health(client, project)
+
+
+
+def _checked(credential: str, model: str, *, ago: timedelta, answered: bool) -> None:
+    """A finished provider check of `model` on the credential, `ago` back —
+    every step passed, or every call refused as a model the key cannot find."""
+    outcome = {"name": "instructions", "kind": "probe", "ok": answered, "calls": 1,
+               "detail": "replied exactly as told" if answered
+               else "the provider refused a call (fatal): model not found"}
+    at = model_upkeep.utcnow() - ago
+    with db_session() as session:
+        session.add(ProviderCheck(
+            id=f"chk-{model}-{int(ago.total_seconds())}-{answered}", secret_id=credential,
+            provider="deepseek", model=model, status="passed" if answered else "failed",
+            summary="1/1 probes" if answered else "0/1 probes", outcomes=[outcome],
+            tasks=False, started_at=at, finished_at=at))
+
+
+def test_an_unlisted_model_that_still_answers_stays_named_but_is_not_called_refused(
+        client, monkeypatch):
+    """The list is a forecast, a call is the fact: DeepSeek retired
+    `deepseek-reasoner` and kept answering it. Silencing the warning on an
+    answer would hide the day it is switched off; keeping "would be refused"
+    tells a chairman something a check just proved false."""
+    make_project(client, start=False)
+    credential = _deepseek(client)
+    # An install that set its frontier to the retired name, as installs did.
+    assert client.put(f"{MODELS}/lineup", headers=ADMIN, json={
+        "provider": "deepseek", "class": "frontier",
+        "model": "deepseek-reasoner"}).status_code == 200
+    project = _project_on_deepseek(client, credential)
+    _serves(monkeypatch, "deepseek-v4-flash", "deepseek-v4-pro")
+    # A check from before the list says nothing about a name since dropped,
+    # and one whose every call was refused is no answer at all.
+    _checked(credential, "deepseek-reasoner", ago=timedelta(days=3), answered=True)
+    assert client.get(f"{CREDENTIALS}/{credential}/models", headers=ADMIN).status_code == 200
+    _checked(credential, "deepseek-reasoner", ago=timedelta(seconds=-5), answered=False)
+    warned = _health(client, project)["model-served:deepseek-reasoner"]
+    assert warned["status"] == "warn" and "would be refused" in warned["detail"]
+    issue = _not_served(client, "deepseek-reasoner")
+    assert "still answered" not in issue["text"]
+
+    _checked(credential, "deepseek-reasoner", ago=timedelta(seconds=-10), answered=True)
+    warned = _health(client, project)["model-served:deepseek-reasoner"]
+    assert warned["status"] == "warn", "an answer must not clear a retired name"
+    assert "would be refused" not in warned["detail"]
+    assert "still answered a check" in warned["detail"] and "CEO" in warned["detail"]
+    issue = _not_served(client, "deepseek-reasoner")
+    assert issue["severity"] == "warn" and "still answered a check" in issue["text"]
+
+    # Another key of the same provider answering proves nothing about this one.
+    other = client.post(CREDENTIALS, headers=ADMIN, json={
+        "name": "DeepSeek 2", "mode": "api_key", "provider": "deepseek",
+        "value": "sk-deepseek-other"}).json()["id"]
+    with db_session() as session:
+        assert model_upkeep.answered_since(
+            session, other, "deepseek-reasoner",
+            (model_upkeep.utcnow() - timedelta(days=1)).isoformat()) is None
+
+
+def _not_served(client, model: str) -> dict:
+    ready = client.get("/admin/settings/providers/readiness", headers=ADMIN).json()
+    deepseek = next(p for p in ready["providers"] if p["provider"] == "deepseek")
+    return next(i for i in deepseek["issues"]
+                if i["code"] == "not_served" and model in i["text"])
 
 
 FEED = {
@@ -172,7 +241,7 @@ def test_an_unreachable_provider_or_feed_is_recorded_not_raised(client, monkeypa
 def test_the_models_screen_shows_the_evidence_beside_each_choice(client, monkeypatch):
     make_project(client, start=False)
     credential = _deepseek(client)
-    _serves(monkeypatch, "deepseek-chat")
+    _serves(monkeypatch, "deepseek-v4-flash")
     client.get(f"{CREDENTIALS}/{credential}/models", headers=ADMIN)
     deepseek = next(r for r in client.get(MODELS, headers=ADMIN).json()["lineups"]
                     if r["provider"] == "deepseek")

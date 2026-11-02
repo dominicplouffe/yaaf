@@ -316,7 +316,10 @@ Claude credentials" any more.
   administrator typed, never the catalog's checked ones, each change audited
   with what it was. A seat whose model its key no longer lists is named on its
   project's health checklist before its next run fails; a list older than two
-  weeks is not held against anybody.
+  weeks is not held against anybody. A model the list leaves out that has
+  since answered a check on the same key stays named — an unlisted name that
+  answers is a retired alias the provider has not switched off yet — but as
+  "may stop without notice", not "would be refused".
 - **Live check per wire.** "Check" on a credential calls that provider's own
   model list through `wire.py` — the same address and header a run will use.
 - **Model discovery.** `GET /admin/providers/{name}/models?credential=…` lists

@@ -192,7 +192,7 @@ def _sse(lines: list[dict]) -> httpx.Response:
 
 def test_a_smoke_call_proves_the_key_the_address_and_the_wire(client, monkeypatch):
     make_project(client, start=False)
-    client.put(f"{PRICES}/deepseek-chat", headers=ADMIN, json={"input": 0.28, "output": 0.42})
+    client.put(f"{PRICES}/deepseek-v4-flash", headers=ADMIN, json={"input": 0.28, "output": 0.42})
     credential = client.post(CREDENTIALS, headers=ADMIN, json={
         "name": "DeepSeek", "mode": "api_key", "provider": "deepseek",
         "value": "sk-deepseek-test"}).json()["id"]
@@ -200,7 +200,7 @@ def test_a_smoke_call_proves_the_key_the_address_and_the_wire(client, monkeypatc
 
     def deepseek(request: httpx.Request) -> httpx.Response:
         sent.append(json.loads(request.content))
-        return _sse([{"model": "deepseek-chat", "choices": [{"index": 0, "delta": {
+        return _sse([{"model": "deepseek-v4-flash", "choices": [{"index": 0, "delta": {
             "tool_calls": [{"index": 0, "id": "c1", "type": "function", "function": {
                 "name": "report_ready", "arguments": '{"ready": true}'}}]}}]},
             {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
@@ -210,8 +210,8 @@ def test_a_smoke_call_proves_the_key_the_address_and_the_wire(client, monkeypatc
     result = client.post(f"{CREDENTIALS}/{credential}/smoke", headers=ADMIN, json={})
     assert result.status_code == 200, result.text
     body = result.json()
-    # DeepSeek's fast class is deepseek-chat, the cheapest thing that proves it.
-    assert (body["ok"], body["model"], body["called_tool"]) == (True, "deepseek-chat", True)
+    # DeepSeek's fast class is deepseek-v4-flash, the cheapest thing that proves it.
+    assert (body["ok"], body["model"], body["called_tool"]) == (True, "deepseek-v4-flash", True)
     assert body["usage"] == {"input": 120, "output": 8, "cache_read": 0}
     assert body["priced_usd"] == pytest.approx((120 * 0.28 + 8 * 0.42) / 1e6)
     assert sent[0]["tools"][0]["function"]["name"] == "report_ready"

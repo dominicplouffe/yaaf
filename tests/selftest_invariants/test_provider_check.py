@@ -178,14 +178,17 @@ def test_a_dead_key_is_one_finding_and_the_check_stops(client, monkeypatch):
 
 def test_it_says_what_it_would_spend_before_spending_it(client, monkeypatch):
     credential = _deepseek(client)
+    # One of the two classes priced: an estimate missing a model is no estimate.
+    client.put("/admin/settings/model-prices/deepseek-v4-flash", headers=ADMIN,
+               json={"input": 0.3, "output": 1.2})
     monkeypatch.setattr(wire, "TRANSPORT", httpx.MockTransport(
         lambda r: pytest.fail("a dry run made a call")))
     planned = client.post(f"{CREDENTIALS}/{credential}/check", headers=ADMIN,
                           json={"dry_run": True}).json()
     # No models named: what DeepSeek's classes resolve to, once each.
-    assert planned["models"] == ["deepseek-chat", "deepseek-reasoner"]
+    assert planned["models"] == ["deepseek-v4-flash", "deepseek-v4-pro"]
     assert planned["checks"] == [] and planned["steps"] == 11
-    assert planned["estimate_usd"] is None, "deepseek-reasoner has no price to estimate by"
+    assert planned["estimate_usd"] is None, "deepseek-v4-pro has no price to estimate by"
     probes = client.post(f"{CREDENTIALS}/{credential}/check", headers=ADMIN, json={
         "dry_run": True, "models": ["deepseek-chat"], "tasks": False}).json()
     assert probes["steps"] == 6 and probes["estimate_usd"] > 0

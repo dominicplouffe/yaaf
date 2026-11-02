@@ -33,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from yaaf.core import platform, price_feed
-from yaaf.core.models import Secret, utcnow
+from yaaf.core.models import ProviderCheck, Secret, utcnow
 from yaaf.runtimes import catalog
 
 log = logging.getLogger("yaaf.model_upkeep")
@@ -112,9 +112,10 @@ def served(session: Session) -> dict[str, dict]:
 def not_served(session: Session, models: list[str],
                keys: dict[str, str] | None = None) -> dict[str, dict]:
     """Of `models`, the ones whose provider's fresh model list leaves them
-    out: {model: the list's date}. `keys` names the credential that pays each
-    provider ({provider: secret id}); its own list is read where there is one
-    — two keys of one provider can be given different models — else the
+    out: {model: {"at": the list's date, "provider", "answered": when a check
+    on the same key last had it answer since that list, or None}}. `keys` names
+    the credential that pays each provider ({provider: secret id}); its own
+    list is read where there is one — two keys of one provider can be given different models — else the
     provider's newest. A provider with no fresh list says nothing — no list is
     not evidence of absence."""
     lists = served(session)
@@ -126,8 +127,44 @@ def not_served(session: Session, models: list[str],
     for model in models:
         found = lists.get(catalog.provider_of(model))
         if found is not None and catalog.api_name(model) not in set(found["models"]):
-            out[model] = {"at": found["at"], "provider": catalog.provider_of(model)}
+            out[model] = {"at": found["at"], "provider": catalog.provider_of(model),
+                          "answered": answered_since(session, found.get("credential_id"),
+                                                     model, found["at"])}
     return out
+
+
+def answered_since(session: Session, secret_id: str | None, model: str,
+                   since: str) -> str | None:
+    """When a provider check on this credential last had `model` answer, if
+    that was at or after `since` (a model list's date); else None.
+
+    A list leaving a model out is a forecast — the provider has stopped
+    advertising the name — and a call that comes back after it is the fact
+    the forecast is about. Neither cancels the other: a name dropped from the
+    list but still answered is, almost always, a retired alias the provider
+    has not switched off *yet* (DeepSeek's `deepseek-reasoner` still answered
+    months past its announced 2026-07-24 cutoff). So this does not clear the
+    warning; it corrects what the warning claims — "still answers, may stop without
+    notice" rather than "would be refused". Only an answer from after the
+    list counts: one from before it says nothing about a name since dropped."""
+    if not secret_id:
+        return None
+    try:
+        after = datetime.fromisoformat(since)
+    except (TypeError, ValueError):
+        return None
+    rows = session.scalars(
+        select(ProviderCheck).where(ProviderCheck.secret_id == secret_id,
+                                    ProviderCheck.model == model,
+                                    ProviderCheck.finished_at.is_not(None),
+                                    ProviderCheck.finished_at >= after)
+        .order_by(ProviderCheck.finished_at.desc()).limit(20))
+    for row in rows:
+        # A step graded a pass is a call the model answered. A check whose
+        # every call was refused — the model not found — is no answer at all.
+        if any(o.get("ok") is True for o in row.outcomes or []):
+            return row.finished_at.isoformat()
+    return None
 
 
 def _listable():
