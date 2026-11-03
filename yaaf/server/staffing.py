@@ -304,6 +304,14 @@ def recall(session: Session, project: Project, team: Team, reason: str,
     refuse_unrunnable_seats(session, project, returned)
     returned = [agent.name for agent in returned]
     team.stood_down_at = None
+    # A recall is a judgment that the declared condition was wrong about when
+    # this job ends, and the condition is still true: left in place it fired on
+    # the next tick. A writer recalled for a new book was stood down again three
+    # seconds later, twice in one day, while the CEO told the chairman she was
+    # writing. A condition that came true is spent; whoever recalls says when
+    # the job ends now, with stand_down_when.
+    if team.stand_down_when and condition_met(session, project, team.stand_down_when):
+        team.stand_down_when = None
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=project.id, actor=actor,
         action="team.recall", entity="team", entity_id=team.id,

@@ -388,3 +388,49 @@ def test_a_reviewer_that_reviews_is_not_an_idle_seat(client):
 
     _evaluate(project["id"])
     assert not _idle_flags(project["id"])
+
+
+def test_a_recall_is_not_undone_by_the_condition_it_overrules(client):
+    """A writer recalled for a new book was stood down again three seconds
+    later by the condition that had already fired, twice in one day, while the
+    CEO told the chairman she was writing. A recall says the condition was wrong
+    about when the job ends, so the spent condition goes with it."""
+    project = make_project(client)
+    token = _ceo(project)
+    _requirement(project["id"], "R-07")
+    team = _hire(client, token,
+                 stand_down_when={"kind": "requirement_met", "keys": ["R-07"]})
+    _settle(project["id"], "R-07")
+    _tick(project["id"])
+    assert _status(project["id"], "Kit") == AgentStatus.STOOD_DOWN
+
+    recalled = client.post(f"/agent/teams/{team['id']}/recall", headers=bearer(token),
+                           json={"reason": "The new plan needs her to write the book."})
+    assert recalled.status_code == 200, recalled.text
+    _tick(project["id"])
+    assert _status(project["id"], "Kit") == AgentStatus.ACTIVE, (
+        "the spent condition stood the recalled seat down again")
+    with db_session() as session:
+        assert session.get(Team, team["id"]).stand_down_when is None
+
+
+def test_a_recall_keeps_a_condition_that_has_not_come_true(client):
+    """Only a spent condition is cleared: one the CEO already moved to the
+    new job's end still holds after the recall."""
+    project = make_project(client)
+    token = _ceo(project)
+    _requirement(project["id"], "R-07")
+    _requirement(project["id"], "R-12", stage=2)
+    team = _hire(client, token,
+                 stand_down_when={"kind": "requirement_met", "keys": ["R-07"]})
+    _settle(project["id"], "R-07")
+    _tick(project["id"])
+    moved = client.post(f"/agent/teams/{team['id']}/stand_down_when", headers=bearer(token),
+                        json={"when": {"kind": "requirement_met", "keys": ["R-12"]},
+                              "reason": "Her job now ends when the book is exported."})
+    assert moved.status_code == 200, moved.text
+    client.post(f"/agent/teams/{team['id']}/recall", headers=bearer(token),
+                json={"reason": "The new plan needs her to write the book."})
+    with db_session() as session:
+        assert session.get(Team, team["id"]).stand_down_when == {
+            "kind": "requirement_met", "keys": ["R-12"]}
