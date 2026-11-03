@@ -2229,16 +2229,53 @@ def check_self_accept_after_delivery(session: Session, project: Project) -> None
     chairman who believes it is done, and that is what stays refused, at every
     dial setting, including the ones that normally delegate scope to the CEO.
     """
-    if not delivered_awaiting_confirmation(session, project):
+    if not self_accept_frozen(session, project):
         return
     raise Refusal(
         "You may propose this, and you may not accept it. Every requirement is true "
         "and the chairman has been told the project is finished, so scope does not "
         "grow here without him — whatever the authority dial says the rest of the "
-        "time. Your proposal is already on his desk with the delivery; he can accept "
-        "it in one click, and until he does, nothing about the delivery has changed.",
+        "time. Your proposals are in his Inbox beside the delivery; he can accept "
+        "them in one click, and until he does, nothing about the delivery has changed. "
+        "Every accept is refused the same way, so do not try the others: tell him in "
+        "one line what is waiting. If he has given you a new direction, propose it "
+        "as a brief — once he confirms it, accepting scope for it is yours again.",
         status_code=409,
     )
+
+
+def redirected_since_delivery(session: Session, project: Project) -> bool:
+    """He confirmed a brief after the last requirement came true.
+
+    Confirming a new brief on a finished project is the chairman saying "keep
+    going". The freeze could not see it: a chairman wrote "change of plans —
+    make the book through AuthorMe", confirmed the brief his CEO wrote back,
+    and the CEO's six requirements for it were each refused as self-growth
+    behind his back. The refusals revoked two runs, one of them the chat
+    session mid-answer to "what's going on", and the proposals sat on no desk
+    because the dial gave acceptance to the CEO.
+    """
+    confirmed = session.execute(
+        select(func.max(Approval.decided_at)).where(
+            Approval.project_id == project.id,
+            Approval.kind == ApprovalKind.BRIEF,
+            Approval.status == ApprovalStatus.APPROVED)
+    ).scalar_one_or_none()
+    if confirmed is None:
+        return False
+    finished = session.execute(
+        select(func.max(Requirement.met_at)).where(
+            Requirement.project_id == project.id,
+            Requirement.status == RequirementStatus.MET)
+    ).scalar_one_or_none()
+    return finished is not None and confirmed > finished
+
+
+def self_accept_frozen(session: Session, project: Project) -> bool:
+    """The CEO may not accept its own scope: the project delivered and the
+    chairman has not redirected it since."""
+    return (delivered_awaiting_confirmation(session, project)
+            and not redirected_since_delivery(session, project))
 
 
 # ── message rules ───────────────────────────────────────────────────────────────
@@ -2837,7 +2874,11 @@ def awaiting_chairman(session: Session, project: Project, cons: ConstitutionDoc)
     # `pending_approvals` — same shelf, same shape, same screen — rather than
     # in here, where one member exempt from the dial would make the emptiness
     # unreadable for all of them.
-    if not ceo_holds(cons, "plan_authority"):
+    # A finished project freezes the CEO's own acceptance at every dial
+    # setting, so what it proposes then is his to accept even where the dial
+    # gave acceptance away. Leaving it out sent it to no desk at all, while
+    # the refusal told the CEO it was on his.
+    if not ceo_holds(cons, "plan_authority") or self_accept_frozen(session, project):
         # Proposed scope is not scope: the CEO may not build against it and may
         # not accept it, so the requirement waits on a human or on nothing.
         out["plan"] = list(session.execute(

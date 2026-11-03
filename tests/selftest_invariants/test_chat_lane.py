@@ -350,6 +350,31 @@ def test_boot_backlog_is_answered_not_skipped(client, monkeypatch):
     assert len(history) == 3 and backlog == []
 
 
+def test_a_question_read_but_never_answered_is_answered_after_a_restart(client, monkeypatch):
+    """Read is not answered. A session read "what's going on, will you do the
+    next step or not?", had its token revoked composing the reply, and its
+    replacement started "0 awaiting an answer" directly under the platform's
+    line promising it would pick the question up. It happened twice that day;
+    the first one was answered two hours later by a fallback run."""
+    chat_entry = _chat_entry(monkeypatch)
+
+    messages = [
+        {"id": "m1", "from_user": "u1", "from_agent": None, "body": "answered"},
+        {"id": "m2", "from_user": None, "from_agent": "ceo", "body": "the answer"},
+        {"id": "m3", "from_user": "u1", "from_agent": None, "body": "what's going on?"},
+        {"id": "m4", "from_user": None, "from_agent": None,
+         "body": "_The CEO's session ended before it could answer you._"},
+    ]
+    history, backlog = chat_entry._split_backlog(messages, unread=1)
+    assert [m["id"] for m in backlog] == ["m3"]
+    assert [m["id"] for m in history] == ["m1", "m2"]
+
+    # Answered is answered, read or not: nothing after the CEO's last line.
+    answered = messages[:3] + [{"id": "m5", "from_user": None, "from_agent": "ceo",
+                                "body": "here is what is going on"}]
+    assert chat_entry._split_backlog(answered, unread=0) == (answered, [])
+
+
 def test_chat_harness_speaks_real_api_paths(client, monkeypatch):
     """The harness's hardcoded paths must be routes the app actually serves —
     the live failure this pins down: a plausible-looking path 404ing and being
@@ -816,6 +841,60 @@ def test_a_chat_session_stamps_its_own_heartbeat_by_calling_the_api(client):
 
     with db_session() as session:
         assert session.get(Run, run_id).heartbeat_at > before
+
+
+def test_a_secret_granted_to_the_ceo_restarts_the_chat_session(client, monkeypatch):
+    """Secrets reach a session as env vars at boot. The chairman added an API
+    key at 9:28 pm to a session started at 4:28 pm: every work run used it, and
+    the CEO he was talking to told him twice it was not reaching it."""
+    from yaaf.runner import chat
+
+    state = _fake_sandbox(monkeypatch)
+    project = make_project(client)
+    _attach_billing(client, project["id"])
+    chat.chat_supervisor_once()
+    with db_session() as session:
+        first = session.query(Run).filter_by(kind="chat_session",
+                                             status=RunStatus.RUNNING).one().id
+
+    added = client.post("/admin/secrets", json={
+        "project_id": project["id"], "name": "AUTHOR_ME_KEY",
+        "value": "not-a-real-key-123456", "role_scopes": ["ceo"]}, headers=ADMIN)
+    assert added.status_code in (200, 201), added.text
+    chat.chat_supervisor_once()
+    with db_session() as session:
+        ended = session.get(Run, first)
+        assert ended.status == RunStatus.KILLED
+        assert "secrets granted to the CEO changed" in (ended.summary or "")
+        replacement = session.query(Run).filter_by(kind="chat_session",
+                                                   status=RunStatus.RUNNING).one()
+    assert state["containers"][project["id"]] == replacement.id
+
+    # A secret no CEO is granted changes nothing for the boardroom.
+    client.post("/admin/secrets", json={
+        "project_id": project["id"], "name": "WRITER_ONLY_KEY",
+        "value": "not-a-real-key-654321", "role_scopes": ["writer"]}, headers=ADMIN)
+    chat.chat_supervisor_once()
+    with db_session() as session:
+        assert session.get(Run, replacement.id).status == RunStatus.RUNNING
+
+
+def test_a_session_from_before_the_secrets_mark_is_not_restarted_by_it(client, monkeypatch):
+    """Deploying the mark must not restart every live boardroom."""
+    from yaaf.runner import chat
+
+    _fake_sandbox(monkeypatch)
+    project = make_project(client)
+    _attach_billing(client, project["id"])
+    chat.chat_supervisor_once()
+    with db_session() as session:
+        run = session.query(Run).filter_by(kind="chat_session",
+                                           status=RunStatus.RUNNING).one()
+        run.trigger = {k: v for k, v in run.trigger.items() if k != "secrets"}
+        live = run.id
+    chat.chat_supervisor_once()
+    with db_session() as session:
+        assert session.get(Run, live).status == RunStatus.RUNNING
 
 
 def test_a_work_run_does_not_stamp_a_chat_heartbeat(client):

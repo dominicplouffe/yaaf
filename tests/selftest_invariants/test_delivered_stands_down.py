@@ -297,6 +297,86 @@ def test_the_proposal_is_not_scope_until_he_says_so(client):
         )
 
 
+def _propose_after_delivery(client, project: dict, token: str) -> str:
+    response = client.post(
+        "/agent/requirements",
+        json={"statement": "The finished novel is written through the new tool",
+              "acceptance_test": CMD_TEST, "est_runs": 2},
+        headers=bearer(token))
+    assert response.status_code == 200, response.text
+    return response.json()["key"]
+
+
+def _self_accept(client, token: str, key: str):
+    return client.post(
+        "/agent/scope",
+        json={"action": {"kind": "accept", "requirement_key": key},
+              "reason": "the chairman asked for the book to be written"},
+        headers=bearer(token))
+
+
+def test_a_proposal_he_must_accept_is_on_his_desk_whatever_the_dial(client):
+    """The refusal tells the CEO its proposal is on the chairman's desk. Under
+    `plan_authority: ceo` the desk left proposed scope out, since the dial gave
+    acceptance away, so six requirements for a book he had asked for sat on
+    no desk at all while the project counted down to closing itself."""
+    from yaaf.core.constitution import effective
+
+    project = delivered(client, "desk-after-delivery")
+    token = ceo_token(project)
+    amend(client, project["id"], plan_authority="ceo")
+    key = _propose_after_delivery(client, project, token)
+
+    refused = _self_accept(client, token, key)
+    assert refused.status_code == 409, refused.text
+    assert "Inbox" in refused.json()["error"]
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        cons = effective(session, row.id)
+        waiting = policy.awaiting_chairman(session, row, cons)
+        assert [r.key for r in waiting["plan"]] == [key], (
+            "the refusal says his desk holds it and his desk does not")
+        assert policy.needs_you(session, row, cons)["plan"] == 1
+
+
+def test_a_brief_he_confirms_after_delivery_lets_the_ceo_accept_again(client):
+    """Confirming a new brief on a finished project is the chairman saying
+    "keep going". The freeze could not see it, refused each of the CEO's
+    requirements for the new goal, and the refusals revoked the session that
+    was answering him."""
+    from tests.conftest import ADMIN
+    from yaaf.core.models import Approval, ApprovalKind, ApprovalStatus
+
+    project = delivered(client, "redirected")
+    token = ceo_token(project)
+    amend(client, project["id"], plan_authority="ceo")
+
+    filed = client.post("/agent/brief", json={
+        "goal": "Write the whole novel through the new tool, not just its outline.",
+        "standing_orders": [], "retired": [],
+        "what_changed": "Nov 2: change of plans, write the book itself."},
+        headers=bearer(token))
+    assert filed.status_code == 200, filed.text
+    key = _propose_after_delivery(client, project, token)
+    assert _self_accept(client, token, key).status_code == 409, (
+        "a brief he has not confirmed is not his say-so")
+
+    with db_session() as session:
+        approval = session.query(Approval).filter_by(
+            project_id=project["id"], kind=ApprovalKind.BRIEF,
+            status=ApprovalStatus.PENDING).one().id
+    decided = client.post(f"/admin/approvals/{approval}/decide",
+                          json={"approve": True}, headers=ADMIN)
+    assert decided.status_code == 200, decided.text
+
+    accepted = _self_accept(client, token, key)
+    assert accepted.status_code == 200, accepted.text
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        assert policy.delivery_outstanding(session, row), (
+            "accepted scope for the new goal reopens the delivery")
+
+
 def test_reopening_lets_scope_move_again(client):
     """The refusal is a consequence of being finished, not a one-way door. The
     chairman reopens; the project is no longer delivered; work resumes."""
