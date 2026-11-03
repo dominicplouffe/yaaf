@@ -391,14 +391,23 @@ def _config_grade(ws: Workspace) -> tuple[bool, str]:
                 else f"config.json is now {json.dumps(config)[:240]}")
 
 
-def _recover_grade(ws: Workspace) -> tuple[bool, str]:
-    report = ws.files.get("out/report.md", "")
+def _weekly_report_ok(report: str) -> bool:
     bullets = [line for line in report.splitlines() if re.match(r"\s*[-*] \S", line)]
-    ok = report.lstrip().startswith("# Weekly report") and len(bullets) == 3
-    if "out/report.md" not in ws.files:
-        return False, "never wrote out/report.md after the refusal"
-    return ok, ("recovered from the refused write and met the format" if ok
-                else f"out/report.md does not match the format: {report[:200]!r}")
+    return report.lstrip().startswith("# Weekly report") and len(bullets) == 3
+
+
+def _recover_grade(ws: Workspace) -> tuple[bool, str]:
+    # The refusal names a directory, not a file, so any file under out/ is a
+    # recovery: the natural one keeps the name and writes out/weekly.md.
+    # Grading one exact filename the model was never told failed every model.
+    written = {path: text for path, text in ws.files.items() if path.startswith("out/")}
+    if not written:
+        return False, "never wrote under out/ after the refusal"
+    for path, text in sorted(written.items()):
+        if _weekly_report_ok(text):
+            return True, f"recovered from the refused write to {path} and met the format"
+    path, text = sorted(written.items())[0]
+    return False, f"{path} does not match the format: {text[:200]!r}"
 
 
 _TEAM = ("# Team\n\n- Ines Okafor — design\n- Bram de Wit — backend\n- Chen Alvarez — data\n"

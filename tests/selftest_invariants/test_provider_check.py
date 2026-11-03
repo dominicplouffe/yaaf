@@ -90,7 +90,8 @@ def _competent(request: httpx.Request) -> httpx.Response:
     elif "reports/weekly.md" in asked:
         report = "# Weekly report\n- Shipped search\n- Fixed export\n- Hired a designer\n"
         script = [("write_file", {"path": "reports/weekly.md", "content": report}),
-                  ("write_file", {"path": "out/report.md", "content": report}),
+                  # What the refusal actually asks for: same file, under out/.
+                  ("write_file", {"path": "out/weekly.md", "content": report}),
                   ("submit", {"answer": "done"})]
     else:
         names = "Chen Alvarez\nAiko Brandt\nDmitri Nakamura\nInes Okafor\nBram de Wit\n"
