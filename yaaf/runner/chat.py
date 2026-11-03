@@ -256,6 +256,18 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
                          "chat session restarted: the CEO's model credential changed")
             live_run, running_ids = None, set()
 
+    if live_run is not None and (live_run.trigger or {}).get("secrets", _NO_MARK) not in (
+            _NO_MARK, _secrets_mark(session, project, role_version_for(session, ceo))):
+        # The third thing baked in at boot: the secrets its role is granted
+        # are env vars in the container. A chairman added an API key at 9:28
+        # pm to a session started at 4:28 pm; every work run used it, and the
+        # CEO he was talking to told him twice the key was not reaching it.
+        # A session started before this mark existed carries none and is left
+        # alone, so deploying it restarts nobody.
+        _end_session(session, project, live_run,
+                     "chat session restarted: the secrets granted to the CEO changed")
+        live_run, running_ids = None, set()
+
     if live_run is not None and (live_run.trigger or {}).get("brief") != brief.mark(project):
         # Same reason, the other thing baked in at boot: the system prompt. A
         # session started before he confirmed a new brief goes on answering him
@@ -391,6 +403,30 @@ def say_session_broke(session: Session, project: Project, why: str) -> None:
     log.warning("boardroom left unanswered in %s: %s", project.slug, why)
 
 
+_NO_MARK = object()
+
+
+def _secrets_mark(session: Session, project: Project, role_version) -> str:
+    """Which secrets, with which values, the CEO's role is granted. Hashed
+    over the stored ciphertext, like the credential mark, because it rides on
+    the run row: nothing derived from a plaintext value is written down."""
+    from sqlalchemy import or_
+
+    from yaaf.core.models import Role, Secret
+
+    role = session.get(Role, role_version.role_id) if role_version is not None else None
+    if role is None:
+        return ""
+    granted = sorted(
+        f"{s.id}:{s.filename}:{s.ciphertext}" for s in session.execute(
+            select(Secret).where(or_(Secret.project_id == project.id,
+                                     Secret.project_id.is_(None)))
+        ).scalars()
+        if s.kind != "billing" and role.slug in (s.role_scopes or [])
+    )
+    return hashlib.sha256("\n".join(granted).encode()).hexdigest()[:16]
+
+
 def _credential_mark(session: Session, project: Project, provider: str) -> str | None:
     """Which credential, in which mode and with which value, pays the CEO's
     seat — hashed, because it rides on the run row the Runs page shows."""
@@ -421,7 +457,8 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         kind=RunKind.CHAT_SESSION,
         trigger={"type": "chat_session",
                  "credential": _credential_mark(session, project, seat.provider),
-                 "brief": brief.mark(project)},
+                 "brief": brief.mark(project),
+                 "secrets": _secrets_mark(session, project, role_version)},
         status=RunStatus.RUNNING,
         worker=settings().worker_name,
         started_at=utcnow(),

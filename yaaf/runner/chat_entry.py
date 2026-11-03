@@ -129,11 +129,24 @@ def _primer(messages: list[dict], state: dict) -> list[dict]:
 def _split_backlog(messages: list[dict], unread: int) -> tuple[list[dict], list[dict]]:
     """(history, backlog): history was read by some earlier run — never
     re-answer it; the unread tail's chairman messages are a backlog this
-    session owes an answer to, restart or not."""
-    if unread <= 0:
+    session owes an answer to, restart or not.
+
+    Read is not answered. A session that read his message and died composing
+    the reply (a revoked token, a lost container) had already moved the
+    cursor, so its replacement filed the question as history and started "0
+    awaiting an answer" directly under the platform's own line promising the
+    new session would pick it up. So a chairman line with no CEO line after it
+    is owed too, read or not. With no CEO line anywhere in the window there is
+    nothing to measure "after" from, and only the unread tail counts."""
+    tail_from = max(0, len(messages) - max(unread, 0))
+    last_reply = max((i for i, m in enumerate(messages) if m.get("from_agent")),
+                     default=None)
+    if last_reply is not None:
+        tail_from = min(tail_from, last_reply + 1)
+    owed = [m for m in messages[tail_from:] if m.get("from_user")]
+    if not owed:
         return messages, []
-    history, tail = messages[:-unread], messages[-unread:]
-    return history, [m for m in tail if m.get("from_user")]
+    return messages[:tail_from], owed
 
 
 def _read_messages(channel_id: str, limit: int = 50) -> tuple[int, list[dict] | None]:
