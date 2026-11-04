@@ -319,7 +319,9 @@ function ReadyStep({ seller, saved, onChanged, onNext }: {
   return <div className="connect-body">
     <div className="ri-head">
       <StatusBadge p={p} />
-      <span>{status.tone === "good" ? `${seller.label} is ready: every class has a priced model.`
+      <span>{status.state === "ready" ? `${seller.label} is ready: every class has a priced model, and the key answered.`
+        : status.state === "untested" ? `${seller.label} is set up. Nothing has answered on the key yet.`
+        : status.state === "failing" ? `${seller.label} refused the key. Check it was copied whole, or make a new one.`
         : p.ready ? `${seller.label} can run seats. One thing is worth a look.`
         : `A few things would still refuse seats on ${seller.label}. Each has its fix beside it:`}</span>
     </div>

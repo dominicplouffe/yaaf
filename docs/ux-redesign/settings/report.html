@@ -133,6 +133,14 @@ td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ac { font-size: 12.5px; color: var(--ink-2); border-top: 1px solid var(--border); padding-top: 10px; line-height: 1.5; }
 .ac b { color: var(--ink); }
 
+.built { margin: 26px 0 0; padding: 16px 18px; border-radius: 12px; background: rgba(var(--good-rgb), .07);
+  border: 1px solid rgba(var(--good-rgb), .25); }
+.built b.k { color: var(--good); }
+.built .shots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.built .shots a { display: block; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.built .shots img { display: block; width: 100%; height: 150px; object-fit: cover; object-position: top left; }
+.built .shots span { display: block; font-size: 12.5px; padding: 6px 8px; color: var(--ink-2); }
+@media (max-width: 860px) { .built .shots { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 details.more { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
 details.more summary { cursor: pointer; font-weight: 600; font-size: 14px; color: var(--accent); }
 .foot { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
@@ -149,6 +157,21 @@ details.more summary { cursor: pointer; font-weight: 600; font-size: 14px; color
   <div class="eyebrow">yaaf · Settings · design study · 4 Nov 2026</div>
   <h1>Settings should answer one question first: can every project run?</h1>
   <p class="lead">Today it answers a different one: what is configured. The parts underneath are sound. The page shows them as eight separate forms, in 2,344 words, with green badges for keys nobody has seen work.</p>
+  <div class="built">
+    <p style="margin:0"><b class="k">Status: built.</b> All three phases are in the app. The sample keys are fake, so the
+      built page shows what it should: Anthropic answered its key with a real <code>401</code> and reads <b>Failing</b>, the
+      keys nothing has called read <b>Untested</b>, and nothing is green. At 1440px on the same seed: words on screen
+      2,344 → 1,405, the Providers page 2,475px → 1,096px (1,972px on a phone, from 4,808), its buttons 65 → 23, and
+      browser <code>confirm()</code> dialogs 6 → 0.</p>
+    <div class="shots">
+      <a href="built/overview.png"><img src="built/overview.png" alt="Built Overview" loading="lazy"><span>Overview</span></a>
+      <a href="built/providers.png"><img src="built/providers.png" alt="Built Providers" loading="lazy"><span>Providers</span></a>
+      <a href="built/lineup-preview.png"><img src="built/lineup-preview.png" alt="A class changed in place, with what it moves" loading="lazy"><span>A class changed in place</span></a>
+      <a href="built/prices.png"><img src="built/prices.png" alt="Built Model prices" loading="lazy"><span>Model prices</span></a>
+      <a href="built/slack.png"><img src="built/slack.png" alt="Built Slack" loading="lazy"><span>Slack</span></a>
+      <a href="built/phone-index.png"><img src="built/phone-index.png" alt="Built phone index" loading="lazy"><span>Phone</span></a>
+    </div>
+  </div>
   <nav class="toc" aria-label="Contents">
     <a href="#verdict">Verdict</a><a href="#audit">Audit</a><a href="#concepts">Concepts</a><a href="#before-after">Before → after</a><a href="#system">Design kit</a><a href="#priorities">Priorities</a><a href="#preservation">Nothing removed</a><a href="#roadmap">Roadmap</a><a href="#validation">Validation</a><a href="#scenarios">Scenarios</a><a href="#method">Method</a>
   </nav>

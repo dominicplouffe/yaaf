@@ -8,7 +8,7 @@
     closes with one still held sends it on the way out, so leaving is never a
     silent "never mind". */
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { post } from "./api";
+import { api } from "./api";
 
 export const UNDO_SECONDS = 8;
 /** After sending, how long the row stays hidden while the next desk poll
@@ -20,7 +20,12 @@ interface Held {
   label: string;
   path: string;
   body: unknown;
+  /** POST unless said: a held Settings toggle is a PUT. */
+  method?: "POST" | "PUT";
   after?: (result: unknown) => void;
+  /** Called when Undo takes it back, so a screen that showed the change at
+      once can put the old state back. */
+  onUndo?: () => void;
   due: number;
   timer: number;
 }
@@ -55,7 +60,7 @@ async function send(key: string) {
   settled.set(key, Date.now() + SETTLE_MS);
   emit();
   try {
-    const result = await post(entry.path, entry.body);
+    const result = await api(entry.method ?? "POST", entry.path, entry.body);
     entry.after?.(result);
   } catch (e) {
     settled.delete(key);
@@ -67,7 +72,7 @@ async function send(key: string) {
 
 /** Hold a decision for UNDO_SECONDS, then send it. */
 export function holdDecision(d: { key: string; label: string; path: string; body: unknown;
-  after?: (result: unknown) => void }) {
+  method?: "POST" | "PUT"; after?: (result: unknown) => void; onUndo?: () => void }) {
   if (held.has(d.key)) return;
   const timer = window.setTimeout(() => { void send(d.key); }, UNDO_SECONDS * 1000);
   held.set(d.key, { ...d, due: Date.now() + UNDO_SECONDS * 1000, timer });
@@ -79,6 +84,7 @@ export function undo(key: string) {
   if (!entry) return;
   window.clearTimeout(entry.timer);
   held.delete(key);
+  entry.onUndo?.();
   emit();
 }
 
@@ -93,7 +99,7 @@ if (typeof window !== "undefined") {
     for (const entry of held.values()) {
       window.clearTimeout(entry.timer);
       void fetch(entry.path, {
-        method: "POST", keepalive: true, credentials: "same-origin",
+        method: entry.method ?? "POST", keepalive: true, credentials: "same-origin",
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry.body),
       });
     }

@@ -14,10 +14,11 @@ import { Link } from "react-router-dom";
 import { get, post, put } from "./api";
 import { CheckChip, CheckRow, fmtUsd } from "./providerCheck";
 import { forgetModels, ModelSelect, useModels, useProviders } from "./providers";
-import { FIX_LINK, useReadiness } from "./readiness";
+import { useReadiness } from "./readiness";
 import { fmtAgo } from "./ui";
 import { EmptyState } from "./ui/kit";
-import { Lede, Why } from "./settingsCopy";
+import { holdDecision } from "./undo";
+import { DefRow, Group, SectionHead, Toggle } from "./settings/kit";
 
 interface LineupCellInfo {
   model: string | null; shipped: string | null; source: "install" | "shipped" | "auto" | null;
@@ -102,52 +103,50 @@ function OtherLineup({ row, catalog, onSaved }: { row: LineupRow; catalog: strin
 }
 
 function UpkeepCard({ upkeep, onSaved }: { upkeep: ModelsSettings["upkeep"]; onSaved: (said: Saved) => void }) {
-  const [busy, setBusy] = useState<"toggle" | "run" | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [last, setLast] = useState<UpkeepRun | null>(upkeep?.last ?? null);
+  const [on, setOn] = useState(!!upkeep?.enabled);
   useEffect(() => { setLast(upkeep?.last ?? null); }, [upkeep?.last]);
-  async function toggle(enabled: boolean) {
-    setBusy("toggle"); setError("");
-    try { onSaved(await put<Saved>("/admin/settings/models/upkeep", { enabled })); }
-    catch (e) { setError((e as Error).message); } finally { setBusy(null); }
+  useEffect(() => { setOn(!!upkeep?.enabled); }, [upkeep?.enabled]);
+  // A switch shows its new state at once and is held for a few seconds with
+  // Undo before it is sent (undo.tsx), like a decision.
+  function toggle(enabled: boolean) {
+    setOn(enabled); setError("");
+    holdDecision({
+      key: "settings:upkeep", method: "PUT", path: "/admin/settings/models/upkeep", body: { enabled },
+      label: enabled ? "Models and prices will be kept current." : "Models and prices will no longer be kept current.",
+      after: (said) => onSaved(said as Saved),
+      onUndo: () => setOn(!enabled),
+    });
   }
   async function run() {
-    setBusy("run"); setError("");
+    setBusy(true); setError("");
     try {
       setLast(await post<UpkeepRun>("/admin/settings/models/upkeep/run"));
       forgetModels();
-    } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   const keys = Object.values(last?.credentials ?? {});
   const failed = keys.filter((k) => k.error);
-  return <div className="card">
-    <label className="check-line strong">
-      <input type="checkbox" checked={!!upkeep?.enabled} disabled={busy !== null}
-        onChange={(e) => toggle(e.target.checked)} />
-      Keep models and prices current
-    </label>
-    <p className="help">On by default. Once a day: re-read each key&apos;s model list and refresh
-      feed prices — for every chat model a key lists, not only the ones seats run on — and price a
-      key&apos;s models the moment its list is read. Prices you typed, and the vendor-checked ones
-      shipped with yaaf, are never touched. Off, yaaf moves no price on its own and never reads the
-      feed unasked.</p>
-    <Why>Re-reading the lists means a seat on a model the provider retired is named on its
-      project&apos;s health checklist before it fails; pricing them means a class is chosen from
-      priced models instead of refused the moment it is saved.</Why>
-    {last ? <div className="upkeep-last">
-      <p><b>Last ran {fmtAgo(last.at)}.</b>{" "}
-        {keys.length === 0 ? "No key to read." : `Read ${keys.length - failed.length} of ${keys.length} key${keys.length === 1 ? "" : "s"}.`}{" "}
-        {"error" in last.prices ? <span className="warn">Prices were not refreshed: {last.prices.error}</span>
-          : last.prices.changed.length ? `Prices: ${last.prices.changed.length} changed (${last.prices.changed.slice(0, 4).join(", ")}${last.prices.changed.length > 4 ? "…" : ""}) of ${last.prices.checked} checked.`
-          : `Prices: none changed of ${last.prices.checked} checked.`}</p>
-      {failed.length > 0 && <ul className="help">{failed.map((k) => <li key={k.name}><b>{k.name}</b>: {k.error}</li>)}</ul>}
-    </div> : <p className="help">It has not run yet.</p>}
-    {error && <p className="error" role="alert">{error}</p>}
-    <div className="actions" style={{ marginTop: 8 }}>
-      <button type="button" className="small" disabled={busy !== null} onClick={run}>
-        {busy === "run" ? "Running…" : "Run now"}</button>
-      <span className="help">Runs whether or not it is switched on. Reading a key&apos;s list is free.</span>
+  const prices = last && !("error" in last.prices) ? last.prices : null;
+  return <div className="set-card">
+    <div className="set-row" style={{ gridTemplateColumns: "minmax(0, 1fr) auto auto" }}>
+      <Toggle id="upkeep" checked={on} onChange={toggle} disabled={busy}
+        label="Re-read model lists and feed prices daily"
+        sub="Prices you typed, and the vendor-checked ones yaaf ships, are never touched. Reading a key’s list is free." />
+      <div className="set-row-val" style={{ textAlign: "right" }}>{last
+        ? <>Last ran <b>{fmtAgo(last.at)}</b> · read {keys.length - failed.length} of {keys.length} key{keys.length === 1 ? "" : "s"}
+            <br />{"error" in last.prices ? <span className="warn">Prices were not refreshed: {last.prices.error}</span>
+              : prices && prices.changed.length ? <span title={prices.changed.join(", ")}>{prices.changed.length} price{prices.changed.length === 1 ? "" : "s"} changed of {prices.checked} checked</span>
+              : prices ? `No price changed of ${prices.checked} checked` : null}</>
+        : "It has not run yet."}</div>
+      <div className="set-row-act"><button type="button" className="small" disabled={busy} onClick={run}>
+        {busy ? "Running…" : "Run now"}</button></div>
     </div>
+    {failed.length > 0 && <ul className="help" style={{ margin: 0, padding: "0 18px 12px 36px" }}>
+      {failed.map((k) => <li key={k.name}><b>{k.name}</b>: {k.error}</li>)}</ul>}
+    {error && <p className="error" role="alert" style={{ padding: "0 18px 12px" }}>{error}</p>}
   </div>;
 }
 
@@ -187,7 +186,7 @@ function CompareModels({ rows, labelOf }: { rows: CheckRow[] | null; labelOf: (p
   </div>;
 }
 
-export function ModelsSection() {
+export function ModelsSection({ onChanged }: { onChanged?: () => void } = {}) {
   const [data, setData] = useState<ModelsSettings | null>(null);
   const [error, setError] = useState("");
   const [stranded, setStranded] = useState<string[]>([]);
@@ -196,118 +195,105 @@ export function ModelsSection() {
   const catalog = useModels(nonce);
   const registry = useProviders();
   const { data: readiness } = useReadiness(nonce);
-  const [appModel, setAppModel] = useState("");
-  const [appHarness, setAppHarness] = useState("");
+  const [editing, setEditing] = useState<"provider" | "model" | "harness" | null>(null);
+  const [draft, setDraft] = useState("");
   const [harnesses, setHarnesses] = useState<{ name: string; label: string }[]>([]);
-  const [appBusy, setAppBusy] = useState(false);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
-    get<ModelsSettings>("/admin/settings/models").then((said) => {
-      setData(said); setAppModel(said.app_model ?? ""); setAppHarness(said.app_harness ?? "");
-    }).catch((e) => setError(e.message));
+    get<ModelsSettings>("/admin/settings/models").then(setData).catch((e) => setError(e.message));
     get<CheckRow[]>("/admin/settings/provider-checks").then(setScoreboard).catch(() => setScoreboard([]));
     get<{ name: string; label: string }[]>("/admin/harnesses")
       .then(setHarnesses).catch(() => setHarnesses([]));
   }, []);
-  async function saveApp() {
-    setAppBusy(true); setError("");
-    try {
-      saved(await put<Saved>("/admin/settings/models/app-model", { model: appModel || null }));
-      await put<Saved>("/admin/settings/models/app-harness", { harness: appHarness || null })
-        .catch(() => undefined);
-    } catch (e) { setError((e as Error).message); } finally { setAppBusy(false); }
-  }
   const saved = useCallback((said: Saved) => {
-    setData(said); setStranded(said.unrunnable ?? []); setNonce((n) => n + 1);
-  }, []);
-  async function setDefault(provider: string) {
-    setError("");
-    try { saved(await put<Saved>("/admin/settings/models/default-provider", { provider })); forgetModels(); }
-    catch (e) { setError((e as Error).message); }
+    setData(said); setStranded(said.unrunnable ?? []); setNonce((n) => n + 1); onChanged?.();
+  }, [onChanged]);
+  const edit = (what: "provider" | "model" | "harness", value: string) => {
+    setEditing(what); setDraft(value); setError("");
+  };
+  // One way to save a default: Change, then Save. The provider used to save the
+  // moment its dropdown moved, beside a card that needed a press, and a failed
+  // harness save was dropped without a word.
+  async function save() {
+    setBusy(true); setError("");
+    try {
+      if (editing === "provider") {
+        saved(await put<Saved>("/admin/settings/models/default-provider", { provider: draft }));
+        forgetModels();
+      } else if (editing === "model") {
+        saved(await put<Saved>("/admin/settings/models/app-model", { model: draft || null }));
+      } else if (editing === "harness") {
+        saved(await put<Saved>("/admin/settings/models/app-harness", { harness: draft || null }));
+      }
+      setEditing(null);
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   if (!data) return error ? <p className="error">{error}</p> : <div className="card muted">Loading…</div>;
   const connected = new Set((readiness?.providers ?? []).map((p) => p.provider));
   const labelOf = (name: string) => data.lineups.find((r) => r.provider === name)?.label ?? name;
   const mine = data.lineups.filter((r) => connected.has(r.provider));
   const others = data.lineups.filter((r) => !connected.has(r.provider));
+  const cls = data.app_model?.startsWith("@") ? data.app_model.slice(1) : null;
+  const resolved = cls ? data.lineups.find((r) => r.provider === data.default_provider)?.classes[cls]?.model : null;
+  const harnessLabel = harnesses.find((h) => h.name === data.app_harness)?.label;
+  const buttons = <>
+    <button type="button" className="small" disabled={busy} onClick={() => setEditing(null)}>Cancel</button>
+    <button type="button" className="small primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</button>
+  </>;
   return <>
-    <h2 style={{ marginTop: 0 }}>Models</h2>
-    <Lede>What each class — <b>Frontier</b>, <b>Balanced</b>, <b>Fast</b> — runs on. Each
-      provider&apos;s lineup is changed on its card under{" "}
-      <Link to="/settings?section=providers">Providers</Link>.</Lede>
-    <Why>A role names a class of model, and the provider a project pays says whose model that
-      is. A provider with nothing set for a class refuses that class&apos;s seats rather than
-      quietly running another vendor&apos;s model.</Why>
+    <SectionHead title="Models"
+      lede={<>The defaults every project starts from. Each provider&apos;s Frontier, Balanced and Fast are set
+        on its card under <Link to="/settings?section=providers">Providers</Link>.</>} />
     {error && <p className="error" role="alert">{error}</p>}
     {stranded.length > 0 && <div className="notice-box" role="alert">
       <b>That change leaves seats unable to run:</b>
       <ul>{stranded.map((line) => <li key={line}>{line}</li>)}</ul></div>}
 
-    <div className="card">
-      <h3 style={{ marginTop: 0 }}>The app&apos;s model</h3>
-      <p className="help">What a seat runs on when neither it nor its role names a model.</p>
-      <Why>The role&apos;s charter is the effort, and the app&apos;s model is the default
-        beneath it. Empty goes back to the shipped class, which resolves on the install&apos;s
-        provider.</Why>
-      <div className="hrow" style={{ alignItems: "end", gap: 12 }}>
-        <label className="field" style={{ maxWidth: 460, flex: 1 }}>Default model
-          <ModelSelect value={appModel} onChange={setAppModel} info={catalog} registry={registry}
+    <Group title="Defaults">
+      <div className="set-card">
+        <DefRow label="Default provider" editing={editing === "provider"}
+          onEdit={() => edit("provider", data.default_provider)}
+          value={<><b>{labelOf(data.default_provider)}</b> · where a project that pays nobody yet runs, and the
+            Founder before it has a key{readiness && !readiness.install.default_connected && readiness.providers.length > 0
+              && <span className="warn"> · it has no key here: pick a connected one</span>}</>}
+          editor={<select aria-label="Default provider" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={busy}>
+            {mine.length > 0 && <optgroup label="Connected">
+              {mine.map((r) => <option key={r.provider} value={r.provider}>{r.label}</option>)}</optgroup>}
+            <optgroup label={mine.length ? "No key here" : "Every provider"}>
+              {others.map((r) => <option key={r.provider} value={r.provider}>{r.label}</option>)}</optgroup>
+          </select>}
+          actions={buttons} />
+        <DefRow label="Default model" editing={editing === "model"}
+          onEdit={() => edit("model", data.app_model ?? "")}
+          value={<><b>{cls ? cls.charAt(0).toUpperCase() + cls.slice(1) : data.app_model || "The shipped class"}</b>
+            {resolved && <> → <code>{resolved}</code></>} · for a seat whose role names no model</>}
+          editor={<ModelSelect value={draft} onChange={setDraft} info={catalog} registry={registry}
             providersShown={(readiness?.providers ?? []).map((p) => p.provider)}
-            empty="The shipped class (the install's provider resolves it)"
-            disabled={appBusy} />
-        </label>
-        <label className="field" style={{ maxWidth: 280 }}>Default harness
-          <select value={appHarness} disabled={appBusy} onChange={(e) => setAppHarness(e.target.value)}>
-            <option value="">The paying credential&apos;s</option>
+            empty="The shipped class (the install's provider resolves it)" disabled={busy} />}
+          actions={buttons} />
+        <DefRow label="Default harness" editing={editing === "harness"}
+          onEdit={() => edit("harness", data.app_harness ?? "")}
+          value={<><b>{harnessLabel ?? "The paying key’s own"}</b> · what drives a seat whose role names none</>}
+          editor={<select aria-label="Default harness" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={busy}>
+            <option value="">The paying key&apos;s own</option>
             {harnesses.map((h) => <option key={h.name} value={h.name}>{h.label}</option>)}
-          </select>
-        </label>
-        <button className="primary" disabled={appBusy} onClick={saveApp}
-          style={{ minHeight: 34 }}>Save</button>
+          </select>}
+          actions={buttons} />
       </div>
-    </div>
+    </Group>
 
-    <div className="card">
-      <label className="field" style={{ maxWidth: 360, marginTop: 0 }}>Default provider
-        <select value={data.default_provider} onChange={(e) => setDefault(e.target.value)}>
-          {mine.length > 0 && <optgroup label="Connected">
-            {mine.map((r) => <option key={r.provider} value={r.provider}>{r.label}</option>)}</optgroup>}
-          <optgroup label={mine.length ? "No key here" : "Every provider"}>
-            {others.map((r) => <option key={r.provider} value={r.provider}>{r.label}</option>)}</optgroup>
-        </select></label>
-      <p className="help">Where a project that pays nobody yet resolves its classes, and what the
-        Founder&apos;s Frontier model means before it has a key.
-        {readiness && !readiness.install.default_connected && readiness.providers.length > 0 &&
-          <span className="warn"> The default has no key on this install — pick a connected one.</span>}</p>
-    </div>
+    <Group title="Staying current">
+      <UpkeepCard upkeep={data.upkeep} onSaved={saved} />
+    </Group>
 
-    <h3>Staying current</h3>
-    <UpkeepCard upkeep={data.upkeep} onSaved={saved} />
+    <Group title="Compare models" count="graded checks, side by side">
+      <CompareModels rows={scoreboard} labelOf={labelOf} />
+    </Group>
 
-    <h3>Compare models</h3>
-    <CompareModels rows={scoreboard} labelOf={labelOf} />
-
-    {mine.length > 0 && <>
-      <h3>Your providers&apos; lineups</h3>
-      <div className="card">
-        <div className="table-scroll"><table className="lineup-table">
-          <thead><tr><th>Provider</th>{CLASS_NAMES.map(([c, l]) => <th key={c}>{l}</th>)}<th /></tr></thead>
-          <tbody>{mine.map((r) => <tr key={r.provider}>
-            <td><b>{r.label}</b>{data.default_provider === r.provider && <> <span className="chip accent">Default</span></>}</td>
-            {CLASS_NAMES.map(([c]) => {
-              const cell = r.classes[c];
-              return <td key={c}>{cell?.model ? <code>{cell.model}</code> : <span className="critical-ink">none set</span>}
-                {cell && <div><Evidence cell={cell} /></div>}</td>;
-            })}
-            <td><Link to={FIX_LINK.provider(r.provider)}>Change on its card</Link></td>
-          </tr>)}</tbody>
-        </table></div>
-      </div>
-    </>}
-
-    <details className="card other-providers">
-      <summary><b>Other providers</b> — {others.length} this install holds no key for</summary>
-      <p className="help">Their lineups, ready for the day you connect one. Connecting a provider
-        is under <Link to="/settings?section=providers&connect=1">Providers → Connect a provider</Link>,
+    <details className="card other-providers" style={{ marginTop: "var(--s6)" }}>
+      <summary><b>Lineups for the {others.length} providers you haven&apos;t connected</b></summary>
+      <p className="help">Ready for the day you connect one. Connecting is under{" "}
+        <Link to="/settings?section=providers&connect=1">Providers → Connect a provider</Link>,
         which also offers each class&apos;s model from the key&apos;s own list.</p>
       {others.map((row) => <OtherLineup key={row.provider} row={row}
         catalog={(catalog?.models ?? []).filter((m) => m.provider === row.provider).map((m) => m.id)}

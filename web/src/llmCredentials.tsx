@@ -20,8 +20,12 @@ import { Link, useSearchParams } from "react-router-dom";
 import { del, get, post, put } from "./api";
 import { CredentialForm, SavedCredential } from "./credentialForm";
 import { DEFAULT_PROVIDER, useProviders } from "./providers";
-import { ConfirmModal, fmtAgo, fmtSoon } from "./ui";
-import { Lede, Why } from "./settingsCopy";
+import { ConfirmModal, Drawer, fmtAgo, fmtSoon, RowMenu } from "./ui";
+import { Why } from "./settingsCopy";
+import type { Readiness } from "./readiness";
+import { Icon } from "./ui/Icon";
+import { Seg } from "./ui/kit";
+import { SectionHead } from "./settings/kit";
 
 export type { ProviderInfo } from "./providers";
 export { providers, useProviders } from "./providers";
@@ -181,7 +185,7 @@ export function LlmCredentials({ onChanged, onAdd, title = "LLM credentials", no
   const [rows, setRows] = useState<Credential[] | null>(null);
   const [editing, setEditing] = useState<Credential | "new" | null>(null);
   const registry = useProviders();
-  // What "Models" and "Smoke test" last said about a row, drawn under it.
+  // What "Read its model list" and "Test" last said about a row, drawn under it.
   const [probes, setProbes] = useState<Record<string, Probe | null>>({});
   const [probing, setProbing] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -316,7 +320,7 @@ export function LlmCredentials({ onChanged, onAdd, title = "LLM credentials", no
   return <section className="card llm-credentials" aria-label="LLM credentials">
     <div className="llm-header">
       <div>
-        <h2>{title}</h2>
+        <h3 style={{ margin: 0 }}>{title}</h3>
         <p className="help">What projects pay their model calls with. Values are never shown
           back — rotate one rather than reading it.</p>
         <Why>One per provider a project&apos;s seats run on. Values are encrypted at rest. A
@@ -398,15 +402,13 @@ export function LlmCredentials({ onChanged, onAdd, title = "LLM credentials", no
       </div>}
 
       {shown.length > 0 && <div className="cred-table-wrap"><table className="cred-table">
-        {/* Actions is 212 because that is what its widest row is: Edit,
-            Restore and Delete side by side, with Delete's own gap. Sized to
-            the common two-button row it overflowed the cell — table-layout is
-            fixed, so the buttons hung past the table's edge rather than
-            widening the column. */}
+        {/* Actions holds two buttons and ⋯, so it fits its column at every
+            width: table-layout is fixed, and five buttons in it once hung past
+            the table's edge rather than widening the column. */}
         <colgroup>
           <col style={{ width: 30 }} /><col /><col style={{ width: 118 }} />
           <col style={{ width: 168 }} /><col style={{ width: 152 }} />
-          <col style={{ width: 212 }} />
+          <col style={{ width: 168 }} />
         </colgroup>
         <thead><tr>
           <th className="pick">{selectable.length > 0 && <input type="checkbox"
@@ -454,32 +456,29 @@ export function LlmCredentials({ onChanged, onAdd, title = "LLM credentials", no
                   onRotate={() => edit(row)} checkNonce={recheck[row.id]}
                   onResult={(r) => noteResult(row.id, r)} /></td>
               <td className="llm-actions">
-                {/* Edit is on a hidden row too: restoring one whose name has
-                    since been taken is refused, and renaming it is the way
-                    out — a shelf you cannot rename anything on is a trap. */}
-                <button className="small" disabled={busy || editing !== null}
-                  onClick={() => edit(row)} aria-label={`Edit ${row.name}`}>Edit</button>
+                {/* Two verbs on the row, the rest in ⋯: five buttons in a 212px
+                    cell hung past the table's edge at 1440px. Edit is on a
+                    hidden row too: restoring one whose name has since been
+                    taken is refused, and renaming it is the way out. */}
                 {row.hidden_at ? <button className="small" disabled={busy}
                   onClick={() => move([row], true)}>Restore</button>
-                  : <button className="small" disabled={busy || row.in_use}
-                      title={row.in_use
-                        ? "A live project pays with this — reassign or stop it first"
-                        : `Hide ${row.name}`}
-                      onClick={() => setHiding([row])} aria-label={`Hide ${row.name}`}>Hide</button>}
-                {registry.find((p) => p.name === (row.provider ?? DEFAULT_PROVIDER))?.protocol
-                  && <>
-                    <button className="small" disabled={busy || probing !== null}
-                      title="Ask the provider which models answer to this key — free"
-                      onClick={() => probe(row, "models")}>
-                      {probing === `${row.id}:models` ? "Asking…" : "Models"}</button>
-                    {row.mode === "api_key" && <button className="small" disabled={busy || probing !== null}
-                      title="One real, trivial call on this key — it spends a few hundred tokens"
+                  : row.mode === "api_key" && registry.find((p) => p.name === (row.provider ?? DEFAULT_PROVIDER))?.protocol
+                  && <button className="small" disabled={busy || probing !== null}
+                      title="One real, trivial call on this key — a few hundred tokens"
                       onClick={() => probe(row, "smoke")}>
-                      {probing === `${row.id}:smoke` ? "Calling…" : "Smoke test"}</button>}
-                  </>}
-                {row.projects.length === 0 && <button className="small danger" disabled={busy}
-                  onClick={() => { setRemoving(row); setError(""); }}
-                  aria-label={`Delete ${row.name}`}>Delete</button>}
+                      {probing === `${row.id}:smoke` ? "Calling…" : "Test"}</button>}
+                <button className="small" disabled={busy || editing !== null}
+                  onClick={() => edit(row)} aria-label={`Edit ${row.name}`}>Edit</button>
+                <RowMenu label={`More for ${row.name}`} items={[
+                  ...(registry.find((p) => p.name === (row.provider ?? DEFAULT_PROVIDER))?.protocol ? [{
+                    label: probing === `${row.id}:models` ? "Reading…" : "Read its model list", icon: "list" as const,
+                    hint: "Free", disabled: busy || probing !== null, onClick: () => probe(row, "models") }] : []),
+                  ...(!row.hidden_at ? [{ label: "Hide", icon: "eye" as const, disabled: busy || !!row.in_use,
+                    note: row.in_use ? "A live project pays with it. Reassign or stop it first." : undefined,
+                    onClick: () => setHiding([row]) }] : []),
+                  ...(row.projects.length === 0 ? [{ label: "Delete…", icon: "trash" as const, danger: true,
+                    disabled: busy, onClick: () => { setRemoving(row); setError(""); } }] : []),
+                ]} />
               </td>
               </tr>
               {/* Full width, because the answer is a sentence and the cell that
@@ -1183,41 +1182,77 @@ export const fmtWindow = (n: number | null | undefined) => n == null ? "—"
 
 const EMPTY_DRAFT = { model: "", input: "", output: "", cache_read: "", context_window: "" };
 
-export function ModelPrices() {
+type PriceFilter = "lineup" | "missing" | "own" | "all";
+
+/** "LiteLLM price feed 2026-11-04" → "Nov 4"; the date a reader compares. */
+function shortDate(text: string | null | undefined): string | null {
+  const m = text?.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).toLocaleDateString(undefined,
+    { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+/** Where a model's price came from, as a seal: checked against the vendor's
+    list, imported from the feed on a date, typed here, or none at all. */
+function PriceSource({ row }: { row: ModelPriceRow }) {
+  if (row.own) {
+    return row.source ? <span className="sg-seal word" title={row.source}>Feed · {shortDate(row.source) ?? "imported"}</span>
+      : <span className="sg-seal judged">Set here</span>;
+  }
+  if (row.shipped) return <span className="sg-seal verified" title={`Shipped with yaaf, checked against the vendor's list on ${row.shipped.as_of}`}>
+    <Icon name="check" size={12} strokeWidth={2.4} />Vendor-checked · {shortDate(row.shipped.as_of) ?? row.shipped.as_of}</span>;
+  return <span className="sg-seal bad">No price</span>;
+}
+
+export function ModelPrices({ readiness, onChanged }: { readiness?: Readiness | null; onChanged?: () => void } = {}) {
   const [rows, setRows] = useState<ModelPriceRow[] | null>(null);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState(EMPTY_DRAFT);
-  const [filter, setFilter] = useState("");
-  const formRef = useRef<HTMLFormElement>(null);
-  // A fix elsewhere ("set a price") lands here with the model named, the form
-  // filled, and the cursor in the first empty box.
+  const [editing, setEditing] = useState<string | null>(null);
+  const [term, setTerm] = useState("");
+  const [importing, setImporting] = useState(false);
   const [params] = useSearchParams();
   const asked = params.get("model");
+  // What each model is used as, by the lineups of the providers this install pays.
+  const uses = useMemo(() => {
+    const out = new Map<string, { provider: string; as: string[]; priced: boolean }>();
+    for (const p of readiness?.providers ?? []) {
+      for (const t of p.tiers) {
+        if (!t.model) continue;
+        const found = out.get(t.model) ?? { provider: p.provider, as: [], priced: t.priced || t.states_cost };
+        found.as.push(`${t.label} · ${p.label}`);
+        out.set(t.model, found);
+      }
+    }
+    return out;
+  }, [readiness]);
+  const [filter, setFilter] = useState<PriceFilter>("lineup");
   const reload = useCallback(() => {
     get<ModelPriceRow[]>(PRICES).then(setRows).catch((e) => setError(e.message));
   }, []);
   useEffect(reload, [reload]);
 
-  const fill = useCallback((row: ModelPriceRow | { model: string }) => {
+  const open = useCallback((row: ModelPriceRow | { model: string }) => {
     const r = row as ModelPriceRow;
     const base = r.own ?? r.shipped;
     setDraft({ model: row.model, input: base ? String(base.input) : "",
       output: base ? String(base.output) : "", cache_read: base?.cache_read ? String(base.cache_read) : "",
       context_window: r.context_window ? String(r.context_window) : "" });
-    setTimeout(() => {
-      formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      (formRef.current?.querySelector("input[name=input]") as HTMLInputElement | null)?.focus();
-    }, 50);
+    setEditing(row.model);
+    setNote(""); setError("");
   }, []);
+  // A fix elsewhere ("set a price") lands here with that model's row open.
   useEffect(() => {
     if (!asked || !rows) return;
-    fill(rows.find((r) => r.model === asked) ?? { model: asked });
+    const row = rows.find((r) => r.model === asked);
+    setFilter("all");
+    open(row ?? { model: asked });
+    setTimeout(() => document.getElementById(`price-${asked}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
   }, [asked, rows === null]);
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
+  async function save() {
     setBusy(true); setError(""); setNote("");
     try {
       const model = draft.model.trim();
@@ -1239,104 +1274,147 @@ export function ModelPrices() {
         await put(`/admin/settings/model-context/${model}`, {
           context_window: draft.context_window.trim() ? Number(draft.context_window) : null });
       }
-      setDraft(EMPTY_DRAFT);
-      setNote(priceChanged ? `Saved ${model}. Seats on it can be metered from their next run.`
+      setEditing(null); setDraft(EMPTY_DRAFT);
+      setNote(priceChanged ? `Saved ${model}. Seats on it are metered at this price from their next run.`
         : windowChanged ? `Saved ${model}'s context window; its price is unchanged.`
           : `Nothing changed for ${model}.`);
-      reload();
+      reload(); onChanged?.();
     } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }
 
   async function clear(model: string) {
     setBusy(true); setError(""); setNote("");
-    try { await del(`${PRICES}/${model}`); reload(); }
+    try { await del(`${PRICES}/${model}`); reload(); onChanged?.(); }
     catch (err) { setError((err as Error).message); } finally { setBusy(false); }
   }
 
-  const price = (p: PriceRow | null) => p
-    ? `${perM(p.input)} in · ${perM(p.output)} out${p.cache_read ? ` · ${perM(p.cache_read)} cached` : ""}`
-      + (p.tiers ?? []).map((t) => `; past ${fmtWindow(t.above)}: ${perM(t.input)} in · ${perM(t.output)} out`).join("")
-    : "—";
-  const term = filter.trim().toLowerCase();
-  const shown = (rows ?? []).filter((r) => !term || r.model.toLowerCase().includes(term)
-    || r.provider.toLowerCase().includes(term));
+  // Lineup models with no price have no row of their own yet; they are the
+  // rows this page most needs to show.
+  const all: ModelPriceRow[] = useMemo(() => {
+    const known = new Set((rows ?? []).map((r) => r.model));
+    const missing = [...uses.entries()].filter(([m]) => !known.has(m))
+      .map(([model, u]) => ({ model, provider: u.provider, listed: false, shipped: null, own: null }));
+    return [...(rows ?? []), ...missing];
+  }, [rows, uses]);
+  const inLineup = (r: ModelPriceRow) => uses.has(r.model);
+  const unpriced = (r: ModelPriceRow) => !r.own && !r.shipped && !(uses.get(r.model)?.priced);
+  const counts = {
+    lineup: all.filter(inLineup).length,
+    missing: all.filter((r) => inLineup(r) && unpriced(r)).length,
+    own: all.filter((r) => r.own && !r.source).length,
+    all: all.length,
+  };
+  const want = term.trim().toLowerCase();
+  const shown = all.filter((r) => filter === "all" || (filter === "lineup" ? inLineup(r)
+      : filter === "missing" ? inLineup(r) && unpriced(r) : !!r.own && !r.source))
+    .filter((r) => !want || r.model.toLowerCase().includes(want) || r.provider.toLowerCase().includes(want))
+    .sort((a, b) => Number(inLineup(b)) - Number(inLineup(a)) || a.model.localeCompare(b.model));
   const windowValue = Number(draft.context_window);
   const windowBad = draft.context_window.trim() !== "" && (!Number.isInteger(windowValue) || windowValue < 1000);
+  const rate = (n: number | undefined | null) => (n || n === 0) ? perM(n) : "—";
+  const effective = (r: ModelPriceRow) => r.own ?? r.shipped;
+  const canSave = !!draft.model.trim() && draft.input !== "" && draft.output !== "" && !windowBad;
 
-  return <section className="card" aria-label="Model prices">
-    <h2 style={{ marginTop: 0 }}>Model prices</h2>
-    <Lede>USD per million tokens. A seat whose model has no price here or in the shipped list
-      is refused.</Lede>
+  const editRow = (key: string, isNew: boolean) => { const current = rows?.find((r) => r.model === draft.model); return <Fragment key={key}>
+    <tr className="editing" id={`price-${draft.model}`}>
+      <td className="model">{isNew
+        ? <input className="model-in" aria-label="Model" value={draft.model} maxLength={128} autoFocus
+            placeholder="provider/model-name" onChange={(e) => setDraft({ ...draft, model: e.target.value })} />
+        : <><span className="mono">{draft.model}</span>{uses.get(draft.model) && <span className="sub">{uses.get(draft.model)!.as.join(", ")}</span>}</>}</td>
+      <td className="num"><input name="input" aria-label="Input $ per M" type="number" min={0} step="any"
+        value={draft.input} autoFocus={!isNew} onChange={(e) => setDraft({ ...draft, input: e.target.value })} /></td>
+      <td className="num"><input aria-label="Output $ per M" type="number" min={0} step="any"
+        value={draft.output} onChange={(e) => setDraft({ ...draft, output: e.target.value })} /></td>
+      <td className="num"><input aria-label="Cached input $ per M" type="number" min={0} step="any"
+        value={draft.cache_read} onChange={(e) => setDraft({ ...draft, cache_read: e.target.value })} /></td>
+      <td className="num"><input aria-label="Context window in tokens" type="number" min={1000} step={1}
+        value={draft.context_window} placeholder="optional" aria-invalid={windowBad || undefined}
+        onChange={(e) => setDraft({ ...draft, context_window: e.target.value })} /></td>
+      <td colSpan={2}><div className="actions" style={{ margin: 0, justifyContent: "flex-end", flexWrap: "nowrap" }}>
+        {!isNew && current?.own && <button type="button" className={`small${current.shipped ? "" : " quiet-danger"}`}
+          disabled={busy} title={current.shipped ? "Drop this install's price and use the vendor-checked one"
+            : inLineup(current) ? "A seat on it is refused until it has a price again" : undefined}
+          onClick={() => { setEditing(null); setDraft(EMPTY_DRAFT); void clear(current.model); }}>
+          {current.shipped ? "Use shipped" : "Remove"}</button>}
+        <button type="button" className="small" disabled={busy}
+          onClick={() => { setEditing(null); setDraft(EMPTY_DRAFT); }}>Cancel</button>
+        <button type="button" className="small primary" disabled={busy || !canSave} onClick={save}>
+          {busy ? "Saving…" : "Save"}</button></div></td>
+    </tr>
+    <tr className="editing price-note"><td colSpan={7}>
+      {windowBad ? <span className="warn">A context window is a whole number of tokens, 1,000 or more. </span> : null}
+      USD per million tokens. A changed price becomes this install&apos;s own, typed by hand, and seats on it are
+      metered at it from their next run. An empty window goes back to the imported or shipped figure.
+      {isNew && " Name a model the list does not know with its provider first: openrouter/qwen/qwen3-coder."}
+    </td></tr>
+  </Fragment>; };
+
+  return <>
+    <SectionHead title="Model prices"
+      lede="USD per million tokens. A seat on a model with no price is refused, because a budget can’t stop what it can’t price."
+      actions={<>
+        <button type="button" onClick={() => setImporting(true)}>Import from the feed…</button>
+        <button type="button" disabled={editing !== null}
+          onClick={() => { setDraft(EMPTY_DRAFT); setEditing("__new"); setFilter("all"); }}>
+          <Icon name="plus" size={15} />Add a price</button>
+      </>} />
     <Why>
-      <p>That applies to a seat on a harness that meters its own runs — yaaf&apos;s loop on any
-        provider&apos;s API, or a CLI yaaf prices. yaaf ships only the prices it could check
-        against the vendor&apos;s own list; import the rest from the price feed below, or type
-        them. Your price wins over the shipped one. Name a model the list does not know with its
-        provider first: <code>openrouter/qwen/qwen3-coder</code>,{" "}
-        <code>groq/llama-4-maverick</code>. OpenRouter states each call&apos;s cost, so its
-        models need no price at all; a local server&apos;s price is usually zero.</p>
-      <p><b>Context window</b> is how many tokens the model reads at once. yaaf&apos;s own loop
-        compacts a seat&apos;s history before it would overflow; without a figure it waits for
-        the provider to refuse a call for length, which costs that call.</p>
+      <p>That applies to a seat on a harness that meters its own runs: yaaf&apos;s loop on any provider&apos;s
+        API, or a CLI yaaf prices. yaaf ships only the prices it could check against the vendor&apos;s own list;
+        import the rest from the feed, or type them. Your price wins over the shipped one. OpenRouter states
+        each call&apos;s cost, so its models need no price; a local server&apos;s price is usually zero.</p>
+      <p><b>Context window</b> is how many tokens the model reads at once. yaaf&apos;s own loop compacts a
+        seat&apos;s history before it would overflow; without a figure it waits for the provider to refuse a
+        call for length, which costs that call.</p>
     </Why>
     {error && <p className="error" role="alert">{error}</p>}
-    {note && <p className="notice-box" role="status">{note}</p>}
-    <ImportPrices onApplied={reload} />
-    <div className="cred-filters">
-      <input type="search" value={filter} aria-label="Filter models" placeholder="Filter by model or provider"
-        onChange={(e) => setFilter(e.target.value)} />
+    {note && <p className="set-flash" role="status">{note}</p>}
+
+    <div className="price-tools">
+      <Seg value={filter} onPick={setFilter} options={[
+        { key: "lineup", label: "In a lineup", count: counts.lineup },
+        { key: "missing", label: "Missing a price", count: counts.missing },
+        { key: "own", label: "Set here", count: counts.own },
+        { key: "all", label: "All", count: counts.all }]} />
+      <input type="search" value={term} aria-label="Filter models" placeholder="Filter by model or provider"
+        onChange={(e) => setTerm(e.target.value)} />
     </div>
-    <div className="table-scroll"><table className="table prices-table">
-      <thead><tr><th>Model</th><th>Provider</th><th>Shipped</th><th>This install</th>
-        <th className="num">Context window</th><th /></tr></thead>
-      <tbody>
-        {shown.map((row) => <tr key={row.model}>
-          <td><code>{row.model}</code></td>
-          <td>{row.provider}</td>
-          <td>{price(row.shipped)}{row.shipped && <div className="help">as of {row.shipped.as_of}</div>}</td>
-          <td>{price(row.own)}{row.own && <div className="help">
-            {row.source ? `from ${row.source}` : "set by hand"}</div>}</td>
-          <td className="num">{row.context_window ? `${fmtWindow(row.context_window)} tokens` : "—"}</td>
-          <td className="prices-acts">
-            <button type="button" className="small" disabled={busy} onClick={() => fill(row)}>
-              {row.own ? "Edit" : "Set price"}</button>
-            {row.own && <button type="button" className="small" disabled={busy}
-              onClick={() => clear(row.model)}>{row.shipped ? "Use shipped" : "Remove"}</button>}</td>
-        </tr>)}
-        {rows && shown.length === 0 && <tr><td colSpan={6} className="help">
-          No model matches. Price it below by name.</td></tr>}
-      </tbody>
-    </table></div>
-    <form ref={formRef} onSubmit={save} className="cred-form price-form">
-      <h3>{draft.model && rows?.some((r) => r.model === draft.model && r.own) ? `Edit ${draft.model}` : "Set a price"}</h3>
-      <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-        <label className="field">Model<input required value={draft.model} maxLength={128}
-          onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-          placeholder="deepseek-v4-flash" /></label>
-        <div className="price-fields">
-          <label className="field">Input $/M<input name="input" required type="number" min={0} step="any"
-            value={draft.input} onChange={(e) => setDraft({ ...draft, input: e.target.value })} /></label>
-          <label className="field">Output $/M<input required type="number" min={0} step="any"
-            value={draft.output} onChange={(e) => setDraft({ ...draft, output: e.target.value })} /></label>
-          <label className="field">Cached input $/M<input type="number" min={0} step="any"
-            value={draft.cache_read}
-            onChange={(e) => setDraft({ ...draft, cache_read: e.target.value })} /></label>
-          <label className="field">Context window (tokens)
-            <input type="number" min={1000} step={1} value={draft.context_window}
-              placeholder="optional — e.g. 128000" aria-invalid={windowBad || undefined}
-              onChange={(e) => setDraft({ ...draft, context_window: e.target.value })} /></label>
-        </div>
-        {windowBad && <p className="help warn">A context window is a whole number of tokens, 1,000 or more.</p>}
-        <p className="help">Clear the window box to go back to the imported or shipped figure.</p>
-        <Why>A changed price becomes the install&apos;s own, typed by hand. A changed context
-          window alone leaves the price as it was.</Why>
-        <div className="actions"><button className="primary"
-          disabled={!draft.model.trim() || draft.input === "" || draft.output === "" || windowBad}>
-          Save price</button>
-          {draft.model && <button type="button" onClick={() => setDraft(EMPTY_DRAFT)}>Clear</button>}</div>
-      </fieldset>
-    </form>
-  </section>;
+    <div className="set-card" style={{ overflow: "hidden" }}><div className="table-scroll">
+      <table className="table price-table">
+        <thead><tr><th>Model</th><th className="num">Input</th><th className="num">Output</th>
+          <th className="num">Cached</th><th className="num">Context</th><th>Source</th><th /></tr></thead>
+        <tbody>
+          {editing === "__new" && editRow("__new", true)}
+          {rows === null && <tr><td colSpan={7} className="help">Loading…</td></tr>}
+          {shown.map((row) => {
+            if (editing === row.model) return editRow(row.model, false);
+            const p = effective(row);
+            const u = uses.get(row.model);
+            return <tr key={row.model} id={`price-${row.model}`}>
+              <td className="model"><span className="mono">{row.model}</span>
+                <span className="sub">{u ? u.as.join(", ") : row.provider}</span></td>
+              <td className="num">{rate(p?.input)}{(p?.tiers ?? []).map((t) =>
+                <span key={t.above} className="sub">past {fmtWindow(t.above)}: {perM(t.input)}</span>)}</td>
+              <td className="num">{rate(p?.output)}{(p?.tiers ?? []).map((t) =>
+                <span key={t.above} className="sub">past {fmtWindow(t.above)}: {perM(t.output)}</span>)}</td>
+              <td className="num">{p?.cache_read ? perM(p.cache_read) : "—"}</td>
+              <td className="num">{row.context_window ? fmtWindow(row.context_window) : "—"}</td>
+              <td><PriceSource row={row} /></td>
+              <td className="num">
+                <button type="button" className={`small${p ? "" : " primary"}`} disabled={busy || editing !== null}
+                  onClick={() => open(row)}>{p ? "Edit" : "Set a price"}</button></td>
+            </tr>;
+          })}
+          {rows && shown.length === 0 && editing !== "__new" && <tr><td colSpan={7} className="help">
+            {filter === "missing" ? "Every model in a lineup has a price." : "No model matches."}</td></tr>}
+        </tbody>
+      </table></div></div>
+
+    {importing && <Drawer title="Import prices" wide onClose={() => setImporting(false)}
+      sub="From the community price feed, or the snapshot shipped with this release. Nothing is written until you apply it.">
+      <ImportPrices onApplied={() => { reload(); onChanged?.(); }} />
+    </Drawer>}
+  </>;
 }
 
 // ── importing prices ────────────────────────────────────────────────────────────
@@ -1399,9 +1477,7 @@ function ImportPrices({ onApplied }: { onApplied: () => void }) {
   }
 
   const changes = (answer?.rows ?? []).filter((r) => r.action === "add" || r.action === "update");
-  return <details className="card" style={{ marginBottom: 12 }}>
-    <summary><strong>Import prices</strong> — from the price feed, or the snapshot shipped
-      with this release</summary>
+  return <div className="import-prices">
     <p className="help">The feed is the community-maintained LiteLLM price list
       {feed && <> (snapshot dated {feed.snapshot_as_of}, {feed.snapshot_models} models)</>}.
       Every imported price says where it came from, and the health checklist still compares
@@ -1452,7 +1528,7 @@ function ImportPrices({ onApplied }: { onApplied: () => void }) {
       onClick={saveUrl}>Save address</button>
       <span className="help">Point it at your own mirror of the same file; blank goes back to
         the default.</span></div>
-  </details>;
+  </div>;
 }
 
 // ── a project's other providers ─────────────────────────────────────────────────

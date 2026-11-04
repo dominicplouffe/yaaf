@@ -4,6 +4,46 @@
 folders and open it in a browser, or view the [published copy](https://claude.ai/artifact/EgBCuMUnSyS7PKT9Xzbe7n). Concepts are in
 [`mockups.html`](mockups.html); the PNGs in `after/` are rendered from it.
 
+> **Status: built.** All three phases of the roadmap are in the app, and `built/` holds screenshots
+> of the real thing on the demo seed plus `seed/configure.py`: [Overview](built/overview.png) ·
+> [Providers](built/providers.png) · [a class changed in place](built/lineup-preview.png) ·
+> [a priced menu](built/key-menu.png) · [All keys](built/all-keys.png) · [Models](built/models.png) ·
+> [Model prices](built/prices.png) · [Web search](built/search.png) · [Founder](built/founder.png) ·
+> [Slack](built/slack.png) · [People](built/people.png) · [phone index](built/phone-index.png) ·
+> [phone Slack](built/phone-slack.png) · [dark](built/overview-dark.png).
+>
+> The sample keys are fake, and that is what the screenshots show: Anthropic answered its key with
+> a real `401`, so it is **Failing**, and the Overview leads with it and with the Founder that borrows
+> it. The two keys nothing has called are **Untested**. Nothing on the page is green.
+>
+> | Measured at 1440px, same seed | Before | Built | Target |
+> |---|---|---|---|
+> | Words on screen, 8 sections | 2,344 | 1,405 | ≤ 1,600 |
+> | Providers page, 4 providers | 2,475px | 1,096px | ≤ 1,100px |
+> | Providers page on a phone | 4,808px | 1,972px | ≤ 2,000px |
+> | Buttons on Providers | 65 | 23 | — |
+> | Browser `confirm()` dialogs | 6 | 0 | 0 |
+> | Sideways scroll at 390px | Slack form unusable | none, every section | none |
+>
+> Slack carries more words on screen than before (137 → 197) and Account slightly more (a header):
+> the ladder shows what used to be folded under four "Why?"s.
+>
+> **Server.** `yaaf/core/key_evidence.py` reads whether a key has answered (a Test, its model list,
+> a graded check, a run of a project it pays) or been refused, counting only what happened since
+> its value last changed; the readiness report gains `status` and `evidence`, leaving `ready` as
+> it was for every screen that reads it. `yaaf doctor` gains **keys answer**. Slack, web search and
+> the Founder remember their last test and forget it when changed. `DELETE /web-search?dry_run=true`
+> and `POST /models/lineup/preview` answer what a removal or a lineup change would do, from a
+> savepoint the change is made in and rolled back. `GET /admin/users` says when an invite link runs
+> out. Tests: `tests/selftest_invariants/test_key_evidence.py`; browser: `web/e2e/settings.spec.ts`.
+>
+> **Where the build departs from the mockups.** The Overview's "Not confirmed yet" list is its own
+> group, so untested keys never inflate the count of what needs you. Provider rows put the facts on
+> one line under the models instead of four columns. In Prices, *Use shipped* and *Remove* live in
+> the row's edit state rather than a ⋯ menu, so the table fits at 1440px. A switch inside a form
+> (Slack's boardroom switch) is a field of that form; only a switch on its own (upkeep) is held
+> with Undo. The Slack room-name preview says `{project slug}` rather than guessing a real one.
+
 | Today (observed, local build) | Proposed |
 |---|---|
 | ![Settings today: the first screen shows a healthy provider; the blocked one is 1,785px down](before/providers-fold.png) | ![Proposed Overview: what needs you, what each class runs on, connections](after/overview.png) |

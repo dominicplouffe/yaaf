@@ -15,7 +15,7 @@
 // also lists is not offered: a seat cannot run on one.
 
 import { useEffect, useMemo, useState } from "react";
-import { get, put } from "./api";
+import { get, post, put } from "./api";
 import { fmtWindow } from "./llmCredentials";
 import { CheckChip, CheckRow } from "./providerCheck";
 import { forgetModels, useModels } from "./providers";
@@ -63,6 +63,33 @@ function described(m: DiscoveredModel): string {
   return parts.join(" · ");
 }
 
+/** What saving a lineup change would do, from the server's own dry run
+    (POST /models/lineup/preview): the seats that move, on which projects, the
+    class's price before and after, and any seat it would leave unable to run. */
+interface LineupPreview {
+  seats: number;
+  projects: string[];
+  before: { model: string | null; input: number | null; output: number | null };
+  after: { model: string | null; input: number | null; output: number | null };
+  unrunnable: string[];
+}
+
+/** The class's rates before and after, per million tokens, and "2×" only where
+    input and output move by the same factor; a blend of the two would be a
+    number nobody could check. Null when either side has no price. */
+function priceChange(p: LineupPreview): { rates: string; ratio: string | null; dearer: boolean } | null {
+  const { before, after } = p;
+  if (before.input == null || after.input == null || before.output == null || after.output == null) return null;
+  const rates = `${perM(before.input)} / ${perM(before.output)} → ${perM(after.input)} / ${perM(after.output)} per M`;
+  const inRatio = before.input ? after.input / before.input : null;
+  const outRatio = before.output ? after.output / before.output : null;
+  const same = inRatio != null && outRatio != null && Math.abs(inRatio - outRatio) / Math.max(inRatio, outRatio) < 0.1;
+  const ratio = same && Math.abs(inRatio! - 1) >= 0.05
+    ? (inRatio! >= 1 ? `${+inRatio!.toFixed(inRatio! >= 10 ? 0 : 1)}× the price` : `${Math.round(inRatio! * 100)}% of the price`)
+    : null;
+  return { rates, ratio, dearer: after.input + after.output > before.input + before.output };
+}
+
 /** One class's model, chosen from what the key lists or typed by name. */
 export function TierEditor({ provider, providerLabel, tier, discovery, onDiscover, onSaved, onCancel }: {
   provider: string; providerLabel: string;
@@ -78,10 +105,24 @@ export function TierEditor({ provider, providerLabel, tier, discovery, onDiscove
   const [byName, setByName] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState<LineupPreview | null>(null);
   // Asked once, on opening, where nobody has asked yet.
   useEffect(() => {
     if (!discovery.models && !discovery.busy && !discovery.error && onDiscover) onDiscover();
   }, []);
+  // What the change would move, asked of the server before Save — the same
+  // reading the save makes, rolled back.
+  useEffect(() => {
+    const model = value.trim();
+    setPreview(null);
+    if (!model || model === tier.model) return;
+    let alive = true;
+    const t = setTimeout(() => {
+      post<LineupPreview>("/admin/settings/models/lineup/preview", { provider, class: tier.class, model })
+        .then((p) => { if (alive) setPreview(p); }).catch(() => {});
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [value, provider, tier.class, tier.model]);
   const suggestions = useMemo(() =>
     (catalog?.models ?? []).filter((m) => m.provider === provider).map((m) => m.id), [catalog, provider]);
   const listed = discovery.models;
@@ -104,7 +145,8 @@ export function TierEditor({ provider, providerLabel, tier, discovery, onDiscove
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
 
-  const id = `tier-${provider}-${tier.class}`;
+  const id = `tier-${provider}-${tier.class}-model`;
+  const change = preview ? priceChange(preview) : null;
   return <div className="tier-editor">
     <label className="field" htmlFor={id}>{tier.label} model on {providerLabel}</label>
     {discovery.busy && <p className="help" role="status">Asking {providerLabel} which models this key can call…</p>}
@@ -122,15 +164,32 @@ export function TierEditor({ provider, providerLabel, tier, discovery, onDiscove
     <p className="help">
       {useList ? <>From {discovery.from ? <b>{discovery.from}</b> : "the key"}&apos;s own list
           {hidden > 0 && <>, without the {hidden} image, video or audio model{hidden === 1 ? "" : "s"} it
-            also lists — a seat cannot run on {hidden === 1 ? "it" : "them"}</>}.{" "}
+            also lists</>}.{" "}
           <button type="button" className="linkish" onClick={() => setByName(true)}>Type a name instead</button></>
-        : discovery.error ? <>Could not read the key&apos;s list ({discovery.error}) — type the model&apos;s name as the provider spells it.{" "}
+        : discovery.error ? <>Could not read the key&apos;s list ({discovery.error}). Type the model&apos;s name as the provider spells it.{" "}
           {onDiscover && <button type="button" className="linkish" onClick={onDiscover}>Ask again</button>}</>
         : listed && byName ? <button type="button" className="linkish" onClick={() => setByName(false)}>
             Pick from the key&apos;s list</button>
         : !onDiscover ? "Type the model's name as the provider spells it." : null}
-      {" "}Every seat naming this class on a project {providerLabel} pays moves with it on its next run.
     </p>
+    {preview ? <div className="lineup-preview" role="status">
+      <div className="sg-facts">
+        {preview.seats ? <>
+          <span className="sg-fact">Moves <b>{preview.seats} seat{preview.seats === 1 ? "" : "s"}</b>
+            {preview.projects.length > 0 && <> on {preview.projects.length === 1 ? preview.projects[0]
+              : `${preview.projects.length} projects`}</>}</span>
+          <span className="sg-fact">From their next run</span></>
+          : <span className="sg-fact">No seat on a live project uses this class</span>}
+        {change && <span className={`sg-fact${change.dearer ? " warn" : ""}`}>
+          {change.ratio && <b>{change.ratio}&nbsp;</b>}{change.rates}</span>}
+        {preview.after.input == null && <span className="sg-fact warn">No price yet: its seats would be refused</span>}
+      </div>
+      {preview.unrunnable.length > 0 && <div className="notice-box" role="alert">
+        <b>It would leave these seats unable to run:</b>
+        <ul>{preview.unrunnable.map((line) => <li key={line}>{line}</li>)}</ul></div>}
+    </div> : value.trim() && value.trim() !== tier.model
+      ? <p className="help">Every seat naming this class on a project {providerLabel} pays moves with it on its next run.</p>
+      : null}
     {error && <p className="error" role="alert">{error}</p>}
     <div className="actions" style={{ marginTop: 8 }}>
       <button type="button" className="primary small" disabled={busy || !value.trim() || value.trim() === tier.model}
@@ -145,11 +204,12 @@ export function TierEditor({ provider, providerLabel, tier, discovery, onDiscove
 /** Whose a class's model is. "Picked by yaaf" stays on its model until somebody
     changes it; the readiness report says when yaaf would now pick another. */
 const SOURCE_LABEL: Record<string, string> = {
-  install: "this install's choice", shipped: "shipped with yaaf",
-  auto: "picked by yaaf — by price, newest",
+  install: "This install’s choice", shipped: "Shipped default",
+  auto: "Picked by yaaf, by price",
 };
 
-/** The three classes on one provider, a row each, with the evidence. */
+/** The three classes on one provider, a row each, with what is known about
+    each choice in one Evidence cell: listed by the key, and its last check. */
 export function TierTable({ provider, providerLabel, tiers, discovery, onDiscover, editing, setEditing,
                             onSaved, scoreboard, viewing, setViewing, servedAt }: {
   provider: string; providerLabel: string;
@@ -162,51 +222,51 @@ export function TierTable({ provider, providerLabel, tiers, discovery, onDiscove
   scoreboard?: Record<string, CheckRow>;
   viewing?: string | null;
   setViewing?: (model: string | null) => void;
-  /** When the key's list was last read, for the "listed" column's header. */
+  /** When the key's list was last read. */
   servedAt?: string | null;
 }) {
   return <div className="tiers" role="table" aria-label={`${providerLabel} models by class`}>
     <div className="tier-row tier-headrow" role="row">
       <span role="columnheader">Class</span><span role="columnheader">Model</span>
-      <span role="columnheader">Price per M tokens</span>
-      <span role="columnheader" title={servedAt ? `List read ${fmtAgo(servedAt)}` : undefined}>Key lists it</span>
-      <span role="columnheader">Last check</span><span role="columnheader">Context</span>
+      <span role="columnheader">Price per M · in / out</span>
+      <span role="columnheader">Context</span>
+      <span role="columnheader" title={servedAt ? `The key’s list was read ${fmtAgo(servedAt)}` : undefined}>Evidence</span>
+      <span role="columnheader"><span className="sr-only">Change</span></span>
     </div>
     {tiers.map((t) => {
       const check = t.model ? scoreboard?.[t.model] : undefined;
+      const evidence: React.ReactNode[] = [];
+      if (t.model && t.served === true) evidence.push(<span key="l" className="good">✓ listed</span>);
+      if (t.model && t.served === false) evidence.push(<span key="l" className="chip warn">not listed</span>);
+      if (t.check) {
+        evidence.push(<button key="c" type="button" className="tier-check" disabled={!check || !setViewing}
+          aria-expanded={viewing === t.model} title={t.check.summary}
+          onClick={() => setViewing?.(viewing === t.model ? null : t.model)}>
+          <CheckChip status={t.check.status} />
+          {t.check.at && <span className="help">{fmtAgo(t.check.at)}</span>}
+        </button>);
+      }
       return <div key={t.class} className={`tier-row${editing === t.class ? " editing" : ""}`} role="row" id={`tier-${provider}-${t.class}`}>
         <span role="cell" className="tier-class"><b>{t.label}</b></span>
         <span role="cell" data-label="Model" className="tier-model">
-          {t.model ? <code>{t.model}</code> : <span className="critical-ink">none set — seats refused</span>}
-          <span className="tier-sub">
-            {t.source && <span className="help">{SOURCE_LABEL[t.source]} · </span>}
-            <button type="button" className="linkish" aria-expanded={editing === t.class}
-              aria-label={`${t.model ? "Change" : "Choose"} the ${t.label} model`}
-              onClick={() => setEditing(editing === t.class ? null : t.class)}>
-              {t.model ? "Change" : "Choose a model"}</button>
-          </span>
+          {t.model ? <><code title={t.model}>{t.model}</code>
+            {t.source && <span className="tier-src">{SOURCE_LABEL[t.source]}</span>}</>
+            : <span className="unset">Not set · seats refused</span>}
         </span>
-        <span role="cell" data-label="Price">
-          {!t.model ? "—" : t.price ? <>{perM(t.price.input)} in · {perM(t.price.output)} out</>
+        <span role="cell" data-label="Price" className={t.model ? undefined : "empty"}>
+          {!t.model ? "—" : t.price ? <>{perM(t.price.input)} / {perM(t.price.output)}</>
             : t.states_cost ? <span title="The provider states each call's cost">stated per call</span>
             : <span className="chip critical">no price</span>}
         </span>
-        <span role="cell" data-label="Key lists it">
-          {t.served === true ? <span className="good">✓ listed</span>
-            : t.served === false ? <span className="chip warn">not listed</span>
-            : <span className="muted" title="Press Models on a credential to read the key's list">not read yet</span>}
+        <span role="cell" data-label="Context" className={t.context_window ? undefined : "empty"}>{t.context_window ? fmtWindow(t.context_window) : <span className="muted">—</span>}</span>
+        <span role="cell" data-label="Evidence" className={`tier-ev${evidence.length ? "" : " empty"}`}>
+          {evidence.length ? evidence : <span className="muted">—</span>}</span>
+        <span role="cell" className="tier-act">
+          <button type="button" className="small" aria-expanded={editing === t.class}
+            aria-label={`${t.model ? "Change" : "Choose"} the ${t.label} model`}
+            onClick={() => setEditing(editing === t.class ? null : t.class)}>
+            {t.model ? "Change" : "Choose"}</button>
         </span>
-        <span role="cell" data-label="Last check">
-          {t.check ? <button type="button" className="tier-check" disabled={!check || !setViewing}
-              aria-expanded={viewing === t.model}
-              title={t.check.summary}
-              onClick={() => setViewing?.(viewing === t.model ? null : t.model)}>
-              <CheckChip status={t.check.status} />
-              {t.check.at && <span className="help">{fmtAgo(t.check.at)}</span>}
-            </button>
-            : <span className="muted">not checked</span>}
-        </span>
-        <span role="cell" data-label="Context">{t.context_window ? fmtWindow(t.context_window) : <span className="muted">—</span>}</span>
         {editing === t.class && <div className="tier-edit-wrap">
           <TierEditor provider={provider} providerLabel={providerLabel} tier={t} discovery={discovery}
             onDiscover={onDiscover} onCancel={() => setEditing(null)}

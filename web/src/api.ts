@@ -150,6 +150,9 @@ export interface UserRow {
   has_password: boolean;
   created_at: string | null;
   deactivated_at: string | null;
+  /** Someone with no password yet: the newest link they hold and whether it
+      still works. Absent on the rows a write returns. */
+  invite?: { expires_at: string; expired: boolean } | null;
 }
 
 /** POST /admin/users and POST /admin/users/{id}/setup-link. The setup fields
@@ -1844,5 +1847,7 @@ export interface SearchBackend { name: string; label: string; base_url: string |
   suggested_usd: number; key: boolean; console_url: string | null }
 export interface SearchSettings {
   configured: { backend: string; label: string; base_url: string; price_usd: number; has_key: boolean } | null;
+  /** Its last test, forgotten whenever it is changed. */
+  last_test?: { ok: boolean; at: string; detail: string } | null;
   backends: SearchBackend[];
 }

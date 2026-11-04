@@ -18,7 +18,7 @@ import {
 } from "./api";
 import { fmtWhen, usePoll } from "./hooks";
 import { useMe } from "./me";
-import { clip, CopyField, fmtAgo, fmtLeft } from "./ui";
+import { clip, ConfirmModal, CopyField, fmtAgo, fmtLeft } from "./ui";
 import { Badge, Btn } from "./ui/kit";
 import { Why } from "./settingsCopy";
 
@@ -145,6 +145,7 @@ export function TokensCard() {
   const [minted, setMinted] = useState<MintedToken | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<Note>(null);
+  const [revoking, setRevoking] = useState<PersonalToken | null>(null);
 
   async function mint(e: React.FormEvent) {
     e.preventDefault();
@@ -162,7 +163,7 @@ export function TokensCard() {
   }
 
   async function revoke(t: PersonalToken) {
-    if (!confirm(`Revoke "${t.name}"? Anything still using it is refused from its next request.`)) return;
+    setRevoking(null);
     setNote(null);
     try {
       await del(`/auth/tokens/${t.id}`);
@@ -237,7 +238,7 @@ export function TokensCard() {
                   </td>
                   <td>{state.badge}</td>
                   <td style={{ textAlign: "right" }}>
-                    {state.live && <Btn small kind="danger" onClick={() => void revoke(t)}>Revoke</Btn>}
+                    {state.live && <Btn small onClick={() => setRevoking(t)}>Revoke</Btn>}
                   </td>
                 </tr>
               );
@@ -249,12 +250,12 @@ export function TokensCard() {
       <form onSubmit={mint}>
         <div className="row" style={{ marginTop: "var(--s3)", alignItems: "flex-end" }}>
           <div style={{ flex: 2 }}>
-            <label className="field" htmlFor="token-name">Name it after where it will live</label>
+            <label className="field" htmlFor="token-name">Name</label>
             <input
               id="token-name"
               value={name}
               maxLength={80}
-              placeholder="nightly-export on the build box"
+              aria-describedby="token-name-hint"
               onChange={(e) => setName(e.target.value)}
             />
           </div>
@@ -280,11 +281,16 @@ export function TokensCard() {
             </Btn>
           </div>
         </div>
-        <p className="help">
-          Between 1 and 365 days. The shorter it lives, the less a leaked one is worth.
+        <p className="help" id="token-name-hint">
+          Name it after where it will live, such as “nightly export on the build server”.
+          Between 1 and 365 days: the shorter it lives, the less a leaked one is worth.
         </p>
       </form>
       <Flash note={note} />
+      {revoking && <ConfirmModal title={`Revoke “${revoking.name}”?`} confirmLabel="Revoke" danger
+        onCancel={() => setRevoking(null)} onConfirm={() => void revoke(revoking)}>
+        <p>Anything still using it is refused from its next request. It stays on this list as revoked.</p>
+      </ConfirmModal>}
     </div>
   );
 }
@@ -296,6 +302,9 @@ export function TokensCard() {
     cannot it says the raw string rather than guessing. */
 function browserOf(ua: string | null): string {
   if (!ua) return "A browser that did not say what it was";
+  // A script or a command line, not a browser: say so, with what it called itself.
+  const tool = ua.match(/^(python-requests|python-httpx|httpx|curl|Wget|Go-http-client|node-fetch|axios|okhttp)[/ ]/i);
+  if (tool) return `A script (${tool[1]})`;
   const browser = /Edg\//.test(ua) ? "Edge"
     : /OPR\//.test(ua) ? "Opera"
     : /Firefox\//.test(ua) ? "Firefox"
@@ -316,11 +325,12 @@ function browserOf(ua: string | null): string {
 export function SessionsCard() {
   const { data: sessions, error, reload } = usePoll(() => get<SignedInSession[]>("/auth/sessions"), 60000);
   const [note, setNote] = useState<Note>(null);
+  const [leaving, setLeaving] = useState<SignedInSession | null>(null);
   const { signOut } = useMe();
 
   async function revoke(s: SignedInSession) {
     const what = s.current ? "this browser" : browserOf(s.user_agent);
-    if (!confirm(`Sign out ${what}?`)) return;
+    setLeaving(null);
     setNote(null);
     try {
       const out = await del<{ revoked: boolean; current: boolean }>(`/auth/sessions/${s.id}`);
@@ -370,7 +380,7 @@ export function SessionsCard() {
                 <td>{fmtWhen(s.created_at)}</td>
                 <td title={fmtWhen(s.last_seen_at)}>{s.current ? "now" : fmtAgo(s.last_seen_at)}</td>
                 <td style={{ textAlign: "right" }}>
-                  <Btn small kind={s.current ? "secondary" : "danger"} onClick={() => void revoke(s)}>
+                  <Btn small onClick={() => setLeaving(s)}>
                     {s.current ? "Sign out" : "Sign it out"}
                   </Btn>
                 </td>
@@ -380,6 +390,11 @@ export function SessionsCard() {
         </table>
       )}
       <Flash note={note} />
+      {leaving && <ConfirmModal title={`Sign out ${leaving.current ? "this browser" : browserOf(leaving.user_agent)}?`}
+        confirmLabel="Sign out" onCancel={() => setLeaving(null)} onConfirm={() => void revoke(leaving)}>
+        <p>{leaving.current ? "You will need your password to come back."
+          : "It needs your password to come back. If you don’t recognise it, change your password too."}</p>
+      </ConfirmModal>}
     </div>
   );
 }

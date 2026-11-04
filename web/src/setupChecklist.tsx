@@ -17,7 +17,7 @@ export function SetupChecklist({ hasProjects }: { hasProjects: boolean }) {
   const { install, providers } = data;
   // The provider to get ready first: the default if it is connected, else the
   // one closest to ready.
-  const order = { good: 0, warn: 1, critical: 2 } as const;
+  const order = { good: 0, neutral: 1, warn: 2, critical: 3 } as const;
   const focus = providers.find((p) => p.is_default)
     ?? [...providers].sort((a, b) => order[providerStatus(a).tone] - order[providerStatus(b).tone])[0];
   const blocking = focus ? focus.issues.filter((i) => i.severity === "block") : [];
