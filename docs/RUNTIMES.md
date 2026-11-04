@@ -349,7 +349,8 @@ priced at zero. Where a harness reports its own cost the run is priced anyway �
 `priced_usd` beside `cost_usd`, per attempt in the trace — and a model whose
 reported bills drift more than 10% from its price raises a health line on
 every project with a seat the catalog meters. The price table is checked
-against the bills it is supposed to predict.
+against the bills it is supposed to predict. A price carries its long-prompt
+tiers, and a call past a tier's line pays its rates (docs/PROVIDERS.md §5).
 
 ### 6. The run contract
 

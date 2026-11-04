@@ -864,6 +864,17 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
 # the last at zero, if the chairman's electricity is free.
 
 
+class PriceTierIn(BaseModel):
+    """A higher rate past a prompt size (yaaf.runtimes.catalog.Tier)."""
+    model_config = ConfigDict(extra="forbid")
+
+    above: int = Field(ge=1_000, le=100_000_000)
+    input: float = Field(ge=0, le=10_000)
+    output: float = Field(ge=0, le=10_000)
+    cache_read: float | None = Field(default=None, ge=0, le=10_000)
+    cache_write: float | None = Field(default=None, ge=0, le=10_000)
+
+
 class ModelPriceIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -875,6 +886,10 @@ class ModelPriceIn(BaseModel):
     #: The model's input window in tokens, which yaaf's own loop compacts
     #: against. Left out, whatever the install already had stays.
     context_window: int | None = Field(default=None, ge=1_000, le=100_000_000)
+    #: The higher rates past a prompt size. Left out, whatever the row had
+    #: stays — typing a new base rate must not quietly drop the long-prompt
+    #: rate a feed found; `[]` says the model has none.
+    tiers: list[PriceTierIn] | None = Field(default=None, max_length=8)
 
 
 @router.get("/model-prices", dependencies=[authority.INSTANCE_ADMIN])
@@ -984,6 +999,8 @@ def put_model_price(model: str, body: ModelPriceIn, session: Session = Depends(d
     row.cache_read, row.cache_write = body.cache_read, body.cache_write
     if body.context_window is not None:
         row.context_window = body.context_window
+    if body.tiers is not None:
+        row.tiers = sorted((t.model_dump() for t in body.tiers), key=lambda t: t["above"]) or None
     row.updated_at = utcnow()
     # Typed by an administrator: whatever a feed said before, this is theirs.
     row.source = None
@@ -1263,7 +1280,9 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
                 "kind": said.get("kind"),
                 "chat": price_feed.runnable(said.get("kind")),
                 "reasoning": said.get("reasoning"),
-                "price": {"input": price.input, "output": price.output} if price else None,
+                "price": {"input": price.input, "output": price.output,
+                          "tiers": [{"above": t.above, "input": t.input, "output": t.output}
+                                    for t in price.tiers]} if price else None,
                 "context_window": prices.context_window(session, ref)
                 or said.get("context_window")}
 

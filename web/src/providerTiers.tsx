@@ -32,7 +32,8 @@ export interface DiscoveredModel {
   /** Whether a seat can run on it; true when the feed does not know. */
   chat: boolean;
   reasoning: boolean | null;
-  price: { input: number; output: number } | null;
+  /** `tiers`: the higher rates a call pays once its prompt passes `above` tokens. */
+  price: { input: number; output: number; tiers?: { above: number; input: number; output: number }[] } | null;
   context_window: number | null;
 }
 export interface Discovery { models: DiscoveredModel[] | null; from: string | null; error: string | null; busy: boolean }
@@ -53,6 +54,9 @@ const perM = (n: number) => `$${n.toLocaleString(undefined, { maximumFractionDig
 /** One option's evidence, in the order a choice is made on: what it costs, how much it reads. */
 function described(m: DiscoveredModel): string {
   const parts = [m.price ? `${perM(m.price.input)} in / ${perM(m.price.output)} out per M` : "no price yet"];
+  for (const t of m.price?.tiers ?? []) {
+    parts.push(`${perM(t.input)} / ${perM(t.output)} past ${fmtWindow(t.above)}`);
+  }
   if (m.context_window) parts.push(`${fmtWindow(m.context_window)} context`);
   if (m.reasoning) parts.push("reasons");
   if (m.in_lineup) parts.push("in the lineup");

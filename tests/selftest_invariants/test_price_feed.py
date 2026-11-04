@@ -121,7 +121,7 @@ def test_a_live_feed_maps_onto_yaafs_names_and_reports_what_it_lacks(client, mon
     # The window comes with the price: yaaf's own loop compacts against it.
     assert rows["groq/llama-4-maverick"]["proposed"] == {
         "input": 0.2, "output": 0.6, "cache_read": 0.0, "cache_write": 0.0,
-        "context_window": 131072}
+        "context_window": 131072, "tiers": []}
     named = _rows(client.post(IMPORT, headers=ADMIN, json={
         "models": ["gpt-6.1-sol", "groq/no-such-model"]}))
     assert named["gpt-6.1-sol"]["proposed"]["cache_read"] == pytest.approx(0.1)

@@ -358,9 +358,17 @@ class GeminiCliDriver(base.CliDriver):
         cached = int(stats.get("cached") or 0)
         floor = replace(bill, tokens_in=max(0, int(stats.get("input_tokens") or 0) - cached),
                         tokens_out=int(stats.get("output_tokens") or 0), cache_read=cached,
-                        cost_usd=None)
+                        cost_usd=None, itemized_usd=None)
         if (floor.tokens_in + floor.tokens_out + floor.cache_read
                 > bill.tokens_in + bill.tokens_out + bill.cache_read):
+            if base.PRICE is not None:
+                # The stats are a sum with no calls in it, so at the base rate;
+                # never below the calls the telemetry did price one by one.
+                flat = base.price_usage(base.PRICE, tokens_in=floor.tokens_in,
+                                        tokens_out=floor.tokens_out,
+                                        cache_read=floor.cache_read, cache_creation=0,
+                                        one_call=False)
+                floor = replace(floor, itemized_usd=max(flat, bill.itemized_usd or 0.0))
             bill = floor
             if base.PRICE is not None and not self.subscription:
                 bill = replace(bill, cost_usd=base._priced(base.PRICE, bill))
@@ -382,20 +390,30 @@ class GeminiCliDriver(base.CliDriver):
                 return
 
     def _bill(self, calls: list[dict], subtype: str | None) -> base.AttemptResult:
-        """Every call's usage as one bill. The input counts the cached part;
-        the output does not count the thinking, which is billed as output.
-        Utility calls the CLI makes on other models (a web search's) are
-        priced at the seat's rate: the sandbox holds that one price."""
-        def total(key: str) -> int:
-            return sum(int(call.get(key) or 0) for call in calls)
+        """Every call's usage as one bill, priced call by call: Gemini Pro's
+        rate past 200k tokens is decided by one call's prompt, and a turn's
+        sum of calls would cross it long before any one call did. The input
+        counts the cached part; the output does not count the thinking, which
+        is billed as output. Utility calls the CLI makes on other models (a
+        web search's) are priced at the seat's rate: the sandbox holds that
+        one price."""
+        def tokens(call: dict) -> tuple[int, int, int]:
+            cached = int(call.get("cached_content_token_count") or 0)
+            return (max(0, int(call.get("input_token_count") or 0) - cached)
+                    + int(call.get("tool_token_count") or 0),
+                    int(call.get("output_token_count") or 0)
+                    + int(call.get("thoughts_token_count") or 0), cached)
 
-        cached = total("cached_content_token_count")
+        each = [tokens(call) for call in calls]
         bill = base.AttemptResult(
-            cost_usd=None,
-            tokens_in=max(0, total("input_token_count") - cached) + total("tool_token_count"),
-            tokens_out=total("output_token_count") + total("thoughts_token_count"),
-            cache_creation=0, cache_read=cached, subtype=subtype,
-            web_searches=self.web_searches)
+            cost_usd=None, tokens_in=sum(t[0] for t in each),
+            tokens_out=sum(t[1] for t in each), cache_creation=0,
+            cache_read=sum(t[2] for t in each), subtype=subtype,
+            web_searches=self.web_searches, one_call=False)
+        if base.PRICE is not None:
+            bill = replace(bill, itemized_usd=sum(
+                base.price_usage(base.PRICE, tokens_in=i, tokens_out=o, cache_read=c,
+                                 cache_creation=0) for i, o, c in each))
         if base.PRICE is not None and not self.subscription:
             bill = replace(bill, cost_usd=base._priced(base.PRICE, bill))
         return bill

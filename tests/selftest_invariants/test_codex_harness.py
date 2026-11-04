@@ -168,6 +168,38 @@ def test_every_thread_is_billed_sub_agents_included(run):
     assert result["cost_usd"] == pytest.approx(_cost(6200, 1000, 340))
 
 
+#: OpenAI's GPT-6 shape: more past 272k tokens of prompt.
+TIERED = {**PRICE, "tiers": [{"above": 272_000, "input": 2.0, "output": 12.0,
+                              "cache_read": 0.2, "cache_write": None}]}
+
+
+def test_a_long_prompt_rate_is_judged_on_each_call_the_session_file_steps(run):
+    """Codex reports a running total. Each step of it is one call, and the
+    272k line is that call's: a 300k prompt pays the higher rate, and two 150k
+    prompts — 300k between them — do not."""
+    run.mp.setattr(run.base, "PRICE", TIERED)
+    main = _thread("text_reply.jsonl")
+    _, result, _ = _drive(run, [{"fixture": "text_reply.jsonl", "rollouts": {
+        main: [_usage(150_000, 0, 1_000), _usage(450_000, 0, 2_000)]}}])
+    base_call = (150_000 * PRICE["input"] + 1_000 * PRICE["output"]) / 1e6
+    long_call = (300_000 * 2.0 + 1_000 * 12.0) / 1e6
+    assert result["cost_usd"] == pytest.approx(base_call + long_call)
+
+    again = _staged(run.mp, run.tmp / "again")
+    again.mp.setattr(again.base, "PRICE", TIERED)
+    _, result, _ = _drive(again, [{"fixture": "text_reply.jsonl", "rollouts": {
+        main: [_usage(150_000, 0, 1_000), _usage(300_000, 0, 2_000)]}}])
+    assert result["cost_usd"] == pytest.approx(_cost(300_000, 0, 2_000))
+
+
+def test_a_repeated_total_is_not_a_second_call(run):
+    run.mp.setattr(run.base, "PRICE", TIERED)
+    main = _thread("text_reply.jsonl")
+    _, result, _ = _drive(run, [{"fixture": "text_reply.jsonl", "rollouts": {
+        main: [_usage(300_000, 0, 1_000), _usage(300_000, 0, 1_000)]}}])
+    assert result["cost_usd"] == pytest.approx((300_000 * 2.0 + 1_000 * 12.0) / 1e6)
+
+
 def test_tool_calls_are_traced(run):
     _drive(run, [{"fixture": "tool_call.jsonl"}])
     trace = (run.staging / "trace-run_test.jsonl").read_text()

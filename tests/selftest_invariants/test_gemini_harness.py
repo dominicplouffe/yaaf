@@ -186,6 +186,25 @@ def test_every_call_is_billed_and_every_tool_call_traced(run):
     assert refused[0]["error"]["type"] == "tool_not_registered"
 
 
+def test_a_long_prompt_rate_is_judged_call_by_call_not_on_the_turns_sum(run):
+    """Gemini Pro bills more past 200k tokens of prompt, per call. The turn's
+    three prompts (1,500, 1,700, 1,900 tokens) sum past a 1,800 line that only
+    the last one crosses: priced on the sum, every call would pay the higher
+    rate; unpriced by tier, the last would pay the lower."""
+    tier = {"above": 1800, "input": 2.5, "output": 20.0, "cache_read": 0.25,
+            "cache_write": None}
+    run.mp.setattr(run.base, "PRICE", {**PRICE, "tiers": [tier]})
+    _, result, _, _ = _drive(run, [TOOLS])
+
+    def at(rates: dict, inp: int, cached: int, out: int) -> float:
+        return (inp * rates["input"] + cached * rates["cache_read"]
+                + out * rates["output"]) / 1e6
+
+    expected = at(PRICE, 1500, 0, 42) + at(PRICE, 300, 1400, 15) + at(tier, 300, 1600, 11)
+    assert result["cost_usd"] == pytest.approx(expected)
+    assert result["priced_usd"] == pytest.approx(expected)
+
+
 # ── 2. what it is started with ──────────────────────────────────────────────────
 
 

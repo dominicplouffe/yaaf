@@ -244,6 +244,20 @@ repo (`yaaf/runtimes/price_snapshot.json`) for installs that cannot reach the
 internet — imported the same way, labelled as a snapshot, never applied on its
 own. `yaaf prices import` does the same from a shell.
 
+**A price has tiers.** Grok bills twice its rate once a call's prompt passes
+200k tokens; GPT-6 does more past 272k, Gemini Pro past 200k. The feed states
+these (`input_cost_per_token_above_200k_tokens` and its siblings), and they are
+imported with the price (`model_prices.tiers`, `catalog.Tier`) — the snapshot
+included — and handed to the sandbox with it. A call whose prompt, cached part
+included, passes a tier's line is billed at that tier's rates for the whole
+call. The line is one call's: yaaf's loop and OpenCode bill per call; the
+Gemini CLI's telemetry and Codex's session files are priced call by call; a
+bill that sums calls it cannot tell apart (a Claude result line, which states
+its own cost anyway) is held to the base rate rather than judged on its sum.
+A call is sized for what it can afford at its highest output rate. Before
+this, a long Grok run was metered at half what it spent, and xAI states no
+per-call cost a drift check could have caught it by.
+
 ### 6. Search is a platform capability, metered like a model call
 
 R2's honour half refused a `web` role on any harness that could not search.

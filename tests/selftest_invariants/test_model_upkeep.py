@@ -348,8 +348,8 @@ def test_reading_a_keys_list_prices_and_describes_what_it_offers(client, monkeyp
     assert models["xai/grok-4.3"] == {
         "id": "xai/grok-4.3", "name": "grok-4.3", "listed": False, "in_lineup": False,
         "kind": "chat", "chat": True, "reasoning": True,
-        "price": {"input": 1.25, "output": 2.5}, "context_window": 1_000_000}
-    assert models["xai/grok-4.5"]["price"] == {"input": 1.0, "output": 2.0}, \
+        "price": {"input": 1.25, "output": 2.5, "tiers": []}, "context_window": 1_000_000}
+    assert models["xai/grok-4.5"]["price"] == {"input": 1.0, "output": 2.0, "tiers": []}, \
         "an administrator's price moved"
     assert models["xai/grok-imagine-image"]["chat"] is False
     assert (models["xai/grok-next"]["chat"], models["xai/grok-next"]["price"]) == (True, None)

@@ -31,7 +31,13 @@ def _row_price(row: ModelPrice) -> catalog.Price:
     write = row.cache_write or 0.0
     return catalog.Price(input=row.input, output=row.output, cache_read=row.cache_read or 0.0,
                          cache_write_5m=write, cache_write_1h=write,
-                         as_of=row.updated_at.date().isoformat() if row.updated_at else "")
+                         as_of=row.updated_at.date().isoformat() if row.updated_at else "",
+                         tiers=tiers_of(row.tiers))
+
+
+def tiers_of(raw: list | None) -> tuple[catalog.Tier, ...]:
+    """A row's stored tiers, lowest threshold first."""
+    return tuple(sorted((catalog.Tier.of(item) for item in raw or ()), key=lambda t: t.above))
 
 
 def price(session: Session, model: str) -> catalog.Price | None:

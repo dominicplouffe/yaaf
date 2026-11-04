@@ -118,6 +118,10 @@ class CodexCliDriver(base.CliDriver):
         self._offsets: dict[Path, int] = {}
         self._start: dict[Path, dict] = {}
         self._now: dict[Path, dict] = {}
+        #: This attempt's tokens priced call by call: each step between two of
+        #: a thread's totals is one call, judged on its own prompt for a
+        #: long-prompt rate. A repeated line steps nothing, as before.
+        self._itemized = 0.0
 
     # ── what the run is told and offered ──────────────────────────────────
 
@@ -203,6 +207,7 @@ class CodexCliDriver(base.CliDriver):
         # thread appends to the file it began, and that much is already billed.
         self._read_rollouts()
         self._start = {path: dict(total) for path, total in self._now.items()}
+        self._itemized = 0.0
         for source, mount in base._external_mcp_servers().items():
             if mount.get("type") == "sse":
                 yield base.TraceLine({"type": "data_source_unmounted", "source": source,
@@ -246,6 +251,7 @@ class CodexCliDriver(base.CliDriver):
                     if isinstance(payload, dict) and payload.get("type") == "token_count":
                         total = (payload.get("info") or {}).get("total_token_usage")
                         if isinstance(total, dict):
+                            self._itemize(self._now.get(path) or {}, total)
                             self._now[path] = total
             self._offsets[path] = offset
 
@@ -274,18 +280,39 @@ class CodexCliDriver(base.CliDriver):
                 self.stop()
                 return
 
-    def _bill(self, usage: dict, subtype: str | None) -> base.AttemptResult:
-        """A Codex usage as a bill. `input_tokens` counts the cached part;
-        `output_tokens` already counts the reasoning."""
-        cached = int(usage.get("cached_input_tokens") or 0)
-        bill = base.AttemptResult(
-            cost_usd=None, tokens_in=max(0, int(usage.get("input_tokens") or 0) - cached),
-            tokens_out=int(usage.get("output_tokens") or 0),
-            cache_creation=int(usage.get("cache_write_input_tokens") or 0), cache_read=cached,
-            subtype=subtype, web_searches=self.web_searches)
-        if base.PRICE is not None and not self.subscription:
-            from dataclasses import replace
+    def _itemize(self, before: dict, now: dict) -> None:
+        """One step of a thread's running total, priced as the call it is.
+        Two calls between two totals are judged together — an over-count past
+        a long-prompt line, never an under-count."""
+        if base.PRICE is None:
+            return
+        step = {k: max(0, int(now.get(k) or 0) - int(before.get(k) or 0)) for k in self._KEYS}
+        if any(step.values()):
+            self._itemized += base.price_usage(base.PRICE, **self._tokens(step))
 
+    @staticmethod
+    def _tokens(usage: dict) -> dict:
+        """A Codex usage in a bill's terms. `input_tokens` counts the cached
+        part; `output_tokens` already counts the reasoning."""
+        cached = int(usage.get("cached_input_tokens") or 0)
+        return {"tokens_in": max(0, int(usage.get("input_tokens") or 0) - cached),
+                "tokens_out": int(usage.get("output_tokens") or 0),
+                "cache_creation": int(usage.get("cache_write_input_tokens") or 0),
+                "cache_read": cached}
+
+    def _bill(self, usage: dict, subtype: str | None) -> base.AttemptResult:
+        """A Codex usage as a bill: a sum of the attempt's calls, priced call by
+        call as the session files stepped through them — and never below the
+        sum at the base rate, which is all a turn's own figure can say."""
+        from dataclasses import replace
+
+        tokens = self._tokens(usage)
+        bill = base.AttemptResult(cost_usd=None, **tokens, subtype=subtype,
+                                  web_searches=self.web_searches, one_call=False)
+        if base.PRICE is not None:
+            flat = base.price_usage(base.PRICE, **tokens, one_call=False)
+            bill = replace(bill, itemized_usd=max(flat, self._itemized))
+        if base.PRICE is not None and not self.subscription:
             bill = replace(bill, cost_usd=base._priced(base.PRICE, bill))
         return bill
 

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -89,10 +90,47 @@ class FeedPrice:
     cache_write: float
     #: The input window the feed states, which the loop compacts against.
     context_window: int | None = None
+    #: The higher rates past a prompt size (catalog.Tier, as dicts), lowest
+    #: threshold first.
+    tiers: tuple[dict, ...] = ()
 
     def as_dict(self) -> dict:
         return {"input": self.input, "output": self.output, "cache_read": self.cache_read,
-                "cache_write": self.cache_write, "context_window": self.context_window}
+                "cache_write": self.cache_write, "context_window": self.context_window,
+                "tiers": list(self.tiers)}
+
+
+#: The feed's long-prompt rates: `input_cost_per_token_above_200k_tokens` and
+#: its siblings. Only the plain ones: `_batches`, `_priority`, `_flex` are
+#: other service levels, and `_above_1hr` a cache lifetime, not a prompt size.
+_TIER_KEY = re.compile(r"^(input_cost_per_token|output_cost_per_token|cache_read_input_token_cost"
+                       r"|cache_creation_input_token_cost)_above_(\d+)k_tokens$")
+_TIER_FIELD = {"input_cost_per_token": "input", "output_cost_per_token": "output",
+               "cache_read_input_token_cost": "cache_read",
+               "cache_creation_input_token_cost": "cache_write"}
+
+
+def entry_tiers(entry: dict) -> tuple[dict, ...]:
+    """The long-prompt rates an entry states, per million tokens. A tier that
+    states only some rates keeps the base rate for the others' input and
+    output, and leaves the cache rates it does not state to the base row."""
+    found: dict[int, dict] = {}
+    for key, value in entry.items():
+        match = _TIER_KEY.match(key)
+        if match is None or not isinstance(value, int | float):
+            continue
+        found.setdefault(int(match.group(2)) * 1000, {})[_TIER_FIELD[match.group(1)]] = \
+            _per_million(value)
+    tiers = []
+    for above, rates in sorted(found.items()):
+        if "input" not in rates and "output" not in rates:
+            continue
+        tiers.append({"above": above,
+                      "input": rates.get("input", _per_million(entry["input_cost_per_token"])),
+                      "output": rates.get("output", _per_million(entry["output_cost_per_token"])),
+                      "cache_read": rates.get("cache_read"),
+                      "cache_write": rates.get("cache_write")})
+    return tuple(tiers)
 
 
 def feed_url(session: Session) -> str:
@@ -123,7 +161,8 @@ def entry_price(entry: dict) -> FeedPrice | None:
                      output=_per_million(entry["output_cost_per_token"]),
                      cache_read=_per_million(entry.get("cache_read_input_token_cost")),
                      cache_write=_per_million(entry.get("cache_creation_input_token_cost")),
-                     context_window=_tokens(entry.get("max_input_tokens")))
+                     context_window=_tokens(entry.get("max_input_tokens")),
+                     tiers=entry_tiers(entry))
 
 
 def _tokens(value) -> int | None:
@@ -228,6 +267,7 @@ def preview(session: Session, feed: dict, models: list[str], *, source: str,
                             "cache_read": current.cache_read or 0.0,
                             "cache_write": current.cache_write or 0.0,
                             "context_window": current.context_window,
+                            "tiers": list(current.tiers or []),
                             "source": current.source} if current is not None else None),
                "shipped": shipped is not None}
         if found is None:
@@ -236,11 +276,12 @@ def preview(session: Session, feed: dict, models: list[str], *, source: str,
             row["action"] = "own"
         elif current is None and shipped is not None and not include_shipped:
             row["action"] = "shipped"
-        elif current is not None and all(
+        elif current is not None and list(current.tiers or []) == list(found.tiers) and all(
                 abs((getattr(current, k) or 0.0) - (v or 0.0)) < 1e-9
                 # A window the feed does not state changes nothing: the
                 # one the row has stays (apply keeps it).
-                for k, v in found.as_dict().items() if v is not None or k != "context_window"):
+                for k, v in found.as_dict().items()
+                if k != "tiers" and (v is not None or k != "context_window")):
             row["action"] = "same"
         else:
             row["action"] = "update" if current is not None else "add"
@@ -261,6 +302,8 @@ def apply(session: Session, rows: list[dict]) -> list[str]:
         price.cache_read, price.cache_write = proposed["cache_read"], proposed["cache_write"]
         # A feed that does not state a window leaves one somebody typed.
         price.context_window = proposed.get("context_window") or price.context_window
+        # Its long-prompt rates, which it states for every row: none is none.
+        price.tiers = list(proposed.get("tiers") or []) or None
         price.source = row["source"][:200]
         price.updated_at = utcnow()
         session.add(price)
@@ -304,10 +347,10 @@ def build_snapshot(feed: dict, models: list[str], *, url: str = DEFAULT_FEED_URL
             entry = feed.get(f"{prefix}{name}")
             if isinstance(entry, dict) and entry.get("litellm_provider") == feed_provider \
                     and entry_price(entry) is not None:
-                kept[f"{prefix}{name}"] = {k: entry[k] for k in (
+                kept[f"{prefix}{name}"] = {k: v for k, v in entry.items() if k in (
                     "litellm_provider", "mode", "input_cost_per_token", "output_cost_per_token",
                     "cache_read_input_token_cost", "cache_creation_input_token_cost",
-                    "max_input_tokens", "max_output_tokens") if k in entry}
+                    "max_input_tokens", "max_output_tokens") or _TIER_KEY.match(k)}
                 break
     return {"source": FEED_LABEL, "url": url,
             "as_of": datetime.now(UTC).date().isoformat(), "models": kept}

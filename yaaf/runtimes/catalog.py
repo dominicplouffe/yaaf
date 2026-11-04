@@ -51,23 +51,55 @@ CLASS_SIGIL = "@"
 
 
 @dataclass(frozen=True)
+class Tier:
+    """A higher rate for a long prompt, USD per million tokens: a call whose
+    prompt — uncached, read from cache and written to it, together — is more
+    than `above` tokens is billed at these rates for the whole call. That is
+    the long-context rule as Google and Anthropic publish it; where a vendor
+    splits the call instead, the whole-call reading over-counts, which a
+    budget survives and an under-count is not. A rate the tier does not state
+    stays the base one."""
+    above: int
+    input: float
+    output: float
+    cache_read: float | None = None
+    cache_write: float | None = None
+
+    def as_dict(self) -> dict:
+        return {"above": self.above, "input": self.input, "output": self.output,
+                "cache_read": self.cache_read, "cache_write": self.cache_write}
+
+    @classmethod
+    def of(cls, raw: dict) -> Tier:
+        return cls(above=int(raw["above"]), input=float(raw["input"]),
+                   output=float(raw["output"]),
+                   cache_read=None if raw.get("cache_read") is None else float(raw["cache_read"]),
+                   cache_write=(None if raw.get("cache_write") is None
+                                else float(raw["cache_write"])))
+
+
+@dataclass(frozen=True)
 class Price:
     """USD per million tokens. Cache writes are priced by TTL: the 5-minute
     entry a loop writes and the 1-hour entry Claude Code writes are different
-    prices for the same tokens."""
+    prices for the same tokens. `tiers` are the long-prompt rates, lowest
+    threshold first: Grok bills twice the rate past 200k tokens, and a meter
+    that knew only the base rate let a long run spend twice what it counted."""
     input: float
     output: float
     cache_read: float
     cache_write_5m: float
     cache_write_1h: float
     as_of: str
+    tiers: tuple[Tier, ...] = ()
 
     def as_dict(self) -> dict:
         """What a sandbox prices a run by: it cannot import this module, so the
         row travels to it as JSON (`YAAF_PRICE`)."""
         return {"input": self.input, "output": self.output, "cache_read": self.cache_read,
                 "cache_write_5m": self.cache_write_5m, "cache_write_1h": self.cache_write_1h,
-                "web_search": WEB_SEARCH_USD, "as_of": self.as_of}
+                "web_search": WEB_SEARCH_USD, "as_of": self.as_of,
+                "tiers": [t.as_dict() for t in self.tiers]}
 
 
 #: Per web search on the Messages API's server tool. Web fetch is not metered.
