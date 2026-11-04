@@ -57,7 +57,13 @@ TRANSPORT: httpx.BaseTransport | None = None
 #: name, the prefix its keys carry). First match wins, so the provider's own
 #: API is read before a cloud's copy of the same model. A provider absent here
 #: has nothing a feed can say: OpenRouter states each call's cost, an Azure
-#: model is a deployment's name, a local server is the chairman's own machine.
+#: model is a deployment's name, a local server is the chairman's own machine,
+#: and Hugging Face's router hands each call to one of several inference
+#: providers, each at its own price — the feed lists no Hugging Face rows, and
+#: another host's row for the same model is that host's price, not necessarily
+#: the router's. NVIDIA's API is mapped,
+#: but as of 2026-11-04 the feed prices only its rerank models, none it chats
+#: with; borrowing a Nemotron price another host charges would be a guess.
 FEED_PROVIDERS: dict[str, tuple[tuple[str, str], ...]] = {
     "anthropic": (("anthropic", ""),),
     "openai": (("openai", ""),),

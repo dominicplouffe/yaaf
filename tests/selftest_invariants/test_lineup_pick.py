@@ -235,3 +235,51 @@ def test_a_lists_dates_are_read_from_either_shape():
         {"id": "grok-4.3", "created": 1_776_000_000}, {"id": "no-date"},
         {"id": "claude-x", "created_at": "2026-02-01T00:00:00Z"}]}) == {
         "grok-4.3": 1_776_000_000, "claude-x": 1_769_904_000}
+
+
+# ── only a maker's own family ──────────────────────────────────────────────────
+
+
+def _key(client, monkeypatch, provider: str, value: str, names: list[str], feed: dict) -> str:
+    credential = client.post(CREDENTIALS, headers=ADMIN, json={
+        "name": provider, "mode": "api_key", "provider": provider, "value": value}).json()["id"]
+    _lists(monkeypatch, names, None)
+    monkeypatch.setattr(price_feed, "TRANSPORT", httpx.MockTransport(
+        lambda r: httpx.Response(200, json=feed)))
+    return credential
+
+
+def _chat(provider: str, inp: float, out: float) -> dict:
+    return {"litellm_provider": provider, "mode": "chat", "supports_function_calling": True,
+            "input_cost_per_token": inp / 1e6, "output_cost_per_token": out / 1e6}
+
+
+def test_a_host_of_many_makers_models_is_never_filled(client, monkeypatch):
+    """Together's dearest model is somebody's frontier, not Together's, and a
+    Llama and a Qwen name say nothing about which is newer."""
+    make_project(client, start=False)
+    names = ["meta-llama/Llama-4-Maverick", "Qwen/Qwen3-235B", "deepseek-ai/DeepSeek-V4"]
+    feed = {f"together_ai/{n}": _chat("together_ai", 0.2 * (i + 1), 0.8 * (i + 1))
+            for i, n in enumerate(names)}
+    credential = _key(client, monkeypatch, "together", "together-test-key", names, feed)
+    listed = _read(client, credential)
+    assert all(m["price"] for m in listed["models"]), "the list is priced all the same"
+    assert listed["filled"] == {}
+    together = next(p for p in client.get(READY, headers=ADMIN).json()["providers"]
+                    if p["provider"] == "together")
+    [unset] = [i for i in together["issues"] if i["code"] == "no_model"]
+    assert "serves many makers' models" in unset["text"]
+    assert summary_lineups(client) == {}
+
+
+def test_a_reseller_is_filled_from_its_own_family_only(client, monkeypatch):
+    """Model Studio sells DeepSeek beside Qwen. The dearest model on the list
+    is DeepSeek's, and Qwen's Frontier is still a Qwen model."""
+    make_project(client, start=False)
+    feed = {f"dashscope/{n}": _chat("dashscope", inp, out) for n, inp, out in (
+        ("deepseek-v4-pro", 4.0, 16.0), ("qwen3-max", 1.2, 6.0), ("qwen-plus", 0.4, 1.2),
+        ("qwen-flash", 0.05, 0.4))}
+    names = sorted(n.split("/", 1)[1] for n in feed)
+    credential = _key(client, monkeypatch, "qwen", "sk-qwen-test-key", names, feed)
+    assert _read(client, credential)["filled"] == {
+        "frontier": "qwen/qwen3-max", "balanced": "qwen/qwen-plus", "fast": "qwen/qwen-flash"}

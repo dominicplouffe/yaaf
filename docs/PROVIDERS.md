@@ -73,9 +73,16 @@ an install that has run since before this rule behaves exactly as it always
 has. A pinned model does not move: pinning is the chairman saying *this*
 model, and the doors then ask for its provider to be paid.
 
-**A provider that ships no lineup has its classes filled from its key's own
-list** (`yaaf.core.lineup_pick`) — xAI, Groq, Together, Moonshot and the rest of
-the long tail, whose lineups move monthly and could not be checked from here.
+**A provider that sells its own models and ships no lineup has its classes
+filled from its key's own list** (`yaaf.core.lineup_pick`) — xAI, Moonshot,
+Qwen, Z.ai, Cohere and Vertex, whose lineups move monthly and could not be
+checked from here. Each names its family (`Provider.family`: `grok`, `kimi`,
+`qwen`…), and only that family is picked from: Qwen's Model Studio resells
+DeepSeek, GLM and Kimi, and none of those is Qwen's Frontier. A host of many
+makers' models — Bedrock, Together, Fireworks, Groq, Cerebras, NVIDIA, Hugging
+Face, OpenRouter, a local server — is never filled: its dearest model is no
+family's frontier, and a Llama name and a Qwen name say nothing about which is
+newer. Its classes are the administrator's, and the readiness report says why.
 Once the list is read and priced (§8), each *empty* class takes a model:
 Frontier from the dearest price group, Fast from the cheapest, Balanced from the
 middle (the lower middle when the count is even), ranked on three input tokens

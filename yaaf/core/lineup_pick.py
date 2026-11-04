@@ -1,13 +1,19 @@
 """Filling a provider's empty classes from what its key lists, by price
 (docs/PROVIDERS.md §1, §8).
 
-The long tail — xAI, Groq, Together, Moonshot — ships no lineup, because no
-model of theirs could be checked from here and their lineups move monthly. So
-every class on them started empty and every seat on one was refused (R8) until
-an administrator typed a model into each. A key's own list, described and
-priced by the feed (yaaf.core.model_upkeep), is enough to pick from:
+The long tail — xAI, Moonshot, Z.ai, Groq, Together — ships no lineup, because
+no model of theirs could be checked from here and their lineups move monthly.
+So every class on them started empty and every seat on one was refused (R8)
+until an administrator typed a model into each. For a provider that sells its
+own family of models (`Provider.family`), a key's own list, described and
+priced by the feed (yaaf.core.model_upkeep), is enough to pick from. A host of
+many vendors' models — Bedrock, Together, Fireworks, Groq — is left to the
+administrator: its dearest model is no family's frontier, and names from
+unrelated families say nothing about which is newer.
 
-- **Candidates** are the chat models the key lists that have a price, take
+- **Candidates** are the models of the provider's own family on the key's list
+  (Qwen's Model Studio resells DeepSeek and GLM; those are not Qwen's ladder),
+  chat models that have a price, take
   tool calls (a seat cannot work without them) and are not deprecated — not a
   `-latest` alias, which moves under the class without anybody choosing, and
   not a multi-agent model, which the feed lists as another kind.
@@ -92,11 +98,14 @@ def _deprecated(said: dict) -> bool:
 def candidates(session: Session, provider: str, found: dict | None) -> list[Candidate]:
     """The models on a key's list (a model_upkeep discovery record) a class
     could be filled with."""
-    if not found:
+    family = PROVIDERS[provider].family if provider in PROVIDERS else ()
+    if not found or not family:
         return []
     details, created = found.get("details") or {}, found.get("created") or {}
     out = []
     for name in found.get("models") or ():
+        if not name.rsplit("/", 1)[-1].lower().startswith(family):
+            continue
         said = details.get(name) or {}
         if said.get("kind") != "chat" or said.get("tools") is False or _deprecated(said):
             continue
@@ -142,7 +151,8 @@ def fill(session: Session, provider: str, secret_id: str | None = None) -> dict[
     """Fill the provider's empty classes from a key's list — the one just read,
     else the freshest — and return what was filled. Nothing while upkeep is
     off: then yaaf changes no model or price on its own."""
-    if provider not in PROVIDERS or not model_upkeep.enabled(session):
+    if provider not in PROVIDERS or not PROVIDERS[provider].family \
+            or not model_upkeep.enabled(session):
         return {}
     lineup = catalog.lineup_of(provider, model_policy.lineups(session))
     empty = [cls for cls in catalog.CLASSES if not lineup.get(cls)]
@@ -164,7 +174,7 @@ def changed(session: Session, provider: str) -> dict[str, tuple[str, Candidate]]
     """The classes yaaf picked that it would now pick otherwise — a newer
     model at the price, or a new price group — as {class: (current, pick)}."""
     mine = model_policy.auto_picked(session).get(provider) or {}
-    if not mine:
+    if not mine or provider not in PROVIDERS or not PROVIDERS[provider].family:
         return {}
     picks = pick(candidates(session, provider, _found(session, provider)))
     return {cls: (model, picks[cls]) for cls, model in mine.items()

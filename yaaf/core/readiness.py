@@ -118,7 +118,10 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
             "no_model", "block",
             f"no {named} model is set — seats on "
             f"{'that class' if len(unset) == 1 else 'those classes'} are refused here. Pick "
-            f"{'one' if len(unset) == 1 else 'them'} from the models the key can call.",
+            f"{'one' if len(unset) == 1 else 'them'} from the models the key can call."
+            # Why yaaf did not: it fills a class only from one maker's family.
+            + ("" if seller.family else f" {seller.label} serves many makers' models, so "
+               "yaaf does not choose its classes by price."),
             {"action": "set_lineup", "class": unset[0], "classes": unset}))
     # A price is what a dollar meter stops on (R3); a login metered in tokens
     # runs its CLI without one. Only a credential that bills in dollars makes
