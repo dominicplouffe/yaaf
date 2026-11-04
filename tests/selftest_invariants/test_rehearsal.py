@@ -536,7 +536,7 @@ def test_it_refuses_to_run_while_a_notification_channel_still_has_a_target(
 
 
 def test_it_gives_the_state_roots_back_including_the_ones_that_were_unset(tmp_path,
-                                                                         monkeypatch):
+                                                                         monkeypatch, request):
     """Same discipline as the engine and the batching windows: a global the
     drill borrowed and kept would leave every later caller in this process
     writing into a directory that has been deleted."""
@@ -545,6 +545,11 @@ def test_it_gives_the_state_roots_back_including_the_ones_that_were_unset(tmp_pa
     monkeypatch.setenv("YAAF_WORKSPACES_ROOT", str(tmp_path / "live-workspaces"))
     monkeypatch.delenv("YAAF_ARTIFACTS_ROOT", raising=False)
     settings.cache_clear()
+    # This test reads the settings with the artifacts root unset, so the cache
+    # holds the production default (/var/lib/yaaf) after it. Left there, every
+    # later test on this worker writes artifacts into it, which a non-root CI
+    # runner refuses; cleared, the next reader sees the suite's own root again.
+    request.addfinalizer(settings.cache_clear)
     before = settings().artifacts_root
 
     rehearsal.rehearse(spec())
