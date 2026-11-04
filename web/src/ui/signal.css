@@ -40,6 +40,8 @@
 .sg-seal.verified { color: var(--good); background: rgba(var(--good-rgb), 0.12); }
 .sg-seal.judged { color: var(--accent); background: rgba(var(--accent-rgb), 0.1); }
 .sg-seal.word { color: var(--ink-2); background: var(--surface-2); }
+/* Observed failure, with its time: a provider that turned a key away. */
+.sg-seal.bad { color: var(--critical); background: rgba(var(--critical-rgb), 0.1); }
 .sg-seal-x { font-weight: 500; }
 
 /* ── consequences ── */

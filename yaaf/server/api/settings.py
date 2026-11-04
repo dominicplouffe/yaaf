@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from yaaf.core import plan_usage, platform
+from yaaf.core import key_evidence, plan_usage, platform
 from yaaf.core.models import Secret
 from yaaf.runtimes.providers import DEFAULT_PROVIDER, MODE_PATTERN, PROVIDERS
 from yaaf.server import authority
@@ -61,6 +61,7 @@ def get_settings(session: Session = Depends(db)) -> dict:
         "model_ref": platform.founder_model_ref(session),
         # Its own key, or one of the LLM credentials below, borrowed.
         "source": platform.credential_source(session),
+        "evidence": _founder_evidence(session),
         "note": ("This key pays for product-wide conversations — the Founder. It is "
                  "never injected into a sandbox and never reaches a project's agents: "
                  "every project pays its own way with its own billing credential."),
@@ -70,9 +71,25 @@ def get_settings(session: Session = Depends(db)) -> dict:
         # The same section under the name it had when Anthropic was the only
         # provider, for clients written then.
         "anthropic": founder,
-        "slack": slack_settings.platform_summary(session),
+        "slack": {**slack_settings.platform_summary(session),
+                  "last_test": key_evidence.last_test(session, "slack")},
         "llm_credentials": _llm_counts(session),
     }
+
+
+def _founder_evidence(session: Session) -> dict:
+    """Whether the Founder's key has been seen to work. A borrowed key carries
+    its own record; a key of the Founder's own has only its last test."""
+    source = platform.credential_source(session)
+    if source.get("source") == "llm_credential" and source.get("credential_id"):
+        row = session.get(Secret, source["credential_id"])
+        if row is not None:
+            return key_evidence.of(session, row)
+    test = key_evidence.last_test(session, "founder")
+    if not test:
+        return {"state": "never", "at": None, "via": None, "detail": None, "project": None}
+    return {"state": "answered" if test["ok"] else "refused", "at": test["at"], "via": "test",
+            "detail": test["detail"], "project": None}
 
 
 def _llm_counts(session: Session) -> dict:
@@ -192,6 +209,7 @@ def borrow_llm_credential(session: Session, credential_id: str) -> dict:
     if problem:
         raise HTTPException(status_code=422, detail=problem)
     platform.use_llm_credential(session, row.id)
+    key_evidence.forget_test(session, "founder")
     return {"ok": True, **platform.credential_source(session),
             "billing_mode": row.llm_mode, "provider": provider,
             "model": platform.founder_model(session)}
@@ -224,7 +242,9 @@ def check_credential(session: Session) -> dict:
     except platform.NoPlatformCredential as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except FounderModelError as exc:
+        key_evidence.record_test(session, "founder", ok=False, detail=str(exc))
         return {"ok": False, "kind": exc.kind, "detail": str(exc)}
+    key_evidence.record_test(session, "founder", ok=True, detail="the credential reached a model.")
     return {"ok": True, "detail": "the credential reached a model."}
 
 
@@ -234,8 +254,10 @@ def check_credential(session: Session) -> dict:
 @router.put("/platform-credential", dependencies=[authority.INSTANCE_ADMIN])
 @router.put("/anthropic", dependencies=[authority.INSTANCE_ADMIN])
 def put_anthropic(body: CredentialIn, session: Session = Depends(db)) -> dict:
-    return install_credential(session, body.value, body.mode, body.provider, body.base_url,
+    said = install_credential(session, body.value, body.mode, body.provider, body.base_url,
                               body.model)
+    key_evidence.forget_test(session, "founder")
+    return said
 
 
 @router.post("/platform-credential/test", dependencies=[authority.INSTANCE_ADMIN])
@@ -250,6 +272,7 @@ def delete_anthropic(session: Session = Depends(db)) -> dict:
     """Remove the platform key. Nothing else breaks: projects never used it,
     and the fire drill and the New Project form never needed it — only the
     Founder conversation stops being offered."""
+    key_evidence.forget_test(session, "founder")
     return {"removed": platform.clear_credential(session)}
 
 
@@ -309,6 +332,8 @@ def put_slack(body: SlackIn, session: Session = Depends(db)) -> dict:
     ):
         if value and value.strip():
             platform.set_secret(session, name, value.strip())
+            # A new token is an untested one: "connected" is the test's to say.
+            key_evidence.forget_test(session, "slack")
     if body.chairman_slack_user is not None:
         platform.set_setting(session, platform.SLACK_CHAIRMAN_USER,
                              body.chairman_slack_user.strip())
@@ -332,7 +357,10 @@ def test_slack(session: Session = Depends(db)) -> dict:
     token = platform.secret_value(session, platform.SLACK_BOT_SECRET)
     if token is None:
         raise HTTPException(status_code=422, detail="no app-wide Slack bot token is configured")
-    return slack_provision.workspace_check(token)
+    said = slack_provision.workspace_check(token)
+    key_evidence.record_test(session, "slack", ok=bool(said.get("ok")),
+                             detail=str(said.get("detail") or ""))
+    return said
 
 
 @router.delete("/slack", dependencies=[authority.INSTANCE_ADMIN])
@@ -340,6 +368,7 @@ def delete_slack(session: Session = Depends(db)) -> dict:
     """Forget the Slack connection. Projects that named their own tokens are
     untouched; projects that were inheriting stop mirroring and keep every
     message — the bus was always the canonical copy."""
+    key_evidence.forget_test(session, "slack")
     removed = [
         name for name in (platform.SLACK_BOT_SECRET, platform.SLACK_SIGNING_SECRET,
                           platform.SLACK_APP_SECRET)
@@ -1119,6 +1148,58 @@ def put_lineup(body: LineupIn, session: Session = Depends(db)) -> dict:
     return {**get_models(session), "unrunnable": _unrunnable_seats(session)}
 
 
+def _seat_models(session: Session) -> dict[str, tuple[str, str | None]]:
+    """Every seat of a live project and the model it resolves to now, by
+    agent id: (project name, model, or None where its class has none)."""
+    from sqlalchemy import select
+
+    from yaaf.core import model_policy
+    from yaaf.core.models import Agent, Project
+    from yaaf.runtimes.seats import seat_for
+    from yaaf.server.contextpack import role_version_for
+
+    out: dict[str, tuple[str, str | None]] = {}
+    for project in session.scalars(select(Project).where(Project.status.in_(("running", "paused")))):
+        context = model_policy.context(session, project)
+        for agent in session.scalars(select(Agent).where(Agent.project_id == project.id)):
+            seat = seat_for(agent, role_version_for(session, agent), context=context)
+            out[agent.id] = (project.name, seat.model if seat.resolved else None)
+    return out
+
+
+@router.post("/models/lineup/preview", dependencies=[authority.INSTANCE_ADMIN])
+def preview_lineup(body: LineupIn, session: Session = Depends(db)) -> dict:
+    """What saving this lineup change would do, without saving it: how many
+    seats move and on which projects, what the class costs before and after,
+    and the seats it would leave unable to run. The change is made inside a
+    savepoint and rolled back, so the preview is the save's own reading and
+    the same refusals apply (an unknown provider, a class named as a model)."""
+    from yaaf.core import model_policy, prices
+    from yaaf.runtimes import catalog
+
+    def priced(model: str | None) -> dict:
+        price = prices.price(session, model) if model else None
+        return {"model": model, "input": price.input if price else None,
+                "output": price.output if price else None}
+
+    ref = catalog.class_ref(body.cls)
+    before = _seat_models(session)
+    old = model_policy.resolve(session, ref, provider=body.provider)
+    savepoint = session.begin_nested()
+    try:
+        model_policy.set_lineup(session, body.provider, body.cls, body.model)
+        session.flush()
+        after = _seat_models(session)
+        new = model_policy.resolve(session, ref, provider=body.provider)
+        stranded = _unrunnable_seats(session)
+    finally:
+        savepoint.rollback()
+    moved = [agent for agent, (_, model) in before.items()
+             if agent in after and after[agent][1] != model]
+    return {"seats": len(moved), "projects": sorted({before[a][0] for a in moved}),
+            "before": priced(old), "after": priced(new), "unrunnable": stranded}
+
+
 class RepickIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1283,6 +1364,16 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
     except model_tokens.MintError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (wire.WireError, httpx.HTTPError) as exc:
+        if getattr(exc, "kind", None) in key_evidence.REFUSED_KINDS:
+            # The one thing this call proved is that the provider turned the
+            # key away. This request rolls back on its way out as an error, so
+            # the note is written on a session of its own, or Settings would go
+            # on calling a refused key "untested" (yaaf.core.key_evidence).
+            from yaaf.core.db import db_session
+
+            with db_session() as own:
+                key_evidence.note_call(own, row.id, ok=False, via="model_list", kind=exc.kind,
+                                       detail=f"{seller.label} would not list its models: {exc}")
         raise HTTPException(status_code=502, detail=f"{seller.label} would not list its "
                                                     f"models: {exc}") from exc
     # Read before anything is written: no write lock waits on the feed.
@@ -1432,9 +1523,14 @@ def smoke_credential(credential_id: str, body: SmokeIn | None = None,
             [probe], 256)))
     except (wire.WireError, httpx.HTTPError) as exc:
         kind = getattr(exc, "kind", "transient")
-        return {"ok": False, "model": model, "kind": kind,
-                "detail": f"{seller.label} refused the call: {exc}"}
+        detail = f"{seller.label} refused the call: {exc}"
+        # Kept, so Settings can say "refused the key" without another press
+        # (yaaf.core.key_evidence). Only an "auth" refusal counts against it.
+        key_evidence.note_call(session, row.id, ok=False, via="test", kind=kind, detail=detail)
+        return {"ok": False, "model": model, "kind": kind, "detail": detail}
     reply = replies[-1]
+    key_evidence.note_call(session, row.id, ok=True, via="test",
+                           detail=f"{seller.label} answered on {reply.model or model}")
     usage = reply.usage
     price = install_prices.price(session, model)
     priced = None
@@ -1558,6 +1654,7 @@ def get_web_search(session: Session = Depends(db)) -> dict:
     from yaaf.runtimes.wire import SEARCH_BACKENDS
 
     return {"configured": web_search.config(session),
+            "last_test": key_evidence.last_test(session, "web_search"),
             "backends": [{"name": b.name, "label": b.label, "base_url": b.base_url,
                           "suggested_usd": b.suggested_usd, "key": b.key,
                           "console_url": b.console_url} for b in SEARCH_BACKENDS.values()]}
@@ -1583,6 +1680,7 @@ def put_web_search(body: WebSearchIn, session: Session = Depends(db)) -> dict:
 
     found = web_search.configure(session, body.backend, key=body.key, base_url=body.base_url,
                                  price_usd=body.price_usd)
+    key_evidence.forget_test(session, "web_search")
     _audit(session, None, "web_search.configure", "backend", body.backend,
            {"price_usd": found.get("price_usd")})
     return get_web_search(session)
@@ -1607,16 +1705,32 @@ def test_web_search(session: Session = Depends(db)) -> dict:
                                            plat.secret_value(session, web_search.SECRET) or "",
                                            "yaaf agent framework", 3))
     except (wire.WireError, httpx.HTTPError) as exc:
+        key_evidence.record_test(session, "web_search", ok=False, detail=f"the search failed: {exc}")
         return {"ok": False, "detail": f"the search failed: {exc}"}
-    return {"ok": True, "detail": f"{found['label']} answered with {len(hits)} results."}
+    detail = f"{found['label']} answered with {len(hits)} results."
+    key_evidence.record_test(session, "web_search", ok=True, detail=detail)
+    return {"ok": True, "detail": detail}
 
 
 @router.delete("/web-search", dependencies=[authority.INSTANCE_ADMIN])
-def delete_web_search(session: Session = Depends(db)) -> dict:
+def delete_web_search(dry_run: bool = False, session: Session = Depends(db)) -> dict:
     """Forget the backend. Seats promised `web` on a provider that does not
-    search are refused at their next door and their next lease (R2)."""
+    search are refused at their next door and their next lease (R2).
+
+    `dry_run` answers the same question without the removal: the confirmation
+    names the seats it would strand before the press, not after it. It removes
+    inside a savepoint and rolls back, so the preview is the removal's own
+    reading rather than a second copy of it that could drift."""
     from yaaf.core import web_search
 
+    if dry_run:
+        savepoint = session.begin_nested()
+        had = web_search.clear(session)
+        session.flush()
+        stranded = _unrunnable_seats(session)
+        savepoint.rollback()
+        return {"removed": False, "would_remove": had, "unrunnable": stranded}
+    key_evidence.forget_test(session, "web_search")
     return {"removed": web_search.clear(session),
             "unrunnable": _unrunnable_seats(session)}
 
@@ -1654,7 +1768,12 @@ def doctor(session: Session = Depends(db)) -> dict:
     cfg = config()
     roles = session.execute(select(func.count(Role.id))).scalar_one()
     crews = session.execute(select(func.count(Crew.id))).scalar_one()
-    keys = len(session.execute(llm_credentials.offerable()).scalars().all())
+    offered = session.execute(llm_credentials.offerable()).scalars().all()
+    keys = len(offered)
+    # A key the provider turned away pauses the projects it pays after three
+    # runs; the doctor names it before the third (yaaf.core.key_evidence).
+    refused = [row.name for row in offered
+               if key_evidence.of(session, row)["state"] == "refused"]
     quiet_since = utcnow() - _RUNNER_QUIET
     waiting = session.execute(select(func.count(RunQueue.id)).where(
         RunQueue.created_at < quiet_since,
@@ -1678,6 +1797,11 @@ def doctor(session: Session = Depends(db)) -> dict:
         _check("a key to pay with", keys > 0, f"{keys} LLM credential(s)",
                "connect one under Settings → Providers, or `yaaf create-llm-credential "
                "NAME` — a project with none is created unable to start"),
+        _check("keys answer", not refused,
+               f"the provider refused {', '.join(refused)}" if refused
+               else "no key has been refused since it was last changed",
+               "rotate it under Settings → Providers, then press Test — runs on a refused "
+               "key fail, and three in a row pause the project"),
         _check("the Founder's key", platform.has_credential(session),
                "the Founder can draft" if platform.has_credential(session)
                else "the Founder cannot draft",

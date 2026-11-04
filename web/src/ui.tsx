@@ -1261,6 +1261,11 @@ export interface MenuItem {
   onClick: () => void;
   danger?: boolean;
   disabled?: boolean;
+  /** What it costs, at the end of the line: "Free", "≈ $0.63". Anything
+      that spends says so before the press, not after. */
+  hint?: string;
+  /** A line under it — why a disabled item is off, said where it is. */
+  note?: string;
 }
 
 /** The ⋯ at the end of a row. Test, edit, delete were four always-visible
@@ -1294,10 +1299,12 @@ export function RowMenu({ label, items }: { label: string; items: MenuItem[] }) 
         <div className="rowmenu-pop" role="menu">
           {items.map((item) => (
             <button key={item.label} role="menuitem" disabled={item.disabled}
-                    className={item.danger ? "del" : ""}
+                    className={[item.danger ? "del" : "", item.note ? "has-note" : ""].filter(Boolean).join(" ")}
                     onClick={() => { setOpen(false); item.onClick(); }}>
               {item.icon && <Icon name={item.icon} size={14} />}
               {item.label}
+              {item.hint && <span className="mi-hint">{item.hint}</span>}
+              {item.note && <span className="mi-note">{item.note}</span>}
             </button>
           ))}
         </div>

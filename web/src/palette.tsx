@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useMe } from "./me";
 import { NavigateFunction, useLocation, useNavigate } from "react-router-dom";
 import { DeskProject, get } from "./api";
 import { firstName, useProjectFrame } from "./projectCtx";
@@ -48,6 +49,8 @@ function useCommands({
   const pins = useMemo(() => (currentProjectId ? pinsFor(currentProjectId) : []), [pinsFor, currentProjectId]);
   const { pathname, search } = useLocation();
   const here = currentProjectId ? placeAt(pathname, search, currentProjectId) : null;
+  const { me } = useMe();
+  const admin = Boolean(me?.is_admin);
   return useMemo(() => {
     // One list per group, joined in the order a reader scans: where you were
     // and what you pinned, then every place, then people and actions.
@@ -144,6 +147,29 @@ function useCommands({
         run: () => navigate(`/projects/${ctx.projectId}/chat`),
       });
     }
+    if (admin) {
+      // The install's own chores, each a door to the Settings form that does
+      // it — never a second way to do it with fewer safeguards.
+      const appChores: [string, string, string, IconName][] = [
+        ["Connect a provider", "section=providers&connect=1", "key api anthropic openai model llm credential", "plug"],
+        ["Invite someone to this install", "section=people&invite=1", "user account admin person", "users"],
+        ["Rotate a key…", "section=providers&view=keys", "credential replace secret llm", "key"],
+        ["See what needs you in Settings", "section=overview", "health ready blocked failing overview", "alert"],
+      ];
+      for (const [label, query, words, icon] of appChores) {
+        actions.push({ group: "Actions", label, icon, words, run: () => navigate(`/settings?${query}`) });
+      }
+      const appSections: [string, string, string][] = [
+        ["Providers", "providers", "keys credentials llm"], ["Models", "models", "defaults lineup harness"],
+        ["Model prices", "prices", "price cost feed import"], ["Web search", "search", "brave tavily searxng"],
+        ["Founder", "founder", "draft assistant"], ["Slack", "slack", "channels boardroom"],
+        ["People", "people", "users invite admin"],
+      ];
+      for (const [label, key, words] of appSections) {
+        settings.push({ group: "App settings", label, icon: "gear", words: `settings ${words}`,
+          run: () => navigate(`/settings?section=${key}`) });
+      }
+    }
     actions.push(
       { group: "Actions", label: "Start a new project", icon: "plus", words: "create", run: () => navigate("/projects/new") },
       { group: "Actions", label: "Use the light theme", icon: "sun", words: "theme", run: () => applyTheme("light") },
@@ -153,7 +179,7 @@ function useCommands({
       { group: "Actions", label: "Sign out", icon: "logout", run: signOut },
     );
     return [...recent, ...pinned, ...goTo, ...settings, ...others, ...people, ...actions];
-  }, [projects, currentProjectId, navigate, openCheatsheet, signOut, ctx, pins, here]);
+  }, [projects, currentProjectId, navigate, openCheatsheet, signOut, ctx, pins, here, admin]);
 }
 
 /** How well an entry answers what was typed: 0 for not at all, and higher

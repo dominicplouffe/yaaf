@@ -88,21 +88,62 @@ bookmark still lands somewhere true.
 
 ## Settings — what is true above every project
 
-Three sections, and none of them belongs to a project.
+An instance admin's page, and nothing on it belongs to a project. It opens on
+**Overview**, which answers the question Settings is opened with — can every
+project run, and what needs me? — in one screen:
 
-The page is a rail, one section at a time, and each rail item carries its
-section's state — so "is anything wrong here?" is answered without opening
-anything. The section is in the URL, so a link to the credentials list is a
-link to the credentials list.
+- **Needs you**, ranked by what it stops: a provider yaaf would refuse seats on
+  (with the readiness report's one-press fixes beside it), a key the provider
+  refused, people whose invite link has not been used or has run out, a token of
+  yours expiring within three days. Below it, **Not confirmed yet**: keys nothing
+  has called, a Slack connection saved but never tested — with **Test** in place.
+- **What each class runs on**: one row per connected provider, its Frontier,
+  Balanced and Fast models with their prices, how many live projects it pays,
+  and when its key last answered.
+- **Connections**: the Founder, Slack and web search, a tile each.
 
-- **LLM credentials** — what projects pay Claude with. An administrator adds
-  each one once, by name: an **Anthropic API key** (the project's budget is
-  then in dollars) or a **Claude subscription token** (in tokens). Every row
-  is filed by what is actually using it: **in use** (a live project pays with
-  it), **idle** (only projects that have ended ever did), **unused** (no
-  project ever was), and **hidden**. Filter by any of those, search by
-  credential or project name, and — for a subscription in use — read the
-  **plan meter**: what Anthropic says is left on the session and weekly
+The rail lists **Overview**, then the install's sections — **Providers**,
+**Models**, **Model prices**, **Web search**, **Founder**, **Slack**, **People**
+— and **Account**, and every entry states its section's state ("1 blocked ·
+3 untested", "Brave · $0.005 a query", "3 haven't signed in") rather than
+describing it. The section is in the URL, and every older link still lands where
+it did. On a phone the rail is the page: an index with a state per row, then the
+section with a way back. Someone who is not an instance admin sees Account only.
+
+**Green means a key has answered.** A provider's badge is **Ready** only once a
+Test, its model list, a graded check or a run of a project it pays has come back
+since the key's value last changed; until then it is **Untested**, and a key the
+provider turned away is **Failing** (`yaaf doctor` names it too). **Blocked** is
+yaaf refusing the seat itself — a class with no model, a model with no price —
+and **Needs a look** is something worth a look that refuses nothing. A seal
+beside each badge says how we know: *Answered 14 min ago · a run on …*, *Never
+answered*, *Refused the key · 2 h ago*. Slack and web search say **Not tested**
+until their own test passes, and forget it when a token changes.
+
+Every section is built the same way: a title, one line on what it is for, its
+state, and at most one primary action; a stored secret is a row that says
+**Saved · Replace** or **Not set**; a form saves with one button that is there
+when something changed; a switch on its own saves at once and is held for a few
+seconds with **Undo**; and anything irreversible is confirmed in the page with
+its consequence stated before the press — removing web search names the seats it
+would strand, from a dry run, before it removes anything.
+
+- **Providers** — read by health: one that needs you opens as a card with its
+  fixes on top; one that needs nothing is a single row (its models, prices, who
+  it pays, when it answered) that opens on a press. A key shows **Test** and
+  **Rotate key**; the rest is in ⋯ — *Read its model list* (free), *Run a graded
+  check…* with its estimated cost on the menu before the confirmation shows it
+  again, *Rename*, *Hide* (off while a live project pays, with the reason
+  beside it), *Delete* (only for a key no project ever named). Changing a class's
+  model shows, before Save, how many seats on which projects move and the rates
+  before and after, from the save's own dry run.
+
+  **All keys** is the same section as a list — every key, hidden ones included —
+  for what a list is good at. Every row is filed by what is actually using it:
+  **in use** (a live project pays with it), **idle** (only projects that have
+  ended ever did), **unused** (no project ever was), and **hidden**. Filter by
+  any of those, search by key or project name, and — for a subscription in use
+  — read the **plan meter**: what Anthropic says is left on the session and weekly
   windows, the same numbers as `/usage` in Claude Code, shown as a fact and
   never enforced. It is harvested from the credential's own agent runs — the
   SDK reports it on every run — and every row carries a **Check now** that gets
@@ -140,15 +181,27 @@ link to the credentials list.
   refuses these. Projects never store a billing key of their own: they pick
   one of these, under their own Settings → Money, on the New Project form, or
   by telling the Founder.
-- **Founder** — the key the **Founder** drafts on: one of the LLM credentials
-  above (**Use** it, one click — the default offered when you add your first),
-  or a key of its own. Install, rotate, run a live test against it, remove it,
-  and pick the model it uses. It pays for drafting and **never reaches a
-  project's agents**: borrowing runs one way — the Founder may use a
-  project-paying credential, a project never uses the Founder's.
-- **Slack connection** — the bot/signing/app tokens for your Slack workspace,
-  your member ID, and the channel naming convention, stored once. Every project
-  inherits them, so
+- **Models** — the defaults every project starts from (the default provider,
+  the default model, the default harness), each said as a sentence with
+  **Change**; whether model lists and feed prices are kept current daily; and the
+  graded checks side by side. Each provider's own lineup is changed on its row
+  under Providers.
+- **Model prices** — opens on the models a lineup actually uses, one column per
+  rate, with where each price came from (*Vendor-checked*, *Feed · Nov 4*, *Set
+  here*); **Missing a price** lists what a seat would be refused for. Editing
+  happens in the row. **Import from the feed…** previews every row and what it
+  would do before anything is written.
+- **Founder** — what the **Founder** drafts on: **one of your keys** (each listed
+  with its provider's state; one it could not run on is greyed with the reason)
+  or **its own key**, the model, and one **Save**. **Turn the Founder off…** stops
+  it being offered; a borrowed key stays as it is. It pays for drafting and
+  **never reaches a project's agents**: borrowing runs one way — the Founder may
+  use a project-paying credential, a project never uses the Founder's.
+- **Slack** — a three-step ladder of what the saved tokens make possible (mirror
+  to Slack; invite you to private rooms; chat with the CEO from Slack, which needs
+  the app token), then the bot/signing/app tokens, your member ID, and the channel
+  naming convention with the room names drawn as they will be made, stored once.
+  Every project inherits them, so
   connecting Slack for a new project is nothing but its channels — and yaaf
   makes the boardroom for you (`{prefix}-boardroom`; private by default, with
   you invited) and names it back on the "project created" screen. Leadership and

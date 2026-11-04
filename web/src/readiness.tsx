@@ -47,6 +47,19 @@ export interface ReadinessTier {
   check: TierCheck | null;
 }
 
+/** What the record says about a key (yaaf.core.key_evidence): an answer
+    from the provider, a refusal of the key itself, or nothing yet. Only what
+    happened since the key's value last changed counts. */
+export interface Evidence {
+  state: "answered" | "refused" | "never";
+  at: string | null;
+  via: "test" | "model_list" | "check" | "run" | null;
+  detail: string | null;
+  project: string | null;
+}
+
+export type ProviderState = "ready" | "untested" | "attention" | "failing" | "blocked";
+
 export interface ProviderReadiness {
   provider: string;
   label: string;
@@ -54,7 +67,11 @@ export interface ProviderReadiness {
   is_default: boolean;
   search: "own" | "platform" | "none";
   states_cost: boolean;
-  credentials: { id: string; name: string; mode: string; kind: string }[];
+  credentials: { id: string; name: string; mode: string; kind: string; evidence?: Evidence }[];
+  /** The newest word on any of its keys; a refusal on one leads. */
+  evidence?: Evidence;
+  /** The badge's word, from the server: green only once a key has answered. */
+  status?: ProviderState;
   tiers: ReadinessTier[];
   served: { at: string; count: number } | null;
   ceiling: number | null;
@@ -96,17 +113,36 @@ export function useReadiness(nonce = 0) {
   return { data, error, reload };
 }
 
-/** Ready, ready with something to look at, or refusing seats — said in a word
-    as well as a colour. */
-export function providerStatus(p: ProviderReadiness): { label: string; tone: "good" | "warn" | "critical" } {
-  if (!p.ready) return { label: "Blocked", tone: "critical" };
-  if (p.issues.length) return { label: "Needs attention", tone: "warn" };
-  return { label: "Ready", tone: "good" };
+export type StatusTone = "good" | "warn" | "critical" | "neutral";
+
+const STATE_WORD: Record<ProviderState, { label: string; tone: StatusTone }> = {
+  ready: { label: "Ready", tone: "good" },
+  untested: { label: "Untested", tone: "neutral" },
+  attention: { label: "Needs a look", tone: "warn" },
+  failing: { label: "Failing", tone: "critical" },
+  blocked: { label: "Blocked", tone: "critical" },
+};
+
+/** The order a list of providers is read in: what stops seats first. */
+export const STATE_ORDER: Record<ProviderState, number> = {
+  blocked: 0, failing: 1, attention: 2, untested: 3, ready: 4,
+};
+
+export function providerState(p: ProviderReadiness): ProviderState {
+  return p.status ?? (!p.ready ? "blocked" : p.issues.length ? "attention" : "ready");
+}
+
+/** The provider's state in a word as well as a colour. Green is the server's
+    to give, and it gives it only once a key has answered: a key nobody has
+    called is Untested, however complete its lineup. */
+export function providerStatus(p: ProviderReadiness): { label: string; tone: StatusTone; state: ProviderState } {
+  const state = providerState(p);
+  return { ...STATE_WORD[state], state };
 }
 
 export function StatusBadge({ p }: { p: ProviderReadiness }) {
   const s = providerStatus(p);
-  return <span className={`badge ${s.tone}`}>{s.label}</span>;
+  return <span className={`badge ${s.tone === "neutral" ? "hollow" : s.tone}${s.tone === "critical" ? " critical-fill" : ""}`}>{s.label}</span>;
 }
 
 /** Where each fix that is a place, rather than a press, lives. */
@@ -238,8 +274,9 @@ export function ProviderReadinessInline({ provider, onChanged }: {
   return <div className={`readiness-inline tone-${providerStatus(p).tone}`}>
     <div className="ri-head">
       <StatusBadge p={p} />
-      <span>{p.ready && !p.issues.length
-        ? `${p.label} is ready: every class has a priced model.`
+      <span>{providerState(p) === "ready" ? `${p.label} is ready: every class has a priced model, and its key has answered.`
+        : providerState(p) === "untested" ? `${p.label} is set up. Nothing has answered on its key yet.`
+        : providerState(p) === "failing" ? `${p.label} refused its key the last time it was called.`
         : p.ready ? `${p.label} can run seats; one thing is worth a look first.`
         : `${p.label} would refuse some seats as things stand. Fix it here, before the project meets the refusal:`}</span>
     </div>
