@@ -9,7 +9,9 @@ this module is how an install does that without typing two dozen numbers in by
 hand: it reads a price feed — the LiteLLM `model_prices_and_context_window.json`
 format, at an address the install chooses — maps it onto yaaf's model names,
 and shows what it *would* write. Nothing is written until an administrator
-applies it, and then each row carries where it came from (`ModelPrice.source`).
+applies it, and then each row carries where it came from (`ModelPrice.source`)
+— except by upkeep (yaaf.core.model_upkeep, on by default), which writes feed
+prices daily and as a key's model list is read, under the rules below.
 
 Three kinds of row are never touched unless asked:
 
@@ -97,10 +99,10 @@ def feed_url(session: Session) -> str:
     return platform.get_setting(session, FEED_URL) or DEFAULT_FEED_URL
 
 
-def fetch(url: str) -> dict:
+def fetch(url: str, *, timeout: float = 60) -> dict:
     """The feed, as JSON. A failure is the caller's to report — nothing here
     falls back to a guess."""
-    with httpx.Client(transport=TRANSPORT, timeout=60, follow_redirects=True) as http:
+    with httpx.Client(transport=TRANSPORT, timeout=timeout, follow_redirects=True) as http:
         response = http.get(url)
     response.raise_for_status()
     body = response.json()
@@ -132,23 +134,48 @@ def _tokens(value) -> int | None:
     return tokens if tokens > 0 else None
 
 
+def _entries(feed: dict, model: str):
+    """The feed's own entries for a yaaf model name, the provider's own API's
+    first (FEED_PROVIDERS), whatever kind of model each says it is."""
+    name = catalog.api_name(model)
+    for feed_provider, prefix in FEED_PROVIDERS.get(catalog.provider_of(model), ()):
+        entry = feed.get(f"{prefix}{name}")
+        if isinstance(entry, dict) and entry.get("litellm_provider") == feed_provider:
+            yield entry
+
+
 def lookup(feed: dict, model: str) -> FeedPrice | None:
     """The feed's price for a yaaf model name, or None."""
-    provider = catalog.provider_of(model)
-    name = catalog.api_name(model)
-    for feed_provider, prefix in FEED_PROVIDERS.get(provider, ()):
-        entry = feed.get(f"{prefix}{name}")
-        if (isinstance(entry, dict) and entry.get("litellm_provider") == feed_provider
-                and entry.get("mode") in _CHAT_MODES):
+    for entry in _entries(feed, model):
+        if entry.get("mode") in _CHAT_MODES:
             found = entry_price(entry)
             if found is not None:
                 return found
     return None
 
 
+def runnable(kind: str | None) -> bool:
+    """Whether a model of this kind can hold a seat. A kind the feed does not
+    state is given the benefit of the doubt: an unknown name is not evidence
+    it cannot talk."""
+    return kind is None or kind in _CHAT_MODES
+
+
+def details(feed: dict, model: str) -> dict | None:
+    """What the feed says a model is, beyond its price: its kind (`chat`, or
+    `image_generation` — which a key's list offers beside the chat models, and
+    a seat cannot run on), its input window, and whether it reasons. None when
+    the feed does not list it."""
+    for entry in _entries(feed, model):
+        reasons = entry.get("supports_reasoning")
+        return {"kind": entry.get("mode"),
+                "context_window": _tokens(entry.get("max_input_tokens")),
+                "reasoning": reasons if isinstance(reasons, bool) else None}
+    return None
+
+
 def provider_models(feed: dict, provider: str) -> list[str]:
     """Every chat model the feed lists for a provider, by yaaf's names."""
-    listed = {m.id for m in catalog.MODELS if m.provider == provider}
     out = set()
     for key, entry in feed.items():
         if not isinstance(entry, dict) or entry.get("mode") not in _CHAT_MODES:
@@ -156,8 +183,7 @@ def provider_models(feed: dict, provider: str) -> list[str]:
         for feed_provider, prefix in FEED_PROVIDERS.get(provider, ()):
             if entry.get("litellm_provider") == feed_provider and key.startswith(prefix) \
                     and entry_price(entry) is not None:
-                name = key[len(prefix):]
-                out.add(name if name in listed else f"{provider}/{name}")
+                out.add(catalog.by_api_name(provider, key[len(prefix):]))
                 break
     return sorted(out)
 
@@ -165,8 +191,14 @@ def provider_models(feed: dict, provider: str) -> list[str]:
 def wanted(session: Session) -> list[str]:
     """The models this install could run a seat on: every catalog model, every
     model a lineup resolves a class to, every model a role version or a seat
-    pins, and the Founder's — each a concrete name, never a class."""
+    pins, the Founder's, and every chat model a key's own list offers — each a
+    concrete name, never a class. The last is what lets a lineup be chosen from
+    priced models: a model priced only once it was picked was a lineup refused
+    the moment it was saved."""
+    from yaaf.core import model_upkeep
+
     names = {m.id for m in catalog.MODELS}
+    names |= model_upkeep.listed_runnable(session)
     own = model_policy.lineups(session)
     for provider in PROVIDERS:
         names |= set(catalog.lineup_of(provider, own).values())

@@ -27,13 +27,14 @@ os.environ.setdefault("YAAF_ARTIFACTS_ROOT", tempfile.mkdtemp(prefix="yaaf-test-
 
 from datetime import timedelta
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event, text
 from sqlalchemy import select as sa_select
 from sqlalchemy.engine import Engine, make_url
 
-from yaaf.core import ids
+from yaaf.core import ids, price_feed
 from yaaf.core.config import settings
 from yaaf.core.constitution import AUTONOMY_PRESETS
 from yaaf.core.db import db_session, engine, reset_for_tests
@@ -51,6 +52,18 @@ from yaaf.core.models import (
 from yaaf.core.tokens import hash_token, mint
 
 settings.cache_clear()
+
+
+def _offline(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError(f"the test suite is offline: {request.url}")
+
+
+# The suite is offline, and the price feed is the one thing an install reads
+# unasked: upkeep is on by default, and a key's model list is priced from the
+# feed as it is read. A test that stands no feed in finds it unreachable and
+# falls back to the shipped snapshot — exactly what an air-gapped install does —
+# rather than downloading three megabytes from GitHub on every list it reads.
+price_feed.TRANSPORT = httpx.MockTransport(_offline)
 
 #: The suite's person, seeded into every test's empty database: the instance
 #: admin, and — through `make_project` — the chairman of every project a test

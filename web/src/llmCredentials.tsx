@@ -288,12 +288,13 @@ export function LlmCredentials({ onChanged, onAdd, title = "LLM credentials", no
     setProbing(`${row.id}:${what}`);
     try {
       if (what === "models") {
-        const found = await get<{ models: { id: string; listed: boolean }[] }>(
+        const found = await get<{ models: { id: string; chat: boolean; price: unknown }[] }>(
           `${endpoint}/${row.id}/models`);
-        const listed = found.models.filter((m) => m.listed).length;
+        const chat = found.models.filter((m) => m.chat);
+        const priced = chat.filter((m) => m.price).length;
         setProbes((prev) => ({ ...prev, [row.id]: { ok: true,
-          text: `✓ ${found.models.length} models answer to this key${listed ? ` (${listed} in the catalog)` : ""}`,
-          models: found.models.map((m) => m.id) } }));
+          text: `✓ ${chat.length} models answer to this key${chat.length ? ` (${priced} priced)` : ""}`,
+          models: chat.map((m) => m.id) } }));
       } else {
         const said = await post<SmokeResult>(`${endpoint}/${row.id}/smoke`, {});
         setProbes((prev) => ({ ...prev, [row.id]: smokeLine(said) }));

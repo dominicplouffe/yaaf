@@ -949,7 +949,8 @@ Designed and tracked in [PROVIDERS.md](PROVIDERS.md); the short list:
 - [x] Every wire validated against its vendor's own spec and SDK types
 - [x] The loop compacts a history before it outgrows the model's window
 - [x] The provider check (probes and agent tasks, graded on state), readiness
-      with one-click fixes, opt-in daily upkeep of model lists and prices
+      with one-click fixes, daily upkeep of model lists and prices (on by
+      default; a key's list is priced as it is read)
 - [x] Failover: a failing provider's class seats move to the project's
       fallback credential until it recovers
 - [ ] **`yaaf check-provider` on a deployment, once per provider an install

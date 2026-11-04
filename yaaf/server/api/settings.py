@@ -1208,10 +1208,17 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
     """What the provider actually serves for this credential, by the names a
     seat or a lineup would use (`provider/model` for one the catalog does not
     list) — so a Groq lineup is picked from Groq's list, not typed from memory
-    (docs/PROVIDERS.md §8). One free call to the provider's own model list."""
+    (docs/PROVIDERS.md §8). One free call to the provider's own model list.
+
+    Each model comes with what the price feed says of it — its price, its
+    window, whether it reasons, and whether it is a chat model at all (a key's
+    list offers image and video models a seat cannot run on) — and, while
+    upkeep is on, the ones with no price yet are priced from it here, so a
+    lineup is chosen from priced models rather than refused once it is saved
+    (yaaf.core.model_upkeep)."""
     import httpx
 
-    from yaaf.core import model_policy, model_tokens, model_upkeep
+    from yaaf.core import model_policy, model_tokens, model_upkeep, price_feed, prices
     from yaaf.runtimes import catalog, wire
     from yaaf.runtimes.providers import provider
 
@@ -1226,23 +1233,47 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
     except (wire.WireError, httpx.HTTPError) as exc:
         raise HTTPException(status_code=502, detail=f"{seller.label} would not list its "
                                                     f"models: {exc}") from exc
+    # Read before anything is written: no write lock waits on the feed.
+    feed, source, live = model_upkeep.feed_for_picker(session)
     # Remembered: a seat whose model drops off this list is named on its
     # project's health checklist (yaaf.core.model_upkeep).
-    model_upkeep.record(session, row, names)
-    listed = {m.id for m in catalog.MODELS if m.provider == seller.name}
+    model_upkeep.record(session, row, names, feed)
+    described = (model_upkeep.discovered(session, row.id) or {}).get("details") or {}
+    refs = {name: catalog.by_api_name(seller.name, name) for name in names}
+    added: list[str] = []
+    if model_upkeep.enabled(session):
+        # Gaps only: moving a price is the daily pass's, and a snapshot read
+        # because the feed was down must not undo a fresher price.
+        _, changes = model_upkeep.refresh_prices(
+            session, feed, sorted(refs[n] for n, said in described.items()
+                                  if price_feed.runnable(said.get("kind"))),
+            source=source, add_only=True, trigger="model list")
+        added = [c["model"] for c in changes]
     served = set(names)
     lineup = {cls: model_policy.resolve(session, catalog.class_ref(cls), provider=seller.name)
               for cls in reversed(catalog.CLASSES)}
     in_lineup = {m for m in lineup.values() if m}
+
+    def described_model(name: str) -> dict:
+        ref, said = refs[name], described.get(name) or {}
+        price = prices.price(session, ref)
+        return {"id": ref, "name": name,
+                "listed": catalog.model(ref) is not None,
+                "in_lineup": ref in in_lineup,
+                "kind": said.get("kind"),
+                "chat": price_feed.runnable(said.get("kind")),
+                "reasoning": said.get("reasoning"),
+                "price": {"input": price.input, "output": price.output} if price else None,
+                "context_window": prices.context_window(session, ref)
+                or said.get("context_window")}
+
     return {"provider": seller.name,
+            "states_cost": seller.reports_cost,
+            "feed": {"source": source, "live": live, "priced": added},
             "lineup": {cls: {"model": model,
                              "served": catalog.api_name(model) in served if model else None}
                        for cls, model in lineup.items()},
-            "models": [
-                {"id": name if name in listed else f"{seller.name}/{name}", "name": name,
-                 "listed": name in listed,
-                 "in_lineup": (name if name in listed else f"{seller.name}/{name}") in in_lineup}
-                for name in names]}
+            "models": [described_model(name) for name in names]}
 
 
 @router.get("/providers/readiness", dependencies=[authority.INSTANCE_ADMIN])

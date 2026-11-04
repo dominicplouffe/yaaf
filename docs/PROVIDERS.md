@@ -232,7 +232,10 @@ format; the address is a setting, so an install can point it at its own
 mirror), maps the feed's entries onto yaaf's model names, and shows a preview:
 every model it would price, at what, from which source, and every hand-set
 price it would *not* touch. Nothing is written until an administrator applies
-it. Imported rows carry their source and date (`model_prices.source`), so the
+it. The one exception is upkeep (§8, on by default): it writes feed prices on
+its own — daily, and as a key's model list is read — under the same rules, so
+a hand-set price and a vendor-checked one are still never touched, and each
+write is audited. Imported rows carry their source and date (`model_prices.source`), so the
 prices table says where each number came from, and the existing gap check
 still compares every reported bill against the price it was metered at.
 
@@ -310,11 +313,18 @@ Claude credentials" any more.
   what it will cost first, and is kept per model — Settings → Models compares
   every model the install has checked, which is the evidence a lineup is
   chosen from.
-- **Keeping models and prices current** (yaaf/core/model_upkeep.py). Opt-in,
-  because it reaches out daily: each key's model list is re-read and
-  remembered, and prices that came from the feed are refreshed — never one an
+- **Keeping models and prices current** (yaaf/core/model_upkeep.py). On by
+  default; an install that must not reach the feed daily switches it off, and
+  then yaaf moves no price on its own. Each key's model list is re-read and
+  remembered, described by the feed (each model's kind — chat, or the image
+  and video models a key also lists, which a seat cannot run on — its window,
+  whether it reasons), and prices that came from the feed are refreshed, for
+  the models seats run on *and* every chat model a key lists — never one an
   administrator typed, never the catalog's checked ones, each change audited
-  with what it was. A seat whose model its key no longer lists is named on its
+  with what it was. A key's list is also priced the moment it is read, so a
+  lineup is chosen from priced models instead of refused once it is saved;
+  that read only fills gaps, because a feed that was down that minute — the
+  snapshot read in its place — must not undo a fresher price. A seat whose model its key no longer lists is named on its
   project's health checklist before its next run fails; a list older than two
   weeks is not held against anybody. A model the list leaves out that has
   since answered a check on the same key stays named — an unlisted name that
@@ -325,6 +335,8 @@ Claude credentials" any more.
 - **Model discovery.** `GET /admin/providers/{name}/models?credential=…` lists
   what the provider actually serves for that key; the lineup editor and the
   model pickers offer it, so a Groq lineup is picked from Groq's list, not typed.
+  Each model carries its price, window and whether it reasons, and the picker
+  leaves out the ones the feed says are not chat models.
 - **`yaaf smoke`.** One real, trivial call per credential (or one named): it
   sends a one-line prompt and a tool, checks the reply, the usage and the
   price, and prints what a run on that credential would cost per thousand

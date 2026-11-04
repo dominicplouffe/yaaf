@@ -308,8 +308,9 @@ WITHHELD = {
         "it re-reads every key's model list and may move prices every project is "
         "metered by.",
     "GET /admin/settings/llm-credentials/{credential_id}/models":
-        "it spends a call on the credential's own key to list a provider's models; the "
-        "lineup it helps set is an administrator's.",
+        "it spends a call on the credential's own key to list a provider's models, and "
+        "may add prices every project is metered by; the lineup it helps set is an "
+        "administrator's.",
     "POST /admin/settings/llm-credentials/{credential_id}/smoke":
         "it spends the credential's own money on a real call; an administrator's check.",
     "POST /admin/settings/llm-credentials/{credential_id}/check":

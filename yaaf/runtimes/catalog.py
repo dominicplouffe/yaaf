@@ -330,6 +330,14 @@ def api_name(model_id: str) -> str:
     return rest if rest and prefix in PROVIDERS and model(model_id) is None else model_id
 
 
+def by_api_name(provider: str, name: str) -> str:
+    """The name a seat uses for the model `provider`'s own API calls `name` —
+    the inverse of `api_name`: the catalog's id where it lists the model under
+    that provider, else `provider/name`."""
+    found = model(name)
+    return name if found is not None and found.provider == provider else f"{provider}/{name}"
+
+
 def price(model_id: str | None) -> Price | None:
     found = model(model_id)
     return found.price if found else None

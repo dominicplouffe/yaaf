@@ -111,11 +111,15 @@ def test_what_a_key_can_call_is_discoverable_by_the_names_a_seat_uses(client, mo
         200, json={"data": [{"id": "deepseek-v4-flash"}, {"id": "deepseek-v9"}]})))
     listed = client.get(f"{CREDENTIALS}/{created.json()['id']}/models", headers=ADMIN)
     assert listed.status_code == 200, listed.text
-    assert listed.json()["models"] == [
+    models = listed.json()["models"]
+    assert [{k: m[k] for k in ("id", "name", "listed", "in_lineup")} for m in models] == [
         {"id": "deepseek-v4-flash", "name": "deepseek-v4-flash", "listed": True,
          "in_lineup": True},
         {"id": "deepseek/deepseek-v9", "name": "deepseek-v9", "listed": False,
          "in_lineup": False}]
+    # A name no feed has heard of is still offered — unknown is not "cannot
+    # talk" — with no price beside it rather than a guessed one.
+    assert (models[1]["chat"], models[1]["price"], models[1]["kind"]) == (True, None, None)
     # The lineup beside the list: a class whose model the key cannot call is
     # visible before a seat on it is refused.
     lineup = listed.json()["lineup"]

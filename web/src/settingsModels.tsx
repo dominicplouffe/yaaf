@@ -125,10 +125,14 @@ function UpkeepCard({ upkeep, onSaved }: { upkeep: ModelsSettings["upkeep"]; onS
         onChange={(e) => toggle(e.target.checked)} />
       Keep models and prices current
     </label>
-    <p className="help">Once a day: re-read each key&apos;s model list and refresh feed prices.
-      Prices you typed, and the vendor-checked ones shipped with yaaf, are never touched.</p>
+    <p className="help">On by default. Once a day: re-read each key&apos;s model list and refresh
+      feed prices — for every chat model a key lists, not only the ones seats run on — and price a
+      key&apos;s models the moment its list is read. Prices you typed, and the vendor-checked ones
+      shipped with yaaf, are never touched. Off, yaaf moves no price on its own and never reads the
+      feed unasked.</p>
     <Why>Re-reading the lists means a seat on a model the provider retired is named on its
-      project&apos;s health checklist before it fails.</Why>
+      project&apos;s health checklist before it fails; pricing them means a class is chosen from
+      priced models instead of refused the moment it is saved.</Why>
     {last ? <div className="upkeep-last">
       <p><b>Last ran {fmtAgo(last.at)}.</b>{" "}
         {keys.length === 0 ? "No key to read." : `Read ${keys.length - failed.length} of ${keys.length} key${keys.length === 1 ? "" : "s"}.`}{" "}

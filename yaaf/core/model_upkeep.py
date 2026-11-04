@@ -10,14 +10,23 @@ budget off by a third — weeks after the fact. Two facts keep it honest:
   provider no longer lists is named on its project's health checklist before
   its next run fails; models the key can call that no lineup uses are shown
   beside the lineup, to be picked rather than typed.
-- **Prices from the feed**, re-read daily when the install opted in. Only
-  prices that came from the feed are moved, and models a lineup or a seat
-  needs are added; a price an administrator typed, and the catalog's checked
-  ones, are never touched (yaaf.core.price_feed). Every change is audited
-  with what it was before.
+- **Prices from the feed**, re-read daily. Only prices that came from the
+  feed are moved, and models a lineup, a seat or a key's own list offers are
+  added; a price an administrator typed, and the catalog's checked ones, are
+  never touched (yaaf.core.price_feed). Every change is audited with what it
+  was before.
 
-Off by default: it reaches out to every provider and to the feed once a day,
-and an install decides whether it wants that. "Run now" does the same once.
+A key's list is also priced the moment it is read — when a lineup is being
+chosen from it — so the models on offer carry their price, window and kind
+(chat, or image and video ones a seat cannot run on) before one is picked.
+That only fills gaps: moving a price is the daily pass's, so a feed that could
+not be reached, and a snapshot read in its place, never undoes a fresher one.
+
+On by default, because the alternative is a lineup picked from names with no
+price beside them and refused the moment it is saved. An install that must not
+reach the feed every day switches it off, and then yaaf moves no price on its
+own: lists read then are described from the shipped snapshot, and priced by
+hand or by Import. "Run now" does the daily pass once either way.
 """
 
 from __future__ import annotations
@@ -57,7 +66,9 @@ def _load(session: Session, key: str) -> dict:
 
 
 def enabled(session: Session) -> bool:
-    return platform.get_setting(session, ENABLED) == "1"
+    """On unless an administrator switched it off: an install that never
+    touched the setting gets the daily pass."""
+    return platform.get_setting(session, ENABLED) != "0"
 
 
 def set_enabled(session: Session, on: bool) -> None:
@@ -77,9 +88,77 @@ def list_served(session: Session, secret: Secret) -> list[str]:
     return asyncio.run(_list(_endpoint(secret)))
 
 
-def record(session: Session, secret: Secret, names: list[str]) -> None:
+def record(session: Session, secret: Secret, names: list[str],
+           feed: dict | None = None) -> None:
+    """Remember what the key listed, and what `feed` says each listed model is
+    (price_feed.details). Where `feed` is silent — it was down, or the
+    snapshot read in its place lists only the catalog's models — what an
+    earlier feed said stands for the names still listed: a feed that could not
+    be read today did not change what a model is."""
+    models = sorted(set(names))
+    before = (discovered(session, secret.id) or {}).get("details") or {}
+    described = {n: before[n] for n in models if n in before}
+    for name in models if feed is not None else ():
+        found = price_feed.details(feed, catalog.by_api_name(secret.provider, name))
+        if found is not None:
+            described[name] = found
     platform.set_setting(session, DISCOVERY + secret.id, json.dumps(
-        {"at": utcnow().isoformat(), "provider": secret.provider, "models": sorted(set(names))}))
+        {"at": utcnow().isoformat(), "provider": secret.provider, "models": models,
+         "details": described}))
+
+
+def listed_runnable(session: Session) -> set[str]:
+    """Every model a key's own list offers that the feed says can hold a seat,
+    by the name a seat would use. Only those the feed described: one it does
+    not list has no price to fetch, and the gap is named where a seat needs it."""
+    out = set()
+    for secret in session.scalars(_listable()):
+        found = discovered(session, secret.id)
+        for name, said in ((found or {}).get("details") or {}).items():
+            if price_feed.runnable(said.get("kind")):
+                out.add(catalog.by_api_name(secret.provider, name))
+    return out
+
+
+#: How long a model picker waits on the feed before it describes the key's
+#: list from the snapshot instead. The daily pass waits the fetch's full minute.
+PICKER_FEED_TIMEOUT = 15
+
+
+def feed_for_picker(session: Session) -> tuple[dict, str, bool]:
+    """(feed, its source label, live) for describing and pricing a key's list
+    as it is read: the live feed when upkeep is on and it answers, else the
+    shipped snapshot. Never raises: a picker with no feed still lists models."""
+    if enabled(session):
+        url = price_feed.feed_url(session)
+        try:
+            return price_feed.fetch(url, timeout=PICKER_FEED_TIMEOUT), \
+                price_feed.source_label(), True
+        except Exception as exc:  # noqa: BLE001 — any failure falls back, by design
+            log.info("price feed unreachable for a model list (%s): %s", url, exc)
+    feed, label = price_feed.snapshot_feed()
+    return feed, label, False
+
+
+def refresh_prices(session: Session, feed: dict, models: list[str], *, source: str,
+                   add_only: bool = False, trigger: str = "daily") -> tuple[list[dict], list[dict]]:
+    """Price `models` from `feed` by upkeep's rule: never an administrator's
+    own price, never the catalog's checked one (the preview already holds both
+    back); a feed row moves only a price that came from a feed, and with
+    `add_only` none at all. Each change audited with what it was. Returns
+    (the preview's rows, the changes written)."""
+    from yaaf.server.api.admin import _audit
+
+    rows = price_feed.preview(session, feed, models, source=source)
+    movable = [r for r in rows if r["action"] == "add" or (
+        not add_only and r["action"] == "update" and (r["current"] or {}).get("source"))]
+    written = price_feed.apply(session, movable)
+    changes = [{"model": r["model"], "from": r["current"], "to": r["proposed"]}
+               for r in movable if r["model"] in written]
+    if changes:
+        _audit(session, None, "model_price.refresh", "model", "feed",
+               {"source": source, "trigger": trigger, "changes": changes})
+    return rows, changes
 
 
 def discovered(session: Session, secret_id: str) -> dict | None:
@@ -188,8 +267,9 @@ def due(session: Session) -> bool:
 
 
 def run() -> dict:
-    """Re-read every key's model list, then refresh prices from the feed.
-    Returns what it did, which is also kept as `upkeep.last`.
+    """Read the feed, re-read every key's model list (described by the feed),
+    then refresh prices — for what seats run on and for every chat model the
+    keys list. Returns what it did, which is also kept as `upkeep.last`.
 
     Its own short transactions, none held across a network call: a slow
     provider must not hold a write lock every other writer waits on. Every
@@ -198,11 +278,18 @@ def run() -> dict:
     longer knows) must not stop the rest, nor leave the pass due again."""
     from yaaf.core.db import db_session
     from yaaf.runtimes.providers import PROVIDERS
-    from yaaf.server.api.admin import _audit
 
     with db_session() as session:
         targets = [(s.id, s.name) for s in session.scalars(_listable())
                    if s.provider in PROVIDERS and PROVIDERS[s.provider].protocol]
+        url = price_feed.feed_url(session)
+    # The feed first: each key's list is described by it as it is recorded.
+    feed: dict | None = None
+    prices: dict = {}
+    try:
+        feed = price_feed.fetch(url)
+    except Exception as exc:  # noqa: BLE001
+        prices = {"error": f"the price feed could not be read: {exc}"[:300]}
     lists: dict[str, dict] = {}
     for secret_id, name in targets:
         try:
@@ -217,33 +304,15 @@ def run() -> dict:
             with db_session() as session:
                 secret = session.get(Secret, secret_id)
                 if secret is not None:
-                    record(session, secret, names)
+                    record(session, secret, names, feed)
             lists[secret_id] = {"name": name, "models": len(names)}
         except Exception as exc:  # noqa: BLE001 — recorded per credential, by design
             lists[secret_id] = {"name": name, "error": f"{type(exc).__name__}: {exc}"[:200]}
-    prices: dict = {}
-    try:
-        with db_session() as session:
-            url = price_feed.feed_url(session)
-        feed = price_feed.fetch(url)
-    except Exception as exc:  # noqa: BLE001
-        prices = {"error": f"the price feed could not be read: {exc}"[:300]}
-    else:
+    if feed is not None:
         try:
             with db_session() as session:
-                rows = price_feed.preview(session, feed, price_feed.wanted(session),
-                                          source=price_feed.source_label())
-                # Never an administrator's own price, never the catalog's
-                # checked one (the preview already holds both back); and a
-                # feed row moves only a price that came from a feed.
-                movable = [r for r in rows if r["action"] == "add" or (
-                    r["action"] == "update" and (r["current"] or {}).get("source"))]
-                written = price_feed.apply(session, movable)
-                changes = [{"model": r["model"], "from": r["current"], "to": r["proposed"]}
-                           for r in movable if r["model"] in written]
-                if changes:
-                    _audit(session, None, "model_price.refresh", "model", "feed",
-                           {"source": price_feed.source_label(), "changes": changes})
+                rows, changes = refresh_prices(session, feed, price_feed.wanted(session),
+                                               source=price_feed.source_label())
             prices = {"changed": [c["model"] for c in changes], "checked": len(rows)}
         except Exception as exc:  # noqa: BLE001
             prices = {"error": f"the prices could not be refreshed: {exc}"[:300]}
