@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import (
+    key_evidence,
     lineup_pick,
     llm_credentials,
     model_policy,
@@ -149,12 +150,20 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
                "refused here." if total else "every role that browses will be refused here."),
             {"action": "web_search"}))
     blocked = any(i["severity"] == "block" for i in issues)
+    # Whether the provider takes the key is the record's to say, not this
+    # report's: `ready` stays what the doors would refuse, and `status` adds
+    # what the provider has done with the keys (yaaf.core.key_evidence).
+    evidence = {s.id: key_evidence.of(session, s) for s in credentials}
+    seen = key_evidence.summary(list(evidence.values()))
     return {
         "provider": name, "label": seller.label, "local": seller.local,
         "is_default": model_policy.default_provider(session) == name,
         "search": searches, "states_cost": seller.reports_cost,
         "credentials": [{"id": s.id, "name": s.name, "mode": s.llm_mode or "api_key",
-                         "kind": seller.kind(s.llm_mode).label} for s in credentials],
+                         "kind": seller.kind(s.llm_mode).label,
+                         "evidence": evidence[s.id]} for s in credentials],
+        "evidence": seen,
+        "status": key_evidence.status(not blocked, issues, seen),
         "tiers": tiers,
         # The key's own list as last read: the tier editor offers it without
         # asking the provider again.

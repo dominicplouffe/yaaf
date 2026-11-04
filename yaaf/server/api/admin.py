@@ -179,8 +179,28 @@ def _setup_fields(link: str) -> dict:
 
 @router.get("/users", dependencies=[authority.INSTANCE_ADMIN])
 def list_users(session: Session = Depends(db)) -> list[dict]:
-    return [_user_row(u) for u in
-            session.execute(select(User).order_by(User.created_at)).scalars()]
+    """Everyone, and for anyone who has not chosen a password yet, the newest
+    link they were given and whether it still works: the link is the whole
+    invitation, so "invited" and "their link ran out" are different next steps."""
+    from yaaf.core.models import UserSetupLink
+
+    links: dict[str, UserSetupLink] = {}
+    for link in session.scalars(select(UserSetupLink).where(
+            UserSetupLink.used_at.is_(None), UserSetupLink.revoked_at.is_(None))
+            .order_by(UserSetupLink.created_at)):
+        links[link.user_id] = link
+    now = utcnow()
+    rows = []
+    for user in session.execute(select(User).order_by(User.created_at)).scalars():
+        row = _user_row(user)
+        link = links.get(user.id) if not user.password_hash else None
+        expires = link.expires_at if link is not None else None
+        if expires is not None and expires.tzinfo is None:
+            expires = expires.replace(tzinfo=UTC)
+        row["invite"] = ({"expires_at": expires.isoformat(), "expired": expires < now}
+                         if expires is not None else None)
+        rows.append(row)
+    return rows
 
 
 @router.post("/users", dependencies=[authority.INSTANCE_ADMIN])
