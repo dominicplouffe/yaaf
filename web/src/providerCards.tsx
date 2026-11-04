@@ -316,9 +316,10 @@ function CredentialRow({ c, full, seller, provider, checkNonce, onRunCheck, onDi
     setProbing("models"); setProbe(null);
     try {
       const found = await discoverModels(c.id);
-      const listed = found.filter((m) => m.listed).length;
-      setProbe({ ok: true, text: `✓ ${found.length} models answer to this key${listed ? ` (${listed} in the catalog)` : ""} — offered when you change a class below`,
-        models: found.map((m) => m.id) });
+      const chat = found.filter((m) => m.chat);
+      const priced = chat.filter((m) => m.price).length;
+      setProbe({ ok: true, text: `✓ ${chat.length} models answer to this key${chat.length ? ` (${priced} priced)` : ""} — offered when you change a class below`,
+        models: chat.map((m) => m.id) });
       onDiscover();
     } catch (e) { setProbe({ ok: false, text: `✕ ${(e as Error).message}` }); }
     finally { setProbing(null); }

@@ -99,6 +99,13 @@ class Provider:
     console_url: str | None = None
     #: Headers every call carries beyond its key.
     headers: Mapping[str, str] = field(default_factory=dict)
+    #: The name prefixes of the models this provider makes itself, for a
+    #: provider that ships no lineup: what yaaf may fill an empty class with
+    #: (yaaf.core.lineup_pick). Its price groups are then one family's ladder.
+    #: Empty for a host of many vendors' models — Bedrock, Together, Groq —
+    #: where the dearest model is no family's frontier and names from unrelated
+    #: families say nothing about which is newer: yaaf fills nothing there.
+    family: tuple[str, ...] = ()
 
     def kind(self, mode: str | None) -> CredentialKind:
         """The kind a mode names. A mode nobody registered is read as the first
@@ -318,6 +325,8 @@ VERTEX = Provider(
     base_url_template=("https://{region}-aiplatform.googleapis.com/v1/projects/{project}"
                        "/locations/{region}/publishers/google"),
     mints_tokens=True,
+    # It lists Google's own publisher models only (wire.models_url).
+    family=("gemini",),
     # Grounding with Google Search, as on the Gemini API: the same call on
     # the same wire, at Vertex's grounding price per prompt.
     search=True,
@@ -403,18 +412,25 @@ MISTRAL = _chat("mistral", "Mistral", "https://api.mistral.ai/v1", "MISTRAL_API_
 
 #: The long tail (docs/RUNTIMES.md, M5; docs/PROVIDERS.md §4): each speaks the
 #: OpenAI shape, so each is a row and nothing else. None ships a lineup: their
-#: lineups move monthly and no model could be checked, so an install picks one
-#: from the provider's own list (Settings → Models). Each address is the
+#: lineups move monthly and no model could be checked. A provider that sells its
+#: own family (`family`) has each class filled from the key's own list by price
+#: once it is read (yaaf.core.lineup_pick); on a host of many vendors' models
+#: the install names them (Settings → Models). Each address is the
 #: vendor's international one; a key issued for another region is a custom
 #: endpoint at that region's address.
 XAI = _chat("xai", "xAI (Grok)", "https://api.x.ai/v1", "XAI_API_KEY",
-            ("incorrect api key provided", "no credits"), "https://console.x.ai")
+            ("incorrect api key provided", "no credits"), "https://console.x.ai",
+            family=("grok",))
 MOONSHOT = _chat("moonshot", "Moonshot (Kimi)", "https://api.moonshot.ai/v1", "MOONSHOT_API_KEY",
-                 ("invalid authentication",), "https://platform.moonshot.ai/console/api-keys")
+                 ("invalid authentication",), "https://platform.moonshot.ai/console/api-keys",
+                 family=("kimi", "moonshot"))
+#: Model Studio resells DeepSeek, GLM and Kimi beside Qwen: its classes are
+#: filled from the Qwen family only.
 QWEN = _chat("qwen", "Qwen (Alibaba Model Studio)",
              "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY",
              ("incorrect api key provided", "invalid_api_key"),
-             "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key")
+             "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key",
+             family=("qwen", "qwq", "qvq"))
 GROQ = _chat("groq", "Groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY",
              ("invalid_api_key",), "https://console.groq.com/keys")
 TOGETHER = _chat("together", "Together AI", "https://api.together.xyz/v1", "TOGETHER_API_KEY",
@@ -425,14 +441,16 @@ FIREWORKS = _chat("fireworks", "Fireworks AI", "https://api.fireworks.ai/inferen
 CEREBRAS = _chat("cerebras", "Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY",
                  ("wrong api key", "invalid_api_key"), "https://cloud.cerebras.ai")
 COHERE = _chat("cohere", "Cohere", "https://api.cohere.ai/compatibility/v1", "COHERE_API_KEY",
-               ("invalid api token",), "https://dashboard.cohere.com/api-keys")
+               ("invalid api token",), "https://dashboard.cohere.com/api-keys",
+               family=("command", "c4ai", "aya"))
 NVIDIA = _chat("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY",
                ("authentication failed for",), "https://build.nvidia.com")
 HUGGINGFACE = _chat("huggingface", "Hugging Face", "https://router.huggingface.co/v1",
                     "HF_TOKEN", ("invalid credentials", "invalid username or password"),
                     "https://huggingface.co/settings/tokens")
 ZAI = _chat("zai", "Z.ai (GLM)", "https://api.z.ai/api/paas/v4", "ZAI_API_KEY",
-            ("token expired or incorrect",), "https://z.ai/manage-apikey/apikey-list")
+            ("token expired or incorrect",), "https://z.ai/manage-apikey/apikey-list",
+            family=("glm",))
 
 CUSTOM = Provider(
     name="custom",

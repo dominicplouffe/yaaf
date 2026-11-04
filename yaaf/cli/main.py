@@ -668,6 +668,16 @@ def set_lineup(provider: str, model_class: str,
 
 
 @app.command()
+def repick_lineup(provider: str, model_class: str) -> None:
+    """Move a class yaaf picked from a key's list onto what it would pick now —
+    a newer model at the price, or a new price group. Only a class yaaf picked;
+    the readiness report (`yaaf models`) says when there is one."""
+    with _client() as client:
+        _show(client.post("/admin/settings/models/lineup/repick",
+                          json={"provider": provider, "class": model_class}))
+
+
+@app.command()
 def set_default_provider(provider: str) -> None:
     """Where a project that pays nobody yet resolves its classes, and the
     Founder's before it has a key."""
@@ -725,7 +735,9 @@ def import_prices(
 @app.command()
 def discover_models(credential_id: str) -> None:
     """What the provider serves for this credential, by the names a seat or a
-    lineup uses — one free call to its own model list."""
+    lineup uses — one free call to its own model list — with each model's price,
+    window and kind from the price feed. While upkeep is on, the chat models
+    with no price yet are priced from the feed as they are read."""
     with _client() as client:
         _show(client.get(f"/admin/settings/llm-credentials/{credential_id}/models"))
 
@@ -798,8 +810,8 @@ def check_provider(
 def upkeep(enable: bool = typer.Option(None, "--enable/--disable",
                                        help="Switch the daily pass on or off"),
            run: bool = typer.Option(False, "--run", help="Run the pass now")) -> None:
-    """Keep models and prices current: re-read each key's model list and refresh
-    prices that came from the feed (never one typed by hand)."""
+    """Keep models and prices current (on by default): re-read each key's model
+    list and refresh prices that came from the feed (never one typed by hand)."""
     with _client() as client:
         if enable is not None:
             _json_or_die(client.put("/admin/settings/models/upkeep", json={"enabled": enable}))

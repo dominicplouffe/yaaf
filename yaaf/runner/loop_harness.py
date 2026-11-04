@@ -656,8 +656,11 @@ class LoopDriver:
         """The history replaced by the model's own summary of it, on the
         request this attempt is answering. Billed as the call it is."""
         max_tokens = SUMMARY_MAX_TOKENS
-        if room is not None and self.price is not None and self.price["output"] > 0:
-            max_tokens = max(1, min(max_tokens, int(room / self.price["output"] * 1_000_000)))
+        # At the highest output rate: whether this call's prompt passes a
+        # long-prompt tier is not known until the provider has counted it.
+        top = base.top_rate(self.price, "output") if self.price is not None else 0.0
+        if room is not None and top > 0:
+            max_tokens = max(1, min(max_tokens, int(room / top * 1_000_000)))
         reply: Reply | None = None
         stated: base.AttemptResult | None = None
         try:
@@ -772,8 +775,9 @@ class LoopDriver:
                 overflowed = False
                 continue
             max_tokens = MAX_OUTPUT_TOKENS
-            if room is not None and self.price is not None and self.price["output"] > 0:
-                affordable = int(room / self.price["output"] * 1_000_000)
+            top = base.top_rate(self.price, "output") if self.price is not None else 0.0
+            if room is not None and top > 0:
+                affordable = int(room / top * 1_000_000)
                 max_tokens = max(1, min(MAX_OUTPUT_TOKENS, affordable))
             reply: Reply | None = None
             stated: base.AttemptResult | None = None

@@ -73,6 +73,30 @@ an install that has run since before this rule behaves exactly as it always
 has. A pinned model does not move: pinning is the chairman saying *this*
 model, and the doors then ask for its provider to be paid.
 
+**A provider that sells its own models and ships no lineup has its classes
+filled from its key's own list** (`yaaf.core.lineup_pick`) — xAI, Moonshot,
+Qwen, Z.ai, Cohere and Vertex, whose lineups move monthly and could not be
+checked from here. Each names its family (`Provider.family`: `grok`, `kimi`,
+`qwen`…), and only that family is picked from: Qwen's Model Studio resells
+DeepSeek, GLM and Kimi, and none of those is Qwen's Frontier. A host of many
+makers' models — Bedrock, Together, Fireworks, Groq, Cerebras, NVIDIA, Hugging
+Face, OpenRouter, a local server — is never filled: its dearest model is no
+family's frontier, and a Llama name and a Qwen name say nothing about which is
+newer. Its classes are the administrator's, and the readiness report says why.
+Once the list is read and priced (§8), each *empty* class takes a model:
+Frontier from the dearest price group, Fast from the cheapest, Balanced from the
+middle (the lower middle when the count is even), ranked on three input tokens
+to one output. Within a group, the newest — by the date the provider's list
+gives, else the version in the name read as a decimal — and of a reasoning and
+a non-reasoning twin, Frontier and Balanced take the first and Fast the second.
+Only a priced chat model that takes tool calls is a candidate: never an image
+or multi-agent model, a `-latest` alias, or a deprecated one. A class an
+administrator named, or yaaf ships, is never touched. A class yaaf filled stays
+on its model — every seat on it moves when it does — and the readiness report
+says when yaaf would now pick another, with one press to move it
+(`POST /admin/settings/models/lineup/repick`, `yaaf repick-lineup`). Naming the
+class by hand makes it the administrator's. With upkeep off, nothing is filled.
+
 `stakes: high` lifts a producing seat to `@frontier` of the provider it is
 already on — the class rank replaces the old per-provider `craft_model`, and
 the lift stays within the provider exactly as before.
@@ -232,7 +256,10 @@ format; the address is a setting, so an install can point it at its own
 mirror), maps the feed's entries onto yaaf's model names, and shows a preview:
 every model it would price, at what, from which source, and every hand-set
 price it would *not* touch. Nothing is written until an administrator applies
-it. Imported rows carry their source and date (`model_prices.source`), so the
+it. The one exception is upkeep (§8, on by default): it writes feed prices on
+its own — daily, and as a key's model list is read — under the same rules, so
+a hand-set price and a vendor-checked one are still never touched, and each
+write is audited. Imported rows carry their source and date (`model_prices.source`), so the
 prices table says where each number came from, and the existing gap check
 still compares every reported bill against the price it was metered at.
 
@@ -240,6 +267,20 @@ A dated snapshot of the feed's rows for the catalog's models ships in the
 repo (`yaaf/runtimes/price_snapshot.json`) for installs that cannot reach the
 internet — imported the same way, labelled as a snapshot, never applied on its
 own. `yaaf prices import` does the same from a shell.
+
+**A price has tiers.** Grok bills twice its rate once a call's prompt passes
+200k tokens; GPT-6 does more past 272k, Gemini Pro past 200k. The feed states
+these (`input_cost_per_token_above_200k_tokens` and its siblings), and they are
+imported with the price (`model_prices.tiers`, `catalog.Tier`) — the snapshot
+included — and handed to the sandbox with it. A call whose prompt, cached part
+included, passes a tier's line is billed at that tier's rates for the whole
+call. The line is one call's: yaaf's loop and OpenCode bill per call; the
+Gemini CLI's telemetry and Codex's session files are priced call by call; a
+bill that sums calls it cannot tell apart (a Claude result line, which states
+its own cost anyway) is held to the base rate rather than judged on its sum.
+A call is sized for what it can afford at its highest output rate. Before
+this, a long Grok run was metered at half what it spent, and xAI states no
+per-call cost a drift check could have caught it by.
 
 ### 6. Search is a platform capability, metered like a model call
 
@@ -310,11 +351,18 @@ Claude credentials" any more.
   what it will cost first, and is kept per model — Settings → Models compares
   every model the install has checked, which is the evidence a lineup is
   chosen from.
-- **Keeping models and prices current** (yaaf/core/model_upkeep.py). Opt-in,
-  because it reaches out daily: each key's model list is re-read and
-  remembered, and prices that came from the feed are refreshed — never one an
+- **Keeping models and prices current** (yaaf/core/model_upkeep.py). On by
+  default; an install that must not reach the feed daily switches it off, and
+  then yaaf moves no price on its own. Each key's model list is re-read and
+  remembered, described by the feed (each model's kind — chat, or the image
+  and video models a key also lists, which a seat cannot run on — its window,
+  whether it reasons), and prices that came from the feed are refreshed, for
+  the models seats run on *and* every chat model a key lists — never one an
   administrator typed, never the catalog's checked ones, each change audited
-  with what it was. A seat whose model its key no longer lists is named on its
+  with what it was. A key's list is also priced the moment it is read, so a
+  lineup is chosen from priced models instead of refused once it is saved;
+  that read only fills gaps, because a feed that was down that minute — the
+  snapshot read in its place — must not undo a fresher price. A seat whose model its key no longer lists is named on its
   project's health checklist before its next run fails; a list older than two
   weeks is not held against anybody. A model the list leaves out that has
   since answered a check on the same key stays named — an unlisted name that
@@ -325,6 +373,8 @@ Claude credentials" any more.
 - **Model discovery.** `GET /admin/providers/{name}/models?credential=…` lists
   what the provider actually serves for that key; the lineup editor and the
   model pickers offer it, so a Groq lineup is picked from Groq's list, not typed.
+  Each model carries its price, window and whether it reasons, and the picker
+  leaves out the ones the feed says are not chat models.
 - **`yaaf smoke`.** One real, trivial call per credential (or one named): it
   sends a one-line prompt and a tool, checks the reply, the usage and the
   price, and prints what a run on that credential would cost per thousand

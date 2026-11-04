@@ -9,7 +9,9 @@ this module is how an install does that without typing two dozen numbers in by
 hand: it reads a price feed — the LiteLLM `model_prices_and_context_window.json`
 format, at an address the install chooses — maps it onto yaaf's model names,
 and shows what it *would* write. Nothing is written until an administrator
-applies it, and then each row carries where it came from (`ModelPrice.source`).
+applies it, and then each row carries where it came from (`ModelPrice.source`)
+— except by upkeep (yaaf.core.model_upkeep, on by default), which writes feed
+prices daily and as a key's model list is read, under the rules below.
 
 Three kinds of row are never touched unless asked:
 
@@ -27,6 +29,7 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -54,7 +57,13 @@ TRANSPORT: httpx.BaseTransport | None = None
 #: name, the prefix its keys carry). First match wins, so the provider's own
 #: API is read before a cloud's copy of the same model. A provider absent here
 #: has nothing a feed can say: OpenRouter states each call's cost, an Azure
-#: model is a deployment's name, a local server is the chairman's own machine.
+#: model is a deployment's name, a local server is the chairman's own machine,
+#: and Hugging Face's router hands each call to one of several inference
+#: providers, each at its own price — the feed lists no Hugging Face rows, and
+#: another host's row for the same model is that host's price, not necessarily
+#: the router's. NVIDIA's API is mapped,
+#: but as of 2026-11-04 the feed prices only its rerank models, none it chats
+#: with; borrowing a Nemotron price another host charges would be a guess.
 FEED_PROVIDERS: dict[str, tuple[tuple[str, str], ...]] = {
     "anthropic": (("anthropic", ""),),
     "openai": (("openai", ""),),
@@ -87,20 +96,57 @@ class FeedPrice:
     cache_write: float
     #: The input window the feed states, which the loop compacts against.
     context_window: int | None = None
+    #: The higher rates past a prompt size (catalog.Tier, as dicts), lowest
+    #: threshold first.
+    tiers: tuple[dict, ...] = ()
 
     def as_dict(self) -> dict:
         return {"input": self.input, "output": self.output, "cache_read": self.cache_read,
-                "cache_write": self.cache_write, "context_window": self.context_window}
+                "cache_write": self.cache_write, "context_window": self.context_window,
+                "tiers": list(self.tiers)}
+
+
+#: The feed's long-prompt rates: `input_cost_per_token_above_200k_tokens` and
+#: its siblings. Only the plain ones: `_batches`, `_priority`, `_flex` are
+#: other service levels, and `_above_1hr` a cache lifetime, not a prompt size.
+_TIER_KEY = re.compile(r"^(input_cost_per_token|output_cost_per_token|cache_read_input_token_cost"
+                       r"|cache_creation_input_token_cost)_above_(\d+)k_tokens$")
+_TIER_FIELD = {"input_cost_per_token": "input", "output_cost_per_token": "output",
+               "cache_read_input_token_cost": "cache_read",
+               "cache_creation_input_token_cost": "cache_write"}
+
+
+def entry_tiers(entry: dict) -> tuple[dict, ...]:
+    """The long-prompt rates an entry states, per million tokens. A tier that
+    states only some rates keeps the base rate for the others' input and
+    output, and leaves the cache rates it does not state to the base row."""
+    found: dict[int, dict] = {}
+    for key, value in entry.items():
+        match = _TIER_KEY.match(key)
+        if match is None or not isinstance(value, int | float):
+            continue
+        found.setdefault(int(match.group(2)) * 1000, {})[_TIER_FIELD[match.group(1)]] = \
+            _per_million(value)
+    tiers = []
+    for above, rates in sorted(found.items()):
+        if "input" not in rates and "output" not in rates:
+            continue
+        tiers.append({"above": above,
+                      "input": rates.get("input", _per_million(entry["input_cost_per_token"])),
+                      "output": rates.get("output", _per_million(entry["output_cost_per_token"])),
+                      "cache_read": rates.get("cache_read"),
+                      "cache_write": rates.get("cache_write")})
+    return tuple(tiers)
 
 
 def feed_url(session: Session) -> str:
     return platform.get_setting(session, FEED_URL) or DEFAULT_FEED_URL
 
 
-def fetch(url: str) -> dict:
+def fetch(url: str, *, timeout: float = 60) -> dict:
     """The feed, as JSON. A failure is the caller's to report — nothing here
     falls back to a guess."""
-    with httpx.Client(transport=TRANSPORT, timeout=60, follow_redirects=True) as http:
+    with httpx.Client(transport=TRANSPORT, timeout=timeout, follow_redirects=True) as http:
         response = http.get(url)
     response.raise_for_status()
     body = response.json()
@@ -121,7 +167,8 @@ def entry_price(entry: dict) -> FeedPrice | None:
                      output=_per_million(entry["output_cost_per_token"]),
                      cache_read=_per_million(entry.get("cache_read_input_token_cost")),
                      cache_write=_per_million(entry.get("cache_creation_input_token_cost")),
-                     context_window=_tokens(entry.get("max_input_tokens")))
+                     context_window=_tokens(entry.get("max_input_tokens")),
+                     tiers=entry_tiers(entry))
 
 
 def _tokens(value) -> int | None:
@@ -132,23 +179,55 @@ def _tokens(value) -> int | None:
     return tokens if tokens > 0 else None
 
 
+def _entries(feed: dict, model: str):
+    """The feed's own entries for a yaaf model name, the provider's own API's
+    first (FEED_PROVIDERS), whatever kind of model each says it is."""
+    name = catalog.api_name(model)
+    for feed_provider, prefix in FEED_PROVIDERS.get(catalog.provider_of(model), ()):
+        entry = feed.get(f"{prefix}{name}")
+        if isinstance(entry, dict) and entry.get("litellm_provider") == feed_provider:
+            yield entry
+
+
 def lookup(feed: dict, model: str) -> FeedPrice | None:
     """The feed's price for a yaaf model name, or None."""
-    provider = catalog.provider_of(model)
-    name = catalog.api_name(model)
-    for feed_provider, prefix in FEED_PROVIDERS.get(provider, ()):
-        entry = feed.get(f"{prefix}{name}")
-        if (isinstance(entry, dict) and entry.get("litellm_provider") == feed_provider
-                and entry.get("mode") in _CHAT_MODES):
+    for entry in _entries(feed, model):
+        if entry.get("mode") in _CHAT_MODES:
             found = entry_price(entry)
             if found is not None:
                 return found
     return None
 
 
+def runnable(kind: str | None) -> bool:
+    """Whether a model of this kind can hold a seat. A kind the feed does not
+    state is given the benefit of the doubt: an unknown name is not evidence
+    it cannot talk."""
+    return kind is None or kind in _CHAT_MODES
+
+
+def details(feed: dict, model: str) -> dict | None:
+    """What the feed says a model is, beyond its price: its kind (`chat`, or
+    `image_generation` — which a key's list offers beside the chat models, and
+    a seat cannot run on), its input window, whether it reasons, whether it
+    takes tool calls (a seat cannot work without them), and the date it is
+    deprecated from. None when the feed does not list it."""
+    def flag(key: str) -> bool | None:
+        value = entry.get(key)
+        return value if isinstance(value, bool) else None
+
+    for entry in _entries(feed, model):
+        deprecated = entry.get("deprecation_date")
+        return {"kind": entry.get("mode"),
+                "context_window": _tokens(entry.get("max_input_tokens")),
+                "reasoning": flag("supports_reasoning"),
+                "tools": flag("supports_function_calling"),
+                "deprecated": deprecated if isinstance(deprecated, str) else None}
+    return None
+
+
 def provider_models(feed: dict, provider: str) -> list[str]:
     """Every chat model the feed lists for a provider, by yaaf's names."""
-    listed = {m.id for m in catalog.MODELS if m.provider == provider}
     out = set()
     for key, entry in feed.items():
         if not isinstance(entry, dict) or entry.get("mode") not in _CHAT_MODES:
@@ -156,8 +235,7 @@ def provider_models(feed: dict, provider: str) -> list[str]:
         for feed_provider, prefix in FEED_PROVIDERS.get(provider, ()):
             if entry.get("litellm_provider") == feed_provider and key.startswith(prefix) \
                     and entry_price(entry) is not None:
-                name = key[len(prefix):]
-                out.add(name if name in listed else f"{provider}/{name}")
+                out.add(catalog.by_api_name(provider, key[len(prefix):]))
                 break
     return sorted(out)
 
@@ -165,8 +243,14 @@ def provider_models(feed: dict, provider: str) -> list[str]:
 def wanted(session: Session) -> list[str]:
     """The models this install could run a seat on: every catalog model, every
     model a lineup resolves a class to, every model a role version or a seat
-    pins, and the Founder's — each a concrete name, never a class."""
+    pins, the Founder's, and every chat model a key's own list offers — each a
+    concrete name, never a class. The last is what lets a lineup be chosen from
+    priced models: a model priced only once it was picked was a lineup refused
+    the moment it was saved."""
+    from yaaf.core import model_upkeep
+
     names = {m.id for m in catalog.MODELS}
+    names |= model_upkeep.listed_runnable(session)
     own = model_policy.lineups(session)
     for provider in PROVIDERS:
         names |= set(catalog.lineup_of(provider, own).values())
@@ -196,6 +280,7 @@ def preview(session: Session, feed: dict, models: list[str], *, source: str,
                             "cache_read": current.cache_read or 0.0,
                             "cache_write": current.cache_write or 0.0,
                             "context_window": current.context_window,
+                            "tiers": list(current.tiers or []),
                             "source": current.source} if current is not None else None),
                "shipped": shipped is not None}
         if found is None:
@@ -204,11 +289,12 @@ def preview(session: Session, feed: dict, models: list[str], *, source: str,
             row["action"] = "own"
         elif current is None and shipped is not None and not include_shipped:
             row["action"] = "shipped"
-        elif current is not None and all(
+        elif current is not None and list(current.tiers or []) == list(found.tiers) and all(
                 abs((getattr(current, k) or 0.0) - (v or 0.0)) < 1e-9
                 # A window the feed does not state changes nothing: the
                 # one the row has stays (apply keeps it).
-                for k, v in found.as_dict().items() if v is not None or k != "context_window"):
+                for k, v in found.as_dict().items()
+                if k != "tiers" and (v is not None or k != "context_window")):
             row["action"] = "same"
         else:
             row["action"] = "update" if current is not None else "add"
@@ -229,6 +315,8 @@ def apply(session: Session, rows: list[dict]) -> list[str]:
         price.cache_read, price.cache_write = proposed["cache_read"], proposed["cache_write"]
         # A feed that does not state a window leaves one somebody typed.
         price.context_window = proposed.get("context_window") or price.context_window
+        # Its long-prompt rates, which it states for every row: none is none.
+        price.tiers = list(proposed.get("tiers") or []) or None
         price.source = row["source"][:200]
         price.updated_at = utcnow()
         session.add(price)
@@ -272,10 +360,10 @@ def build_snapshot(feed: dict, models: list[str], *, url: str = DEFAULT_FEED_URL
             entry = feed.get(f"{prefix}{name}")
             if isinstance(entry, dict) and entry.get("litellm_provider") == feed_provider \
                     and entry_price(entry) is not None:
-                kept[f"{prefix}{name}"] = {k: entry[k] for k in (
+                kept[f"{prefix}{name}"] = {k: v for k, v in entry.items() if k in (
                     "litellm_provider", "mode", "input_cost_per_token", "output_cost_per_token",
                     "cache_read_input_token_cost", "cache_creation_input_token_cost",
-                    "max_input_tokens", "max_output_tokens") if k in entry}
+                    "max_input_tokens", "max_output_tokens") or _TIER_KEY.match(k)}
                 break
     return {"source": FEED_LABEL, "url": url,
             "as_of": datetime.now(UTC).date().isoformat(), "models": kept}

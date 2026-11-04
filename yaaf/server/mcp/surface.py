@@ -287,6 +287,9 @@ WITHHELD = {
     "PUT /admin/settings/models/lineup":
         "a lineup moves every class seat on every project of that provider at once — "
         "an administrator's decision, made on the Models screen.",
+    "POST /admin/settings/models/lineup/repick":
+        "it moves every class seat on every project of that provider at once, onto "
+        "yaaf's newer pick — an administrator's press, on the readiness report.",
     "PUT /admin/settings/models/default-provider":
         "where every unpaid project's classes resolve is install-wide; not a drafter's.",
     "POST /admin/agents/{agent_id}/seat/check":
@@ -308,8 +311,9 @@ WITHHELD = {
         "it re-reads every key's model list and may move prices every project is "
         "metered by.",
     "GET /admin/settings/llm-credentials/{credential_id}/models":
-        "it spends a call on the credential's own key to list a provider's models; the "
-        "lineup it helps set is an administrator's.",
+        "it spends a call on the credential's own key to list a provider's models, and "
+        "may add prices every project is metered by; the lineup it helps set is an "
+        "administrator's.",
     "POST /admin/settings/llm-credentials/{credential_id}/smoke":
         "it spends the credential's own money on a real call; an administrator's check.",
     "POST /admin/settings/llm-credentials/{credential_id}/check":

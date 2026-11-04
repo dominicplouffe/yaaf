@@ -16,9 +16,11 @@ import { get, post } from "./api";
 import { forgetModels } from "./providers";
 
 export interface IssueFix {
-  action: "import_prices" | "set_price" | "web_search" | "set_lineup" | "check";
+  action: "import_prices" | "set_price" | "web_search" | "set_lineup" | "check" | "repick";
   models?: string[];
   class?: string;
+  /** `repick`: the model yaaf would now pick for the class. */
+  model?: string;
 }
 
 export interface ReadinessIssue {
@@ -34,7 +36,8 @@ export interface ReadinessTier {
   class: string;
   label: string;
   model: string | null;
-  source: "install" | "shipped" | null;
+  /** `auto`: yaaf picked it from the key's own list, by price (yaaf.core.lineup_pick). */
+  source: "install" | "shipped" | "auto" | null;
   priced: boolean;
   price: { input: number; output: number } | null;
   states_cost: boolean;
@@ -159,6 +162,18 @@ export function IssueList({ provider, issues, onChanged, onSetLineup, onCheck, n
     } finally { setBusy(null); }
   }
 
+  async function doRepick(issue: ReadinessIssue) {
+    setBusy(issue.code + issue.fix?.class); setNote(null);
+    try {
+      await post("/admin/settings/models/lineup/repick", { provider, class: issue.fix?.class });
+      forgetModels();
+      setNote({ ok: true, text: `Switched to ${issue.fix?.model}.` });
+      onChanged();
+    } catch (e) {
+      setNote({ ok: false, text: (e as Error).message });
+    } finally { setBusy(null); }
+  }
+
   // One model on two classes is one finding, not two rows saying it twice.
   issues = issues.filter((issue, i) => issues.findIndex((o) => o.text === issue.text) === i);
   if (!issues.length) return empty ? <p className="help issue-empty">✓ {empty}</p> : null;
@@ -172,6 +187,10 @@ export function IssueList({ provider, issues, onChanged, onSetLineup, onCheck, n
             onClick={() => doImport(issue)}>
             {busy === issue.code ? "Importing…" : `Import ${fix.models?.length === 1 ? "its price" : "prices"}`}
           </button>;
+        } else if (fix?.action === "repick") {
+          action = <button type="button" className="small" disabled={busy !== null}
+            onClick={() => doRepick(issue)}>
+            {busy === issue.code + fix.class ? "Switching…" : `Switch to ${fix.model}`}</button>;
         } else if (fix?.action === "set_price") {
           action = <Link className="btnlink small" to={FIX_LINK.prices(fix.models?.[0])} {...target}>
             Set a price{arrow}</Link>;

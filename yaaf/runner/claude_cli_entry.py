@@ -129,7 +129,7 @@ class ClaudeCliDriver(base.CliDriver):
                 self.last_error_result = record
             events.append(base.usage_bill(record.get("usage") or {},
                                           cost_usd=record.get("total_cost_usd"),
-                                          subtype=record.get("subtype")))
+                                          subtype=record.get("subtype"), one_call=False))
         else:
             if kind == "rate_limit_event":
                 info = record.get("rate_limit_info") or {}

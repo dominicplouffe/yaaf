@@ -864,6 +864,17 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
 # the last at zero, if the chairman's electricity is free.
 
 
+class PriceTierIn(BaseModel):
+    """A higher rate past a prompt size (yaaf.runtimes.catalog.Tier)."""
+    model_config = ConfigDict(extra="forbid")
+
+    above: int = Field(ge=1_000, le=100_000_000)
+    input: float = Field(ge=0, le=10_000)
+    output: float = Field(ge=0, le=10_000)
+    cache_read: float | None = Field(default=None, ge=0, le=10_000)
+    cache_write: float | None = Field(default=None, ge=0, le=10_000)
+
+
 class ModelPriceIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -875,6 +886,10 @@ class ModelPriceIn(BaseModel):
     #: The model's input window in tokens, which yaaf's own loop compacts
     #: against. Left out, whatever the install already had stays.
     context_window: int | None = Field(default=None, ge=1_000, le=100_000_000)
+    #: The higher rates past a prompt size. Left out, whatever the row had
+    #: stays — typing a new base rate must not quietly drop the long-prompt
+    #: rate a feed found; `[]` says the model has none.
+    tiers: list[PriceTierIn] | None = Field(default=None, max_length=8)
 
 
 @router.get("/model-prices", dependencies=[authority.INSTANCE_ADMIN])
@@ -984,6 +999,8 @@ def put_model_price(model: str, body: ModelPriceIn, session: Session = Depends(d
     row.cache_read, row.cache_write = body.cache_read, body.cache_write
     if body.context_window is not None:
         row.context_window = body.context_window
+    if body.tiers is not None:
+        row.tiers = sorted((t.model_dump() for t in body.tiers), key=lambda t: t["above"]) or None
     row.updated_at = utcnow()
     # Typed by an administrator: whatever a feed said before, this is theirs.
     row.source = None
@@ -1102,6 +1119,34 @@ def put_lineup(body: LineupIn, session: Session = Depends(db)) -> dict:
     return {**get_models(session), "unrunnable": _unrunnable_seats(session)}
 
 
+class RepickIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(max_length=32)
+    cls: str = Field(alias="class", max_length=16)
+
+
+@router.post("/models/lineup/repick", dependencies=[authority.INSTANCE_ADMIN])
+def repick_lineup(body: RepickIn, session: Session = Depends(db)) -> dict:
+    """Move a class yaaf picked to what it would pick now — a newer model at
+    the price, or a new price group (yaaf.core.lineup_pick). The pick is the
+    server's, never the caller's: this door cannot name a model, only take
+    the one the readiness report offered. Every seat on the class moves on its
+    next run, as with any lineup change."""
+    from yaaf.core import lineup_pick
+    from yaaf.server.api.admin import _audit
+
+    moved = lineup_pick.repick(session, body.provider, body.cls)
+    if moved is None:
+        raise HTTPException(status_code=409, detail=(
+            f"yaaf has nothing newer to pick for that class on {body.provider} — either "
+            "somebody named its model, or it is already on yaaf's pick"))
+    _audit(session, None, "models.lineup.auto", "provider", body.provider,
+           {"filled": {body.cls: moved}, "rule": "price group, newest", "repick": True})
+    session.flush()
+    return {**get_models(session), "unrunnable": _unrunnable_seats(session)}
+
+
 class DefaultProviderIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1208,10 +1253,24 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
     """What the provider actually serves for this credential, by the names a
     seat or a lineup would use (`provider/model` for one the catalog does not
     list) — so a Groq lineup is picked from Groq's list, not typed from memory
-    (docs/PROVIDERS.md §8). One free call to the provider's own model list."""
+    (docs/PROVIDERS.md §8). One free call to the provider's own model list.
+
+    Each model comes with what the price feed says of it — its price, its
+    window, whether it reasons, and whether it is a chat model at all (a key's
+    list offers image and video models a seat cannot run on) — and, while
+    upkeep is on, the ones with no price yet are priced from it here, so a
+    lineup is chosen from priced models rather than refused once it is saved
+    (yaaf.core.model_upkeep)."""
     import httpx
 
-    from yaaf.core import model_policy, model_tokens, model_upkeep
+    from yaaf.core import (
+        lineup_pick,
+        model_policy,
+        model_tokens,
+        model_upkeep,
+        price_feed,
+        prices,
+    )
     from yaaf.runtimes import catalog, wire
     from yaaf.runtimes.providers import provider
 
@@ -1220,29 +1279,59 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
     if seller.protocol is None:
         raise HTTPException(status_code=422, detail=f"{seller.label} lists no models")
     try:
-        names = model_upkeep.list_served(session, row)
+        names, created = model_upkeep.list_served(session, row)
     except model_tokens.MintError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (wire.WireError, httpx.HTTPError) as exc:
         raise HTTPException(status_code=502, detail=f"{seller.label} would not list its "
                                                     f"models: {exc}") from exc
+    # Read before anything is written: no write lock waits on the feed.
+    feed, source, live = model_upkeep.feed_for_picker(session)
     # Remembered: a seat whose model drops off this list is named on its
     # project's health checklist (yaaf.core.model_upkeep).
-    model_upkeep.record(session, row, names)
-    listed = {m.id for m in catalog.MODELS if m.provider == seller.name}
+    model_upkeep.record(session, row, names, feed, created)
+    described = (model_upkeep.discovered(session, row.id) or {}).get("details") or {}
+    refs = {name: catalog.by_api_name(seller.name, name) for name in names}
+    added: list[str] = []
+    if model_upkeep.enabled(session):
+        # Gaps only: moving a price is the daily pass's, and a snapshot read
+        # because the feed was down must not undo a fresher price.
+        _, changes = model_upkeep.refresh_prices(
+            session, feed, sorted(refs[n] for n, said in described.items()
+                                  if price_feed.runnable(said.get("kind"))),
+            source=source, add_only=True, trigger="model list")
+        added = [c["model"] for c in changes]
+    # A provider yaaf ships no lineup for has its empty classes filled from
+    # this list, now that it is priced (yaaf.core.lineup_pick).
+    filled = lineup_pick.fill(session, seller.name, row.id)
     served = set(names)
     lineup = {cls: model_policy.resolve(session, catalog.class_ref(cls), provider=seller.name)
               for cls in reversed(catalog.CLASSES)}
     in_lineup = {m for m in lineup.values() if m}
+
+    def described_model(name: str) -> dict:
+        ref, said = refs[name], described.get(name) or {}
+        price = prices.price(session, ref)
+        return {"id": ref, "name": name,
+                "listed": catalog.model(ref) is not None,
+                "in_lineup": ref in in_lineup,
+                "kind": said.get("kind"),
+                "chat": price_feed.runnable(said.get("kind")),
+                "reasoning": said.get("reasoning"),
+                "price": {"input": price.input, "output": price.output,
+                          "tiers": [{"above": t.above, "input": t.input, "output": t.output}
+                                    for t in price.tiers]} if price else None,
+                "context_window": prices.context_window(session, ref)
+                or said.get("context_window")}
+
     return {"provider": seller.name,
+            "states_cost": seller.reports_cost,
+            "feed": {"source": source, "live": live, "priced": added},
+            "filled": filled,
             "lineup": {cls: {"model": model,
                              "served": catalog.api_name(model) in served if model else None}
                        for cls, model in lineup.items()},
-            "models": [
-                {"id": name if name in listed else f"{seller.name}/{name}", "name": name,
-                 "listed": name in listed,
-                 "in_lineup": (name if name in listed else f"{seller.name}/{name}") in in_lineup}
-                for name in names]}
+            "models": [described_model(name) for name in names]}
 
 
 @router.get("/providers/readiness", dependencies=[authority.INSTANCE_ADMIN])

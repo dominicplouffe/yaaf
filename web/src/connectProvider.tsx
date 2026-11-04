@@ -302,6 +302,9 @@ function ReadyStep({ seller, saved, onChanged, onNext }: {
     setDiscovery((d) => ({ ...d, busy: true, error: null }));
     try {
       setDiscovery({ models: await discoverModels(saved.id), from: saved.name, error: null, busy: false });
+      // Reading the list priced what it could and is what "the key lists it" is
+      // read against: the Ready step's findings are stale until it is re-read.
+      changed();
     } catch (e) { setDiscovery({ models: null, from: null, error: (e as Error).message, busy: false }); }
   }
   async function act(fn: () => Promise<unknown>, done: string) {

@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import (
+    lineup_pick,
     llm_credentials,
     model_policy,
     model_upkeep,
@@ -53,7 +54,6 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
                        served: dict, checks: dict, web_roles: tuple[int, int]) -> dict:
     seller = provider(name)
     lineup = catalog.lineup_of(name, model_policy.lineups(session))
-    own = model_policy.lineups(session).get(name, {})
     listed = served.get(name)
     names = set(listed["models"]) if listed else None
     snapshot = price_feed.snapshot()["models"]
@@ -66,7 +66,7 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
         check = checks.get(model) if model else None
         tiers.append({
             "class": cls, "label": catalog.CLASS_LABELS[cls], "model": model,
-            "source": "install" if cls in own else ("shipped" if model else None),
+            "source": model_policy.source(session, name, cls),
             "priced": covered,
             "price": {"input": price.input, "output": price.output} if price else None,
             "states_cost": seller.reports_cost,
@@ -103,6 +103,14 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
                 "check_failed", "warn",
                 f"{model} failed its last check ({check['summary']}) — seats on it may get "
                 "little done.", {"action": "check", "models": [model]}))
+    for cls, (current, better) in lineup_pick.changed(session, name).items():
+        label = catalog.CLASS_LABELS[cls]
+        issues.append(_issue(
+            "newer_pick", "warn",
+            f"yaaf would now pick {better.ref} for {label} (${better.input:g} in / "
+            f"${better.output:g} out per M) — it picked {current} before. Seats on {label} "
+            f"stay on {current} until you switch.",
+            {"action": "repick", "class": cls, "model": better.ref}))
     if unset:
         labels = [catalog.CLASS_LABELS[c] for c in unset]
         named = labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " or " + labels[-1]
@@ -110,7 +118,10 @@ def provider_readiness(session: Session, name: str, *, credentials: list[Secret]
             "no_model", "block",
             f"no {named} model is set — seats on "
             f"{'that class' if len(unset) == 1 else 'those classes'} are refused here. Pick "
-            f"{'one' if len(unset) == 1 else 'them'} from the models the key can call.",
+            f"{'one' if len(unset) == 1 else 'them'} from the models the key can call."
+            # Why yaaf did not: it fills a class only from one maker's family.
+            + ("" if seller.family else f" {seller.label} serves many makers' models, so "
+               "yaaf does not choose its classes by price."),
             {"action": "set_lineup", "class": unset[0], "classes": unset}))
     # A price is what a dollar meter stops on (R3); a login metered in tokens
     # runs its CLI without one. Only a credential that bills in dollars makes

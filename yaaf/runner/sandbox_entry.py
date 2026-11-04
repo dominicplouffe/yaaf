@@ -2143,14 +2143,50 @@ class AttemptResult:
     #: What the install's own search backend charged, in USD, for searches
     #: made through yaaf rather than the provider (docs/PROVIDERS.md §6).
     search_usd: float = 0.0
+    #: Whether the bill is one model call. A long-prompt rate is decided by
+    #: one call's prompt, so a bill summing several cannot be judged by its
+    #: total: where its calls are not told apart (a Claude result line, which
+    #: states its own cost anyway) it is priced at the base rate.
+    one_call: bool = True
+    #: The tokens' cost where a harness priced the bill call by call itself —
+    #: a CLI that bills a turn but logs each call (yaaf.runner.gemini_cli_entry,
+    #: codex_cli_entry). Searches are added on top, as for any bill.
+    itemized_usd: float | None = None
+
+
+def rates(price: dict, prompt: int) -> dict:
+    """The row a call whose prompt is `prompt` tokens is billed at: past a
+    tier's threshold, that tier's rates for the whole call (the highest tier
+    passed), else the base row (yaaf.runtimes.catalog.Tier). A rate the tier
+    does not state stays the base one."""
+    passed = [t for t in price.get("tiers") or () if prompt > int(t.get("above") or 0)]
+    if not passed:
+        return price
+    tier = max(passed, key=lambda t: int(t["above"]))
+    out = dict(price, input=tier["input"], output=tier["output"])
+    if tier.get("cache_read") is not None:
+        out["cache_read"] = tier["cache_read"]
+    if tier.get("cache_write") is not None:
+        out["cache_write_5m"] = out["cache_write_1h"] = tier["cache_write"]
+    return out
+
+
+def top_rate(price: dict, key: str) -> float:
+    """A rate at its highest across the tiers: what a call is affordable at
+    before its prompt size is known."""
+    return max([float(price[key])] + [float(t[key]) for t in price.get("tiers") or ()
+                                      if t.get(key) is not None])
 
 
 def price_usage(price: dict, *, tokens_in: int, tokens_out: int, cache_read: int,
                 cache_creation: int, cache_creation_1h: int = 0,
-                web_searches: int = 0) -> float:
+                web_searches: int = 0, one_call: bool = True) -> float:
     """USD for one bill at a catalog price row (per million tokens).
     `tokens_in` is the uncached remainder of the prompt, as every Anthropic
-    surface reports it; the cached rest is priced as reads and writes."""
+    surface reports it; the cached rest is priced as reads and writes. One
+    call past a tier's prompt size is billed at that tier's rates."""
+    if one_call:
+        price = rates(price, tokens_in + cache_read + cache_creation)
     per_token = (tokens_in * price["input"] + tokens_out * price["output"]
                  + cache_read * price["cache_read"]
                  + (cache_creation - cache_creation_1h) * price["cache_write_5m"]
@@ -2162,21 +2198,28 @@ def _priced(price: dict | None, bill: AttemptResult) -> float | None:
     if price is None:
         # A platform search is priced by the install whatever the model is.
         return bill.search_usd or None
+    if bill.itemized_usd is not None:
+        return (bill.search_usd + bill.itemized_usd
+                + bill.web_searches * price.get("web_search", 0.0))
     return bill.search_usd + price_usage(
         price, tokens_in=bill.tokens_in, tokens_out=bill.tokens_out,
         cache_read=bill.cache_read, cache_creation=bill.cache_creation,
-        cache_creation_1h=bill.cache_creation_1h, web_searches=bill.web_searches)
+        cache_creation_1h=bill.cache_creation_1h, web_searches=bill.web_searches,
+        one_call=bill.one_call)
 
 
-def usage_bill(usage, *, cost_usd: float | None, subtype: str | None) -> AttemptResult:
+def usage_bill(usage, *, cost_usd: float | None, subtype: str | None,
+               one_call: bool = True) -> AttemptResult:
     """An Anthropic `usage` object (a dict off the CLI, an object off an SDK)
     as a bill. The TTL split and the search count are nested and optional —
-    absent on older CLIs — so their absence is zero, not an error."""
+    absent on older CLIs — so their absence is zero, not an error. A result
+    line sums the attempt's every call: it passes `one_call=False`."""
     if usage is None:
         return AttemptResult(cost_usd=cost_usd, tokens_in=0, tokens_out=0, cache_creation=0,
-                             cache_read=0, subtype=subtype)
+                             cache_read=0, subtype=subtype, one_call=one_call)
     return AttemptResult(
         cost_usd=cost_usd,
+        one_call=one_call,
         # input_tokens is only the uncached remainder; the cache fields carry
         # the rest of the real prompt.
         tokens_in=_usage_int(usage, "input_tokens"),
@@ -2507,7 +2550,7 @@ class SdkDriver:
                                          "repr": repr(block)[:2000]})
             elif isinstance(message, ResultMessage):
                 yield usage_bill(message.usage, cost_usd=message.total_cost_usd,
-                                 subtype=message.subtype)
+                                 subtype=message.subtype, one_call=False)
             else:
                 # The SDK tells us the plan meter without being asked: a
                 # RateLimitEvent carries the same five_hour/seven_day windows

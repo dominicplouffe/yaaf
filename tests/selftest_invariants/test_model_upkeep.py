@@ -9,10 +9,14 @@ A lineup and a price list rot. The promises:
 - a model the list leaves out but that has since answered a check on the same
   key stays named — an unlisted name that answers is a retired alias not yet
   switched off — but is no longer said to "be refused", because it is not;
-- the daily pass is off until an administrator switches it on; on, it re-reads
-  every key's model list and refreshes prices — moving only prices that came
-  from a feed, adding ones a seat needs, never an administrator's own, and
-  auditing every change with what it was before;
+- the daily pass is on until an administrator switches it off, and off means
+  nothing is reached; on, it re-reads every key's model list and refreshes
+  prices — moving only prices that came from a feed, adding ones a seat needs
+  and ones a key's list offers, never an administrator's own, and auditing
+  every change with what it was before;
+- reading a key's list prices the chat models on it that have none yet and
+  says what each one is, so a lineup is picked from priced models — filling
+  gaps only, never moving a price, and never from a feed while upkeep is off;
 - a provider or a feed that cannot be reached is recorded, not raised.
 """
 
@@ -182,19 +186,26 @@ class _Inline:
         self.target()
 
 
-def test_the_daily_pass_is_off_until_switched_on(client, monkeypatch):
+def test_the_daily_pass_is_on_by_default_and_off_means_off(client, monkeypatch):
+    """On by default: a lineup picked from names with no price beside them is
+    refused the moment it is saved. Off is an install's word that it must not
+    reach out daily, and is held to it — not a provider, not the feed."""
     make_project(client, start=False)
     _deepseek(client)
     monkeypatch.setattr(model_upkeep.threading, "Thread", _Inline)
     asked = _serves(monkeypatch, "deepseek-chat")
+    feeds = []
+    monkeypatch.setattr(price_feed, "TRANSPORT", httpx.MockTransport(
+        lambda r: feeds.append(r) or httpx.Response(200, json=FEED)))
+    assert client.get(MODELS, headers=ADMIN).json()["upkeep"]["enabled"] is True
+    assert client.put(f"{MODELS}/upkeep", headers=ADMIN,
+                      json={"enabled": False}).json()["upkeep"]["enabled"] is False
     model_upkeep.tick()
-    assert asked == [], "an install that never opted in reached out to a provider"
+    assert (asked, feeds) == ([], []), "an install that switched it off was reached out from"
     assert client.put(f"{MODELS}/upkeep", headers=ADMIN,
                       json={"enabled": True}).json()["upkeep"]["enabled"] is True
-    monkeypatch.setattr(price_feed, "TRANSPORT", httpx.MockTransport(
-        lambda r: httpx.Response(200, json=FEED)))
     model_upkeep.tick()
-    assert len(asked) == 1
+    assert (len(asked), len(feeds)) == (1, 1)
     model_upkeep.tick()
     assert len(asked) == 1, "once a day, not once a tick"
 
@@ -282,3 +293,142 @@ def test_an_odd_answer_is_recorded_and_the_pass_is_not_due_again_until_tomorrow(
     last = client.get(MODELS, headers=ADMIN).json()["upkeep"]["last"]
     assert "error" in last["credentials"][credential]
     assert "changed" in last["prices"], "one credential's odd answer stopped the price refresh"
+
+
+# ── a key's list, priced and described as it is read ───────────────────────────
+
+
+XAI_FEED = {
+    "xai/grok-4.3": {"litellm_provider": "xai", "mode": "chat",
+                     "input_cost_per_token": 1.25e-06, "output_cost_per_token": 2.5e-06,
+                     "max_input_tokens": 1_000_000, "supports_reasoning": True},
+    "xai/grok-4.5": {"litellm_provider": "xai", "mode": "chat",
+                     "input_cost_per_token": 2e-06, "output_cost_per_token": 6e-06,
+                     "max_input_tokens": 500_000, "supports_reasoning": True},
+    "xai/grok-imagine-image": {"litellm_provider": "xai", "mode": "image_generation"},
+}
+#: What an xAI key lists: chat models, an image model, and a name newer than any feed.
+XAI_SERVES = ("grok-4.3", "grok-4.5", "grok-imagine-image", "grok-next")
+
+
+def _xai(client, monkeypatch, feed: dict | None = XAI_FEED) -> tuple[str, list]:
+    """An xAI key whose list is XAI_SERVES, and the feed requests made."""
+    credential = client.post(CREDENTIALS, headers=ADMIN, json={
+        "name": "Grok", "mode": "api_key", "provider": "xai",
+        "value": "xai-test-key"}).json()["id"]
+    _serves(monkeypatch, *XAI_SERVES)
+    feeds: list = []
+
+    def answer(request):
+        feeds.append(request)
+        if feed is None:
+            raise httpx.ConnectError("no route to host")
+        return httpx.Response(200, json=feed)
+
+    monkeypatch.setattr(price_feed, "TRANSPORT", httpx.MockTransport(answer))
+    return credential, feeds
+
+
+def _offered(client, credential: str) -> tuple[dict, dict]:
+    listed = client.get(f"{CREDENTIALS}/{credential}/models", headers=ADMIN)
+    assert listed.status_code == 200, listed.text
+    return {m["id"]: m for m in listed.json()["models"]}, listed.json()["feed"]
+
+
+def test_reading_a_keys_list_prices_and_describes_what_it_offers(client, monkeypatch):
+    """The case that made this: every model an xAI key listed was offered as
+    "not in yaaf's catalog", with no price — and whichever was picked, the
+    lineup was refused for want of one. Now the list is priced as it is read,
+    an administrator's own price still wins, and an image model is said to be one."""
+    make_project(client, start=False)
+    credential, _ = _xai(client, monkeypatch)
+    client.put(f"{PRICES}/xai/grok-4.5", headers=ADMIN, json={"input": 1.0, "output": 2.0})
+    models, feed = _offered(client, credential)
+    assert feed["live"] is True and feed["priced"] == ["xai/grok-4.3"]
+    # In the lineup: xAI ships none, and the read filled Frontier with the
+    # dearer of the two priced chat models (yaaf.core.lineup_pick).
+    assert models["xai/grok-4.3"] == {
+        "id": "xai/grok-4.3", "name": "grok-4.3", "listed": False, "in_lineup": True,
+        "kind": "chat", "chat": True, "reasoning": True,
+        "price": {"input": 1.25, "output": 2.5, "tiers": []}, "context_window": 1_000_000}
+    assert models["xai/grok-4.5"]["price"] == {"input": 1.0, "output": 2.0, "tiers": []}, \
+        "an administrator's price moved"
+    assert models["xai/grok-imagine-image"]["chat"] is False
+    assert (models["xai/grok-next"]["chat"], models["xai/grok-next"]["price"]) == (True, None)
+    table = {r["model"]: r for r in client.get(PRICES, headers=ADMIN).json()}
+    assert table["xai/grok-4.3"]["source"].startswith("LiteLLM price feed 20")
+    assert "xai/grok-imagine-image" not in table
+    with db_session() as session:
+        [audit] = session.query(AuditLog).filter_by(action="model_price.refresh").all()
+    assert audit.detail["trigger"] == "model list"
+    assert [c["model"] for c in audit.detail["changes"]] == ["xai/grok-4.3"]
+    # Picked from that list, the class is not refused for want of a price.
+    assert client.put(f"{MODELS}/lineup", headers=ADMIN, json={
+        "provider": "xai", "class": "frontier", "model": "xai/grok-4.3"}).status_code == 200
+    ready = client.get("/admin/settings/providers/readiness", headers=ADMIN).json()
+    xai = next(p for p in ready["providers"] if p["provider"] == "xai")
+    assert not [i for i in xai["issues"] if i["code"] == "unpriced"]
+
+
+def test_a_list_read_fills_gaps_and_leaves_moving_prices_to_the_daily_pass(
+        client, monkeypatch):
+    """Reading a list only adds prices. Moving one is the daily pass's: a list
+    read on a day the feed was down — the snapshot read in its place — must not
+    put back an older price than the one the feed last gave."""
+    make_project(client, start=False)
+    credential, _ = _xai(client, monkeypatch, feed={
+        "xai/grok-4.3": {**XAI_FEED["xai/grok-4.3"], "input_cost_per_token": 1e-06}})
+    client.post("/admin/settings/model-prices/import", headers=ADMIN, json={
+        "apply": True, "models": ["xai/grok-4.3"]})
+    monkeypatch.setattr(price_feed, "TRANSPORT", httpx.MockTransport(
+        lambda r: httpx.Response(200, json=XAI_FEED)))
+    models, feed = _offered(client, credential)
+    assert feed["priced"] == ["xai/grok-4.5"]
+    assert models["xai/grok-4.3"]["price"]["input"] == 1.0, "a list read moved a price"
+    summary = client.post(f"{MODELS}/upkeep/run", headers=ADMIN).json()
+    assert summary["prices"]["changed"] == ["xai/grok-4.3"]
+    table = {r["model"]: r for r in client.get(PRICES, headers=ADMIN).json()}
+    assert table["xai/grok-4.3"]["own"]["input"] == 1.25
+
+
+def test_the_daily_pass_prices_every_chat_model_a_key_lists(client, monkeypatch):
+    """Not only what seats already run on: a model priced only once it is
+    picked is a lineup refused the moment it is saved."""
+    make_project(client, start=False)
+    _xai(client, monkeypatch)
+    summary = client.post(f"{MODELS}/upkeep/run", headers=ADMIN).json()
+    assert {"xai/grok-4.3", "xai/grok-4.5"} <= set(summary["prices"]["changed"])
+    assert "xai/grok-imagine-image" not in summary["prices"]["changed"]
+    table = {r["model"]: r for r in client.get(PRICES, headers=ADMIN).json()}
+    assert table["xai/grok-4.5"]["context_window"] == 500_000
+    assert "xai/grok-imagine-image" not in table and "xai/grok-next" not in table
+
+
+def test_with_upkeep_off_a_list_read_asks_no_feed_and_writes_no_price(client, monkeypatch):
+    make_project(client, start=False)
+    credential, feeds = _xai(client, monkeypatch)
+    client.put(f"{MODELS}/upkeep", headers=ADMIN, json={"enabled": False})
+    models, feed = _offered(client, credential)
+    assert feeds == [], "an install that switched upkeep off was reached out from"
+    assert (feed["live"], feed["priced"]) == (False, [])
+    assert "snapshot" in feed["source"]
+    assert set(models) == {f"xai/{n}" for n in XAI_SERVES}
+    assert all(m["price"] is None for m in models.values())
+
+
+def test_a_feed_that_cannot_be_read_still_lists_and_keeps_what_it_knew(client, monkeypatch):
+    """The picker never waits on the feed to list a key's models: it reads
+    the snapshot instead, and an image model it was told about yesterday is
+    still one today."""
+    make_project(client, start=False)
+    credential, _ = _xai(client, monkeypatch)
+    _offered(client, credential)
+
+    def down(request):
+        raise httpx.ConnectError("no route to host")
+
+    monkeypatch.setattr(price_feed, "TRANSPORT", httpx.MockTransport(down))
+    models, feed = _offered(client, credential)
+    assert feed["live"] is False and "snapshot" in feed["source"]
+    assert models["xai/grok-imagine-image"]["chat"] is False
+    assert models["xai/grok-4.3"]["reasoning"] is True

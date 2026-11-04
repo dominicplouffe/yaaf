@@ -2387,6 +2387,10 @@ class ModelPrice(Base):
     #: The model's input window in tokens, which yaaf's own loop compacts
     #: against; None where nobody has said (yaaf.core.prices.context_window).
     context_window: Mapped[int | None] = mapped_column(Integer)
+    #: The higher rates past a prompt size (yaaf.runtimes.catalog.Tier), as
+    #: [{"above", "input", "output", "cache_read", "cache_write"}], lowest
+    #: threshold first; None where the model has one rate whatever the prompt.
+    tiers: Mapped[list | None] = mapped_column(JSONVariant)
 
 
 class CredentialBreaker(Base):

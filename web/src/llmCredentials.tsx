@@ -288,12 +288,13 @@ export function LlmCredentials({ onChanged, onAdd, title = "LLM credentials", no
     setProbing(`${row.id}:${what}`);
     try {
       if (what === "models") {
-        const found = await get<{ models: { id: string; listed: boolean }[] }>(
+        const found = await get<{ models: { id: string; chat: boolean; price: unknown }[] }>(
           `${endpoint}/${row.id}/models`);
-        const listed = found.models.filter((m) => m.listed).length;
+        const chat = found.models.filter((m) => m.chat);
+        const priced = chat.filter((m) => m.price).length;
         setProbes((prev) => ({ ...prev, [row.id]: { ok: true,
-          text: `✓ ${found.models.length} models answer to this key${listed ? ` (${listed} in the catalog)` : ""}`,
-          models: found.models.map((m) => m.id) } }));
+          text: `✓ ${chat.length} models answer to this key${chat.length ? ` (${priced} priced)` : ""}`,
+          models: chat.map((m) => m.id) } }));
       } else {
         const said = await post<SmokeResult>(`${endpoint}/${row.id}/smoke`, {});
         setProbes((prev) => ({ ...prev, [row.id]: smokeLine(said) }));
@@ -1163,7 +1164,9 @@ export function PlanMeterCompact({ credentialId, mode, auto = true, onRotate, on
 // through yaaf's own loop is priced here, or that seat is refused — a run nobody
 // can price is a run the budget cannot stop. Zero is a price: a local server's.
 
-interface PriceRow { input: number; output: number; cache_read: number; cache_write_5m: number; as_of: string }
+interface PriceRow { input: number; output: number; cache_read: number; cache_write_5m: number; as_of: string;
+  /** The higher rates a call pays once its prompt passes `above` tokens. */
+  tiers?: { above: number; input: number; output: number }[] }
 interface ModelPriceRow { model: string; provider: string; listed: boolean;
   shipped: PriceRow | null; own: PriceRow | null;
   /** Where the install's own price came from: null when an administrator
@@ -1252,6 +1255,7 @@ export function ModelPrices() {
 
   const price = (p: PriceRow | null) => p
     ? `${perM(p.input)} in · ${perM(p.output)} out${p.cache_read ? ` · ${perM(p.cache_read)} cached` : ""}`
+      + (p.tiers ?? []).map((t) => `; past ${fmtWindow(t.above)}: ${perM(t.input)} in · ${perM(t.output)} out`).join("")
     : "—";
   const term = filter.trim().toLowerCase();
   const shown = (rows ?? []).filter((r) => !term || r.model.toLowerCase().includes(term)

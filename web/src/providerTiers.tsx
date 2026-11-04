@@ -7,6 +7,12 @@
 // from memory is a lineup that 404s at 3am. When it will not say — no network,
 // a key without list access — it falls back to a name typed by hand, with the
 // catalog's models as suggestions.
+//
+// Each model the key lists comes with what the price feed says of it — its
+// price, its window, whether it reasons, whether it is a chat model at all —
+// and is priced from the feed as the list is read (yaaf.core.model_upkeep), so
+// the choice is made between priced models. An image or video model the key
+// also lists is not offered: a seat cannot run on one.
 
 import { useEffect, useMemo, useState } from "react";
 import { get, put } from "./api";
@@ -16,7 +22,20 @@ import { forgetModels, useModels } from "./providers";
 import type { ReadinessTier } from "./readiness";
 import { fmtAgo } from "./ui";
 
-export interface DiscoveredModel { id: string; name: string; listed: boolean; in_lineup: boolean }
+export interface DiscoveredModel {
+  id: string; name: string;
+  /** In yaaf's own catalog — which only means yaaf ships a rank and an effort list for it. */
+  listed: boolean;
+  in_lineup: boolean;
+  /** What the price feed calls it (`chat`, `image_generation`…), or null when it does not know. */
+  kind: string | null;
+  /** Whether a seat can run on it; true when the feed does not know. */
+  chat: boolean;
+  reasoning: boolean | null;
+  /** `tiers`: the higher rates a call pays once its prompt passes `above` tokens. */
+  price: { input: number; output: number; tiers?: { above: number; input: number; output: number }[] } | null;
+  context_window: number | null;
+}
 export interface Discovery { models: DiscoveredModel[] | null; from: string | null; error: string | null; busy: boolean }
 export const NO_DISCOVERY: Discovery = { models: null, from: null, error: null, busy: false };
 
@@ -31,6 +50,18 @@ export async function discoverModels(credentialId: string): Promise<DiscoveredMo
 export interface LineupSaved { unrunnable?: string[] }
 
 const perM = (n: number) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 3 })}`;
+
+/** One option's evidence, in the order a choice is made on: what it costs, how much it reads. */
+function described(m: DiscoveredModel): string {
+  const parts = [m.price ? `${perM(m.price.input)} in / ${perM(m.price.output)} out per M` : "no price yet"];
+  for (const t of m.price?.tiers ?? []) {
+    parts.push(`${perM(t.input)} / ${perM(t.output)} past ${fmtWindow(t.above)}`);
+  }
+  if (m.context_window) parts.push(`${fmtWindow(m.context_window)} context`);
+  if (m.reasoning) parts.push("reasons");
+  if (m.in_lineup) parts.push("in the lineup");
+  return parts.join(" · ");
+}
 
 /** One class's model, chosen from what the key lists or typed by name. */
 export function TierEditor({ provider, providerLabel, tier, discovery, onDiscover, onSaved, onCancel }: {
@@ -54,13 +85,15 @@ export function TierEditor({ provider, providerLabel, tier, discovery, onDiscove
   const suggestions = useMemo(() =>
     (catalog?.models ?? []).filter((m) => m.provider === provider).map((m) => m.id), [catalog, provider]);
   const listed = discovery.models;
-  const useList = !!listed?.length && !byName;
   const options = useMemo(() => {
     if (!listed) return [];
-    // The catalog's own models first: those are the ones yaaf knows how to label and price.
-    return [...listed].sort((a, b) => Number(b.listed) - Number(a.listed) || a.id.localeCompare(b.id));
+    // Priced ones first: a seat on an unpriced model is refused until somebody prices it.
+    return listed.filter((m) => m.chat)
+      .sort((a, b) => Number(!!b.price) - Number(!!a.price) || a.id.localeCompare(b.id));
   }, [listed]);
-  const inList = !!listed?.some((m) => m.id === value);
+  const hidden = (listed?.length ?? 0) - options.length;
+  const useList = !!options.length && !byName;
+  const inList = options.some((m) => m.id === value);
 
   async function save(model: string | null) {
     setBusy(true); setError("");
@@ -77,9 +110,8 @@ export function TierEditor({ provider, providerLabel, tier, discovery, onDiscove
     {discovery.busy && <p className="help" role="status">Asking {providerLabel} which models this key can call…</p>}
     {useList ? <select id={id} value={inList ? value : ""} disabled={busy}
         onChange={(e) => setValue(e.target.value)}>
-        <option value="">Choose one of the {listed!.length} models the key lists…</option>
-        {options.map((m) => <option key={m.id} value={m.id}>
-          {m.id}{m.in_lineup ? " · in the lineup" : ""}{m.listed ? "" : " · not in yaaf's catalog"}</option>)}
+        <option value="">Choose one of the {options.length} models the key lists…</option>
+        {options.map((m) => <option key={m.id} value={m.id}>{m.id} · {described(m)}</option>)}
       </select>
       : <>
         <input id={id} list={`${id}-list`} value={value} disabled={busy} maxLength={128}
@@ -88,7 +120,9 @@ export function TierEditor({ provider, providerLabel, tier, discovery, onDiscove
         <datalist id={`${id}-list`}>{suggestions.map((o) => <option key={o} value={o} />)}</datalist>
       </>}
     <p className="help">
-      {useList ? <>From {discovery.from ? <b>{discovery.from}</b> : "the key"}&apos;s own list.{" "}
+      {useList ? <>From {discovery.from ? <b>{discovery.from}</b> : "the key"}&apos;s own list
+          {hidden > 0 && <>, without the {hidden} image, video or audio model{hidden === 1 ? "" : "s"} it
+            also lists — a seat cannot run on {hidden === 1 ? "it" : "them"}</>}.{" "}
           <button type="button" className="linkish" onClick={() => setByName(true)}>Type a name instead</button></>
         : discovery.error ? <>Could not read the key&apos;s list ({discovery.error}) — type the model&apos;s name as the provider spells it.{" "}
           {onDiscover && <button type="button" className="linkish" onClick={onDiscover}>Ask again</button>}</>
@@ -107,6 +141,13 @@ export function TierEditor({ provider, providerLabel, tier, discovery, onDiscove
     </div>
   </div>;
 }
+
+/** Whose a class's model is. "Picked by yaaf" stays on its model until somebody
+    changes it; the readiness report says when yaaf would now pick another. */
+const SOURCE_LABEL: Record<string, string> = {
+  install: "this install's choice", shipped: "shipped with yaaf",
+  auto: "picked by yaaf — by price, newest",
+};
 
 /** The three classes on one provider, a row each, with the evidence. */
 export function TierTable({ provider, providerLabel, tiers, discovery, onDiscover, editing, setEditing,
@@ -138,7 +179,7 @@ export function TierTable({ provider, providerLabel, tiers, discovery, onDiscove
         <span role="cell" data-label="Model" className="tier-model">
           {t.model ? <code>{t.model}</code> : <span className="critical-ink">none set — seats refused</span>}
           <span className="tier-sub">
-            {t.source && <span className="help">{t.source === "install" ? "this install's choice" : "shipped with yaaf"} · </span>}
+            {t.source && <span className="help">{SOURCE_LABEL[t.source]} · </span>}
             <button type="button" className="linkish" aria-expanded={editing === t.class}
               aria-label={`${t.model ? "Change" : "Choose"} the ${t.label} model`}
               onClick={() => setEditing(editing === t.class ? null : t.class)}>

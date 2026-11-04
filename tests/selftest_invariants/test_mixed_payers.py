@@ -236,8 +236,8 @@ def test_a_seat_that_names_no_model_runs_on_the_apps_model(client):
 
 
 def test_an_unpriced_model_is_priced_in_place_and_the_move_completes(client):
-    """DeepSeek ships unpriced and daily price upkeep is off by default, so on
-    most installs the first move is refused for want of a price. The seat
+    """DeepSeek ships unpriced, so on an install whose upkeep has not run yet
+    — or was switched off — the first move is refused for want of a price. The seat
     dialog's price door does what Settings → Model prices would — import that
     one model's price from the shipped list, audited — and saves again."""
     make_project(client, start=False)

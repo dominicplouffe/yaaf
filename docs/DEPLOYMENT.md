@@ -422,10 +422,12 @@ Vertex's tokens there (the service account key never enters a sandbox).
   network — `http://ollama:11434/v1`, not `localhost` — and the server must be
   attached to that network (`YAAF_SANDBOX_NETWORK`).
 - **The price feed** is read by the control plane when an administrator
-  imports prices (Settings → Model prices → Import), and daily when upkeep is
-  on (only prices that came from the feed are moved). An install with no route
-  to `raw.githubusercontent.com` imports the snapshot shipped with yaaf, or
-  points the feed at a mirror of its own.
+  imports prices (Settings → Model prices → Import), daily while upkeep is on
+  (the default; only prices that came from the feed are moved), and whenever a
+  key's model list is read for a picker while upkeep is on. An install with no
+  route to `raw.githubusercontent.com` switches upkeep off (Settings → Models,
+  or `yaaf upkeep --disable`) so no picker waits on it, then imports the
+  snapshot shipped with yaaf, or points the feed at a mirror of its own.
 - **The web search backend**, when one is configured, is called from the
   sandbox, like the providers.
 

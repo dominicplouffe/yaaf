@@ -349,7 +349,8 @@ priced at zero. Where a harness reports its own cost the run is priced anyway �
 `priced_usd` beside `cost_usd`, per attempt in the trace — and a model whose
 reported bills drift more than 10% from its price raises a health line on
 every project with a seat the catalog meters. The price table is checked
-against the bills it is supposed to predict.
+against the bills it is supposed to predict. A price carries its long-prompt
+tiers, and a call past a tier's line pays its rates (docs/PROVIDERS.md §5).
 
 ### 6. The run contract
 
@@ -949,7 +950,8 @@ Designed and tracked in [PROVIDERS.md](PROVIDERS.md); the short list:
 - [x] Every wire validated against its vendor's own spec and SDK types
 - [x] The loop compacts a history before it outgrows the model's window
 - [x] The provider check (probes and agent tasks, graded on state), readiness
-      with one-click fixes, opt-in daily upkeep of model lists and prices
+      with one-click fixes, daily upkeep of model lists and prices (on by
+      default; a key's list is priced as it is read)
 - [x] Failover: a failing provider's class seats move to the project's
       fallback credential until it recovers
 - [ ] **`yaaf check-provider` on a deployment, once per provider an install

@@ -20,7 +20,7 @@ import { EmptyState } from "./ui/kit";
 import { Lede, Why } from "./settingsCopy";
 
 interface LineupCellInfo {
-  model: string | null; shipped: string | null; source: "install" | "shipped" | null;
+  model: string | null; shipped: string | null; source: "install" | "shipped" | "auto" | null;
   served?: boolean | null; check?: { status: string; summary: string; at: string | null } | null;
 }
 interface LineupRow { provider: string; label: string; classes: Record<string, LineupCellInfo>;
@@ -74,7 +74,8 @@ function LineupCell({ provider, cls, label, cell, options, onSaved }: {
     </label>
     <span className="help">
       {cell.source === "install" ? `this install's${cell.shipped ? ` (shipped: ${cell.shipped})` : ""}`
-        : cell.source === "shipped" ? "shipped with yaaf" : "not set"}
+        : cell.source === "shipped" ? "shipped with yaaf"
+        : cell.source === "auto" ? "picked by yaaf from the key's list — by price, newest" : "not set"}
     </span>{" "}<Evidence cell={cell} />{" "}
     <button type="button" className="small" disabled={busy || !value.trim() || value.trim() === cell.model}
       onClick={() => save(value.trim())}>Save</button>{" "}
@@ -125,10 +126,14 @@ function UpkeepCard({ upkeep, onSaved }: { upkeep: ModelsSettings["upkeep"]; onS
         onChange={(e) => toggle(e.target.checked)} />
       Keep models and prices current
     </label>
-    <p className="help">Once a day: re-read each key&apos;s model list and refresh feed prices.
-      Prices you typed, and the vendor-checked ones shipped with yaaf, are never touched.</p>
+    <p className="help">On by default. Once a day: re-read each key&apos;s model list and refresh
+      feed prices — for every chat model a key lists, not only the ones seats run on — and price a
+      key&apos;s models the moment its list is read. Prices you typed, and the vendor-checked ones
+      shipped with yaaf, are never touched. Off, yaaf moves no price on its own and never reads the
+      feed unasked.</p>
     <Why>Re-reading the lists means a seat on a model the provider retired is named on its
-      project&apos;s health checklist before it fails.</Why>
+      project&apos;s health checklist before it fails; pricing them means a class is chosen from
+      priced models instead of refused the moment it is saved.</Why>
     {last ? <div className="upkeep-last">
       <p><b>Last ran {fmtAgo(last.at)}.</b>{" "}
         {keys.length === 0 ? "No key to read." : `Read ${keys.length - failed.length} of ${keys.length} key${keys.length === 1 ? "" : "s"}.`}{" "}
