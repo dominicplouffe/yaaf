@@ -668,6 +668,16 @@ def set_lineup(provider: str, model_class: str,
 
 
 @app.command()
+def repick_lineup(provider: str, model_class: str) -> None:
+    """Move a class yaaf picked from a key's list onto what it would pick now —
+    a newer model at the price, or a new price group. Only a class yaaf picked;
+    the readiness report (`yaaf models`) says when there is one."""
+    with _client() as client:
+        _show(client.post("/admin/settings/models/lineup/repick",
+                          json={"provider": provider, "class": model_class}))
+
+
+@app.command()
 def set_default_provider(provider: str) -> None:
     """Where a project that pays nobody yet resolves its classes, and the
     Founder's before it has a key."""

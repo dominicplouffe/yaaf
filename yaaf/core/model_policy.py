@@ -24,6 +24,10 @@ from yaaf.runtimes.seats import ModelContext
 
 #: Setting keys (yaaf.core.platform.get_setting).
 LINEUPS = "models.lineups"
+#: The lineup entries yaaf picked itself, {provider: {class: model}}
+#: (yaaf.core.lineup_pick): an entry is yaaf's while the lineup still names
+#: the model it picked, and an administrator's once anybody names another.
+AUTO_LINEUPS = "models.lineups.auto"
 DEFAULT_PROVIDER_SETTING = "models.default_provider"
 CEILINGS = "models.provider_ceilings"
 
@@ -45,10 +49,31 @@ def lineups(session: Session) -> dict[str, dict[str, str]]:
             for p, row in stored.items() if p in PROVIDERS and isinstance(row, dict)}
 
 
+def auto_picked(session: Session) -> dict[str, dict[str, str]]:
+    """The lineup entries yaaf picked and nobody has changed since."""
+    own = lineups(session)
+    return {p: {c: m for c, m in row.items() if own.get(p, {}).get(c) == m}
+            for p, row in _json(session, AUTO_LINEUPS).items() if isinstance(row, dict)}
+
+
+def source(session: Session, provider: str, cls: str, *,
+           own: dict | None = None, auto: dict | None = None) -> str | None:
+    """Whose a class's model is: `install` (an administrator named it), `auto`
+    (yaaf picked it from the key's list), `shipped`, or None when nobody has."""
+    own = lineups(session) if own is None else own
+    auto = auto_picked(session) if auto is None else auto
+    if cls in auto.get(provider, {}):
+        return "auto"
+    if cls in own.get(provider, {}):
+        return "install"
+    return "shipped" if (PROVIDERS[provider].lineup or {}).get(cls) else None
+
+
 def lineup_table(session: Session) -> list[dict]:
     """Every provider's lineup as a screen shows it: per class, the model, and
-    whether it is the shipped one or the install's."""
+    whether it is the shipped one, the install's, or yaaf's own pick."""
     own = lineups(session)
+    auto = auto_picked(session)
     out = []
     for seller in PROVIDERS.values():
         shipped = dict(seller.lineup or {})
@@ -56,17 +81,19 @@ def lineup_table(session: Session) -> list[dict]:
         out.append({"provider": seller.name, "label": seller.label, "classes": {
             cls: {"model": mine.get(cls) or shipped.get(cls),
                   "shipped": shipped.get(cls),
-                  "source": "install" if cls in mine else ("shipped" if cls in shipped
-                                                           else None)}
+                  "source": source(session, seller.name, cls, own=own, auto=auto)}
             for cls in reversed(catalog.CLASSES)}})
     return out
 
 
-def set_lineup(session: Session, provider: str, cls: str, model: str | None) -> None:
+def set_lineup(session: Session, provider: str, cls: str, model: str | None, *,
+               auto: bool = False) -> None:
     """Name the model a class is on a provider — or, with None, go back to the
     shipped one. Refused for a class that does not exist, and for a model that
     is not that provider's: a lineup that names another vendor's model would
-    move a seat across vendors behind a label that says it stayed."""
+    move a seat across vendors behind a label that says it stayed. `auto`
+    says yaaf picked it (yaaf.core.lineup_pick); anything else makes the
+    class an administrator's, whatever yaaf picked for it before."""
     if provider not in PROVIDERS:
         raise HTTPException(status_code=422, detail=f"unknown provider '{provider}'")
     if cls not in catalog.CLASSES:
@@ -88,6 +115,14 @@ def set_lineup(session: Session, provider: str, cls: str, model: str | None) -> 
         row.pop(cls, None)
     stored[provider] = row
     platform.set_setting(session, LINEUPS, json.dumps(stored, sort_keys=True))
+    picked = _json(session, AUTO_LINEUPS)
+    mine = dict(picked.get(provider) or {})
+    if auto and model:
+        mine[cls] = model
+    else:
+        mine.pop(cls, None)
+    picked[provider] = mine
+    platform.set_setting(session, AUTO_LINEUPS, json.dumps(picked, sort_keys=True))
 
 
 def default_provider(session: Session) -> str:

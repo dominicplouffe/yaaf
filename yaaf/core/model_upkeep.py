@@ -82,14 +82,15 @@ def last(session: Session) -> dict:
 # ── what each key can call ─────────────────────────────────────────────────────
 
 
-def list_served(session: Session, secret: Secret) -> list[str]:
-    """The provider's own model list for this credential, by its own names.
-    Raises `wire.WireError`, `httpx.HTTPError` or `model_tokens.MintError`."""
+def list_served(session: Session, secret: Secret) -> tuple[list[str], dict[str, int]]:
+    """The provider's own model list for this credential, by its own names,
+    and when it says each was created (wire.model_dates). Raises
+    `wire.WireError`, `httpx.HTTPError` or `model_tokens.MintError`."""
     return asyncio.run(_list(_endpoint(secret)))
 
 
 def record(session: Session, secret: Secret, names: list[str],
-           feed: dict | None = None) -> None:
+           feed: dict | None = None, created: dict[str, int] | None = None) -> None:
     """Remember what the key listed, and what `feed` says each listed model is
     (price_feed.details). Where `feed` is silent — it was down, or the
     snapshot read in its place lists only the catalog's models — what an
@@ -104,7 +105,8 @@ def record(session: Session, secret: Secret, names: list[str],
             described[name] = found
     platform.set_setting(session, DISCOVERY + secret.id, json.dumps(
         {"at": utcnow().isoformat(), "provider": secret.provider, "models": models,
-         "details": described}))
+         "details": described,
+         "created": {n: t for n, t in (created or {}).items() if n in set(models)}}))
 
 
 def listed_runnable(session: Session) -> set[str]:
@@ -300,11 +302,11 @@ def run() -> dict:
                 held = _Held(secret.provider, secret.llm_mode, secret.base_url,
                              secret.ciphertext)
             # Minting (Vertex) is a network call too: outside the session.
-            names = asyncio.run(_list(_endpoint(held)))
+            names, created = asyncio.run(_list(_endpoint(held)))
             with db_session() as session:
                 secret = session.get(Secret, secret_id)
                 if secret is not None:
-                    record(session, secret, names, feed)
+                    record(session, secret, names, feed, created)
             lists[secret_id] = {"name": name, "models": len(names)}
         except Exception as exc:  # noqa: BLE001 — recorded per credential, by design
             lists[secret_id] = {"name": name, "error": f"{type(exc).__name__}: {exc}"[:200]}
@@ -316,7 +318,21 @@ def run() -> dict:
             prices = {"changed": [c["model"] for c in changes], "checked": len(rows)}
         except Exception as exc:  # noqa: BLE001
             prices = {"error": f"the prices could not be refreshed: {exc}"[:300]}
-    summary = {"at": utcnow().isoformat(), "credentials": lists, "prices": prices}
+    # Priced now: an empty class on a provider that ships no lineup is filled
+    # from its key's list (yaaf.core.lineup_pick). Never one somebody named.
+    lineups: dict = {}
+    try:
+        from yaaf.core import lineup_pick
+
+        with db_session() as session:
+            for provider_name in sorted(served(session)):
+                filled = lineup_pick.fill(session, provider_name)
+                if filled:
+                    lineups[provider_name] = filled
+    except Exception as exc:  # noqa: BLE001
+        lineups = {"error": f"the lineups could not be filled: {exc}"[:300]}
+    summary = {"at": utcnow().isoformat(), "credentials": lists, "prices": prices,
+               "lineups": lineups}
     with db_session() as session:
         platform.set_setting(session, LAST, json.dumps(summary))
     return summary
@@ -345,10 +361,12 @@ def _endpoint(secret: Secret | _Held):
     return wire.Endpoint.from_spec(spec(seller, secret.llm_mode, secret.base_url), key)
 
 
-async def _list(endpoint) -> list[str]:
+async def _list(endpoint) -> tuple[list[str], dict[str, int]]:
     from yaaf.runtimes import wire
 
-    return await wire.list_models(endpoint)
+    created: dict[str, int] = {}
+    names = await wire.list_models(endpoint, dates=created)
+    return names, created
 
 
 _RUNNING = threading.Lock()

@@ -203,13 +203,20 @@ def runnable(kind: str | None) -> bool:
 def details(feed: dict, model: str) -> dict | None:
     """What the feed says a model is, beyond its price: its kind (`chat`, or
     `image_generation` — which a key's list offers beside the chat models, and
-    a seat cannot run on), its input window, and whether it reasons. None when
-    the feed does not list it."""
+    a seat cannot run on), its input window, whether it reasons, whether it
+    takes tool calls (a seat cannot work without them), and the date it is
+    deprecated from. None when the feed does not list it."""
+    def flag(key: str) -> bool | None:
+        value = entry.get(key)
+        return value if isinstance(value, bool) else None
+
     for entry in _entries(feed, model):
-        reasons = entry.get("supports_reasoning")
+        deprecated = entry.get("deprecation_date")
         return {"kind": entry.get("mode"),
                 "context_window": _tokens(entry.get("max_input_tokens")),
-                "reasoning": reasons if isinstance(reasons, bool) else None}
+                "reasoning": flag("supports_reasoning"),
+                "tools": flag("supports_function_calling"),
+                "deprecated": deprecated if isinstance(deprecated, str) else None}
     return None
 
 

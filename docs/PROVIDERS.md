@@ -73,6 +73,23 @@ an install that has run since before this rule behaves exactly as it always
 has. A pinned model does not move: pinning is the chairman saying *this*
 model, and the doors then ask for its provider to be paid.
 
+**A provider that ships no lineup has its classes filled from its key's own
+list** (`yaaf.core.lineup_pick`) — xAI, Groq, Together, Moonshot and the rest of
+the long tail, whose lineups move monthly and could not be checked from here.
+Once the list is read and priced (§8), each *empty* class takes a model:
+Frontier from the dearest price group, Fast from the cheapest, Balanced from the
+middle (the lower middle when the count is even), ranked on three input tokens
+to one output. Within a group, the newest — by the date the provider's list
+gives, else the version in the name read as a decimal — and of a reasoning and
+a non-reasoning twin, Frontier and Balanced take the first and Fast the second.
+Only a priced chat model that takes tool calls is a candidate: never an image
+or multi-agent model, a `-latest` alias, or a deprecated one. A class an
+administrator named, or yaaf ships, is never touched. A class yaaf filled stays
+on its model — every seat on it moves when it does — and the readiness report
+says when yaaf would now pick another, with one press to move it
+(`POST /admin/settings/models/lineup/repick`, `yaaf repick-lineup`). Naming the
+class by hand makes it the administrator's. With upkeep off, nothing is filled.
+
 `stakes: high` lifts a producing seat to `@frontier` of the provider it is
 already on — the class rank replaces the old per-provider `craft_model`, and
 the lift stays within the provider exactly as before.

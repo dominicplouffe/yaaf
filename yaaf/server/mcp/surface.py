@@ -287,6 +287,9 @@ WITHHELD = {
     "PUT /admin/settings/models/lineup":
         "a lineup moves every class seat on every project of that provider at once — "
         "an administrator's decision, made on the Models screen.",
+    "POST /admin/settings/models/lineup/repick":
+        "it moves every class seat on every project of that provider at once, onto "
+        "yaaf's newer pick — an administrator's press, on the readiness report.",
     "PUT /admin/settings/models/default-provider":
         "where every unpaid project's classes resolve is install-wide; not a drafter's.",
     "POST /admin/agents/{agent_id}/seat/check":

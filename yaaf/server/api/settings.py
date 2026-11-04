@@ -1119,6 +1119,34 @@ def put_lineup(body: LineupIn, session: Session = Depends(db)) -> dict:
     return {**get_models(session), "unrunnable": _unrunnable_seats(session)}
 
 
+class RepickIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(max_length=32)
+    cls: str = Field(alias="class", max_length=16)
+
+
+@router.post("/models/lineup/repick", dependencies=[authority.INSTANCE_ADMIN])
+def repick_lineup(body: RepickIn, session: Session = Depends(db)) -> dict:
+    """Move a class yaaf picked to what it would pick now — a newer model at
+    the price, or a new price group (yaaf.core.lineup_pick). The pick is the
+    server's, never the caller's: this door cannot name a model, only take
+    the one the readiness report offered. Every seat on the class moves on its
+    next run, as with any lineup change."""
+    from yaaf.core import lineup_pick
+    from yaaf.server.api.admin import _audit
+
+    moved = lineup_pick.repick(session, body.provider, body.cls)
+    if moved is None:
+        raise HTTPException(status_code=409, detail=(
+            f"yaaf has nothing newer to pick for that class on {body.provider} — either "
+            "somebody named its model, or it is already on yaaf's pick"))
+    _audit(session, None, "models.lineup.auto", "provider", body.provider,
+           {"filled": {body.cls: moved}, "rule": "price group, newest", "repick": True})
+    session.flush()
+    return {**get_models(session), "unrunnable": _unrunnable_seats(session)}
+
+
 class DefaultProviderIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1235,7 +1263,14 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
     (yaaf.core.model_upkeep)."""
     import httpx
 
-    from yaaf.core import model_policy, model_tokens, model_upkeep, price_feed, prices
+    from yaaf.core import (
+        lineup_pick,
+        model_policy,
+        model_tokens,
+        model_upkeep,
+        price_feed,
+        prices,
+    )
     from yaaf.runtimes import catalog, wire
     from yaaf.runtimes.providers import provider
 
@@ -1244,7 +1279,7 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
     if seller.protocol is None:
         raise HTTPException(status_code=422, detail=f"{seller.label} lists no models")
     try:
-        names = model_upkeep.list_served(session, row)
+        names, created = model_upkeep.list_served(session, row)
     except model_tokens.MintError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (wire.WireError, httpx.HTTPError) as exc:
@@ -1254,7 +1289,7 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
     feed, source, live = model_upkeep.feed_for_picker(session)
     # Remembered: a seat whose model drops off this list is named on its
     # project's health checklist (yaaf.core.model_upkeep).
-    model_upkeep.record(session, row, names, feed)
+    model_upkeep.record(session, row, names, feed, created)
     described = (model_upkeep.discovered(session, row.id) or {}).get("details") or {}
     refs = {name: catalog.by_api_name(seller.name, name) for name in names}
     added: list[str] = []
@@ -1266,6 +1301,9 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
                                   if price_feed.runnable(said.get("kind"))),
             source=source, add_only=True, trigger="model list")
         added = [c["model"] for c in changes]
+    # A provider yaaf ships no lineup for has its empty classes filled from
+    # this list, now that it is priced (yaaf.core.lineup_pick).
+    filled = lineup_pick.fill(session, seller.name, row.id)
     served = set(names)
     lineup = {cls: model_policy.resolve(session, catalog.class_ref(cls), provider=seller.name)
               for cls in reversed(catalog.CLASSES)}
@@ -1289,6 +1327,7 @@ def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
     return {"provider": seller.name,
             "states_cost": seller.reports_cost,
             "feed": {"source": source, "live": live, "priced": added},
+            "filled": filled,
             "lineup": {cls: {"model": model,
                              "served": catalog.api_name(model) in served if model else None}
                        for cls, model in lineup.items()},

@@ -34,6 +34,7 @@ import concurrent.futures
 import json
 from collections.abc import AsyncIterator, Coroutine
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -1051,11 +1052,36 @@ def model_ids(endpoint: Endpoint, body: Any) -> list[str]:
                    if isinstance(r, dict) and (r.get("id") or r.get("name"))})
 
 
+def model_dates(endpoint: Endpoint, body: Any) -> dict[str, int]:
+    """When the provider says each listed model was created, as Unix seconds:
+    the OpenAI shape's `created`, Anthropic's `created_at`. Only where it says
+    so — Gemini and Bedrock list no dates, and a name is not one."""
+    if not isinstance(body, dict) or endpoint.protocol in ("gemini", "bedrock"):
+        return {}
+    out = {}
+    for row in body.get("data") or body.get("models") or []:
+        if not isinstance(row, dict) or not (row.get("id") or row.get("name")):
+            continue
+        name, when = str(row.get("id") or row.get("name")), row.get("created")
+        if isinstance(when, int | float) and not isinstance(when, bool) and when > 0:
+            out[name] = int(when)
+        elif isinstance(row.get("created_at"), str):
+            try:
+                out[name] = int(datetime.fromisoformat(
+                    row["created_at"].replace("Z", "+00:00")).timestamp())
+            except ValueError:
+                continue
+    return out
+
+
 async def list_models(endpoint: Endpoint, *,
-                      transport: httpx.AsyncBaseTransport | None = None) -> list[str]:
+                      transport: httpx.AsyncBaseTransport | None = None,
+                      dates: dict[str, int] | None = None) -> list[str]:
     """Every model the key may call, by the provider's own names. Free on every
     provider that has the endpoint, and answered only for a live key — which
-    is why it is also the live check. Raises `WireError` on a refusal."""
+    is why it is also the live check. Raises `WireError` on a refusal. Given
+    `dates`, fills it with when the provider says each was created
+    (`model_dates`), which is what "newest" is read by."""
     if not endpoint.base_url:
         raise WireError(0, {"error": {"message": "no address to reach this provider at"}},
                         "fatal")
@@ -1066,6 +1092,8 @@ async def list_models(endpoint: Endpoint, *,
             raise await _refused(response, endpoint)
         body = response.json()
         names = set(model_ids(endpoint, body))
+        if dates is not None:
+            dates.update(model_dates(endpoint, body))
         for _ in range(_MAX_PAGES):
             following = _next_page(endpoint, body)
             if following is None:
@@ -1076,6 +1104,8 @@ async def list_models(endpoint: Endpoint, *,
                 raise await _refused(response, endpoint)
             body = response.json()
             names.update(model_ids(endpoint, body))
+            if dates is not None:
+                dates.update(model_dates(endpoint, body))
         if endpoint.protocol == "bedrock":
             names.update(await _inference_profiles(http, endpoint))
         return sorted(names)

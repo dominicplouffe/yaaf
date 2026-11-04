@@ -20,7 +20,7 @@ import { EmptyState } from "./ui/kit";
 import { Lede, Why } from "./settingsCopy";
 
 interface LineupCellInfo {
-  model: string | null; shipped: string | null; source: "install" | "shipped" | null;
+  model: string | null; shipped: string | null; source: "install" | "shipped" | "auto" | null;
   served?: boolean | null; check?: { status: string; summary: string; at: string | null } | null;
 }
 interface LineupRow { provider: string; label: string; classes: Record<string, LineupCellInfo>;
@@ -74,7 +74,8 @@ function LineupCell({ provider, cls, label, cell, options, onSaved }: {
     </label>
     <span className="help">
       {cell.source === "install" ? `this install's${cell.shipped ? ` (shipped: ${cell.shipped})` : ""}`
-        : cell.source === "shipped" ? "shipped with yaaf" : "not set"}
+        : cell.source === "shipped" ? "shipped with yaaf"
+        : cell.source === "auto" ? "picked by yaaf from the key's list — by price, newest" : "not set"}
     </span>{" "}<Evidence cell={cell} />{" "}
     <button type="button" className="small" disabled={busy || !value.trim() || value.trim() === cell.model}
       onClick={() => save(value.trim())}>Save</button>{" "}

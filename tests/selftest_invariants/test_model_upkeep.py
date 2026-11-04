@@ -345,8 +345,10 @@ def test_reading_a_keys_list_prices_and_describes_what_it_offers(client, monkeyp
     client.put(f"{PRICES}/xai/grok-4.5", headers=ADMIN, json={"input": 1.0, "output": 2.0})
     models, feed = _offered(client, credential)
     assert feed["live"] is True and feed["priced"] == ["xai/grok-4.3"]
+    # In the lineup: xAI ships none, and the read filled Frontier with the
+    # dearer of the two priced chat models (yaaf.core.lineup_pick).
     assert models["xai/grok-4.3"] == {
-        "id": "xai/grok-4.3", "name": "grok-4.3", "listed": False, "in_lineup": False,
+        "id": "xai/grok-4.3", "name": "grok-4.3", "listed": False, "in_lineup": True,
         "kind": "chat", "chat": True, "reasoning": True,
         "price": {"input": 1.25, "output": 2.5, "tiers": []}, "context_window": 1_000_000}
     assert models["xai/grok-4.5"]["price"] == {"input": 1.0, "output": 2.0, "tiers": []}, \

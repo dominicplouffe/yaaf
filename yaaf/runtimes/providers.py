@@ -403,8 +403,9 @@ MISTRAL = _chat("mistral", "Mistral", "https://api.mistral.ai/v1", "MISTRAL_API_
 
 #: The long tail (docs/RUNTIMES.md, M5; docs/PROVIDERS.md §4): each speaks the
 #: OpenAI shape, so each is a row and nothing else. None ships a lineup: their
-#: lineups move monthly and no model could be checked, so an install picks one
-#: from the provider's own list (Settings → Models). Each address is the
+#: lineups move monthly and no model could be checked, so each class is filled
+#: from the key's own list by price once it is read (yaaf.core.lineup_pick), and
+#: an install may name another (Settings → Models). Each address is the
 #: vendor's international one; a key issued for another region is a custom
 #: endpoint at that region's address.
 XAI = _chat("xai", "xAI (Grok)", "https://api.x.ai/v1", "XAI_API_KEY",

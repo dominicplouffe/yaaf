@@ -142,6 +142,13 @@ export function TierEditor({ provider, providerLabel, tier, discovery, onDiscove
   </div>;
 }
 
+/** Whose a class's model is. "Picked by yaaf" stays on its model until somebody
+    changes it; the readiness report says when yaaf would now pick another. */
+const SOURCE_LABEL: Record<string, string> = {
+  install: "this install's choice", shipped: "shipped with yaaf",
+  auto: "picked by yaaf — by price, newest",
+};
+
 /** The three classes on one provider, a row each, with the evidence. */
 export function TierTable({ provider, providerLabel, tiers, discovery, onDiscover, editing, setEditing,
                             onSaved, scoreboard, viewing, setViewing, servedAt }: {
@@ -172,7 +179,7 @@ export function TierTable({ provider, providerLabel, tiers, discovery, onDiscove
         <span role="cell" data-label="Model" className="tier-model">
           {t.model ? <code>{t.model}</code> : <span className="critical-ink">none set — seats refused</span>}
           <span className="tier-sub">
-            {t.source && <span className="help">{t.source === "install" ? "this install's choice" : "shipped with yaaf"} · </span>}
+            {t.source && <span className="help">{SOURCE_LABEL[t.source]} · </span>}
             <button type="button" className="linkish" aria-expanded={editing === t.class}
               aria-label={`${t.model ? "Change" : "Choose"} the ${t.label} model`}
               onClick={() => setEditing(editing === t.class ? null : t.class)}>
