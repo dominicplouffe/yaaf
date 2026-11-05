@@ -505,6 +505,11 @@ button.danger { background: transparent; border-color: rgba(var(--critical-rgb),
 button.danger:where(:not(:disabled)):hover { background: rgba(var(--critical-rgb), 0.1); border-color: var(--critical); color: var(--critical); }
 button.small { min-height: 30px; padding: 4px 11px; font-size: var(--t-micro); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
+/* A menu is a list, read down its left edge. The button rule centres its label,
+   which is right for a button and wrong for a row in a menu: the project's More
+   menu and Snooze both inherited it, so each item drifted by the width of its
+   own words while the Settings link beside them sat flush left. */
+[role="menuitem"] { justify-content: flex-start; text-align: left; }
 
 .actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
 
