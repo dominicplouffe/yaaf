@@ -221,7 +221,7 @@ function NothingPublished({ ctx }: { ctx: ProjectCtx }) {
         <div>
           <p><b>Delivered, no file published.</b></p>
           <p>Drafts and working files are in{" "}
-            <Link to={`/projects/${ctx.projectId}/details/deliverables`}>Details › Deliverables</Link>.</p>
+            <Link to={`/projects/${ctx.projectId}/details/deliverables?state=all`}>Details › Deliverables</Link>.</p>
         </div>
       </div>
     );
@@ -264,7 +264,7 @@ export default function Results({ ctx }: { ctx: ProjectCtx }) {
     <>
       <PageHead title="Results" lede={<>
         What the team published, newest first. Drafts are in{" "}
-        <Link to={`/projects/${projectId}/details/deliverables`}>Details › Deliverables</Link>.
+        <Link to={`/projects/${projectId}/details/deliverables?state=all`}>Details › Deliverables</Link>.
       </>} />
       {error && <div className="error">{error}</div>}
       {!data ? <Skeleton rows={5} /> : rows.length === 0 ? <NothingPublished ctx={ctx} /> : (
