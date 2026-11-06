@@ -411,3 +411,28 @@ def test_a_slow_walk_is_paid_once_and_never_by_the_reader(monkeypatch, tmp_path)
     monkeypatch.setattr(file_index, "FRESH_S", 60.0)
     fresh = file_index.snapshot("proj_slowwalk", tmp_path, "projects/proj_slowwalk/")
     assert sorted(i.name for i in fresh.items) == ["first.md", "second.md"]
+
+
+def test_a_deliverable_titled_with_an_em_dash_still_downloads(client):
+    """"SignalHunter — AuthorMe revision tools broken (escalation).md" answered
+    500. The name went into Content-Disposition raw, headers are Latin-1, and
+    the em dash raised before a byte was sent. Agents title things like this
+    all the time, so both branches — the artifact store and the workspace —
+    must serve it, under its real name."""
+    from urllib.parse import unquote
+
+    project = make_project(client, start=False)
+    name = "SignalHunter — AuthorMe revision tools broken (escalation).md"
+    key = f"projects/{project['id']}/run_abc123/{name}"
+    store().put_bytes(key, b"# escalation")
+    (_workspace("acme") / name).write_text("# escalation")
+
+    for params in ({"artifact": key}, {"path": name}):
+        served = client.get(f"/observe/projects/{project['id']}/files/content",
+                            params=params, headers=ADMIN)
+        assert served.status_code == 200, (params, served.text)
+        assert served.content == b"# escalation"
+        disposition = served.headers["content-disposition"]
+        assert disposition.startswith("attachment")
+        encoded = disposition.split("filename*=UTF-8''", 1)[1]
+        assert unquote(encoded) == name
