@@ -12,6 +12,7 @@ import random
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -3032,8 +3033,17 @@ def _as_download(body: bytes | Path, name: str) -> Response:
     page. `Content-Disposition: attachment` plus `application/octet-stream` is
     what keeps agent-written HTML from rendering on this origin, where the
     chairman's admin token lives; both halves are set here so neither can be
-    forgotten by one of the two branches."""
-    headers = {"Content-Disposition": f'attachment; filename="{name.replace(chr(34), "")}"'}
+    forgotten by one of the two branches.
+
+    The name goes out twice. HTTP headers are Latin-1, and agents title
+    deliverables with em dashes, so the raw name in `filename=` raised
+    UnicodeEncodeError and the chairman got a 500 for a file that existed.
+    `filename*` (RFC 6266/5987) carries the real name percent-encoded, and
+    every current browser prefers it; `filename=` is an ASCII stand-in for
+    anything that does not."""
+    fallback = re.sub(r'[^\x20-\x7e]|["\\]', "_", name)
+    headers = {"Content-Disposition":
+               f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(name, safe='')}"}
     if isinstance(body, Path):
         return FileResponse(body, media_type="application/octet-stream", headers=headers)
     return Response(content=body, media_type="application/octet-stream", headers=headers)
