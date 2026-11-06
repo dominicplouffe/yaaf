@@ -80,7 +80,10 @@ answers through ordinary queued runs instead.
 > and exits. It is a test harness, not a demo.
 
 > `YAAF_SANDBOX_MODE=subprocess` provides **no isolation**. It exists for dev
-> machines and CI, and yaaf refuses it unless you configure it explicitly.
+> machines and CI, and yaaf refuses it unless you configure it explicitly. It
+> also does not run real agents: their runs still need Docker, and without it
+> each one fails. For real agents on your own machine without Docker, use
+> [host mode](#host-mode--real-agents-on-your-own-machine-without-docker).
 
 ### The mock runtime
 
@@ -94,6 +97,76 @@ completions, evidence and every governance trip at $0. That is what CI runs.
 context pack and exits, which is exactly right for testing the platform and
 useless as a demo. If you want to watch a scripted project move, run the eval
 harness (`python -m evals.run`) rather than pointing a project at mock.
+
+## Host mode — real agents on your own machine, without Docker
+
+For a desktop or a laptop: yaaf, its runner and its agents all on the machine
+you are using, on SQLite, with no Docker daemon and no image to build.
+
+```bash
+sudo pacman -S bubblewrap        # or: sudo apt install bubblewrap
+pip install -e ".[host]"         # the libraries the sandbox image would carry
+cd web && npm install && npm run build && cd ..
+yaaf up --host --email you@example.com
+```
+
+Every agent run, and every success test an agent wrote, runs as an ordinary
+process on your machine's own Python and CLIs, inside a
+[bubblewrap](https://github.com/containers/bubblewrap) jail made for that run
+and gone when it ends (`yaaf/runner/host_jail.py`). The jail is there for two
+reasons:
+
+- **The path.** Every role, the context pack and the agent's tools say the
+  work lives in `/workspace`, and the checks agents write name that path. The
+  jail mounts the project's workspace there, so nothing an agent reads or
+  writes differs from docker mode — and a project started here can move to a
+  Docker box later with every check it wrote still pointing at the right place.
+- **What it hides.** A process running as you could otherwise read your home
+  folder, yaaf's database (the record), its master key (every stored
+  credential), and the runner's environment through `/proc`. Inside the jail,
+  your home folder is not there, `/run` and `/tmp` are empty and private, the
+  run sees only its own processes, and its environment is built from nothing:
+  `PATH`, `HOME`, the locale, your proxy and CA settings, and the run's own
+  variables. A run pays with the project's credential, never with a key in your
+  shell.
+
+What a run *can* see: `/usr`, `/etc`, `/opt` and `/sys` read-only, the Python
+yaaf runs on read-only, its own workspace read-write, and the network.
+
+`bwrap` is required, not preferred. Without it, or on a kernel or AppArmor
+policy that forbids unprivileged user namespaces, `yaaf up --host` stops before
+starting, `yaaf doctor` says why, and a runner that is somehow started anyway
+refuses every run (exit 126) rather than run an agent bare.
+
+**Harness CLIs.** The Agent SDK brings its own Claude CLI, inside the Python
+environment the jail already mounts, so Anthropic seats need nothing more. A
+Codex, Gemini or OpenCode seat needs its CLI visible in the jail: under `/usr`
+or `/opt` it already is; in your home folder (`~/.npm-global`, `~/.local/bin`)
+list it in `YAAF_HOST_JAIL_BINDS` (colon-separated, read-only, its `bin/` put on
+`PATH`). A path that would expose your whole home folder or yaaf's data folder
+is refused and logged, not bound.
+
+**What host mode does not do, yet:**
+
+- **No memory or CPU cap.** Docker gives each run 2 GB and two CPUs; a jail
+  gives it what your machine has.
+- **The network is your machine's.** Docker's sandbox network is open too, but a
+  bridge cannot reach your `localhost` and a jail can — a local database, a dev
+  server, an Ollama. See [SECURITY.md](../SECURITY.md).
+- **No resident boardroom session.** The CEO answers the boardroom through
+  ordinary queued runs, as in subprocess mode.
+- **No browser lane by default.** Chromium is in the image, not on your machine.
+  Set `PLAYWRIGHT_BROWSERS_PATH` to a Playwright browser install and the jail
+  mounts it.
+- **A sleeping laptop runs nothing.** A run in flight when the lid closes can
+  miss its lease heartbeat and be reaped as a dead run when the machine wakes.
+- **SQLite upgrades.** `yaaf up` builds the schema with `create_all`, which never
+  changes a table that already exists. Until the migration chain is supported on
+  SQLite, a release that adds a column needs a fresh database or Postgres.
+
+`yaaf up` keeps the workspaces and artifacts in its own folder (`~/.yaaf` by
+default) beside the database, in every mode — the server default under
+`/var/lib/yaaf` is not writable by a desktop user.
 
 ## The real thing — your own server
 
@@ -529,12 +602,13 @@ in env vars. See [GOVERNANCE.md](GOVERNANCE.md).
 | Variable | Default | Notes |
 |---|---|---|
 | `YAAF_WORKER_NAME` | `worker-1` | Identifies this runner in leases |
-| `YAAF_SANDBOX_MODE` | `docker` | `docker` (isolation) or `subprocess` (dev/CI only — **no isolation**) |
+| `YAAF_SANDBOX_MODE` | `docker` | `docker` (isolation), `host` (agents on this machine, each in a bubblewrap jail — [Host mode](#host-mode--real-agents-on-your-own-machine-without-docker)), or `subprocess` (dev/CI only — **no isolation**, and real agent runs still need Docker) |
+| `YAAF_HOST_JAIL_BINDS` | *(empty)* | Host mode only. Extra paths a run may read, colon-separated — where a harness CLI lives outside `/usr` and `/opt`. A path that would expose a whole home folder or yaaf's data folder is refused. |
 | `YAAF_ALLOW_HOST_SUCCESS_TESTS` | `false` | Under `subprocess` mode only, lets an agent-authored success test run on a host that holds the Docker socket. **Leave it off on a deployed runner** — there the socket is root on the box. The test suite sets it for itself. |
 | `YAAF_SANDBOX_IMAGE` | `yaaf-sandbox:latest` | |
 | `YAAF_SANDBOX_NETWORK` | `yaaf_sandbox` | |
-| `YAAF_WORKSPACES_ROOT` | `/var/lib/yaaf/workspaces` | Host path must equal container path |
-| `YAAF_ARTIFACTS_ROOT` | `/var/lib/yaaf/artifacts` | |
+| `YAAF_WORKSPACES_ROOT` | `/var/lib/yaaf/workspaces` | Host path must equal container path. `yaaf up` uses `<its folder>/workspaces`. |
+| `YAAF_ARTIFACTS_ROOT` | `/var/lib/yaaf/artifacts` | `yaaf up` uses `<its folder>/artifacts`. |
 
 ### Artifact store (optional)
 

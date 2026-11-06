@@ -9,7 +9,8 @@ folder so the next `yaaf up` finds them, and prints one address.
 
 The one thing it will not decide for you is isolation. `subprocess` mode runs
 agents' code as you, with no sandbox; the platform refuses to assume it, and
-so does this command — you say `--no-isolation`, or you configure docker.
+so does this command — you say `--no-isolation`, `--host` for agents on this
+machine inside bubblewrap, or you configure docker.
 """
 
 from __future__ import annotations
@@ -31,8 +32,14 @@ REPO = Path(__file__).resolve().parents[2]
 
 NO_ISOLATION_HELP = (
     "Run agents as yourself, with no sandbox. Fine on a dev machine; never on a "
-    "box other people can reach. The alternative is YAAF_SANDBOX_MODE=docker with "
-    "the sandbox image built (docs/DEPLOYMENT.md).")
+    "box other people can reach. Real agent runs still need Docker in this mode; "
+    "--host runs them on this machine instead. The alternative is "
+    "YAAF_SANDBOX_MODE=docker with the sandbox image built (docs/DEPLOYMENT.md).")
+
+HOST_HELP = (
+    "Run agents on this machine, without Docker, each inside a bubblewrap jail: "
+    "its workspace at /workspace, your home folder and yaaf's data out of sight. "
+    "Needs `bwrap` (pacman -S bubblewrap / apt install bubblewrap).")
 
 
 def ensure_key(home: Path) -> str:
@@ -61,6 +68,11 @@ def environment(home: Path, port: int, sandbox: str) -> dict[str, str]:
     base = f"http://localhost:{port}"
     env = dict(os.environ)
     env.setdefault("YAAF_DATABASE_URL", f"sqlite:///{home / 'yaaf.db'}")
+    # The server default is /var/lib/yaaf, which a desktop user cannot write:
+    # the first run of every project died making its workspace. The folder
+    # that already holds the database holds the work too.
+    env.setdefault("YAAF_WORKSPACES_ROOT", str(home / "workspaces"))
+    env.setdefault("YAAF_ARTIFACTS_ROOT", str(home / "artifacts"))
     env["YAAF_MASTER_KEY"] = ensure_key(home)
     env["YAAF_SANDBOX_MODE"] = sandbox
     env["YAAF_API_PORT"] = str(port)
@@ -114,6 +126,7 @@ def _seed(env: dict[str, str], base: str) -> None:
 
 def up(
     no_isolation: bool = typer.Option(False, "--no-isolation", help=NO_ISOLATION_HELP),
+    host: bool = typer.Option(False, "--host", help=HOST_HELP),
     email: str = typer.Option("", "--email",
                               help="First run: who the first admin is. Prints their "
                                    "one-time link to choose a password."),
@@ -124,13 +137,28 @@ def up(
 ) -> None:
     """Start yaaf on this machine — API, dashboard, runner — in one command, and
     print the address. Ctrl-C stops it."""
-    sandbox = os.environ.get("YAAF_SANDBOX_MODE") or ("subprocess" if no_isolation else "")
+    if host and no_isolation:
+        typer.echo("--host and --no-isolation are two different answers; pick one.", err=True)
+        raise typer.Exit(2)
+    sandbox = (os.environ.get("YAAF_SANDBOX_MODE")
+               or ("host" if host else "subprocess" if no_isolation else ""))
     if not sandbox:
         typer.echo("yaaf up will not choose how agents are isolated for you.\n"
-                   "  On a dev machine:  yaaf up --no-isolation\n"
+                   "  Agents on this machine, no Docker:  yaaf up --host\n"
+                   "  On a dev machine, scripted agents:  yaaf up --no-isolation\n"
                    "  Otherwise:         set YAAF_SANDBOX_MODE=docker and build the sandbox "
                    "image (docs/DEPLOYMENT.md)", err=True)
         raise typer.Exit(2)
+    if sandbox == "host":
+        from yaaf.runner import host_jail
+
+        problem = host_jail.unavailable()
+        if problem:
+            # Said before anything starts: a runner that cannot jail fails every
+            # run it leases, which reads as a broken install rather than a
+            # missing package.
+            typer.echo(problem, err=True)
+            raise typer.Exit(2)
     folder = Path(home or os.environ.get("YAAF_HOME") or Path.home() / ".yaaf").expanduser()
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     env = environment(folder, port, sandbox)
@@ -188,6 +216,10 @@ def up(
 
         typer.echo(f"\nyaaf is up: {base}/app")
         typer.echo(f"  data and key: {folder}   logs: {server_log}, {runner_log}")
+        typer.echo("  agents run: " + {
+            "host": "on this machine, each in a bubblewrap jail",
+            "subprocess": "scripted only, with no isolation (real runs need Docker)",
+        }.get(sandbox, f"in {sandbox} sandboxes"))
         if not email:
             typer.echo("  first time here? run again with --email you@example.com for your "
                        "sign-in link")

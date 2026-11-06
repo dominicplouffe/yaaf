@@ -54,8 +54,14 @@ class Settings(BaseSettings):
     # project ids. Without this label its supervisor reads the live session as
     # a zombie and removes it.
     stack: str = "deploy"
-    # "docker" (isolation; default) or "subprocess" (dev/CI only — NO isolation)
+    # "docker" (isolation; default), "host" (agents run on this machine inside
+    # bubblewrap, no Docker — yaaf/runner/host_jail.py), or "subprocess"
+    # (dev/CI only — NO isolation, and real agent runs still need Docker)
     sandbox_mode: str = "docker"
+    # Host mode only: extra paths a run may read, os.pathsep-separated — where
+    # a harness CLI lives outside /usr and /opt (~/.npm-global, ~/.local/bin).
+    # A path that would expose yaaf's data folder or a whole home is refused.
+    host_jail_binds: str = ""
     # A task's success test can be a command string an *agent* wrote. Under
     # sandbox_mode="subprocess" that string runs on the runner host, which
     # mounts the Docker socket — so the platform refuses it unless an operator

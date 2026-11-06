@@ -1748,6 +1748,22 @@ def _check(name: str, ok: bool, detail: str, fix: str, *, problem: bool = True) 
             "detail": detail, "fix": None if ok else fix}
 
 
+def _sandbox_checks(cfg) -> list[dict]:
+    """Host mode's one way to look alive and do nothing: a runner that cannot
+    make a jail fails every run it leases. Asked here, where the runner's own
+    machine answers it — host mode is the native install, one box, one env."""
+    if cfg.sandbox_mode != "host":
+        return []
+    from yaaf.runner import host_jail
+
+    problem = host_jail.unavailable()
+    return [_check("agent sandbox", problem is None,
+                   "agents run on this machine, each in a bubblewrap jail" if problem is None
+                   else problem.removeprefix("Refused: "),
+                   "install bubblewrap (Arch: pacman -S bubblewrap; Debian/Ubuntu: apt install "
+                   "bubblewrap), or set YAAF_SANDBOX_MODE=docker")]
+
+
 @router.get("/doctor", dependencies=[authority.INSTANCE_ADMIN])
 def doctor(session: Session = Depends(db)) -> dict:
     """Every way this install can look alive and do nothing, checked at once,
@@ -1811,6 +1827,7 @@ def doctor(session: Session = Depends(db)) -> dict:
                f"{waiting} run(s) waiting over 10 minutes, none started" if waiting and not started
                else "runs are being picked up",
                "start yaaf-runner — the server queues runs but never executes them"),
+        *_sandbox_checks(cfg),
         _check("public address", bool(cfg.public_base_url),
                cfg.public_base_url or "YAAF_PUBLIC_BASE_URL is unset",
                "set YAAF_PUBLIC_BASE_URL to the address people open — notices link to "
