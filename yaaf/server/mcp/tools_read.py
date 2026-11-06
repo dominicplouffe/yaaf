@@ -422,6 +422,79 @@ def spend(principal: Principal, session: Session, arguments: dict) -> dict:
     return envelope.fit({"project": row.slug, **payload}, arguments.get("detail"))
 
 
+def _names(arguments: dict, key: str) -> list[str] | None:
+    """One name or several. Nothing checks arguments against the schema at
+    dispatch, so a bare string is taken as a list of one rather than iterated
+    letter by letter, and anything else is refused in words."""
+    value = arguments.get(key)
+    if value in (None, "", []):
+        return None
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        return value
+    raise ToolRefusal(f"{key!r} is a name or a list of names")
+
+
+@register(
+    "spend_across",
+    scope="read",
+    description=(
+        "What each provider, model and project cost across every project you are on, per "
+        "day, week or month — the install-wide view, where `spend` is one project's budget. "
+        "Dollars are only what API keys billed; a subscription's usage is tokens "
+        "(`plan_tokens`) and is never priced. Use it for 'what did Anthropic cost me this "
+        "month' or 'which model is my biggest bill'."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "group_by": {"type": "string", "enum": ["provider", "model", "project"]},
+            "every": {"type": "string", "enum": ["day", "week", "month"],
+                      "description": "Bucket size; default day"},
+            "since": {"type": "string", "description": "First day, YYYY-MM-DD; default "
+                                                       "30 days, 13 weeks or 12 months back"},
+            "until": {"type": "string", "description": "Last day, YYYY-MM-DD; default today"},
+            "tz": {"type": "string", "description": "IANA timezone for the calendar; default UTC"},
+            "project": {"type": "array", "items": {"type": "string"},
+                        "description": "Slugs or ids; default every project"},
+            "provider": {"type": "array", "items": {"type": "string"}},
+            "model": {"type": "array", "items": {"type": "string"}},
+            "paid_in": {"type": "string", "enum": ["usd", "tokens"],
+                        "description": "usd: API keys only · tokens: subscriptions only"},
+            "detail": DETAIL_ARG,
+        },
+        "additionalProperties": False,
+    },
+)
+def spend_across(principal: Principal, session: Session, arguments: dict) -> dict:
+    from yaaf.server import spend_rollup
+
+    # This client's own reach — its person's memberships, never the instance
+    # admin's read-everything (reachable_projects says why).
+    report = _observe(
+        spend_rollup.rollup, session=session,
+        reachable=reachable_projects(session, principal),
+        every=arguments.get("every") or "day", group_by=arguments.get("group_by") or "provider",
+        since=arguments.get("since"), until=arguments.get("until"), tz=arguments.get("tz"),
+        projects=_names(arguments, "project"), providers=_names(arguments, "provider"),
+        models=_names(arguments, "model"), paid_in=arguments.get("paid_in"))
+    full = arguments.get("detail") == "full"
+    measures = ("runs", "tokens", "plan_tokens", "usd")
+    return envelope.fit({
+        "window": {k: report[k] for k in ("since", "until", "tz", "every", "group_by")},
+        "totals": {k: report["totals"][k] for k in measures},
+        "groups": [{"key": g["key"], "label": g["label"], **{k: g[k] for k in measures}}
+                   for g in report["groups"]],
+        "series": [{"start": b["start"], "usd": b["usd"], "tokens": b["tokens"],
+                    "plan_tokens": b["plan_tokens"], **({"by": b["by"]} if full else {})}
+                   for b in report["series"]],
+        "rows": [{k: r[k] for k in ("slug", "provider", "model", *measures)}
+                 for r in report["rows"]],
+        "note": report["notes"]["dollars"],
+    }, arguments.get("detail"))
+
+
 @register(
     "receipt",
     scope="read",

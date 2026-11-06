@@ -297,8 +297,19 @@ dates are its cycles' (§4).
   the question is on your desk while it is open, and the CEO cannot go back to
   ordinary status posts until it has said what it did about the answer it got
   or the one it did not.
-- **`yaaf spend-report`** breaks spend down by agent, role, model, and wake
-  reason, straight from the database.
+- **Spend across the install.** Settings → **Spend** charts what each
+  provider, model and project cost, per day, week or month, in tokens and in
+  the dollars a provider billed — filtered by project, provider, model and
+  what paid (API keys or subscriptions), on your own calendar, with every
+  figure in a table you can export. Dollars are only ever what a provider
+  billed: a subscription's usage shows as tokens on a flat plan and is never
+  priced at a list rate, even where a dollar budget counts it that way.
+  `yaaf spend` prints the same answer in a terminal, and the MCP
+  `spend_across` tool hands it to your model client. Each reaches only the
+  projects you may open.
+- **`yaaf spend-report`** breaks one project's spend down by agent, role,
+  model, and wake reason — waste, retries, cost per task — straight from the
+  database.
 
 ## 8. Loops that can't burn a night
 

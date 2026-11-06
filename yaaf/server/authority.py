@@ -160,9 +160,9 @@ def reachable(session: Session, user_id: str, is_admin: bool,
     """Every project this person holds at least `level` on, in creation order.
 
     One function for every cross-project rollup — the project list, the Desk,
-    the briefing, the MCP desk — because the gate has to hold on payloads
-    nobody wrote with it in mind, and the day one of them stops passing through
-    here is the day it lists a project its reader cannot open.
+    the briefing, the MCP desk, the install's spend — because the gate has to
+    hold on payloads nobody wrote with it in mind, and the day one of them stops
+    passing through here is the day it lists a project its reader cannot open.
     """
     query = select(Project).order_by(Project.created_at)
     if not (is_admin and level == Level.READ):

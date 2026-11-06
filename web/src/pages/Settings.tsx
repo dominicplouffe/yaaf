@@ -34,6 +34,7 @@ import { OverviewSection } from "../settings/overview";
 import { SettingsRail } from "../settings/rail";
 import { WebSearchSection } from "../settings/search";
 import { SlackSection } from "../settings/slack";
+import { SpendSection } from "../settings/spend";
 import { needsOf, SECTIONS, SectionKey } from "../settings/state";
 
 export default function Settings() {
@@ -91,6 +92,7 @@ export default function Settings() {
             {section === "providers" && <ProvidersSection onChanged={data.reload} />}
             {section === "models" && <ModelsSection onChanged={data.reload} />}
             {section === "prices" && <ModelPrices readiness={data.readiness} onChanged={data.reload} />}
+            {section === "spend" && <SpendSection />}
             {section === "search" && <WebSearchSection readiness={data.readiness} onChanged={data.reload} />}
             {section === "founder" && founder && <FounderSection founder={founder} creds={data.creds}
               readiness={data.readiness} onChanged={data.reload} />}

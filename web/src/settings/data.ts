@@ -4,11 +4,12 @@
 // when one changes something it calls `reload` and the rail follows.
 
 import { useCallback, useEffect, useState } from "react";
-import { get, PersonalToken, SearchSettings, UserRow } from "../api";
+import { get, InstallSpend, PersonalToken, SearchSettings, UserRow } from "../api";
 import type { Credential } from "../llmCredentials";
 import { DEFAULT_PROVIDER } from "../providers";
 import { Evidence, Readiness, READINESS } from "../readiness";
 import type { LastTest } from "./kit";
+import { monthToDateUrl } from "./spend";
 
 export interface PlatformSettings {
   configured: boolean;
@@ -62,6 +63,8 @@ export interface SettingsData {
   search: SearchSettings | null;
   tokens: PersonalToken[] | null;
   creds: Credential[] | null;
+  /** This month so far, across every project — the Spend entry's state. */
+  spend: InstallSpend | null;
   error: string | null;
   reload: () => void;
   reloadUsers: () => void;
@@ -78,6 +81,7 @@ export function useSettingsData(admin: boolean): SettingsData {
   const [search, setSearch] = useState<SearchSettings | null>(null);
   const [tokens, setTokens] = useState<PersonalToken[] | null>(null);
   const [creds, setCreds] = useState<Credential[] | null>(null);
+  const [spend, setSpend] = useState<InstallSpend | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
@@ -90,6 +94,7 @@ export function useSettingsData(admin: boolean): SettingsData {
     get<SearchSettings>("/admin/settings/web-search").then(setSearch).catch(() => {});
     get<Credential[]>("/admin/settings/llm-credentials?include_hidden=true").then(setCreds)
       .catch(() => {});
+    get<InstallSpend>(monthToDateUrl()).then(setSpend).catch(() => {});
   }, [admin]);
 
   const reloadUsers = useCallback(() => {
@@ -102,7 +107,7 @@ export function useSettingsData(admin: boolean): SettingsData {
   useEffect(reload, [reload]);
   useEffect(reloadUsers, [reloadUsers]);
 
-  return { admin, settings, readiness, users, usersError, models, search, tokens, creds, error,
+  return { admin, settings, readiness, users, usersError, models, search, tokens, creds, spend, error,
     reload, reloadUsers };
 }
 

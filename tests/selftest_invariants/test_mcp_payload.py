@@ -70,6 +70,8 @@ def test_every_read_tool_stays_inside_the_default_budget(client):
         ("project", {"project": SLUG, "view": "agenda"}),
         ("plan", {"project": SLUG}),
         ("spend", {"project": SLUG}),
+        ("spend_across", {}),
+        ("spend_across", {"every": "week", "group_by": "model"}),
         ("work", {"project": SLUG}),
         ("proof", {"project": SLUG}),
         ("org", {"project": SLUG}),

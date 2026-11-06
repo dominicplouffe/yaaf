@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { get, SpendBucket, SpendReport } from "../../api";
 import { fmtUsd, usePoll } from "../../hooks";
+import { useMe } from "../../me";
 import { PlanMeter } from "../../llmCredentials";
 import { useProviders } from "../../providers";
 import type { ProjectCtx } from "../../projectCtx";
@@ -178,6 +179,7 @@ function DollarsBilled({ projectId }: { projectId: string }) {
 
 export default function Spend({ ctx }: { ctx: ProjectCtx }) {
   const { dash, projectId } = ctx;
+  const admin = Boolean(useMe().me?.is_admin);
   const usdMode = dash.billing_mode === "api_key";
   const { data: ledger } = usePoll(
     () => get<LedgerRow[]>(`/observe/projects/${projectId}/ledger?limit=500`),
@@ -226,6 +228,10 @@ export default function Spend({ ctx }: { ctx: ProjectCtx }) {
       <SpendBreakdown projectId={projectId} usdMode={usdMode} />
       <p className="help">
         Every run with its own cost is on <Link to={`/projects/${projectId}/details/activity/runs`}>Activity → Runs</Link>.
+        {/* Settings is the instance admin's, so only they are shown the door. */}
+        {admin && <> This project beside every other one, per day, week or month, is on{" "}
+          <Link to={`/settings?section=spend&project=${encodeURIComponent(dash.slug)}`}>
+            Settings → Spend</Link>.</>}
       </p>
     </>
   );
