@@ -220,9 +220,12 @@ def up(
             "host": "on this machine, each in a bubblewrap jail",
             "subprocess": "scripted only, with no isolation (real runs need Docker)",
         }.get(sandbox, f"in {sandbox} sandboxes"))
-        if not email:
-            typer.echo("  first time here? run again with --email you@example.com for your "
-                       "sign-in link")
+        # Only on a box with nobody to sign in: under `yaaf setup` the service
+        # starts after the admin exists, and this line in its journal was a
+        # wrong instruction.
+        if not email and _cli(["users", "has-admin"], env).returncode != 0:
+            typer.echo("  first time here? run `yaaf setup`, or run again with "
+                       "--email you@example.com for your sign-in link")
         typer.echo("  check it any time with: yaaf doctor   ·   Ctrl-C stops both processes")
         while all(child.poll() is None for child in children):
             time.sleep(1)

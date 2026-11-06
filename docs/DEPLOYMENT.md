@@ -104,11 +104,34 @@ For a desktop or a laptop: yaaf, its runner and its agents all on the machine
 you are using, on SQLite, with no Docker daemon and no image to build.
 
 ```bash
-sudo pacman -S bubblewrap        # or: sudo apt install bubblewrap
-pip install -e ".[host]"         # the libraries the sandbox image would carry
-cd web && npm install && npm run build && cd ..
-yaaf up --host --email you@example.com
+git clone https://github.com/dominicplouffe/yaaf && cd yaaf
+deploy/install_desktop.sh
 ```
+
+The script installs what is missing (git, bubblewrap, node and npm, and uv
+for a pinned Python — on Arch with pacman, on Debian and Ubuntu with apt),
+installs yaaf with the `[host]` extra, puts `yaaf` in `~/.local/bin`, and hands
+over to **`yaaf setup`**, which asks for three things:
+
+1. **This machine** — that bubblewrap can make a sandbox; builds the dashboard
+   if it is not built.
+2. **Your account** — an email and a password (12 characters or more). You
+   become the box's admin; no setup link to open.
+3. **Starting yaaf** — as a systemd user service that starts when you log in
+   (`systemctl --user stop yaaf` stops it), or a background process where
+   there is no systemd. This terminal is signed in, and the role library is
+   loaded before it moves on.
+4. **A key** — Anthropic or OpenAI, pasted hidden, and checked with the
+   provider's own free model list before it is kept. A refused key is removed
+   and asked for again. Any other provider: Settings → Providers.
+5. **The Founder** — drafts on the same key.
+
+It ends with anything `yaaf doctor` would still call a problem, and the
+address. Run it again any time: every step skips what is done.
+
+By hand, the same thing is `pip install -e ".[host]"`, a dashboard build
+(`cd web && npm install && npm run build`), and `yaaf up --host --email
+you@example.com`.
 
 Every agent run, and every success test an agent wrote, runs as an ordinary
 process on your machine's own Python and CLIs, inside a
@@ -143,7 +166,8 @@ environment the jail already mounts, so Anthropic seats need nothing more. A
 Codex, Gemini or OpenCode seat needs its CLI visible in the jail: under `/usr`
 or `/opt` it already is; in your home folder (`~/.npm-global`, `~/.local/bin`)
 list it in `YAAF_HOST_JAIL_BINDS` (colon-separated, read-only, its `bin/` put on
-`PATH`). A path that would expose your whole home folder or yaaf's data folder
+`PATH`). `yaaf setup` does this for you when `npm prefix -g` is in your home
+folder. A path that would expose your whole home folder or yaaf's data folder
 is refused and logged, not bound.
 
 **What host mode does not do, yet:**

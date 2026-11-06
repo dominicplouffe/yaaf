@@ -54,3 +54,32 @@ def test_a_bare_box_gets_a_database_and_an_address_of_its_own(monkeypatch, tmp_p
     assert env["YAAF_DATABASE_URL"] == f"sqlite:///{tmp_path / 'yaaf.db'}"
     assert env["YAAF_API"] == env["YAAF_API_BASE_URL"] == "http://localhost:8091"
     assert env["YAAF_SANDBOX_MODE"] == "subprocess"
+
+
+def test_host_mode_without_a_jail_starts_nothing(monkeypatch, tmp_path):
+    """`--host` without bubblewrap is not a weaker host mode; it is agents run
+    bare by accident. Said before anything is made, with the fix."""
+    from yaaf.runner import host_jail
+
+    monkeypatch.delenv("YAAF_SANDBOX_MODE", raising=False)
+    monkeypatch.setattr(host_jail, "_bwrap", lambda: None)
+    result = runner.invoke(cli.app, ["up", "--host", "--home", str(tmp_path)])
+    assert result.exit_code == 2
+    assert "bubblewrap" in result.output
+    assert not (tmp_path / "master.key").exists(), "nothing is made before it can run"
+
+
+def test_host_and_no_isolation_are_two_answers(monkeypatch, tmp_path):
+    monkeypatch.delenv("YAAF_SANDBOX_MODE", raising=False)
+    result = runner.invoke(cli.app, ["up", "--host", "--no-isolation", "--home", str(tmp_path)])
+    assert result.exit_code == 2
+
+
+def test_the_work_lives_beside_the_database(monkeypatch, tmp_path):
+    """The server default, /var/lib/yaaf, is not writable by a desktop user:
+    every project's first run died making its workspace there."""
+    for name in ("YAAF_WORKSPACES_ROOT", "YAAF_ARTIFACTS_ROOT"):
+        monkeypatch.delenv(name, raising=False)
+    env = up.environment(tmp_path, 8091, "host")
+    assert env["YAAF_WORKSPACES_ROOT"] == str(tmp_path / "workspaces")
+    assert env["YAAF_ARTIFACTS_ROOT"] == str(tmp_path / "artifacts")

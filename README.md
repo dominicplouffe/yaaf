@@ -292,9 +292,9 @@ install, with `--admin-email you@example.com` — a one-time link to choose your
 password, printed at the end. Safe to re-run. The dashboard binds to `127.0.0.1`, so reach
 it over SSH (`ssh -N -L 8080:localhost:8080 you@your-server`, then
 `localhost:8080/app`). Just trying it on your own machine? From a checkout,
-`pip install -e .`, build the dashboard once (`cd web && npm install && npm run build`),
-then `yaaf up --host --email you@example.com` starts everything and prints
-the address — real agents on your machine, each in a bubblewrap jail, no Docker
+`deploy/install_desktop.sh` installs what is missing and walks you through
+`yaaf setup`: an email, a password, a key, and yaaf running in the background —
+real agents on your machine, each in a bubblewrap jail, no Docker
 (see [DEPLOYMENT.md](docs/DEPLOYMENT.md#host-mode--real-agents-on-your-own-machine-without-docker)).
 Then connect Claude:
 

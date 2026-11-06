@@ -1677,8 +1677,10 @@ def _register_users() -> None:
 
 
 def _register_up() -> None:
+    from yaaf.cli.setup import setup
     from yaaf.cli.up import up
 
+    app.command()(setup)
     app.command()(up)
 
 
@@ -1689,7 +1691,7 @@ _register_up()
 #: Where each command sits in `yaaf --help`, in the order somebody new reaches
 #: for them. The help used to be sixty commands in the order they were written.
 PANELS = {
-    "Get started": ("up", "login", "logout", "whoami", "doctor", "rehearse",
+    "Get started": ("setup", "up", "login", "logout", "whoami", "doctor", "rehearse",
                     "create_project", "projects", "status"),
     "Run a project": ("start", "pause", "stop", "configure", "amend"),
     "Decide": ("say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",
@@ -1708,7 +1710,15 @@ def _panel(name: str) -> str:
 
 for _info in app.registered_commands:
     _info.rich_help_panel = _panel(_info.callback.__name__)
-app.registered_commands.sort(key=lambda info: _ORDER.index(info.rich_help_panel))
+def _place(info) -> tuple[int, int]:
+    # Within a panel, the order PANELS names them in — so `setup`, the first
+    # thing somebody new runs, is the first thing they read.
+    names = PANELS.get(info.rich_help_panel, ())
+    name = info.callback.__name__
+    return _ORDER.index(info.rich_help_panel), names.index(name) if name in names else len(names)
+
+
+app.registered_commands.sort(key=_place)
 for _group in app.registered_groups:
     _group.rich_help_panel = "Set up the install"
 
