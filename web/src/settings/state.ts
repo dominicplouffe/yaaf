@@ -6,9 +6,11 @@
 import { names, SettingsData, founderOf, liveProjects } from "./data";
 import { providerState, ProviderReadiness, STATE_ORDER } from "../readiness";
 import { splitLead } from "../settingsCopy";
+import { spendNote } from "./spend";
 
 export type SectionKey =
-  | "overview" | "providers" | "models" | "prices" | "search" | "founder" | "slack" | "people" | "account";
+  | "overview" | "providers" | "models" | "prices" | "spend" | "search" | "founder" | "slack" | "people"
+  | "account";
 
 export type NoteTone = "good" | "warn" | "critical" | "hollow" | "";
 
@@ -20,6 +22,7 @@ export const SECTIONS: ({ group: string; admin: boolean } | { key: SectionKey; l
   { key: "providers", label: "Providers", admin: true },
   { key: "models", label: "Models", admin: true },
   { key: "prices", label: "Model prices", admin: true },
+  { key: "spend", label: "Spend", admin: true },
   { key: "search", label: "Web search", admin: true },
   { key: "founder", label: "Founder", admin: true },
   { key: "slack", label: "Slack", admin: true },
@@ -102,6 +105,7 @@ export function railNote(key: SectionKey, d: SettingsData, email: string): RailN
     return missing ? { text: `${plural(missing, "model")} in use unpriced`, tone: "critical" }
       : { text: `All ${used.length} in use priced`, tone: "good" };
   }
+  if (key === "spend") return spendNote(d.spend);
   if (key === "models") {
     if (!d.models || !d.readiness) return { text: "…", tone: "" };
     const label = d.models.lineups.find((r) => r.provider === d.models!.default_provider)?.label

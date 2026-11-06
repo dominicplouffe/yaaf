@@ -75,7 +75,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.runtimes.providers import DEFAULT_PROVIDER, PROVIDERS
+from yaaf.runtimes.providers import PROVIDERS
 from yaaf.server import (
     activity,
     agenda,
@@ -84,6 +84,7 @@ from yaaf.server import (
     file_index,
     metrics,
     policy,
+    spend_rollup,
     typing_state,
 )
 from yaaf.server import asks as ask_lib
@@ -2454,14 +2455,13 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
     def key_label(run: Run | None) -> tuple[str, str]:
         if run is None:
             return "unattributed", "unattributed"
+        # Through the same helpers as the install-wide rollup, so Settings →
+        # Spend and this card can never put one run under two names.
         if group_by == "model":
-            name = run.model or "unknown"
+            name = spend_rollup.model_key(run.model)
             return name, name
         if group_by == "provider":
-            # A run from before providers were recorded was Anthropic's.
-            name = run.provider or DEFAULT_PROVIDER
-            seller = PROVIDERS.get(name)
-            return name, seller.label if seller else name
+            return spend_rollup.provider_key(run.provider)
         if group_by == "kind":
             return run.kind, run.kind
         agent = agents.get(run.agent_id) if run.agent_id else None
@@ -2499,6 +2499,33 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
     )
     return {"group_by": group_by, "days": days, "window": window,
             "since": since.isoformat(), "rows": out}
+
+
+@router.get("/spend", dependencies=[authority.SIGNED_IN])
+def install_spend(every: str = "day", group_by: str = "provider",
+                  since: str | None = None, until: str | None = None,
+                  tz: str | None = None,
+                  project: list[str] | None = Query(None),
+                  provider: list[str] | None = Query(None),
+                  model: list[str] | None = Query(None),
+                  paid_in: str | None = None, kind: str = "model_usage",
+                  session: Session = Depends(db),
+                  person: Person = Depends(person_auth)) -> dict:
+    """What each provider, model and project cost, over time, across every
+    project this reader may open (yaaf.server.spend_rollup).
+
+    `every` buckets the series by day, week (ISO, from Monday) or month on the
+    reader's calendar — `tz` is an IANA name, UTC when left out. `since` and
+    `until` are dates; `since` snaps back to the start of its bucket, and a
+    window left open is a month of days, a quarter of weeks or a year of
+    months. `project`, `provider` and `model` repeat to choose several;
+    `paid_in` keeps what API keys billed (`usd`) or what ran on a plan
+    (`tokens`). Dollars are only ever what a provider billed.
+    """
+    return spend_rollup.rollup(
+        session, _reachable(session, person), every=every, group_by=group_by,
+        since=since, until=until, tz=tz, projects=project, providers=provider,
+        models=model, paid_in=paid_in, kind=kind)
 
 
 @router.get("/projects/{project_id}/activity", dependencies=[authority.READ])

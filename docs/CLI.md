@@ -253,10 +253,33 @@ included.
 ## Spend analysis
 
 ```bash
+yaaf spend [--by provider|model|project] [--every day|week|month]
+           [--days N | --since YYYY-MM-DD] [--until YYYY-MM-DD]
+           [--project SLUG]... [--provider NAME]... [--model ID]...
+           [--billing usd|tokens] [--everything] [--tokens] [--tz ZONE] [--json]
+```
+
+What each provider, model and project cost across every project you can
+open, per day, week or month — the same answer as Settings → **Spend**, over
+the API, so it works from any machine you have run `yaaf login` on. It prints
+the totals, a table by the grouping, a bar per bucket naming its biggest
+contributors, and every project × provider × model row. The window defaults to
+30 days, 13 weeks or 12 months, on this machine's timezone (`--tz` to choose);
+a weekly or monthly window starts at the beginning of its first week or month.
+
+Dollars are what API keys billed. A subscription's usage is tokens on a flat
+plan and is never priced — `--billing tokens` shows only that, `--billing usd`
+only the keys. `--everything` counts purchases and infrastructure too, as the
+budget meter does; the default is model usage. `--tokens` charts tokens instead
+of dollars, which is also the default when nothing in the window was billed in
+dollars.
+
+```bash
 yaaf spend-report [PROJECT] [--days N] [--all-projects]
 ```
 
-Breaks LLM spend down by agent, role, model, and wake reason. Defaults to the
+One project's forensics: spend by agent, role, model, and wake reason, plus
+waste, heartbeat wakes, retries and cost per completed task. Defaults to the
 current calendar month.
 
 > This one reads the **database directly**, not the API: it needs

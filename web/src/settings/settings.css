@@ -280,3 +280,80 @@ button.quiet-danger:hover:not(:disabled) { background: rgba(var(--critical-rgb),
   .switch::after { transition: none; }
   .prov-card.flash { animation: none; }
 }
+
+/* ── spend: one filter row over everything it scopes, then the chart ──
+   Columns follow the chart specs: at most 24px, a 4px rounded data-end and a
+   square baseline, a 2px surface gap between stacked segments, hairline solid
+   grid. The whole column band is the hover and focus target. */
+.sp-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: var(--s3); }
+.sp-k { font-size: var(--t-micro); color: var(--muted); font-weight: 600; }
+.sp-date, .sp-select { display: inline-flex; align-items: center; gap: 6px; }
+.sp-date span, .sp-select span { font-size: var(--t-micro); color: var(--muted); font-weight: 600; }
+.sp-date input { width: auto; min-height: 32px; padding: 3px 8px; }
+.sp-select select { width: auto; min-height: 32px; padding: 3px 8px; }
+.sp-pick { position: relative; margin: 0; }
+.sp-pick > summary { list-style: none; display: inline-flex; align-items: center; gap: 6px; min-height: 32px;
+  padding: 3px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
+  color: var(--ink); font-size: var(--t-small); }
+.sp-pick > summary::-webkit-details-marker { display: none; }
+.sp-pick > summary::after { content: "▾"; color: var(--muted); font-size: 11px; }
+.sp-pick > summary b { font-weight: 600; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-pick.on > summary { border-color: var(--accent); }
+.sp-pick-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 240px; max-width: 360px;
+  max-height: 320px; overflow: auto; display: flex; flex-direction: column; gap: 2px; padding: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--e2, var(--e1)); }
+.sp-pick-menu > button { align-self: flex-start; margin-bottom: 4px; }
+.sp-pick-menu label { display: flex; gap: 8px; align-items: center; padding: 5px 6px; border-radius: var(--radius-sm);
+  font-size: var(--t-small); color: var(--ink); cursor: pointer; }
+.sp-pick-menu label:hover { background: var(--hover); }
+.sp-pick-menu label.mono span { font-family: var(--mono); font-size: var(--t-micro); }
+.sp-pick-menu label em { font-style: normal; color: var(--muted); }
+.sp-pick-menu input { width: auto; margin: 0; }
+.sp-kpis { margin-top: var(--s2); }
+.sp-note { margin: 0 0 var(--s4); max-width: 80ch; line-height: 1.5; }
+.sp-stale { opacity: 0.55; transition: opacity 0.15s; }
+.sp-card { margin-bottom: var(--s5); }
+.sp-legend { margin: 0 0 var(--s3); }
+.sp-legend i.sw, .sp-name i.sw, .sp-tip-row i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.sp-empty { margin: var(--s4) 0; }
+.sp-chart { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 200px auto;
+  column-gap: 8px; position: relative; }
+.sp-y { position: relative; min-width: 36px; }
+.sp-y span { position: absolute; right: 0; transform: translateY(50%); font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap; line-height: 1; }
+.sp-plot { position: relative; border-bottom: 1px solid var(--grid); }
+.sp-grid { position: absolute; left: 0; right: 0; height: 1px; background: var(--grid); }
+.sp-cols { position: absolute; inset: 0; display: flex; align-items: stretch; }
+.sp-col { flex: 1 1 0; min-width: 0; min-height: 0; height: 100%; padding: 0; margin: 0; border: 0;
+  border-radius: 0; background: transparent; display: flex; align-items: flex-end; justify-content: center;
+  cursor: default; font-weight: 400; }
+.sp-col:hover:not(:disabled), .sp-col.on { background: var(--hover); border-color: transparent; }
+.sp-col:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sp-stack { display: flex; flex-direction: column-reverse; gap: 2px; width: min(24px, 72%); min-height: 0;
+  border-radius: 4px 4px 0 0; overflow: hidden; }
+.sp-stack i { display: block; flex-basis: 0; min-height: 0; }
+.sp-x { grid-column: 2; display: flex; padding-top: 6px; }
+.sp-x span { flex: 1 1 0; min-width: 0; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: visible;
+  text-align: left; }
+.sp-tip { position: absolute; top: 4px; z-index: 10; pointer-events: none;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: var(--e2, var(--e1)); padding: 8px 10px; font-size: var(--t-small); }
+.sp-tip-h { font-size: var(--t-micro); color: var(--muted); margin-bottom: 4px; }
+.sp-tip-row { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
+.sp-tip-row i { width: 12px; height: 2px; border-radius: 2px; }
+.sp-tip-row b { font-variant-numeric: tabular-nums; color: var(--ink); }
+.sp-tip-row span { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-tip-row.total { padding-left: 20px; border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 3px; }
+.sp-tip-foot { font-size: var(--t-micro); color: var(--muted); margin-top: 4px; }
+.sp-numbers { margin: var(--s4) 0 0; }
+.sp-numbers > summary { font-size: var(--t-small); }
+.sp-scroll { overflow-x: auto; }
+.sp-h { margin-top: var(--s5); }
+.sp-table { padding: var(--s3) var(--s4); margin-bottom: var(--s3); }
+.sp-name { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.sp-table th, .sp-numbers th, .sp-table td .mono { white-space: nowrap; }
+.sp-name .mono { font-size: var(--t-micro); }
+@media (max-width: 860px) {
+  .sp-chart { grid-template-rows: 160px auto; }
+  .sp-pick-menu { min-width: 200px; }
+}
