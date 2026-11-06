@@ -877,7 +877,9 @@ used to be answered by reading two lists with different shapes.
 - **Three filters and a search**, all of them in the URL so the view is a link:
   published or working, file type (the extensions this project actually has,
   with counts), a date window, and a search over names and folders that
-  highlights what it matched.
+  highlights what it matched. It opens on **Published**, because what was
+  published is what was delivered; **All** and **Working** are one press away,
+  and a link to a working file opens it with All on.
 - **The reader** opens the file as the thing it is: a report as a document, a
   page as a page (sandboxed — agent-written HTML never runs on this origin), a
   dataset as a table with a header that survives scrolling, JSON as a tree,

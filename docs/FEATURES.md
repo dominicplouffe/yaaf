@@ -573,7 +573,8 @@ evidence at all about your *project*.
   deliverables and working files in the same rows, foldered by the day each
   landed, today's folder open. Published-vs-working, file type and a search
   across names and folders are filters on that one list, and the filters live
-  in the URL, so a view you found is a link you can send.
+  in the URL, so a view you found is a link you can send. It opens on
+  Published — what was delivered — with All and Working one press away.
 - **Preview reads the file as what it is** — a report as a document, a page as
   a page, a dataset as a table, JSON as a tree, an image as a picture, a PDF in
   the browser's viewer, anything else as text with line numbers. The arrow keys

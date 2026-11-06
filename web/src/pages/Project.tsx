@@ -398,7 +398,7 @@ export default function ProjectPage() {
         <Route path="board" element={<Navigate to={`${base}/details/tasks`} replace />} />
         <Route path="review" element={<Navigate to={`${base}/details/reviews`} replace />} />
         <Route path="evidence" element={<Navigate to={`${base}/details/activity/evidence`} replace />} />
-        <Route path="files" element={<Navigate to={`${base}/details/deliverables`} replace />} />
+        <Route path="files" element={<Navigate to={`${base}/details/deliverables?state=working`} replace />} />
         <Route path="approvals" element={<Navigate to={`${base}/details/activity/decisions`} replace />} />
         <Route path="runs" element={<Navigate to={`${base}/details/activity/runs`} replace />} />
         <Route path="channels" element={<Navigate to={`${base}/details/activity/messages`} replace />} />
