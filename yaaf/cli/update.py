@@ -139,6 +139,22 @@ def install_packages(repo: Path, log: Path) -> None:
         _run([sys.executable, "-m", "pip", "install", "--quiet", "-e", target], repo, log)
 
 
+def install_browser(log: Path) -> bool:
+    """Chromium for Playwright, when this machine does not have it yet: an
+    install from before the browser lane came to native mode has the library
+    (the [host] extra) and nothing for it to drive. False when the download
+    failed — the doctor then says agents are not offered a browser."""
+    from yaaf.runner import host_tools
+
+    if host_tools.chromium_installed():
+        return True
+    try:
+        _run([sys.executable, "-m", "playwright", "install", "chromium"], REPO, log)
+    except Stop:
+        return False
+    return host_tools.chromium_installed()
+
+
 def build_dashboard(repo: Path, log: Path) -> None:
     npm = shutil.which("npm")
     if npm is None:
@@ -146,6 +162,12 @@ def build_dashboard(repo: Path, log: Path) -> None:
                    "sudo pacman -S nodejs npm, then yaaf update again")
     _run([npm, "install"], repo / "web", log)
     _run([npm, "run", "build"], repo / "web", log)
+
+
+def setup_module():
+    from yaaf.cli import setup
+
+    return setup
 
 
 def restart(port: int, folder: Path) -> str:
@@ -158,6 +180,12 @@ def restart(port: int, folder: Path) -> str:
     unit = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") \
         / "systemd" / "user" / setup.SERVICE
     if unit.exists() and setup._systemd_user():
+        # Rewritten with the new code first: what the service is started with
+        # — the CLIs the jail binds, where the browser is, each run's caps —
+        # is decided by this yaaf, and a restart alone kept the old answers.
+        bind, _ = setup.chosen_bind(folder, "")
+        unit.write_text(setup.unit_file(port, folder, bind))
+        subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
         subprocess.run(["systemctl", "--user", "restart", setup.SERVICE], capture_output=True)
         how = "restarted (systemctl --user)"
     elif setup._healthy(base):
@@ -256,6 +284,14 @@ def update(
         if needs_packages(changed):
             install_packages(REPO, log)
             ok("Python packages reinstalled")
+        if install_browser(log):
+            ok("the agents' browser is installed")
+        else:
+            typer.echo(f"! Chromium did not install; agents are not offered a browser ({log})")
+        if not (folder / setup_module().ACCEPTED_FILE).exists():
+            # Installed before native mode said what it gives up: said once now.
+            typer.echo(setup_module().NATIVE_WARNING)
+            (folder / setup_module().ACCEPTED_FILE).write_text("shown by yaaf update\n")
         if needs_web(REPO, changed):
             typer.echo("… rebuilding the dashboard (a minute)")
             build_dashboard(REPO, log)

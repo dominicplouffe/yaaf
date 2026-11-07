@@ -70,6 +70,8 @@ def run(repos, tmp_path, monkeypatch):
     monkeypatch.setattr(update, "build_dashboard", lambda repo, log: did.append("dashboard"))
     monkeypatch.setattr(update, "restart", lambda port, folder: did.append("restart") or "restarted")
     monkeypatch.setattr(update, "refresh_desktop", lambda: did.append("desktop") or None)
+    # Tested on its own below; here it must not download a browser.
+    monkeypatch.setattr(update, "install_browser", lambda log: True)
     home = tmp_path / "yaaf-home"
     home.mkdir()
     db = home / "yaaf.db"
@@ -193,3 +195,40 @@ def test_an_install_that_is_not_a_checkout_says_how_instead(tmp_path, monkeypatc
     monkeypatch.setattr(update, "REPO", tmp_path)
     result = CliRunner().invoke(cli.app, ["update", "--home", str(tmp_path)])
     assert result.exit_code == 2 and "not a git checkout" in result.output
+
+
+def test_an_update_rewrites_the_service_before_restarting_it(tmp_path, monkeypatch):
+    """What the service is started with — the CLIs the jail binds, the browser,
+    each run's caps — is the new code's to decide. A restart alone kept an old
+    install on the old answers: no browser, no mise CLIs, ever."""
+    from yaaf.cli import setup
+
+    config = tmp_path / "config"
+    unit = config / "systemd" / "user" / setup.SERVICE
+    unit.parent.mkdir(parents=True)
+    unit.write_text("old unit\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    monkeypatch.setattr(setup, "_systemd_user", lambda: True)
+    monkeypatch.setattr(setup, "_healthy", lambda base: True)
+    monkeypatch.setattr(setup, "unit_file", lambda port, folder, bind: "new unit\n")
+    calls = []
+    monkeypatch.setattr(update.subprocess, "run",
+                        lambda args, **k: calls.append((args, unit.read_text())))
+    monkeypatch.setattr(update.time, "sleep", lambda s: None)
+    update.restart(24247, tmp_path)
+    restarted = [text for args, text in calls if "restart" in args]
+    assert restarted == ["new unit\n"], "restarted on the old unit"
+    assert any("daemon-reload" in args for args, _ in calls)
+
+
+def test_an_update_fetches_the_browser_only_when_it_is_missing(tmp_path, monkeypatch):
+    from yaaf.runner import host_tools
+
+    ran = []
+    monkeypatch.setattr(update, "_run", lambda argv, cwd, log: ran.append(argv))
+    monkeypatch.setattr(host_tools, "chromium_installed", lambda: True)
+    assert update.install_browser(tmp_path / "log") and ran == []
+    state = iter([False, True])
+    monkeypatch.setattr(host_tools, "chromium_installed", lambda: next(state))
+    assert update.install_browser(tmp_path / "log")
+    assert ran and ran[0][-3:] == ["playwright", "install", "chromium"]

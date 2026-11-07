@@ -123,8 +123,10 @@ def browser_available() -> bool:
 
     if getattr(settings(), "sandbox_mode", "docker") == "docker":
         return True
-    if find_spec("playwright") is None:
-        return False
+    return find_spec("playwright") is not None and chromium_installed()
+
+
+def chromium_installed() -> bool:
     root = browsers_path()
     return root.is_dir() and any(root.glob("chromium*"))
 
