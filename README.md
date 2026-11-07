@@ -100,7 +100,6 @@ the server's API, with short-lived tokens. More in
 | [Configuration](docs/CONFIGURATION.md) | Every environment variable |
 | [Deployment](docs/DEPLOYMENT.md) | Running it on a server: updates, backups, going public |
 | [Architecture](docs/ARCHITECTURE.md) | How the pieces fit |
-| [Known gaps](docs/GAPS.md) | What is missing or unfinished |
 
 ## Good to know
 
