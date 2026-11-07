@@ -247,11 +247,11 @@ def test_a_ceo_whose_replies_keep_failing_is_held_by_the_lanes_backstop(client):
     _drain()
     ceo = project["ceo_agent_id"]
     with db_session() as session:
-        for attempt in (1, 2, 3):
+        for _ in range(3):  # three replies, each failed, inside the window
             at = utcnow()
             session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"], agent_id=ceo,
                             kind=RunKind.BOARDROOM_RUN, status=RunStatus.FAILED,
-                            trigger={"type": "wake"}, attempt=attempt, created_at=at,
+                            trigger={"type": "wake"}, attempt=1, created_at=at,
                             started_at=at, finished_at=at))
     _chairman_says(client, project)
     with db_session() as session:

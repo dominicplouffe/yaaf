@@ -1695,11 +1695,14 @@ TALK_FAILURES_IN_WINDOW = 3
 
 def _talk_backstop(session: Session, agent: Agent) -> bool:
     """Whether this CEO's queued replies are boot-looping. Failures only: a
-    chairman talking quickly to a healthy seat is never held."""
+    chairman talking quickly to a healthy seat is never held. Counted per
+    reply, not per attempt — the runner's retries of one reply are one
+    failure, or a sandbox broken for three minutes would hold his answer for
+    ten after it was fixed (test_message_survival: the night this was found)."""
     failed = session.execute(
         select(func.count(Run.id)).where(
             Run.agent_id == agent.id, Run.kind == RunKind.BOARDROOM_RUN,
-            Run.status == RunStatus.FAILED,
+            Run.status == RunStatus.FAILED, Run.attempt == 1,
             Run.created_at >= utcnow() - TALK_FAILURE_WINDOW)
     ).scalar_one()
     return failed >= TALK_FAILURES_IN_WINDOW
