@@ -2,7 +2,7 @@
 # yaaf on your own desktop, in one command: the packages, yaaf itself, then
 # `yaaf setup`, which asks for an email, a password and a key and leaves yaaf
 # running in the background. Agents run on this machine in bubblewrap jails —
-# no Docker (docs/DEPLOYMENT.md, "Host mode").
+# no Docker (docs/INSTALL.md, "Option 2: Native").
 #
 #   deploy/install_desktop.sh
 #
@@ -29,7 +29,7 @@ cat <<'WARN'
     - use the CPU, memory and disk you give it.
   Docker keeps each run in its own container on its own network. If this
   machine holds anything you would not hand to a stranger's script, run yaaf
-  with Docker instead (docs/DEPLOYMENT.md, "The real thing").
+  with Docker instead (docs/INSTALL.md, "Option 1: Docker").
 
 WARN
 if [ -t 0 ] && [ -z "${YAAF_ACCEPT_NATIVE:-}" ]; then

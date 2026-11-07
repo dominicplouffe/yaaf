@@ -1810,7 +1810,7 @@ def doctor(session: Session = Depends(db)) -> dict:
     each with the command or the page that fixes it.
 
     The dev path alone has four steps that, missed, leave "a project that looks
-    alive and never moves" (docs/DEPLOYMENT.md), and a fresh box met them one
+    alive and never moves" (the old docs/DEPLOYMENT.md), and a fresh box met them one
     at a time: an empty crew picker, a 500 on the first saved secret, runs
     queued forever, a Founder asking for a second key. `yaaf doctor` reads this.
     """

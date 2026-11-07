@@ -1,39 +1,41 @@
 # yaaf documentation
 
-Start here if you're new; skim the table if you're not.
-
-## Getting started
+## Get it running
 
 | Doc | What it covers |
 |---|---|
-| [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md) | **Start here.** Your first project in plain English: picking a shape, writing a goal the CEO can plan from, accepting the plan, connecting billing, credentials, and data sources. |
-| [../examples/](../examples/) | **Twelve projects to import and run**, split by the question a skeptic asks: two you could do in a Claude session (so you learn the loop) and ten that name the specific thing which breaks without the platform. Each needs nothing but your API key, bar one free-GitHub exception. |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Install and run it: one script for a real deployment, a checkout for working on yaaf, every environment variable, backups, upgrades, scaling. |
+| [INSTALL.md](INSTALL.md) | Install with Docker, natively, or from source |
+| [CONFIGURATION.md](CONFIGURATION.md) | Every environment variable, and which ones you must set |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Run it on a server: access, updates, backups, scaling, claude.ai |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | How the server, runner, database and sandboxes fit together |
 
-## Using it
-
-| Doc | What it covers |
-|---|---|
-| [FEATURES.md](FEATURES.md) | The complete feature reference, grouped by the failure it prevents. |
-| [DASHBOARD.md](DASHBOARD.md) | Every screen and what you do there — Home, Inbox, Projects, Roles, and each project page. |
-| [GOVERNANCE.md](GOVERNANCE.md) | The constitution: every rule, its default, what each refuses, and how to change one. |
-| [AUTONOMY.md](AUTONOMY.md) | How much the CEO decides without you — the five authority switches, and what never moves at any setting. |
-| [INTEGRATIONS.md](INTEGRATIONS.md) | Billing, credentials, MCP data sources, Slack, GitHub, webhooks, notifications, artifact storage. |
-
-## Building on it
+## Use it
 
 | Doc | What it covers |
 |---|---|
-| [CLI.md](CLI.md) | Every `yaaf` command, the project spec shape, and a full provisioning script. |
-| [AGENT_API.md](AGENT_API.md) | The API your agents act through, and how to write a role that uses it well. |
-| [RUNTIMES.md](RUNTIMES.md) | **M0–M7 built (the live runs and the Cursor CLI aside).** Running a seat on any harness and provider — the Claude CLI, yaaf's own loop on every provider's own API, Codex, Gemini and the rest — under the same rules: the pattern, the refusals it adds, and what adding a provider costs. |
-| [PROVIDERS.md](PROVIDERS.md) | **M7 built.** Any model from the first screen: roles name a class of model and run on whichever provider pays; one loop speaks every provider's wire; prices import with their provenance; search on every provider; the migration from what was Claude-shaped. |
-| [MCP_SERVER.md](MCP_SERVER.md) | **Built — M0 through M5.** yaaf as an MCP server: chairing your projects and founding new ones from a model client, every tool and scope, and the security model that makes writes safe. |
+| [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md) | **Start here.** Your first project, from goal to running team |
+| [../examples/](../examples/) | Twelve projects you can import and run |
+| [DASHBOARD.md](DASHBOARD.md) | Every screen, and what you do there |
+| [FEATURES.md](FEATURES.md) | Everything yaaf does |
+| [GOVERNANCE.md](GOVERNANCE.md) | Every rule and its default |
+| [AUTONOMY.md](AUTONOMY.md) | How much the CEO decides without you |
+| [INTEGRATIONS.md](INTEGRATIONS.md) | Slack, GitHub, data sources, webhooks, storage |
+| [AUTH.md](AUTH.md) | Accounts, roles and sign-in |
+
+## Build on it
+
+| Doc | What it covers |
+|---|---|
+| [MCP_SERVER.md](MCP_SERVER.md) | Run yaaf from Claude: every tool and scope |
+| [CLI.md](CLI.md) | Every `yaaf` command |
+| [AGENT_API.md](AGENT_API.md) | The API agents use, and how to write a role |
+| [PROVIDERS.md](PROVIDERS.md) | Model providers, prices and model choice |
+| [RUNTIMES.md](RUNTIMES.md) | Harnesses: Claude Code, Codex, Gemini CLI, OpenCode, yaaf's loop |
 
 ## Background
 
 | Doc | What it covers |
 |---|---|
-| [PLAN.md](PLAN.md) | The thesis, the kill conditions, what is built, and what is deliberately not. |
-| [projects/](projects/) | Full worked project definitions from real use, longer than an example. |
-| [../CONTRIBUTING.md](../CONTRIBUTING.md) | How to work on yaaf itself. |
+| [../SECURITY.md](../SECURITY.md) | What contains an agent, and what does not |
+| [PLAN.md](PLAN.md) | Where yaaf is going, and what would prove it wrong |
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | How to work on yaaf |

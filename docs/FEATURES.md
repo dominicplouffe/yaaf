@@ -716,6 +716,8 @@ the fire drill still costs nothing whether or not a platform key exists.
 | Tune the rules | [GOVERNANCE.md](GOVERNANCE.md) |
 | Decide how much the CEO does alone | [AUTONOMY.md](AUTONOMY.md) |
 | Connect Slack/GitHub/MCP/webhooks | [INTEGRATIONS.md](INTEGRATIONS.md) |
+| Install it | [INSTALL.md](INSTALL.md) |
+| Configure it | [CONFIGURATION.md](CONFIGURATION.md) |
 | Deploy and operate it | [DEPLOYMENT.md](DEPLOYMENT.md) |
 | Script it | [CLI.md](CLI.md) |
 | Write a role | [AGENT_API.md](AGENT_API.md) |

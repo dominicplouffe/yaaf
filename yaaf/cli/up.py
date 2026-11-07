@@ -1,6 +1,6 @@
 """`yaaf up`: one command from a checkout to a dashboard.
 
-The dev path in DEPLOYMENT.md is eleven steps, and missing any one gives a box
+The manual dev path is eleven steps, and missing any one gives a box
 that looks alive and never moves: no master key and saving a credential
 answers 500; no runner and every run sits in the queue; no admin and nobody
 can sign in; no role library and the creation form has nothing to hire. This
@@ -37,7 +37,7 @@ NO_ISOLATION_HELP = (
     "Run agents as yourself, with no sandbox. Fine on a dev machine; never on a "
     "box other people can reach. Real agent runs still need Docker in this mode; "
     "--host runs them on this machine instead. The alternative is "
-    "YAAF_SANDBOX_MODE=docker with the sandbox image built (docs/DEPLOYMENT.md).")
+    "YAAF_SANDBOX_MODE=docker with the sandbox image built (docs/INSTALL.md).")
 
 HOST_HELP = (
     "Run agents on this machine, without Docker, each inside a bubblewrap jail: "
@@ -183,7 +183,7 @@ def up(
                    "  Agents on this machine, no Docker:  yaaf up --host\n"
                    "  On a dev machine, scripted agents:  yaaf up --no-isolation\n"
                    "  Otherwise:         set YAAF_SANDBOX_MODE=docker and build the sandbox "
-                   "image (docs/DEPLOYMENT.md)", err=True)
+                   "image (docs/INSTALL.md)", err=True)
         raise typer.Exit(2)
     if sandbox == "host":
         from yaaf.runner import host_jail

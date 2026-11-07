@@ -457,7 +457,7 @@ doesn't double-count.
 ## Notifications to you
 
 Process-level environment, set once for the deployment (see
-[DEPLOYMENT.md](DEPLOYMENT.md)):
+[CONFIGURATION.md](CONFIGURATION.md#email-and-alerts)):
 
 - **Email** — `YAAF_SMTP_HOST`, `YAAF_SMTP_PORT`, `YAAF_SMTP_USERNAME`,
   `YAAF_SMTP_PASSWORD`, `YAAF_SMTP_FROM`

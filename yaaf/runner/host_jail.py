@@ -382,7 +382,7 @@ def _starts_python(bwrap: str, executable: str) -> str | None:
         return (f"the sandbox cannot start the Python yaaf runs on ({executable}), so no "
                 f"agent run can start either: {proc.stderr.strip()[-400:]}\nIf it lives "
                 "somewhere the jail does not mount, add that folder to host_jail_binds "
-                "(docs/DEPLOYMENT.md, Host mode).")
+                "(docs/INSTALL.md, Native).")
     return None
 
 
@@ -446,7 +446,7 @@ def _restricted_userns() -> str:
             "the restriction for the whole machine (sudo sysctl "
             "kernel.apparmor_restrict_unprivileged_userns=0). Both reopen user namespaces, "
             "which Ubuntu restricts to shrink the kernel's attack surface; or use "
-            "sandbox_mode=docker. docs/DEPLOYMENT.md, Host mode, has the profile.")
+            "sandbox_mode=docker. docs/INSTALL.md (Native) has the profile.")
 
 
 def _scope_env() -> dict[str, str]:
