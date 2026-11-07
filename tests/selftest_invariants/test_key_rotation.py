@@ -86,24 +86,22 @@ def test_one_unreadable_value_changes_nothing(stored):
         session.add(Secret(id=ids.new_id(ids.SECRET), project_id=stored, name="orphan",
                            ciphertext=Fernet(stray.encode()).encrypt(b"x").decode(),
                            role_scopes=[], kind="service"))
-    with pytest.raises(RotationError, match="secret orphan"):
-        with db_session() as session:
-            rotate(session, settings().master_key, NEW)
+    with pytest.raises(RotationError, match="secret orphan"), db_session() as session:
+        rotate(session, settings().master_key, NEW)
     assert _opened_with(settings().master_key)["secret"] == "sk-live-123"
 
 
 def test_the_wrong_current_key_says_so(stored):
-    with pytest.raises(RotationError, match="none of the 3 stored values"):
-        with db_session() as session:
-            rotate(session, Fernet.generate_key().decode(), NEW)
+    with (pytest.raises(RotationError, match="none of the 3 stored values"),
+          db_session() as session):
+        rotate(session, Fernet.generate_key().decode(), NEW)
 
 
 @pytest.mark.parametrize("new, why", [("not-a-key", "not a Fernet key"),
                                       (None, "same as the current one")])
 def test_a_bad_new_key_is_refused(stored, new, why):
-    with pytest.raises(RotationError, match=why):
-        with db_session() as session:
-            rotate(session, settings().master_key, new or settings().master_key)
+    with pytest.raises(RotationError, match=why), db_session() as session:
+        rotate(session, settings().master_key, new or settings().master_key)
 
 
 def test_the_cli_rotates_a_server_install_and_records_it(stored):
