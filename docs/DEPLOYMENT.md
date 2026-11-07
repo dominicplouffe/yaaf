@@ -137,6 +137,17 @@ over to **`yaaf setup`**, which asks for three things:
 It ends with anything `yaaf doctor` would still call a problem, and the
 address. Run it again any time: every step skips what is done.
 
+**Who can reach it.** A desktop install listens on `127.0.0.1`: this machine
+only, which is also all your agents need, since the jail shares this machine's
+network. To open it to a network, say so once — `yaaf setup --bind 0.0.0.0`
+for every network, or `--bind <address>` for one — and setup restarts yaaf
+there and remembers it; `yaaf setup --bind 127.0.0.1` closes it again. The
+dashboard speaks plain HTTP, so on a network anyone can read the traffic, your
+password at sign-in included. To use it from a phone or another computer, an
+SSH tunnel (`ssh -N -L 24247:localhost:24247 you@this-machine`) or a private
+network such as Tailscale, bound to its address, keeps it private.
+(`yaaf up --bind` is the same switch for one run.)
+
 By hand, the same thing is `pip install -e ".[host]"`, a dashboard build
 (`cd web && npm install && npm run build`), and `yaaf up --host --email
 you@example.com`.

@@ -15,6 +15,7 @@ machine inside bubblewrap, or you configure docker.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import signal
 import subprocess
@@ -63,12 +64,41 @@ def ensure_key(home: Path) -> str:
     return key
 
 
-def environment(home: Path, port: int, sandbox: str) -> dict[str, str]:
+#: Where a desktop install listens unless told otherwise: this machine only.
+#: The server's own default is 0.0.0.0, which is right inside a container (the
+#: published port decides who reaches it) and wrong on a laptop, where it put
+#: the sign-in page on every network the laptop joined.
+LOOPBACK = "127.0.0.1"
+
+
+def is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def exposure(host: str, port: int) -> str:
+    """Who can reach the dashboard, said where it is chosen."""
+    if is_loopback(host):
+        return "this machine only (--bind 0.0.0.0, or an address, to open it to a network)"
+    where = "every network this machine is on" if host in ("0.0.0.0", "::") else host
+    return (f"{where}, on port {port}, over plain HTTP — anyone on that network can read "
+            "the traffic, your password at sign-in included. To reach it from another "
+            "device privately, use an SSH tunnel or a private network (Tailscale, "
+            "WireGuard) and bind to that address.")
+
+
+def environment(home: Path, port: int, sandbox: str, bind: str = "") -> dict[str, str]:
     """The process environment both children run under. Anything already set
     wins: this fills in what a dev box is missing, it does not override a
-    configuration somebody chose."""
+    configuration somebody chose. `bind` is a choice made on this command
+    line, so it wins over the environment too."""
     base = f"http://localhost:{port}"
     env = dict(os.environ)
+    env["YAAF_API_HOST"] = bind or env.get("YAAF_API_HOST") or LOOPBACK
     env.setdefault("YAAF_DATABASE_URL", f"sqlite:///{home / 'yaaf.db'}")
     # The server default is /var/lib/yaaf, which a desktop user cannot write:
     # the first run of every project died making its workspace. The folder
@@ -137,6 +167,9 @@ def up(
                                   "(default ~/.yaaf, or YAAF_HOME)"),
     port: int = typer.Option(DEFAULT_PORT, "--port",
                              help="The port the dashboard and API listen on"),
+    bind: str = typer.Option("", "--bind",
+                             help="The address to listen on (default 127.0.0.1: this "
+                                  "machine only). 0.0.0.0 opens it to every network."),
 ) -> None:
     """Start yaaf on this machine — API, dashboard, runner — in one command, and
     print the address. Ctrl-C stops it."""
@@ -164,7 +197,7 @@ def up(
             raise typer.Exit(2)
     folder = Path(home or os.environ.get("YAAF_HOME") or Path.home() / ".yaaf").expanduser()
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-    env = environment(folder, port, sandbox)
+    env = environment(folder, port, sandbox, bind)
     base = env["YAAF_API"]
 
     schema = subprocess.run(
@@ -219,6 +252,7 @@ def up(
 
         typer.echo(f"\nyaaf is up: {base}/app")
         typer.echo(f"  data and key: {folder}   logs: {server_log}, {runner_log}")
+        typer.echo(f"  reachable from: {exposure(env['YAAF_API_HOST'], port)}")
         typer.echo("  agents run: " + {
             "host": "on this machine, each in a bubblewrap jail",
             "subprocess": "scripted only, with no isolation (real runs need Docker)",

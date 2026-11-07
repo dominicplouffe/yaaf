@@ -275,3 +275,18 @@ def test_the_installer_hands_over_to_the_wizard():
     script = (Path(__file__).resolve().parents[2] / "deploy/install_desktop.sh").read_text()
     assert 'yaaf" setup "$@"' in script
     assert ".[host]" in script, "host mode's libraries are what the jail runs on"
+
+
+def test_the_service_listens_where_it_was_told_and_remembers_it(tmp_path, monkeypatch):
+    """No flag on a fresh install: this machine only. A flag is a choice, and a
+    re-run without one keeps it — so opening the dashboard to the network once
+    is not quietly undone, and closing it again is one more flag."""
+    monkeypatch.setattr(setup, "_npm_global_bind", lambda: None)
+    assert setup.chosen_bind(tmp_path, "") == ("127.0.0.1", True), \
+        "an install that never chose may be the old one on every network: restart it"
+    assert "--bind 127.0.0.1" in setup.unit_file(24247, tmp_path)
+
+    (tmp_path / setup.BIND_FILE).write_text("0.0.0.0\n")
+    assert setup.chosen_bind(tmp_path, "") == ("0.0.0.0", False)
+    assert setup.chosen_bind(tmp_path, "127.0.0.1") == ("127.0.0.1", True)
+    assert "--bind 0.0.0.0" in setup.unit_file(24247, tmp_path, "0.0.0.0")

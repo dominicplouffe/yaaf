@@ -83,3 +83,22 @@ def test_the_work_lives_beside_the_database(monkeypatch, tmp_path):
     env = up.environment(tmp_path, 8091, "host")
     assert env["YAAF_WORKSPACES_ROOT"] == str(tmp_path / "workspaces")
     assert env["YAAF_ARTIFACTS_ROOT"] == str(tmp_path / "artifacts")
+
+
+def test_a_desktop_install_listens_on_this_machine_only(monkeypatch, tmp_path):
+    """The server's own default is 0.0.0.0, right inside a container and wrong
+    on a laptop: it put the sign-in page, over plain HTTP, on every network
+    the laptop joined."""
+    monkeypatch.delenv("YAAF_API_HOST", raising=False)
+    assert up.environment(tmp_path, 8091, "host")["YAAF_API_HOST"] == "127.0.0.1"
+    assert "this machine only" in up.exposure("127.0.0.1", 8091)
+
+
+def test_opening_it_to_a_network_is_one_flag_and_says_what_it_costs(monkeypatch, tmp_path):
+    monkeypatch.setenv("YAAF_API_HOST", "10.0.0.5")
+    assert up.environment(tmp_path, 8091, "host")["YAAF_API_HOST"] == "10.0.0.5", \
+        "an address somebody configured wins over the default"
+    assert up.environment(tmp_path, 8091, "host", "0.0.0.0")["YAAF_API_HOST"] == "0.0.0.0", \
+        "and the flag on this command line wins over both"
+    warning = up.exposure("0.0.0.0", 8091)
+    assert "plain HTTP" in warning and "password" in warning

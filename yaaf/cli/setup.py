@@ -187,12 +187,30 @@ def service_environment() -> dict[str, str]:
     return env
 
 
-def _up_command(port: int, folder: Path) -> list[str]:
+def _up_command(port: int, folder: Path, bind: str) -> list[str]:
     return [sys.executable, "-m", "yaaf.cli.main", "up", "--host",
-            "--port", str(port), "--home", str(folder)]
+            "--port", str(port), "--home", str(folder), "--bind", bind]
 
 
-def unit_file(port: int, folder: Path) -> str:
+BIND_FILE = "bind"
+
+
+def chosen_bind(folder: Path, flag: str) -> tuple[str, bool]:
+    """The address to listen on, and whether it differs from what is running.
+    A flag is a choice; without one a re-run keeps the last choice, so opening
+    the dashboard to the network once does not quietly close it again — and an
+    install that never chose listens on this machine only. Unknown (an install
+    from before this was remembered, which listened on every network) counts
+    as different, so the re-run that adds this file also closes that door."""
+    try:
+        previous = (folder / BIND_FILE).read_text().strip()
+    except OSError:
+        previous = ""
+    chosen = flag.strip() or previous or up_cmd.LOOPBACK
+    return chosen, chosen != previous
+
+
+def unit_file(port: int, folder: Path, bind: str = up_cmd.LOOPBACK) -> str:
     env = service_environment()
     lines = "\n".join(f'Environment="{k}={v}"' for k, v in env.items())
     return (
@@ -201,7 +219,7 @@ def unit_file(port: int, folder: Path) -> str:
         "Description=yaaf: your agent company\n"
         "After=network.target\n\n"
         "[Service]\n"
-        f"ExecStart={' '.join(_up_command(port, folder))}\n"
+        f"ExecStart={' '.join(_up_command(port, folder, bind))}\n"
         f"{lines}\n"
         "Restart=on-failure\n"
         "RestartSec=5\n\n"
@@ -217,34 +235,54 @@ def _systemd_user() -> bool:
                           capture_output=True).returncode == 0
 
 
-def _start(port: int, folder: Path, base: str, service: bool) -> str:
+def _start(port: int, folder: Path, base: str, service: bool, bind: str,
+           changed: bool) -> str:
     """Start yaaf so it outlives this terminal. A user service where systemd
     is running — it starts again when you log in — and a detached process
-    where it is not. Returns how to stop it."""
+    where it is not. Already running on another address: restarted on the new
+    one, which is what makes `yaaf setup --bind …` the one way to change it.
+    Returns how to stop it."""
     detached_stop = f"pkill -f 'yaaf.cli.main up --host --port {port}'"
+    systemd = service and _systemd_user()
+    unit = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") \
+        / "systemd" / "user" / SERVICE
     if _healthy(base):
-        _ok(f"yaaf is already running at {base}")
-        return "systemctl --user stop yaaf" if service and _systemd_user() else detached_stop
-    if service and _systemd_user():
-        unit = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") \
-            / "systemd" / "user" / SERVICE
+        stale_unit = systemd and (not unit.exists() or unit.read_text() != unit_file(
+            port, folder, bind))
+        if not (changed or stale_unit):
+            _ok(f"yaaf is already running at {base}")
+            return "systemctl --user stop yaaf" if systemd else detached_stop
+        typer.echo(f"     … restarting to listen on {bind}")
+        if not systemd:
+            subprocess.run(["pkill", "-f", f"yaaf.cli.main up --host --port {port}"],
+                           check=False)
+            for _ in range(30):
+                if not _healthy(base):
+                    break
+                time.sleep(1)
+    if systemd:
         unit.parent.mkdir(parents=True, exist_ok=True)
-        unit.write_text(unit_file(port, folder))
+        unit.write_text(unit_file(port, folder, bind))
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
-        subprocess.run(["systemctl", "--user", "enable", "--now", SERVICE],
-                       capture_output=True, check=False)
+        subprocess.run(["systemctl", "--user", "enable", SERVICE], capture_output=True,
+                       check=False)
+        subprocess.run(["systemctl", "--user", "restart", SERVICE], capture_output=True,
+                       check=False)
         how, stop = "as a background service that starts when you log in", \
             "systemctl --user stop yaaf"
     else:
         log = (folder / "yaaf-up.log").open("a")
-        subprocess.Popen(_up_command(port, folder), stdout=log, stderr=subprocess.STDOUT,
-                         stdin=subprocess.DEVNULL, start_new_session=True,
-                         env={**os.environ, **service_environment()})
+        subprocess.Popen(_up_command(port, folder, bind), stdout=log,
+                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                         start_new_session=True, env={**os.environ, **service_environment()})
         how = "in the background until you log out (run yaaf setup again after a reboot)"
         stop = detached_stop
     typer.echo("     … starting (the first start loads the role library)")
+    if systemd:
+        time.sleep(2)  # a restart answers from the old process for a moment
     for _ in range(120):
         if _healthy(base):
+            (folder / BIND_FILE).write_text(bind + "\n")
             _ok(f"yaaf is running {how}")
             return stop
         time.sleep(1)
@@ -643,6 +681,10 @@ def setup(
                              help="The port the dashboard listens on"),
     home: str = typer.Option("", "--home",
                              help="Where the database and key live (default ~/.yaaf)"),
+    bind: str = typer.Option("", "--bind",
+                             help="The address to listen on. Default: what it was last "
+                                  "time, else 127.0.0.1 (this machine only). 0.0.0.0 opens "
+                                  "it to every network; run setup again to change it."),
     service: bool = typer.Option(True, "--service/--no-service",
                                  help="Keep yaaf running as a systemd user service"),
 ) -> None:
@@ -667,7 +709,8 @@ def setup(
     _step(2, "Your account")
     account = _account()
     _step(3, "Starting yaaf")
-    stop = _start(port, folder, base, service)
+    address, changed = chosen_bind(folder, bind)
+    stop = _start(port, folder, base, service, address, changed)
     _sign_in(base, account)
     _library(base)
     _step(4, "The AI your agents run on")
@@ -682,6 +725,7 @@ def setup(
         if check.get("fix"):
             typer.echo(f"    → {check['fix']}")
     typer.echo(f"{'Almost' if problems else 'Done'}. yaaf is at {base}/app")
+    typer.echo(f"  reachable from: {up_cmd.exposure(address, port)}")
     typer.echo(f"  data and key: {folder}  (back up master.key: it unlocks every stored key)")
     typer.echo(f"  stop it: {stop}")
     if port != DEFAULT_PORT:
