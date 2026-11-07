@@ -1802,10 +1802,40 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   gap: 8px; flex: none; }
 .founding-head-acts .crumb { margin: 0; white-space: nowrap; }
 .founding-body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  gap: 20px; align-items: start; }
+  gap: 20px; align-items: start; margin-top: var(--s4); }
 @media (max-width: 1000px) { .founding-body { grid-template-columns: 1fr; } }
 
 .founding-chat { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.founding-log { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* Clear of the sticky top bar when the window is what scrolls a new round
+   into view. */
+.founding-round { display: flex; flex-direction: column; gap: 4px; scroll-margin-top: 64px; }
+
+/* The page fits the screen, and the conversation scrolls inside it.
+   A conversation only grows, and as one long page it grew the window's own
+   scrollbar without end: the composer drifted to the foot of a page several
+   screens tall, the draft beside it scrolled away with the transcript, and
+   every new turn meant hunting for where you were. Here the transcript is
+   the one thing that scrolls, the place to type stays under it, and the
+   draft keeps its own column. Only where both columns fit side by side and
+   the screen is tall enough to hold a round — stacked, the window scrolls as
+   before. The negative margin hands back the frame's bottom padding, the
+   same way the Inbox does. */
+@media (min-width: 1001px) and (min-height: 600px) {
+  .founding { display: flex; flex-direction: column;
+    height: calc(100vh - 52px - var(--s6)); margin-bottom: calc(-1 * var(--s9));
+    padding-bottom: var(--s5); }
+  .founding-head { flex: none; }
+  .founding-body { flex: 1 1 auto; min-height: 0; align-items: stretch; }
+  .founding-chat { min-height: 0; }
+  .founding-log { flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    padding-right: 6px; overscroll-behavior: contain; }
+  .founding-round { scroll-margin-top: 0; }
+  .founding-compose { flex: none; }
+  .founding-compose textarea { max-height: 40vh; }
+  .founding-draft { position: static; min-height: 0; overflow-y: auto;
+    padding-right: 6px; overscroll-behavior: contain; }
+}
 
 .turn { display: flex; flex-direction: column; gap: 4px; }
 .turn-who { font-size: var(--t-micro); letter-spacing: normal;

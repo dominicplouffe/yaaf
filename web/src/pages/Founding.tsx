@@ -94,6 +94,13 @@ const PLACEHOLDER =
   "fine, and you don't have to be complete. I'll draft the whole project, then ask " +
   "about anything I had to guess, with my answer already picked.";
 
+/** Whatever is scrolling the conversation right now: its own pane on a wide
+ *  screen, the window when the columns stack. */
+function scroller(el: HTMLElement | null): HTMLElement {
+  if (el && /(auto|scroll)/.test(getComputedStyle(el).overflowY)) return el;
+  return (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
+}
+
 /** What the Founder is doing, while it does it.
  *
  *  A drafting turn takes minutes — it reads the role library, writes a goal,
@@ -475,24 +482,50 @@ export default function Founding() {
   // boardroom keeps: whether you are following is decided by where you left
   // the page, and sending something puts you back at the end.
   //
+  // On a wide screen the conversation is its own scroller and the page does
+  // not move; stacked on a narrow one, the window is the scroller. Whichever
+  // it is, it is asked for at the moment, not assumed.
+  //
   // Instant rather than smooth: a smooth scroll emits scroll events that
   // report "not at the bottom" mid-flight, which would unpin the reader the
   // page itself was moving.
+  const log = useRef<HTMLDivElement | null>(null);
+  const roundTop = useRef<HTMLDivElement | null>(null);
   const following = useRef(true);
   useEffect(() => {
     const onScroll = () => {
-      const doc = document.documentElement;
-      following.current = doc.scrollHeight - window.scrollY - window.innerHeight < 120;
+      const el = scroller(log.current);
+      following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
     };
+    const el = log.current;
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-  // The page's own foot, not a marker inside it: the composer sits below the
-  // conversation, and stopping at a marker short of it would both hide the
-  // place to type and leave the reader far enough up to count as unpinned.
+    el?.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      el?.removeEventListener("scroll", onScroll);
+    };
+  }, [status?.credential_configured]);
+
+  // A round of questions is read from its top. Following it to the foot of
+  // the page instead — where its submit button and the Founder's steps sit —
+  // scrolled every question out of sight the moment they arrived, and a
+  // chairman who did not know to scroll up never knew he had been asked.
+  // So a new round is brought into view by its first question, and while it
+  // is open nothing below it pulls the page down: the steps still landing
+  // under it are not worth losing your place in the questions for.
   useLayoutEffect(() => {
-    if (following.current) window.scrollTo(0, document.documentElement.scrollHeight);
-  }, [turns.length, busy, progress?.steps.length, key]);
+    if (key && roundTop.current) {
+      roundTop.current.scrollIntoView({ block: "start" });
+      following.current = false;
+    }
+  }, [key]);
+  // Otherwise, the foot: the composer sits at the end of the conversation,
+  // and stopping short of it would hide the place to type.
+  useLayoutEffect(() => {
+    if (!following.current || asking) return;
+    const el = scroller(log.current);
+    el.scrollTop = el.scrollHeight;
+  }, [turns.length, busy, progress?.steps.length, key, reopening]);
 
   async function post_(payload: { message: string; answers?: Answer[] }) {
     if (!thread) return;
@@ -635,74 +668,78 @@ export default function Founding() {
 
       <div className="founding-body">
         <section className="founding-chat">
-          {turns.length === 0 && !busy && (
-            <div className="card muted">
-              <h3>Start anywhere</h3>
-              <p>A paragraph is plenty.</p>
-              <Why label="What to say">
-                Say what should be true at the end, who it is for, and roughly what you are
-                willing to spend. Whatever you leave out, the Founder asks about — with its
-                recommended answer already chosen, so agreeing is one click.
-              </Why>
-            </div>
-          )}
-          {turns.map((turn, i) => {
-            const next = turns[i + 1];
-            // Answers are read back on the round they answer, as question →
-            // answer; the chairman's own turn then only carries his note.
-            if (turn.answers) {
-              return turn.note ? (
-                <div key={i} className="turn turn-chairman">
-                  <div className="turn-who">You</div>
-                  <div className="turn-text">{turn.note}</div>
-                </div>
-              ) : null;
-            }
-            const round = turn.round;
-            return (
-              <div key={i} className={`turn turn-${turn.role}`}>
-                <div className="turn-who">{turn.role === "chairman" ? "You" : "The Founder"}</div>
-                {turn.text && (
-                  <div className="turn-text">
-                    {/* The Founder writes markdown — headings, bold, lists, backticked
-                        constitution keys. Rendering it as source was making the most
-                        carefully written thing on the page the hardest to read. The
-                        chairman types plain text, so his turns stay verbatim. */}
-                    {turn.role === "founder" ? <Markdown>{turn.text}</Markdown> : turn.text}
-                  </div>
-                )}
-                {round && round.questions.length > 0 && next && (
-                  <RoundRecap round={round} answers={next.answers ?? null} />
-                )}
+          <div className="founding-log" ref={log}>
+            {turns.length === 0 && !busy && (
+              <div className="card muted">
+                <h3>Start anywhere</h3>
+                <p>A paragraph is plenty.</p>
+                <Why label="What to say">
+                  Say what should be true at the end, who it is for, and roughly what you are
+                  willing to spend. Whatever you leave out, the Founder asks about — with its
+                  recommended answer already chosen, so agreeing is one click.
+                </Why>
               </div>
-            );
-          })}
+            )}
+            {turns.map((turn, i) => {
+              const next = turns[i + 1];
+              // Answers are read back on the round they answer, as question →
+              // answer; the chairman's own turn then only carries his note.
+              if (turn.answers) {
+                return turn.note ? (
+                  <div key={i} className="turn turn-chairman">
+                    <div className="turn-who">You</div>
+                    <div className="turn-text">{turn.note}</div>
+                  </div>
+                ) : null;
+              }
+              const round = turn.round;
+              return (
+                <div key={i} className={`turn turn-${turn.role}`}>
+                  <div className="turn-who">{turn.role === "chairman" ? "You" : "The Founder"}</div>
+                  {turn.text && (
+                    <div className="turn-text">
+                      {/* The Founder writes markdown — headings, bold, lists, backticked
+                          constitution keys. Rendering it as source was making the most
+                          carefully written thing on the page the hardest to read. The
+                          chairman types plain text, so his turns stay verbatim. */}
+                      {turn.role === "founder" ? <Markdown>{turn.text}</Markdown> : turn.text}
+                    </div>
+                  )}
+                  {round && round.questions.length > 0 && next && (
+                    <RoundRecap round={round} answers={next.answers ?? null} />
+                  )}
+                </div>
+              );
+            })}
 
-          {liveRound && asking && <div className="turn-who">The Founder</div>}
-          {asking && (
-            <RoundForm
-              round={asking}
-              picks={picks.key === key ? picks.picks : initialPicks(asking)}
-              onPick={pick}
-              note={roundNote}
-              onNote={setRoundNote}
-              onSubmit={answer}
-              waiting={busy}
-              queued={queued !== null}
-            />
-          )}
-          {aligned && (
-            <Aligned
-              round={aligned}
-              onConfirm={review}
-              onReopen={() => reopen()}
-              disabled={!thread?.draft_bundle}
-            />
-          )}
+            {asking && (
+              <div className="founding-round" ref={roundTop}>
+                {liveRound && <div className="turn-who">The Founder</div>}
+                <RoundForm
+                  round={asking}
+                  picks={picks.key === key ? picks.picks : initialPicks(asking)}
+                  onPick={pick}
+                  note={roundNote}
+                  onNote={setRoundNote}
+                  onSubmit={answer}
+                  waiting={busy}
+                  queued={queued !== null}
+                />
+              </div>
+            )}
+            {aligned && (
+              <Aligned
+                round={aligned}
+                onConfirm={review}
+                onReopen={() => reopen()}
+                disabled={!thread?.draft_bundle}
+              />
+            )}
 
-          {busy && <Steps progress={progress} />}
+            {busy && <Steps progress={progress} />}
 
-          {error && <p className="error">{error}</p>}
+            {error && <p className="error">{error}</p>}
+          </div>
 
           {/* One place to type at a time: while a round is open, its own note
               box is that place, and a second composer would be a second way
