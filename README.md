@@ -40,8 +40,8 @@ and show you where it would stall and what it would cost.
 
 ```bash
 git clone https://github.com/dominicplouffe/yaaf && cd yaaf
-pip install -e .
-yaaf rehearse examples/01-your-first-hour.json
+python3 -m venv .venv && .venv/bin/pip install -e .     # Python 3.12+
+.venv/bin/yaaf rehearse examples/01-your-first-hour.json
 ```
 
 **On a server, with Docker.** The recommended way to run it for real.
@@ -73,7 +73,7 @@ claude mcp add --transport http yaaf http://localhost:24247/mcp \
 ```
 
 Start with the `read` scope. Add `steer`, `create` or `configure` when you
-want Claude to do more. See [docs/MCP_SERVER.md](docs/MCP_SERVER.md).
+want Claude to do more.
 
 ## How it works
 
@@ -100,9 +100,7 @@ the server's API, with short-lived tokens. More in
 | [Configuration](docs/CONFIGURATION.md) | Every environment variable |
 | [Deployment](docs/DEPLOYMENT.md) | Running it on a server: updates, backups, going public |
 | [Architecture](docs/ARCHITECTURE.md) | How the pieces fit |
-| [Your first project](docs/CREATING_A_PROJECT.md) | From goal to running team |
-| [Examples](examples/) | Twelve projects you can import |
-| [All docs](docs/README.md) | Features, rules, CLI, API, security |
+| [Known gaps](docs/GAPS.md) | What is missing or unfinished |
 
 ## Good to know
 

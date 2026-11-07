@@ -128,7 +128,7 @@ stored.
 | Governed | Database, per project | Budget, deadline, wake limits, who approves what |
 
 Operational settings are in [CONFIGURATION.md](CONFIGURATION.md). Governed rules
-are in [GOVERNANCE.md](GOVERNANCE.md).
+are set per project in the dashboard.
 
 ## Code map
 
@@ -156,6 +156,7 @@ Vite, Docker, bubblewrap.
 
 ## Read next
 
+- [INSTALL.md](INSTALL.md): get it running.
+- [CONFIGURATION.md](CONFIGURATION.md): every environment variable.
+- [DEPLOYMENT.md](DEPLOYMENT.md): run it on a server.
 - [SECURITY.md](../SECURITY.md): what contains an agent and what does not.
-- [RUNTIMES.md](RUNTIMES.md): harnesses and providers in depth.
-- [AGENT_API.md](AGENT_API.md): what agents can do.

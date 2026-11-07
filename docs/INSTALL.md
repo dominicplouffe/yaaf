@@ -17,8 +17,8 @@ scripted agents:
 
 ```bash
 git clone https://github.com/dominicplouffe/yaaf && cd yaaf
-pip install -e .        # Python 3.12+
-yaaf rehearse examples/01-your-first-hour.json
+python3 -m venv .venv && .venv/bin/pip install -e .     # Python 3.12+
+.venv/bin/yaaf rehearse examples/01-your-first-hour.json
 ```
 
 ---
@@ -181,8 +181,8 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) before you open a pull request.
    ```
 
    `doctor` lists anything that is wrong and how to fix it.
-3. **Create a project.** Follow [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md),
-   or import one from [examples/](../examples/).
+3. **Create a project.** In the dashboard, click New Project, or import one of
+   the ready-made specs in `examples/`.
 4. **Connect Claude** (optional):
 
    ```bash

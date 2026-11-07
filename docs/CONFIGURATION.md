@@ -8,7 +8,7 @@ Two kinds of settings, kept apart on purpose:
   sandboxes, email. Set by whoever runs the server.
 - **Governed**: how a project behaves. Budget, deadline, wake limits,
   approvals. Stored in the database, per project, and changed in the dashboard.
-  Never in environment variables. See [GOVERNANCE.md](GOVERNANCE.md).
+  Never in environment variables.
 
 **Model API keys are not environment variables.** Add them in the dashboard
 under Settings → Providers, or with `yaaf create-llm-credential`. They are
