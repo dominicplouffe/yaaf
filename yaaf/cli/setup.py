@@ -175,18 +175,98 @@ def _npm_global_bind() -> str | None:
     return prefix
 
 
-def service_environment() -> dict[str, str]:
+_SHIMS = ("mise", "asdf", "rtx")
+
+
+def _real_tool(command: str) -> str | None:
+    """Where `command` really is. A version manager's shim (mise, asdf) is a
+    program that reads the caller's config to pick a version — useless inside
+    a jail that sees none of it — so the manager is asked for the real path."""
+    hit = shutil.which(command)
+    if hit is None:
+        return None
+    if Path(hit).resolve().name not in _SHIMS and "/shims/" not in hit:
+        return hit
+    for manager in ("mise", "asdf"):
+        if shutil.which(manager) is None:
+            continue
+        try:
+            out = subprocess.run([manager, "which", command], capture_output=True,
+                                 text=True, timeout=20).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if out and Path(out).is_file():
+            return out
+    return None
+
+
+def _tool_binds() -> list[str]:
+    """The folders the harness CLIs and their runtimes are installed in, where
+    the jail does not already see them. Without these a Claude Code or Codex
+    seat installed through a version manager died on its first command on a
+    native install, while the same seat ran on the image."""
+    from yaaf.runner.host_tools import TOOLS
+
+    found: list[str] = []
+    for tool in TOOLS:
+        real = _real_tool(tool.command)
+        if real is None:
+            continue
+        folder = Path(real).parent
+        # A bin folder's parent is the install: a Node CLI in bin/ is a link
+        # into ../lib/node_modules, which has to be visible too.
+        if folder.name == "bin":
+            folder = folder.parent
+        text = str(folder)
+        if text in ("/", "/usr", "/usr/local") or text.startswith(("/usr/", "/opt/", "/bin")):
+            continue
+        if text not in found:
+            found.append(text)
+    return found
+
+
+#: What `yaaf setup` was told each run may use, kept beside the bind choice.
+LIMITS_FILE = "run-limits"
+
+
+def chosen_limits(folder: Path, ask: bool) -> tuple[float, float]:
+    """(CPUs, GB) per agent run: the last answer, or asked — Docker's 2 and 2
+    as the default — or, with nobody to ask, the default."""
+    try:
+        cpus, memory = (float(x) for x in (folder / LIMITS_FILE).read_text().split())
+        return cpus, memory
+    except (OSError, ValueError):
+        pass
+    cpus, memory = 2.0, 2.0
+    if ask:
+        typer.echo("     Each agent run is capped, as Docker caps a container. 0 means no cap.")
+        cpus = float(typer.prompt("     CPUs per agent run", default="2"))
+        memory = float(typer.prompt("     Memory per agent run, in GB", default="2"))
+    (folder / LIMITS_FILE).write_text(f"{cpus:g} {memory:g}\n")
+    return cpus, memory
+
+
+def service_environment(folder: Path | None = None) -> dict[str, str]:
     """What the background service needs from this shell, and nothing more:
-    the PATH that finds bwrap, git and the harness CLIs, and where those CLIs
-    live. Never a key — yaaf up reads the master key from its own folder, and a
-    unit file is not a secret store."""
+    the PATH that finds bwrap, git and the harness CLIs, where those CLIs
+    live, where Playwright keeps its browser, and each run's caps. Never a key
+    — yaaf up reads the master key from its own folder, and a unit file is not
+    a secret store."""
+    from yaaf.runner.host_tools import browsers_path
+
     env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")}
     binds = [b for b in os.environ.get("YAAF_HOST_JAIL_BINDS", "").split(os.pathsep) if b]
     npm = _npm_global_bind()
-    if npm and npm not in binds:
-        binds.append(npm)
+    for extra in ([npm] if npm else []) + _tool_binds():
+        if extra not in binds:
+            binds.append(extra)
     if binds:
         env["YAAF_HOST_JAIL_BINDS"] = os.pathsep.join(binds)
+    env["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_path())
+    if folder is not None:
+        cpus, memory = chosen_limits(folder, ask=False)
+        env["YAAF_HOST_RUN_CPUS"] = f"{cpus:g}"
+        env["YAAF_HOST_RUN_MEMORY_GB"] = f"{memory:g}"
     return env
 
 
@@ -214,7 +294,7 @@ def chosen_bind(folder: Path, flag: str) -> tuple[str, bool]:
 
 
 def unit_file(port: int, folder: Path, bind: str = up_cmd.LOOPBACK) -> str:
-    env = service_environment()
+    env = service_environment(folder)
     lines = "\n".join(f'Environment="{k}={v}"' for k, v in env.items())
     return (
         "# Written by `yaaf setup`. Run it again to rewrite this file.\n"
@@ -277,7 +357,7 @@ def _start(port: int, folder: Path, base: str, service: bool, bind: str,
         log = (folder / "yaaf-up.log").open("a")
         subprocess.Popen(_up_command(port, folder, bind), stdout=log,
                          stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                         start_new_session=True, env={**os.environ, **service_environment()})
+                         start_new_session=True, env={**os.environ, **service_environment(folder)})
         how = "in the background until you log out (run yaaf setup again after a reboot)"
         stop = detached_stop
     typer.echo("     … starting (the first start loads the role library)")
@@ -735,6 +815,9 @@ def setup(
     typer.echo("yaaf setup — about two minutes. Safe to run again: it skips what is done.")
     _step(1, "This machine")
     _check_machine(folder)
+    cpus, memory = chosen_limits(folder, ask=sys.stdin.isatty())
+    _ok(f"each agent run may use {cpus:g} CPUs and {memory:g} GB "
+        f"(change it: edit {folder / LIMITS_FILE} and run yaaf setup again)")
     _step(2, "Your account")
     account = _account()
     _step(3, "Starting yaaf")

@@ -16,6 +16,27 @@ say() { printf '\n==> %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi; }
 
+cat <<'WARN'
+
+  Native mode runs your agents on this computer, not in Docker.
+
+  Each agent works in a bubblewrap sandbox that hides your home folder and
+  yaaf's own keys, and each run is capped at 2 CPUs and 2 GB unless you choose
+  otherwise. But it is far less contained than Docker. An agent can:
+    - use your network as you can, including this machine's own services
+      (a local database, a dev server, your router's admin page);
+    - read the system's installed software and its settings (/usr, /etc, /opt);
+    - use the CPU, memory and disk you give it.
+  Docker keeps each run in its own container on its own network. If this
+  machine holds anything you would not hand to a stranger's script, run yaaf
+  with Docker instead (docs/DEPLOYMENT.md, "The real thing").
+
+WARN
+if [ -t 0 ] && [ -z "${YAAF_ACCEPT_NATIVE:-}" ]; then
+  read -r -p "Continue with native mode? [y/N] " answer
+  case "$answer" in [yY]*) ;; *) echo "Stopped; nothing was installed."; exit 1 ;; esac
+fi
+
 say "System packages"
 missing=()
 for tool in git bwrap node npm; do have "$tool" || missing+=("$tool"); done
@@ -68,6 +89,18 @@ fi
 mkdir -p "$HOME/.local/bin"
 ln -sf "$REPO/.venv/bin/yaaf" "$HOME/.local/bin/yaaf"
 echo "installed; the yaaf command is $HOME/.local/bin/yaaf"
+
+say "The agents' browser"
+# Chromium for Playwright, as the sandbox image carries it. Where the
+# distribution needs system libraries for it, Playwright installs them (apt).
+if have apt-get; then
+  as_root .venv/bin/python -m playwright install-deps chromium || true
+fi
+if .venv/bin/python -m playwright install chromium; then
+  echo "agents can drive Chromium"
+else
+  echo "note: Chromium did not install; agents will not be offered a browser (yaaf doctor)"
+fi
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) ;;
   *) echo "note: $HOME/.local/bin is not on your PATH — add it, or run $REPO/.venv/bin/yaaf" ;;

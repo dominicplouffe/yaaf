@@ -267,7 +267,15 @@ def start_chat_container(*, project_id: str, run_id: str, name: str,
     the file sat on disk two directories away. Read-only because a resident
     session writing into the working tree is the race the split was built to
     avoid; the CEO reads the project's output, it does not edit it.
+
+    Host mode holds the same session in a jail that stays up (host_jail).
     """
+    if getattr(settings(), "sandbox_mode", "docker") == "host":
+        from yaaf.runner import host_jail
+
+        return host_jail.start_chat(project_id=project_id, run_id=run_id,
+                                    workspace_dir=workspace_dir, env=env,
+                                    project_dir=project_dir)
     import docker
 
     client = docker.from_env()
@@ -303,6 +311,10 @@ def start_chat_container(*, project_id: str, run_id: str, name: str,
 def chat_container_run_ids(project_id: str) -> set[str]:
     """Run ids of the RUNNING chat containers for a project. More than one, or
     one that doesn't match the live run row, means zombies to clear."""
+    if getattr(settings(), "sandbox_mode", "docker") == "host":
+        from yaaf.runner import host_jail
+
+        return host_jail.chat_run_ids(project_id)
     import docker
 
     client = docker.from_env()
@@ -316,6 +328,10 @@ def stop_chat_container(project_id: str) -> str:
     """Stop and remove the project's chat container(s); returns forensics +
     logs for every container found — the corpse is removed here, so this is
     the only chance to record why it died."""
+    if getattr(settings(), "sandbox_mode", "docker") == "host":
+        from yaaf.runner import host_jail
+
+        return host_jail.stop_chat(project_id)
     import docker
 
     client = docker.from_env()

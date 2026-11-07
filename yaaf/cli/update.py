@@ -172,7 +172,7 @@ def restart(port: int, folder: Path) -> str:
         subprocess.Popen(setup._up_command(port, folder, bind), stdout=log,
                          stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                          start_new_session=True,
-                         env={**os.environ, **setup.service_environment()})
+                         env={**os.environ, **setup.service_environment(folder)})
         how = "restarted"
     else:
         return "not running — it migrates the next time it starts (yaaf setup)"

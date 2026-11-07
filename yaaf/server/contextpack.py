@@ -277,7 +277,12 @@ WORKSPACE_RUN = (
     "pulls, long documents, intermediate results — in files, work on it with "
     "tools, and let only the small end of it (aggregates, samples, conclusions) "
     "into messages, memory, or your own prose. Before fetching anything twice, "
-    "look in the workspace: a file a previous run left there is free. "
+    "look in the workspace: a file a previous run left there is free."
+)
+#: Said only where it is true (host_tools.browser_available): every native
+#: install used to tell its agents the browser was there, and a run spent its
+#: budget discovering that it was not.
+WORKSPACE_BROWSER = (
     "The sandbox also carries Chromium with playwright (python) for services "
     "that have no API — signups, dashboards, checkouts. Screenshot the moments "
     "that matter into the workspace as your evidence trail; save session state "
@@ -286,6 +291,14 @@ WORKSPACE_RUN = (
     "code, or human-only step blocks you, save state and file assist_request — "
     "never try to defeat a security challenge."
 )
+
+
+def _workspace_run() -> str:
+    from yaaf.runner.host_tools import browser_available
+
+    return f"{WORKSPACE_RUN} {WORKSPACE_BROWSER}" if browser_available() else WORKSPACE_RUN
+
+
 WORKSPACE_CHAT = (
     "TWO DIRECTORIES, and the difference matters. /project is the project's real "
     "workspace, READ-ONLY: everything every agent has ever produced is in there, "
@@ -468,7 +481,7 @@ def build_system_prompt(session: Session, agent: Agent, project: Project,
         "messages, memory, evidence, approvals). Each run is stateless: read your context, "
         "do one unit of work, write down anything durable, and exit. Query memory before "
         "repeating work you suspect has been tried. "
-        f"{WORKSPACE_CHAT if lane == 'chat' else WORKSPACE_RUN}\n\n"
+        f"{WORKSPACE_CHAT if lane == 'chat' else _workspace_run()}\n\n"
         f"{UNTRUSTED_NOTE}"
     )
 

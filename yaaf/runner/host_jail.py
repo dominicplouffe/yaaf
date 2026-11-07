@@ -255,6 +255,10 @@ def jail_path(extra: list[str] | None = None) -> str:
             dirs.append(str(p))
         elif (p / "bin").is_dir():
             dirs.append(str(p / "bin"))
+        else:
+            # A tool installed as one binary at the top of its folder — how
+            # mise lays out Claude Code. Bound to be found, so it is on PATH.
+            dirs.append(str(p))
     return ":".join(dict.fromkeys(dirs))
 
 
@@ -287,7 +291,8 @@ def _name_service() -> tuple[list[str], list[str]]:
     return files, names
 
 
-def jail_argv(workspace_dir: str, command: list[str], *, entries: bool = False) -> list[str]:
+def jail_argv(workspace_dir: str, command: list[str], *, entries: bool = False,
+              project_dir: str | None = None) -> list[str]:
     """The bwrap command line for one run. Order matters to bwrap: a later
     mount lands on top of an earlier one, so the private binds come after the
     roots and the tmpfs they would otherwise be hidden under."""
@@ -333,6 +338,14 @@ def jail_argv(workspace_dir: str, command: list[str], *, entries: bool = False) 
     if entries:
         for name, source in ENTRY_FILES.items():
             argv += ["--ro-bind", str(source), f"{ENTRY_DIR}/{name}"]
+    if project_dir:
+        # The resident chat session's view of the project's working tree,
+        # read-only — the container lane mounts it the same way, for the same
+        # reason (sandbox.start_chat_container).
+        argv += ["--ro-bind", project_dir, "/project"]
+    # The user bus systemd-run needed to make the run's scope: the agent has
+    # no use for it, and its socket is not mounted here anyway.
+    argv += ["--unsetenv", "DBUS_SESSION_BUS_ADDRESS", "--unsetenv", "XDG_RUNTIME_DIR"]
     argv += ["--bind", workspace_dir, "/workspace", "--chdir", "/workspace", "--", *command]
     return argv
 
@@ -436,6 +449,69 @@ def _restricted_userns() -> str:
             "sandbox_mode=docker. docs/DEPLOYMENT.md, Host mode, has the profile.")
 
 
+def _scope_env() -> dict[str, str]:
+    """What systemd-run needs to find this user's manager — never more."""
+    return {k: os.environ[k] for k in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS")
+            if os.environ.get(k)}
+
+
+def _scope_properties() -> list[str]:
+    cfg = settings()
+    props = []
+    if cfg.host_run_memory_gb > 0:
+        props += ["-p", f"MemoryMax={int(cfg.host_run_memory_gb * 1024)}M",
+                  "-p", "MemorySwapMax=0"]
+    if cfg.host_run_cpus > 0:
+        props += ["-p", f"CPUQuota={int(cfg.host_run_cpus * 100)}%"]
+    return props
+
+
+@functools.lru_cache(maxsize=8)
+def _scope_works(props: tuple[str, ...]) -> str | None:
+    """Can this machine cap a run? A user systemd with the cpu and memory
+    controllers delegated can; a container, a non-systemd distro or a bare
+    TTY session may not. Asked once, and said by name, not as a dead run."""
+    systemd_run = shutil.which("systemd-run")
+    if systemd_run is None:
+        return "systemd-run is not installed"
+    try:
+        proc = subprocess.run([systemd_run, "--user", "--scope", "--quiet", "--collect",
+                               *props, "--", "true"], capture_output=True, text=True,
+                              timeout=20, env={"PATH": "/usr/bin:/bin", **_scope_env()})
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"systemd-run could not start: {exc!r}"
+    if proc.returncode != 0:
+        return f"systemd-run cannot make a capped scope here: {proc.stderr.strip()[:300]}"
+    return None
+
+
+def limits_problem() -> str | None:
+    """Why runs on this machine go uncapped though caps are set, or None."""
+    props = tuple(_scope_properties())
+    return _scope_works(props) if props else None
+
+
+def limits_prefix() -> list[str]:
+    """The command that puts one run in its own capped scope: Docker's 2 CPUs
+    and 2 GB per run, unless the operator chose other numbers at setup. Where
+    the machine cannot do it the run goes uncapped, with one warning and a line
+    in `yaaf doctor` — refusing every run over a missing cap would be the
+    brake eating the thing it exists to protect."""
+    props = tuple(_scope_properties())
+    if not props:
+        return []
+    problem = _scope_works(props)
+    if problem:
+        _warn_uncapped(problem)
+        return []
+    return ["systemd-run", "--user", "--scope", "--quiet", "--collect", *props, "--"]
+
+
+@functools.lru_cache(maxsize=1)
+def _warn_uncapped(problem: str) -> None:
+    log.warning("host jail: runs are not capped (%s); `yaaf doctor` says how to fix it", problem)
+
+
 def _tail(handle) -> str:
     handle.flush()
     size = os.fstat(handle.fileno()).st_size
@@ -459,16 +535,20 @@ def run(command: list[str], *, workspace_dir: str, env: dict[str, str] | None,
         log.warning("%s", problem.splitlines()[0])
         return 126, problem
     Path(workspace_dir).mkdir(parents=True, exist_ok=True)
-    argv = jail_argv(workspace_dir, command, entries=entries)
+    argv = limits_prefix() + jail_argv(workspace_dir, command, entries=entries)
     deadline = time.monotonic() + timeout_s
     with tempfile.TemporaryFile() as out:
         proc = subprocess.Popen(argv, stdout=out, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, env=jail_env(env),
+                                stdin=subprocess.DEVNULL, env={**jail_env(env), **_scope_env()},
                                 start_new_session=True)
         try:
             while True:
                 try:
-                    return proc.wait(timeout=1), _tail(out)
+                    code = proc.wait(timeout=1)
+                    # Killed by a signal — the memory cap's OOM kill among them —
+                    # in the shell's spelling the container lane reports and
+                    # deaths.py reads: 128 + the signal, not Popen's negative.
+                    return (128 - code if code < 0 else code), _tail(out)
                 except subprocess.TimeoutExpired:
                     if stop_event is not None and stop_event.is_set():
                         _kill(proc)
@@ -507,3 +587,69 @@ def run_check(command: str, workspace_dir: str, timeout_s: int) -> tuple[int, st
                        timeout_s=timeout_s,
                        timeout_note=f"success test timed out after {timeout_s}s")
     return code, output[-8000:]
+
+
+# ── the chat lane ───────────────────────────────────────────────────────────────
+# The resident CEO session, in a jail that stays up instead of a container.
+# Docker finds its chat containers by label after a runner restart; a jail made
+# with --die-with-parent dies with the runner instead, so there is nothing to
+# re-adopt and this table is the whole record: one live session per project.
+# The supervisor reads a missing entry as a lost session and starts a new one,
+# exactly as it does for a container that vanished.
+
+_chats: dict[str, tuple[str, subprocess.Popen, Path, float]] = {}
+
+
+def _chat_log(project_id: str) -> Path:
+    folder = Path(settings().workspaces_root).parent / "chat-logs"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / f"{project_id}.log"
+
+
+def start_chat(*, project_id: str, run_id: str, workspace_dir: str, env: dict[str, str],
+               project_dir: str | None = None) -> str:
+    """Start the resident chat entry, detached; returns the jail's pid. Same
+    jail, caps and entry scripts as a run — the talk lane gets a different
+    entry and no timeout, and nothing else."""
+    problem = unavailable()
+    if problem:
+        raise RuntimeError(problem)
+    stop_chat(project_id)
+    Path(workspace_dir).mkdir(parents=True, exist_ok=True)
+    argv = limits_prefix() + jail_argv(workspace_dir, [sys.executable,
+                                                       f"{ENTRY_DIR}/chat_entry.py"],
+                                       entries=True, project_dir=project_dir)
+    path = _chat_log(project_id)
+    with path.open("wb") as out:
+        proc = subprocess.Popen(argv, stdout=out, stderr=subprocess.STDOUT,
+                                stdin=subprocess.DEVNULL,
+                                env={**jail_env(env), **_scope_env()},
+                                start_new_session=True)
+    _chats[project_id] = (run_id, proc, path, time.time())
+    return str(proc.pid)
+
+
+def chat_run_ids(project_id: str) -> set[str]:
+    """The run id of the project's session when its jail is still running."""
+    entry = _chats.get(project_id)
+    if entry is None or entry[1].poll() is not None:
+        return set()
+    return {entry[0]}
+
+
+def stop_chat(project_id: str) -> str:
+    """Stop the project's session; returns what it died of and its log tail —
+    the only chance to read why, as with a container's corpse."""
+    entry = _chats.pop(project_id, None)
+    if entry is None:
+        return ""
+    run_id, proc, path, started = entry
+    if proc.poll() is None:
+        _kill(proc)
+    try:
+        tail = path.read_bytes()[-LOG_TAIL * 4:].decode(errors="replace")[-LOG_TAIL:]
+    except OSError:
+        tail = ""
+    header = (f"exit={proc.returncode} run={run_id} "
+              f"uptime={time.time() - started:.0f}s jail=bubblewrap")
+    return (header + "\n" + tail).strip()

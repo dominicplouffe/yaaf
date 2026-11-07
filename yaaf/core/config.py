@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     # a harness CLI lives outside /usr and /opt (~/.npm-global, ~/.local/bin).
     # A path that would expose yaaf's data folder or a whole home is refused.
     host_jail_binds: str = ""
+    # Host mode only: what one agent run may use, as Docker gives each run
+    # (2 CPUs, 2 GB). `yaaf setup` asks; 0 means no cap. Enforced with a
+    # systemd user scope around the jail, where the machine has one.
+    host_run_cpus: float = 2.0
+    host_run_memory_gb: float = 2.0
     # A task's success test can be a command string an *agent* wrote. Under
     # sandbox_mode="subprocess" that string runs on the runner host, which
     # mounts the Docker socket — so the platform refuses it unless an operator

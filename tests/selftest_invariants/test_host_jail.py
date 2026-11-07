@@ -43,6 +43,10 @@ class _Settings:
     host_jail_binds: str = ""
     sandbox_mode: str = "host"
     allow_host_success_tests: bool = False
+    # Uncapped here: these attack containment. test_host_parity holds the caps.
+    host_run_cpus: float = 0.0
+    host_run_memory_gb: float = 0.0
+    workspaces_root: str = ""
 
 
 @pytest.fixture()

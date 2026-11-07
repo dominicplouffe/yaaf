@@ -259,19 +259,31 @@ list it in `YAAF_HOST_JAIL_BINDS` (colon-separated, read-only, its `bin/` put on
 folder. A path that would expose your whole home folder or yaaf's data folder
 is refused and logged, not bound.
 
-**What host mode does not do, yet:**
+**What host mode does the same as Docker:**
 
-- **No memory or CPU cap.** Docker gives each run 2 GB and two CPUs; a jail
-  gives it what your machine has.
+- **The boardroom is a live conversation.** The CEO's chat session runs in a
+  jail that stays up, as it runs in a container: replies in seconds, the typing
+  dots, and none of the run allowances. Queued runs answer only while it is down.
+- **Every run is capped.** 2 CPUs and 2 GB per run, as Docker gives a container;
+  `yaaf setup` asks, and 0 means no cap. Enforced with a systemd user scope;
+  where the machine has none, runs go uncapped and `yaaf doctor` says so.
+- **The browser.** The installer adds Playwright and its Chromium, and agents
+  are told about the browser only where it is there.
+- **The tools.** Each command-line tool the image pins (Node, Claude Code,
+  Codex, opencode, Gemini, git, curl, jq, gawk) has the image's version as its
+  floor here. `yaaf doctor` — and so the end of `yaaf setup` — names one that is
+  missing or older, looked up where agents look, and setup binds a CLI a
+  version manager (mise, asdf) installed in your home folder.
+
+**What host mode does differently, on purpose:**
+
+- **It is far less contained.** An agent runs on your machine, inside a
+  bubblewrap jail that hides your home folder and yaaf's keys, but reads the
+  system's software and settings (/usr, /etc, /opt). The installer says this
+  first and asks before it installs anything.
 - **The network is your machine's.** Docker's sandbox network is open too, but a
   bridge cannot reach your `localhost` and a jail can — a local database, a dev
-  server, an Ollama. See [SECURITY.md](../SECURITY.md).
-- **No resident boardroom session.** The CEO answers the boardroom through
-  queued runs, as in subprocess mode: a few minutes rather than seconds, and
-  still outside the daily and hourly run allowance.
-- **No browser lane by default.** Chromium is in the image, not on your machine.
-  Set `PLAYWRIGHT_BROWSERS_PATH` to a Playwright browser install and the jail
-  mounts it.
+  server, an Ollama. Neither restricts it. See [SECURITY.md](../SECURITY.md).
 - **A sleeping laptop runs nothing.** A run in flight when the lid closes can
   miss its lease heartbeat and be reaped as a dead run when the machine wakes.
 - **Updating is `yaaf update`.** It refuses a checkout with edits of its own or

@@ -148,10 +148,12 @@ def chat_supervisor_loop() -> None:  # pragma: no cover - thin loop
     # stands down with one line instead of throwing a Docker traceback every
     # tick — which is what a first-time reader of the dev-mode quickstart saw,
     # and reasonably read as "this is broken" while everything else worked.
-    # Host mode has no resident container either: its runs are jails that end
-    # with the run, so it takes the same queued-run path as subprocess mode.
+    # Host mode holds the session in a jail that stays up for as long as the
+    # session does (host_jail.start_chat), so it gets the lane too — replies in
+    # seconds, the typing dots, none of the run caps — and the queued run is
+    # its fallback, as it is for a container that died.
     mode = getattr(settings(), "sandbox_mode", "docker")
-    if mode != "docker":
+    if mode not in ("docker", "host"):
         log.info("chat supervisor idle: sandbox_mode=%s has no container lane, so "
                  "the boardroom answers through ordinary queued runs", mode)
         return
