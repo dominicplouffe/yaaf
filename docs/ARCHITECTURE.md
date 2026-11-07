@@ -53,7 +53,7 @@ One Python process (FastAPI + Uvicorn). It serves:
 | `/agent` | Agents, from inside their sandbox |
 | `/mcp` | Claude and other MCP clients |
 | `/webhooks` | Signed events from outside (GitHub, your systems) |
-| `/healthz` | Liveness check |
+| `/healthz`, `/readyz` | Liveness, and readiness (database and schema) |
 
 It also runs background threads:
 

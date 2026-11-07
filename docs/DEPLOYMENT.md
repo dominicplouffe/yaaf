@@ -178,7 +178,9 @@ Stops everything and keeps all data. Run the deploy script to bring it back.
 
 ## Health
 
-- `GET /healthz`: the process is alive. It does not prove the database works.
+- `GET /healthz`: the process is alive.
+- `GET /readyz`: the database is reachable and the schema exists. Returns 503
+  if not. Point your monitoring here.
 - `yaaf doctor`: checks the whole install and says what to fix.
 - `yaaf smoke <credential>`: one real, tiny call per model key, to prove the
   key and network path work.

@@ -57,6 +57,11 @@ RUN pip install --no-cache-dir --no-deps --no-build-isolation .
 
 COPY --from=webbuild /web/dist /app/web/dist
 ENV YAAF_WEB_DIST=/app/web/dist
+# Outside a container yaaf listens on 127.0.0.1 by default. Inside one that
+# would make it unreachable even from the sandboxes on the same network, so the
+# image listens on every interface of the container; who can reach it from
+# outside is decided where the port is published (127.0.0.1 in compose).
+ENV YAAF_API_HOST=0.0.0.0
 
 # Apply migrations, then run whatever command compose gives us.
 COPY deploy/entrypoint.sh /entrypoint.sh

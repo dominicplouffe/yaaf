@@ -205,6 +205,25 @@ def create_app() -> FastAPI:
     def healthz() -> dict:
         return {"ok": True}
 
+    @app.get("/readyz")
+    def readyz() -> JSONResponse:
+        """Can this server do real work? /healthz says only that the process
+        is alive, which a box whose migrations never ran also is. This reads
+        one row from a table every install has, so a missing schema or an
+        unreachable database answers 503 instead of 200. The reason stays in
+        the log: this route needs no sign-in, so it names no host or table."""
+        from sqlalchemy import select
+
+        from yaaf.core.models import Project
+
+        try:
+            with db_session() as session:
+                session.execute(select(Project.id).limit(1)).all()
+        except Exception:
+            log.exception("readiness check failed")
+            return JSONResponse({"ok": False, "database": "unavailable"}, status_code=503)
+        return JSONResponse({"ok": True, "database": "ok"})
+
     dist = _web_dist()
     if dist is not None:
         # Registered before the mount so it wins. The mount's own trailing-

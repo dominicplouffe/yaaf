@@ -47,7 +47,11 @@ class Settings(BaseSettings):
     # inspector, which is how you debug a connector that will not connect.
     mcp_redirect_hosts: str = "claude.ai,claude.com,localhost,127.0.0.1"
 
-    api_host: str = "0.0.0.0"
+    # This machine only, unless told otherwise. The server speaks plain HTTP, so
+    # listening on a network is a choice to make with TLS in front, never a
+    # default. `yaaf up --bind` and `yaaf setup --bind` set it; the container
+    # image sets 0.0.0.0, because there the published port is the boundary.
+    api_host: str = "127.0.0.1"
     api_port: int = DEFAULT_PORT
 
     # Runner

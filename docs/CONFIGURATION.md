@@ -42,7 +42,7 @@ start `yaaf-server` and `yaaf-runner` from.
 |---|---|---|
 | `YAAF_DATABASE_URL` | `postgresql+psycopg://yaaf:yaaf@localhost:5432/yaaf` | Where all state lives. Postgres for servers. SQLite works too: `sqlite:////path/to/yaaf.db` |
 | `YAAF_MASTER_KEY` | *(none)* | Encrypts every stored secret. **Required. Never change it. Back it up.** See [below](#the-master-key). |
-| `YAAF_API_HOST` | `0.0.0.0` | Address the server listens on |
+| `YAAF_API_HOST` | `127.0.0.1` | Address the server listens on. The Docker image sets `0.0.0.0` inside the container; the published port decides who can reach it. |
 | `YAAF_API_PORT` | `24247` | Port the server listens on |
 | `YAAF_API_BASE_URL` | `http://localhost:24247` | How the runner and sandboxes reach the server. Change it if you change the port. |
 | `YAAF_PUBLIC_BASE_URL` | *(none)* | The https address people use, like `https://yaaf.example.com`. Needed for claude.ai, OAuth data sources, and secure cookies. |
