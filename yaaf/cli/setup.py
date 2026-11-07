@@ -664,6 +664,36 @@ def _founder(base: str, key: dict | None) -> None:
             _note(f"the Founder is not set: {done.text[:200]}")
 
 
+def graphical() -> bool:
+    return bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"))
+
+
+def _desktop(wanted: bool | None) -> None:
+    """Offered, not assumed: it adds entries to a menu the person arranges and
+    a notification they did not ask for, so it is a question — asked only in a
+    graphical session, where there is a desktop to add it to."""
+    from yaaf.cli import desktop as desktop_cmd
+
+    if wanted is None:
+        if not (graphical() and sys.stdin.isatty()):
+            typer.echo("\n     Add yaaf to a desktop any time: yaaf desktop install")
+            return
+        wanted = typer.confirm("\n     Add yaaf to this desktop — app menu, a nudge when a "
+                               "decision is about to decide itself, the morning letter at "
+                               "login?", default=True)
+    if not wanted:
+        return
+    written, kept = desktop_cmd.install_files()
+    desktop_cmd._refresh_menus()
+    timer = desktop_cmd._systemctl("daemon-reload") and desktop_cmd._systemctl(
+        "enable", "--now", f"{desktop_cmd.NUDGE_UNIT}.timer")
+    _ok("in your app menu: yaaf, yaaf desk, yaaf morning letter")
+    _ok("a nudge at most once a day" if timer
+        else "nudge timer written (no systemd user session to run it here)")
+    for path in kept:
+        _note(f"left {path} alone: it is not the file yaaf wrote")
+
+
 def _problems(base: str) -> list[dict]:
     with _client(base) as client:
         report = client.get("/admin/settings/doctor")
@@ -687,6 +717,9 @@ def setup(
                                   "it to every network; run setup again to change it."),
     service: bool = typer.Option(True, "--service/--no-service",
                                  help="Keep yaaf running as a systemd user service"),
+    desktop: bool | None = typer.Option(None, "--desktop/--no-desktop",
+                                        help="Add yaaf to this desktop (app menu, nudges, "
+                                             "the morning letter). Asked when not given."),
 ) -> None:
     """Set yaaf up on this machine, step by step: checks, your account, a
     background service, a key, the Founder. Safe to run again."""
@@ -717,6 +750,7 @@ def setup(
     key = _key(base)
     _step(5, "The Founder, who drafts projects with you")
     _founder(base, key)
+    _desktop(desktop)
 
     problems = _problems(base)
     typer.echo("")

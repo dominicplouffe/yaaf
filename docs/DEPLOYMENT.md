@@ -137,6 +137,14 @@ over to **`yaaf setup`**, which asks for three things:
 It ends with anything `yaaf doctor` would still call a problem, and the
 address. Run it again any time: every step skips what is done.
 
+In a graphical session it then asks whether to **add yaaf to the desktop**
+(`yaaf desktop install`, or `--desktop`/`--no-desktop` to answer up front): the
+dashboard, the desk and the morning letter in your app menu, the letter at
+login when something happened, and a nudge — at most once a day — when a
+decision is about to decide itself. All of it through freedesktop standards,
+so it is the same on Ubuntu's GNOME, KDE, Omarchy's Hyprland or Sway, and all
+of it in your own folders; `yaaf desktop remove` takes it out again.
+
 **Who can reach it.** A desktop install listens on `127.0.0.1`: this machine
 only, which is also all your agents need, since the jail shares this machine's
 network. To open it to a network, say so once — `yaaf setup --bind 0.0.0.0`
