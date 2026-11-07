@@ -361,3 +361,50 @@ dump_database() {
   rm -f "$out"
   return 1
 }
+
+# ── images ────────────────────────────────────────────────────────────────────
+# Two images: the app (api and runner) and the sandbox each agent run executes
+# inside. CI publishes both for every commit on main, tagged sha-<commit>
+# (.github/workflows/images.yml). This pulls the pair built from EXACTLY the
+# commit checked out here, so the code that runs is the code you have; when
+# there is no such pair (local edits, a branch, a commit CI has not finished,
+# or --build) it builds both from source, as it always did.
+YAAF_IMAGE_REGISTRY="${YAAF_IMAGE_REGISTRY:-ghcr.io/dominicplouffe}"
+
+# The checkout's commit, if the tracked files are exactly that commit.
+checkout_commit() {
+  [ -d "$REPO/.git" ] || return 1
+  [ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ] || return 1
+  git -C "$REPO" rev-parse HEAD
+}
+
+# Leaves the app image tagged yaaf-<stack>:local and the sandbox image tagged
+# $YAAF_SANDBOX_IMAGE, ready for `compose up --no-build`. $1 = "build" forces a
+# build from source.
+prepare_images() {
+  load_stack_env
+  local app="yaaf-${YAAF_STACK}:local"
+  local sandbox="${YAAF_SANDBOX_IMAGE:-yaaf-sandbox:latest}"
+  local commit published_app published_sandbox
+  if [ "${1:-}" != "build" ] && commit="$(checkout_commit)"; then
+    published_app="${YAAF_IMAGE_REGISTRY}/yaaf:sha-${commit}"
+    published_sandbox="${YAAF_IMAGE_REGISTRY}/yaaf-sandbox:sha-${commit}"
+    if $DOCKER pull -q "$published_app" >/dev/null 2>&1 \
+       && $DOCKER pull -q "$published_sandbox" >/dev/null 2>&1; then
+      $DOCKER tag "$published_app" "$app"
+      $DOCKER tag "$published_sandbox" "$sandbox"
+      ok "pulled the published images for ${commit:0:12}"
+      return 0
+    fi
+    warn "no published images for ${commit:0:12} yet — building from source (slower)"
+  elif [ "${1:-}" = "build" ]; then
+    ok "building from source (--build)"
+  else
+    warn "the checkout has local changes — building from source so they are included"
+  fi
+  $DOCKER build -f deploy/sandbox/Dockerfile -t "$sandbox" . >/dev/null \
+    || die "sandbox image build failed"
+  ok "$sandbox built"
+  compose build api runner >/dev/null || die "app image build failed"
+  ok "$app built"
+}

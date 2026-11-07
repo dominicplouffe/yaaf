@@ -7,7 +7,7 @@ Three ways to run yaaf. Pick the one that fits.
 | **For** | A server, or any machine you want to run it on for real | Your own Linux desktop or laptop | Working on yaaf itself |
 | **Agents run in** | A fresh container per run | A bubblewrap jail per run | A plain process (no isolation) |
 | **Database** | Postgres | SQLite | SQLite |
-| **Time** | ~10 minutes (image builds) | ~5 minutes | ~5 minutes |
+| **Time** | A few minutes (about 10 if it builds the images) | ~5 minutes | ~5 minutes |
 
 All three need a model key to do real work: from Anthropic, OpenAI, Google,
 or any provider yaaf supports. A local Ollama needs no key.
@@ -26,7 +26,7 @@ python3 -m venv .venv && .venv/bin/pip install -e .     # Python 3.12+
 ## Option 1: Docker
 
 **You need:** Linux with Docker and the compose plugin, `git`, `openssl` and
-`curl`. No Python or Node; the images build everything.
+`curl`. No Python or Node; the images carry everything.
 
 **1. Install Docker** (skip if you have it):
 
@@ -44,7 +44,7 @@ git clone https://github.com/dominicplouffe/yaaf && cd yaaf
 deploy/deploy_single_server.sh --admin-email you@example.com
 ```
 
-The script creates the secrets, builds both images, starts Postgres, the
+The script creates the secrets, gets both images, starts Postgres, the
 server and the runner, applies the schema, loads the role library, and makes
 you the admin. It ends by printing a one-time link to set your password.
 
@@ -70,6 +70,7 @@ Open the setup link, choose a password, and you are in.
 | `--port 9090` | Use another port |
 | `--bind ADDRESS` | Listen on another address. Repeatable. `0.0.0.0` exposes it to every network, so put TLS in front first. |
 | `--skip-roles` | Don't load the role library |
+| `--build` | Build the images from source instead of pulling them |
 
 To run it on a public server, read [DEPLOYMENT.md](DEPLOYMENT.md).
 

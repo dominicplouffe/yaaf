@@ -58,3 +58,27 @@ def test_saved_copies_of_deploy_env_are_never_committed():
     (deploy/.env.<date>.bak and the like). Each copy holds a master key."""
     ignore = (COMPOSE.parents[1] / ".gitignore").read_text().splitlines()
     assert "deploy/.env.*" in ignore and "!deploy/.env.example" in ignore
+
+
+# ── published images ────────────────────────────────────────────────────────
+
+
+def test_the_scripts_pull_what_ci_publishes():
+    """The deploy scripts pull <registry>/<name>:sha-<commit> and fall back to a
+    build when it is missing. A rename on either side would not fail anything:
+    every install would just build from source again, slowly, forever."""
+    root = COMPOSE.parents[1]
+    workflow = yaml.safe_load((root / ".github" / "workflows" / "images.yml").read_text())
+    published = {i["name"] for i in workflow["jobs"]["build"]["strategy"]["matrix"]["image"]}
+    assert published == {"yaaf", "yaaf-sandbox"}
+    joined = "\n".join(workflow["jobs"]["publish"]["steps"][-1]["run"].splitlines())
+    assert '-t "$IMAGE:sha-${GITHUB_SHA}"' in joined
+
+    common = (COMPOSE.parent / "_common.sh").read_text()
+    assert '"${YAAF_IMAGE_REGISTRY}/yaaf:sha-${commit}"' in common
+    assert '"${YAAF_IMAGE_REGISTRY}/yaaf-sandbox:sha-${commit}"' in common
+
+
+def test_both_app_services_run_one_image_named_per_stack(services):
+    assert services["api"]["image"] == services["runner"]["image"] == \
+        "yaaf-${YAAF_STACK:-deploy}:local"

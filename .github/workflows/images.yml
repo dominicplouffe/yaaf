@@ -1,0 +1,90 @@
+name: Images
+
+# Publishes the two images a Docker install runs, so a server pulls them
+# instead of spending ten minutes building:
+#
+#   ghcr.io/<owner>/yaaf           the control plane (api and runner)
+#   ghcr.io/<owner>/yaaf-sandbox   what each agent run executes inside
+#
+# Every push to main is tagged sha-<full commit>, which is what the deploy and
+# update scripts pull: the image built from exactly the commit they have
+# checked out, or nothing (they then build from source). main also gets
+# :main. A tag v* also gets :<tag> and :latest.
+#
+# Each architecture builds on its own native runner (amd64, and arm64 for
+# Apple Silicon and ARM servers) rather than under emulation, then one
+# manifest joins them. Plain docker commands, no marketplace actions: this job
+# holds write access to the registry, so it keeps no supply chain of its own.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        image:
+          - { name: yaaf, dockerfile: deploy/Dockerfile }
+          - { name: yaaf-sandbox, dockerfile: deploy/sandbox/Dockerfile }
+        platform:
+          - { arch: amd64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push ${{ matrix.image.name }} (${{ matrix.platform.arch }})
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ matrix.image.name }}
+        run: |
+          set -euo pipefail
+          IMAGE="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+          tag="$IMAGE:sha-${GITHUB_SHA}-${{ matrix.platform.arch }}"
+          docker build -f "${{ matrix.image.dockerfile }}" -t "$tag" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.licenses=Apache-2.0" \
+            .
+          docker push "$tag"
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        name: [yaaf, yaaf-sandbox]
+    steps:
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Join the architectures under every tag
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          IMAGE="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+          tags=(-t "$IMAGE:sha-${GITHUB_SHA}")
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            tags+=(-t "$IMAGE:main")
+          fi
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            tags+=(-t "$IMAGE:${GITHUB_REF_NAME}" -t "$IMAGE:latest")
+          fi
+          docker buildx imagetools create "${tags[@]}" \
+            "$IMAGE:sha-${GITHUB_SHA}-amd64" "$IMAGE:sha-${GITHUB_SHA}-arm64"
+          echo "published: ${tags[*]}"

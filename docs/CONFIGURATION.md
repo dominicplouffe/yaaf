@@ -169,6 +169,8 @@ second stack's `deploy/.env`. Leave them unset for a normal install.
 |---|---|
 | `YAAF_ADMIN_EMAIL` | In `deploy/.env`: the account to make admin on a fresh install. Same as `--admin-email`. |
 | `YAAF_ACCEPT_NATIVE` | Set to `1` to skip the native installer's "are you sure" question |
+| `YAAF_IMAGE_REGISTRY` | Where to pull published images from. Default `ghcr.io/dominicplouffe`. Set it for a fork that publishes its own. |
+| `MINIO_ROOT_PASSWORD` | Written by the deploy script for the optional MinIO store. See [S3](#artifact-storage-s3). |
 
 ## Command line (`yaaf`)
 

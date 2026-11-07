@@ -47,6 +47,10 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    # One image for both, named per stack. The deploy and update scripts either
+    # pull the published image for this exact commit and tag it with this name,
+    # or build it here from source (deploy/_common.sh, prepare_images).
+    image: yaaf-${YAAF_STACK:-deploy}:local
     command: yaaf-server
     # Every variable in deploy/.env reaches the app. The `environment:` list
     # below only pins values that must not come from the file (the database
@@ -116,6 +120,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    image: yaaf-${YAAF_STACK:-deploy}:local
     command: yaaf-runner
     # Every variable in deploy/.env reaches the app. The `environment:` list
     # below only pins values that must not come from the file (the database

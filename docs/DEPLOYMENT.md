@@ -33,12 +33,34 @@ concurrency cap is a setting).
 2. **Creates folders** at `/var/lib/yaaf/workspaces` and `/var/lib/yaaf/artifacts`.
 3. **Creates `deploy/.env`** with a new `YAAF_MASTER_KEY`. Never overwrites it.
 4. **Binds the port** to `127.0.0.1:24247` (in `deploy/docker-compose.override.yml`).
-5. **Builds two images:** the app image (`deploy/Dockerfile`) and the sandbox
-   image (`deploy/sandbox/Dockerfile`).
+5. **Gets two images:** the app (`deploy/Dockerfile`) and the sandbox
+   (`deploy/sandbox/Dockerfile`). See [Images](#images).
 6. **Starts** the stack. Migrations run when the containers start.
 7. **Checks** the schema reached the latest migration.
 8. **Creates the first admin** if there is none, and prints a setup link.
 9. **Loads** the role library and ready-made teams. Adds only what is missing.
+
+## Images
+
+CI publishes both images for every commit on `main`, for Intel and ARM
+(Apple Silicon included):
+
+| Image | What it is |
+|---|---|
+| `ghcr.io/dominicplouffe/yaaf` | The app: api and runner |
+| `ghcr.io/dominicplouffe/yaaf-sandbox` | What each agent run executes inside |
+
+Each is tagged `sha-<commit>`. The deploy and update scripts pull the pair
+built from **exactly** the commit you have checked out, so the code that runs
+is the code you have. They build from source instead when:
+
+- the checkout has local changes,
+- the commit was never published (a branch, or CI hasn't finished), or
+- you pass `--build`.
+
+Releases also get `:<version>` and `:latest`, and `main` gets `:main`. To use
+your own registry (for a fork), set `YAAF_IMAGE_REGISTRY`, for example
+`ghcr.io/you`.
 
 ## Reaching the dashboard
 
@@ -116,13 +138,14 @@ deploy/update_single_server.sh
 ```
 
 It refuses to run on a checkout with local edits, then: pulls, dumps the
-database to `backups/`, rebuilds both images, restarts, and checks the
+database to `backups/`, gets both images for the new code, restarts, and checks the
 migrations applied. Migrations need no extra step. That dump is for undoing a
 bad migration; for real backups, see [Backups](#backups).
 
 | Flag | Effect |
 |---|---|
-| `--no-pull` | Rebuild what is checked out |
+| `--no-pull` | Don't `git pull`; update to what is checked out |
+| `--build` | Build the images from source instead of pulling them |
 | `--no-backup` | Skip the backup (not recommended) |
 | `--keep-chat` | Leave running CEO chat sessions on the old code |
 
@@ -218,7 +241,7 @@ runners on several machines can share one database safely. Each runner needs:
 
 - the same `YAAF_DATABASE_URL` and `YAAF_MASTER_KEY`
 - its own `YAAF_WORKER_NAME`
-- Docker, with the sandbox image built
+- Docker, with the sandbox image (pulled or built)
 
 ## Two stacks on one server
 

@@ -15,13 +15,14 @@
 #   deploy/update_single_server.sh --no-backup    # skip the pg_dump (not advised)
 #   deploy/update_single_server.sh --keep-chat    # leave resident chat sessions running
 #   deploy/update_single_server.sh --skip-roles   # do not load roles new to the checkout
+#   deploy/update_single_server.sh --build        # build images from source, never pull
 #   deploy/update_single_server.sh --admin-email you@example.com
 #                                            # the first update after people
 #                                            # arrived: make this account the admin
 #
 set -euo pipefail
 
-PULL="yes"; BACKUP="yes"; RESTART_CHAT="yes"; SKIP_ROLES="no"; ADMIN_EMAIL=""
+PULL="yes"; BACKUP="yes"; RESTART_CHAT="yes"; SKIP_ROLES="no"; ADMIN_EMAIL=""; BUILD_MODE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -29,8 +30,9 @@ while [ $# -gt 0 ]; do
     --no-backup) BACKUP="no"; shift ;;
     --keep-chat) RESTART_CHAT="no"; shift ;;
     --skip-roles) SKIP_ROLES="yes"; shift ;;
+    --build)     BUILD_MODE="build"; shift ;;
     --admin-email) ADMIN_EMAIL="${2:?--admin-email needs an address}"; shift 2 ;;
-    -h|--help)   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)   sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -92,14 +94,12 @@ fi
 # ── 3. images ─────────────────────────────────────────────────────────────────
 # Two images, and compose only knows about one. The sandbox image is what agent
 # runs execute inside; skipping it leaves runs on stale code after an update.
-say "Rebuilding images"
-$DOCKER build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest . >/dev/null \
-  || die "sandbox image build failed"
-ok "yaaf-sandbox:latest rebuilt"
+say "Images"
+prepare_images "$BUILD_MODE"
 migrate_sandbox_network
 # --remove-orphans: the proxy service was removed with the egress allowlist;
 # an orphaned squid container would sit there advertising containment nothing uses.
-compose up -d --build --remove-orphans || die "compose up failed"
+compose up -d --no-build --remove-orphans || die "compose up failed"
 ok "control plane restarted on the new code"
 
 # ── 4. migrations ─────────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@
 #   deploy/deploy_single_server.sh --bind 127.0.0.1 --bind 192.168.0.5   # both
 #   deploy/deploy_single_server.sh --port 9090
 #   deploy/deploy_single_server.sh --skip-roles
+#   deploy/deploy_single_server.sh --build        # build images from source, never pull
 #
 set -euo pipefail
 
@@ -23,14 +24,16 @@ BINDS=()
 PORT=""
 SKIP_ROLES="no"
 ADMIN_EMAIL=""
+BUILD_MODE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --bind)  BINDS+=("${2:?--bind needs an address}"); shift 2 ;;
     --port)  PORT="${2:?--port needs a port}"; shift 2 ;;
     --skip-roles) SKIP_ROLES="yes"; shift ;;
+    --build) BUILD_MODE="build"; shift ;;
     --admin-email) ADMIN_EMAIL="${2:?--admin-email needs an address}"; shift 2 ;;
-    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -161,18 +164,16 @@ if [ "$exposed" = "yes" ]; then
 fi
 
 # ── 5. images ─────────────────────────────────────────────────────────────────
-# Two images, and compose only knows about one of them. The sandbox image is
-# what agent runs execute inside; forgetting it leaves runs starting against a
-# missing or stale image.
-say "Building images (this is the slow part)"
-$DOCKER build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest . \
-  || die "sandbox image build failed"
-ok "yaaf-sandbox:latest built"
+# Pulled when CI published this exact commit, built from source otherwise
+# (prepare_images in _common.sh). Both images, every time: the sandbox image is
+# what agent runs execute inside, and a stale one runs old code.
+say "Images"
+prepare_images "$BUILD_MODE"
 
 migrate_sandbox_network
 # --remove-orphans: the proxy service was removed with the egress allowlist;
 # an orphaned squid container would sit there advertising containment nothing uses.
-compose up -d --build --remove-orphans || die "compose up failed"
+compose up -d --no-build --remove-orphans || die "compose up failed"
 ok "control plane up"
 
 # ── 6. wait for the API ───────────────────────────────────────────────────────
