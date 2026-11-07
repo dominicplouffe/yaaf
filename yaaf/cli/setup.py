@@ -683,15 +683,8 @@ def _desktop(wanted: bool | None) -> None:
                                "login?", default=True)
     if not wanted:
         return
-    written, kept = desktop_cmd.install_files()
-    desktop_cmd._refresh_menus()
-    timer = desktop_cmd._systemctl("daemon-reload") and desktop_cmd._systemctl(
-        "enable", "--now", f"{desktop_cmd.NUDGE_UNIT}.timer")
-    _ok("in your app menu: yaaf, yaaf desk, yaaf morning letter")
-    _ok("a nudge at most once a day" if timer
-        else "nudge timer written (no systemd user session to run it here)")
-    for path in kept:
-        _note(f"left {path} alone: it is not the file yaaf wrote")
+    for line in desktop_cmd.apply():
+        (_ok if line.startswith("✓") else _note)(line[2:])
 
 
 def _problems(base: str) -> list[dict]:

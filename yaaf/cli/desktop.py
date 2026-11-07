@@ -107,6 +107,10 @@ def terminal_command(argv: list[str]) -> list[str] | None:
     custom = os.environ.get("YAAF_TERMINAL", "").strip()
     if custom:
         return [*shlex.split(custom), *argv]
+    if shutil.which("omarchy-launch-tui"):
+        # Omarchy's own TUI launcher; TUI.float is the app id its window rules
+        # float, so the desk opens over your work instead of tiling into it.
+        return ["omarchy-launch-tui", "--app-id=TUI.float", *argv]
     if shutil.which("xdg-terminal-exec"):
         return ["xdg-terminal-exec", *argv]
     named = os.environ.get("TERMINAL", "").strip()
@@ -316,6 +320,13 @@ def notify_command(nudge: Nudge) -> list[str] | None:
     is installed (with an "Open the desk" button where it can wait for one),
     and straight over D-Bus where only gdbus is. Normal urgency, always: Do
     Not Disturb is the person's, and a nudge is not an emergency."""
+    if shutil.which("omarchy-notification-send"):
+        # Omarchy's own sender keeps the button across shell restarts with no
+        # process waiting on it. Named yaaf: its default name, omarchy-action,
+        # is one Do Not Disturb lets through, and a nudge must not be.
+        return ["omarchy-notification-send", "--app-name", "yaaf", "-u", "normal",
+                nudge.title, nudge.body,
+                "--action", "Open the desk", _yaaf_bin(), "desktop", "launch", "desk"]
     if shutil.which("notify-send"):
         base = ["notify-send", "--app-name=yaaf", "--icon=yaaf", "--urgency=normal",
                 nudge.title, nudge.body]
@@ -458,6 +469,10 @@ def planned_files() -> dict[Path, str]:
     if icon.exists():
         files[data_home() / "icons" / "hicolor" / "scalable" / "apps" / "yaaf.svg"] = \
             icon.read_text()
+    from yaaf.cli import omarchy
+
+    if omarchy.present():
+        files.update(omarchy.plugin_files(_yaaf_bin()))
     return files
 
 
@@ -518,39 +533,63 @@ def install_files(dry_run: bool = False) -> tuple[list[Path], list[Path]]:
     return written, kept
 
 
-@desktop_app.command("install")
-def install(dry_run: bool = typer.Option(False, "--dry-run", help="list what it would write")
-            ) -> None:
-    """Add yaaf to this desktop: app-menu entries (dashboard, desk, morning
-    letter), a nudge when something is about to decide itself, and the morning
-    letter at login. Only your own folders; `yaaf desktop remove` undoes it."""
-    written, kept = install_files(dry_run)
-    verb = "would write" if dry_run else "wrote"
-    for path in written:
-        typer.echo(f"  {verb} {path}")
-    for path in kept:
-        typer.echo(f"  ! left {path} alone: it is not the file install wrote")
-    if dry_run:
-        return
+def apply(key: str | None = None) -> list[str]:
+    """Install everything for this desktop and say what happened, one line a
+    piece (✓ done, ! not done and why) — for `install` and for `yaaf setup`."""
+    from yaaf.cli import omarchy
+
+    written, kept = install_files()
     _refresh_menus()
     timer = _systemctl("daemon-reload") and _systemctl("enable", "--now", f"{NUDGE_UNIT}.timer")
     terminal = terminal_command(["yaaf", "desk"])
-    typer.echo("")
-    typer.echo("✓ app menu: “yaaf”, “yaaf desk”, “yaaf morning letter”")
-    typer.echo("✓ morning letter at login, when something happened"
-               if terminal else "! no terminal found for the desk and the letter — set "
-               "YAAF_TERMINAL (e.g. YAAF_TERMINAL=foot) and run this again")
-    typer.echo("✓ a nudge at most once a day, when something is about to decide itself"
-               if timer else "! the nudge timer is written but not running (no systemd user "
-               "session here) — `yaaf nudge` from any scheduler does the same")
+    said = ["✓ app menu: “yaaf”, “yaaf desk”, “yaaf morning letter”",
+            "✓ morning letter at login, when something happened" if terminal
+            else "! no terminal found for the desk and the letter — set YAAF_TERMINAL "
+                 "(e.g. YAAF_TERMINAL=foot) and run this again",
+            "✓ a nudge at most once a day, when something is about to decide itself"
+            if timer else "! the nudge timer is written but not running (no systemd user "
+                          "session here) — `yaaf nudge` from any scheduler does the same"]
+    said += [f"! left {path} alone: it is not the file install wrote" for path in kept]
+    if omarchy.present():
+        said += omarchy.install(_yaaf_bin(), key or omarchy.KEY)
+        manifest = _manifest()
+        manifest["omarchy"] = True
+        _write_state("desktop.json", manifest)
+    return said
+
+
+@desktop_app.command("install")
+def install(
+    dry_run: bool = typer.Option(False, "--dry-run", help="list what it would write"),
+    key: str = typer.Option("", "--key", help="Omarchy: the key that opens the desk "
+                                              "(default SUPER + Y)"),
+) -> None:
+    """Add yaaf to this desktop: app-menu entries (dashboard, desk, morning
+    letter), a nudge when something is about to decide itself, the morning
+    letter at login — and on Omarchy, the bar, its menu and Super+Y. Only your
+    own folders; `yaaf desktop remove` undoes it."""
+    if dry_run:
+        written, kept = install_files(dry_run=True)
+        for path in written:
+            typer.echo(f"  would write {path}")
+        for path in kept:
+            typer.echo(f"  ! would leave {path} alone: it is not the file install wrote")
+        return
+    for line in apply(key or None):
+        typer.echo(line)
 
 
 @desktop_app.command("remove")
 def remove() -> None:
     """Take out what `yaaf desktop install` put in — and only that. A file you
     edited since is left in place and named."""
+    from yaaf.cli import omarchy
+
     manifest = _manifest()
     _systemctl("disable", "--now", f"{NUDGE_UNIT}.timer")
+    if manifest.get("omarchy"):
+        for line in omarchy.remove():
+            typer.echo(f"  {line}")
     for name in manifest.get("files", {}):
         path = Path(name)
         if not path.exists():
@@ -562,6 +601,8 @@ def remove() -> None:
             typer.echo(f"  ! left {path}: it changed since install wrote it")
     _systemctl("daemon-reload")
     (state_home() / "desktop.json").unlink(missing_ok=True)
+    if manifest.get("omarchy"):
+        omarchy.rescan()
     _refresh_menus()
 
 
@@ -583,3 +624,10 @@ def status() -> None:
     terminal = terminal_command(["yaaf", "desk"])
     typer.echo(f"  terminal     {terminal[0] if terminal else 'none found (set YAAF_TERMINAL)'}")
     typer.echo(f"  dashboard    {' '.join(browser_command(_api_base() + '/app/')[:1])}")
+    if manifest.get("omarchy"):
+        from yaaf.cli import omarchy
+
+        menu = omarchy.menu_file()
+        has_menu = menu.exists() and omarchy.BEGIN in menu.read_text()
+        typer.echo(f"  omarchy menu {'in place' if has_menu else 'missing'}")
+        typer.echo(f"  omarchy key  {'in place' if omarchy.binding_file().exists() else 'not bound'}")

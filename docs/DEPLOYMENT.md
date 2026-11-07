@@ -145,6 +145,19 @@ decision is about to decide itself. All of it through freedesktop standards,
 so it is the same on Ubuntu's GNOME, KDE, Omarchy's Hyprland or Sway, and all
 of it in your own folders; `yaaf desktop remove` takes it out again.
 
+**On Omarchy** it also puts the number in the bar (a shell plugin beside the
+clock, hidden while nothing needs you, highlighted when something is about to
+decide itself), a `yaaf` submenu in the Omarchy menu, and `Super+Y` for the
+desk in a floating window. Each goes in through the route Omarchy documents
+for a third party — `omarchy plugin enable`, the menu's extension file, a
+`require` in your `bindings.lua` — and nothing is written into Omarchy's own
+folders, so an Omarchy update leaves it alone. The desk follows your Omarchy
+theme on its own, since it draws in the terminal's colors; the dashboard does
+not follow it yet. Omarchy's own tests are the check: the bar plugin passes
+Omarchy's plugin validator and the edited menu parses with Omarchy's menu code
+(`tests/fixtures/omarchy`), and `yaaf desktop remove` puts the menu and
+bindings files back byte for byte.
+
 **Who can reach it.** A desktop install listens on `127.0.0.1`: this machine
 only, which is also all your agents need, since the jail shares this machine's
 network. To open it to a network, say so once — `yaaf setup --bind 0.0.0.0`
