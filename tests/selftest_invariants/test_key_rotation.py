@@ -124,7 +124,9 @@ def test_the_cli_replaces_a_native_key_file_and_keeps_the_old_one(stored, tmp_pa
     monkeypatch.setattr(settings(), "master_key", "")
     done = CliRunner().invoke(cli, ["rotate-master-key", "--yes", "--home", str(tmp_path)],
                               env={"YAAF_NEW_MASTER_KEY": NEW,
-                                   "YAAF_DATABASE_URL": str(engine().url)})
+                                   # str(url) masks a Postgres password as ***.
+                                   "YAAF_DATABASE_URL": engine().url.render_as_string(
+                                       hide_password=False)})
     assert done.exit_code == 0, done.output
     assert (tmp_path / "master.key").read_text().strip() == NEW
     kept = list(tmp_path.glob("master.key.*.old"))
