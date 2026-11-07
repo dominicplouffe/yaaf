@@ -241,7 +241,10 @@ waiting for your sign-off, late, at risk, decisions waiting, busy with nothing t
 a week, from a project at least a week old, with nothing finished, met,
 published or proven), gone quiet, on track — decided once on the server,
 so the Projects page, the project's Inbox, `yaaf projects`, `yaaf status`
-and Claude's `desk` and `project` say exactly the same thing. The state chip
+and Claude's `desk` and `project` say exactly the same thing. `yaaf signal`
+(a status bar's number) and `yaaf desk` (the Inbox in a terminal) read the same
+payload and draw the Inbox's own rows, so the bar shows the badge's number and
+a snooze made in either place holds in both. The state chip
 beside a project's name, everywhere it appears — Home, Projects, the project
 header and the sidebar switcher — is that same verdict in a word (Needs you · 2,
 Can't run, At risk, On track, Delivered…), not the raw Running/Paused status.

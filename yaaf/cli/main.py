@@ -1679,11 +1679,14 @@ def _register_users() -> None:
 
 
 def _register_up() -> None:
+    from yaaf.cli.desk import desk, signal
     from yaaf.cli.setup import setup
     from yaaf.cli.up import up
 
     app.command()(setup)
     app.command()(up)
+    app.command()(desk)
+    app.command()(signal)
 
 
 _register_spend()
@@ -1696,7 +1699,7 @@ PANELS = {
     "Get started": ("setup", "up", "login", "logout", "whoami", "doctor", "rehearse",
                     "create_project", "projects", "status"),
     "Run a project": ("start", "pause", "stop", "configure", "amend"),
-    "Decide": ("say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",
+    "Decide": ("desk", "signal", "say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",
                "audit_evidence"),
     "Read": ("briefing", "agenda", "receipt", "dashboard", "board", "org", "activity",
              "channels", "inbox", "tail", "runs", "ledger", "evidence", "hypotheses",

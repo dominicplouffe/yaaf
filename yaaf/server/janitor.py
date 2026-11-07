@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, inbox
 from yaaf.core.config import settings
 from yaaf.core.constitution import (
     ConstitutionDoc,
@@ -2550,7 +2550,7 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
     if spent >= hard_stop:
         project.status = ProjectStatus.PAUSED
         project.status_reason = (
-            f"hard stop: {spent:,.0f} {unit} this month against a budget of "
+            f"{inbox.HARD_STOP}: {spent:,.0f} {unit} this month against a budget of "
             f"{budget:,.0f} and a wall at {hard_stop:,.0f}"
         )
         for run in session.execute(

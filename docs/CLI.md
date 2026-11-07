@@ -157,6 +157,7 @@ yaaf stop  my-slug --reason "shipped"
 | `yaaf up --host\|--no-isolation [--email E] [--home DIR] [--port N] [--bind ADDR]` | Start yaaf on this machine in one command — key, database, schema, server, runner, first admin, role library — and print the address. `--host` runs real agents here, each in a bubblewrap jail, with no Docker; `--no-isolation` runs scripted agents with no sandbox at all. Refuses to pick either for you. Listens on `127.0.0.1` unless `--bind` names another address. See DEPLOYMENT.md. |
 | `yaaf projects [--json]` | Every project as one line: status, spend against the budget, the hard stop, and how many things wait on you. `--json` for the raw payload. |
 | `yaaf status [PROJECT] [--json]` | Is everything OK, in sentences: one paragraph across your projects, each project's status line (the same words Home, the project's Inbox and Claude's `desk` say), then everything waiting on you, with ids. `--json` for the status lines alone. |
+| `yaaf signal [--format text\|waybar\|json\|count] [--prefix P]` | **What needs you, for a status bar**: the dashboard badge's number (running projects, minus what you snoozed), and empty when it is zero. `waybar`/`json` print one line of `{text, tooltip, class}` — Waybar's custom-module format, which Omarchy's bar command module also reads; `class` is `active` only when a decision decides itself within a day or a project is paused at its spending wall, `waiting`, `clear`, or `offline`/`signed-out` (still valid JSON, so a bar never breaks). `count` prints the number for a script and exits 1 when yaaf cannot be read. Runs once and exits; put it on an interval. |
 | `yaaf rehearse SPEC_FILE [--days N] [--usd-per-run N] [--json]` | **A fire drill: run the spec as a project for nothing, before you fund it.** Needs no deployment and no key — `yaaf rehearse examples/01-your-first-hour.json` works on a fresh checkout. See [FEATURES §13](FEATURES.md). |
 | `yaaf briefing [PROJECT] [--hours N] [--seen]` | **What happened since you last read one.** Omit the project for every live project. Composed from the record at zero tokens, so it works on a paused project and a broke one. Reading never moves your mark; `--seen` does, and only to the edge of the window it just printed. |
 | `yaaf agenda PROJECT [--days 14]` | **What it is scheduled to do next**: the wall-clock wakes, the standing meeting, the cycle roll, the kill dates, the clocks that decide themselves, and the promised date with the platform's projection beside it. |
@@ -181,6 +182,7 @@ yaaf stop  my-slug --reason "shipped"
 
 | Command | What it does |
 |---|---|
+| `yaaf desk` | **The Inbox in a terminal.** What needs you, one decision at a time — the Inbox's rows, in its order, minus what you snoozed. It settles what the Inbox settles in place, with the Inbox's safeguards: approve (a purchase says what it spends and asks first), decline (only with a reason), answer a question (one key per option; the answer is a boardroom line and settles the questions asked before it), accept proposed scope and sign off a finished delivery (both ask twice). A verdict, a date, an expired bet or a frozen thread opens its row in the dashboard (`o`). `s` speaks to the CEO, `z` is "not now". Every write goes out on this CLI's token and is recorded as such. |
 | `yaaf say PROJECT "message"` | Speak in the boardroom — your only channel. |
 | `yaaf decide APPROVAL_ID --approve\|--deny [--note …]` | Decide an approval. |
 | `yaaf extend HYPOTHESIS_ID NEW_KILL_DATE REASON` | Your one-time extension of an expired bet (ISO datetime). |
@@ -335,3 +337,24 @@ yaaf agenda my-slug           # and what the next fortnight holds
 Set `brief_daily_at` (Settings → **Rules in force** → Rhythm & reporting, or
 `yaaf amend`) and the same briefing arrives by email every morning without
 anyone typing anything.
+
+### In a status bar
+
+`yaaf signal` runs once and exits, so any bar that runs a command on an
+interval can show it. Waybar (Sway, Hyprland, and anything else it runs on):
+
+```json
+"custom/yaaf": {
+  "exec": "yaaf signal --format waybar",
+  "return-type": "json",
+  "interval": 30,
+  "on-click": "xdg-terminal-exec yaaf desk"
+}
+```
+
+`on-click` is your terminal's way to run a command: `xdg-terminal-exec` on
+Omarchy and newer desktops, `gnome-terminal --` on stock Ubuntu,
+`x-terminal-emulator -e` on any Debian-family system.
+`#custom-yaaf.active` is the one class worth styling. On KDE, a "Command
+Output" widget runs `yaaf signal`; in tmux, `#(yaaf signal)` in
+`status-right`.
