@@ -77,6 +77,7 @@ def _tick() -> None:
     ("`${p.id}-plan`", notify.scope_item("PID")),
     ("`${p.id}-commitment`", notify.commitment_item("PID")),
     ("`${p.id}-verdict-${v.key}`", notify.verdict_item("PID", "R-01")),
+    ("`${p.id}-frozen`", notify.frozen_item("PID")),
 ])
 def test_a_link_names_the_row_the_way_the_inbox_names_it(built_there, built_here):
     """The Inbox selects `?item=` by exact match and falls back to its first

@@ -60,7 +60,14 @@ from yaaf.runtimes.providers import (
 from yaaf.runtimes.providers import spec as provider_spec
 from yaaf.runtimes.seats import effective_harness, seat_for
 from yaaf.server import budget, policy
-from yaaf.server.contextpack import build_context_pack, build_system_prompt, role_version_for
+from yaaf.server.contextpack import (
+    build_context_pack,
+    build_system_prompt,
+    give_back_reads,
+    role_version_for,
+    wake_attempts,
+    wake_read_from,
+)
 from yaaf.server.dispatcher import MODEL_RUN_KINDS, NON_WORK_RUN_KINDS
 
 log = logging.getLogger("yaaf.runner")
@@ -294,6 +301,12 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
     run.token_hash = token_hash
     job.api_token = token_plain
     job.system_prompt = build_system_prompt(session, agent, project)
+    if job.kind == RunKind.BOARDROOM_RUN:
+        # The talk lane's rules, in its queued vehicle: the chairman's answer
+        # is the same conversation whichever one carries it.
+        from yaaf.runner.talk_prompt import BOARDROOM_ADDENDUM
+
+        job.system_prompt += BOARDROOM_ADDENDUM
     job.context_pack = build_context_pack(session, run, agent, project)
 
     role_version = role_version_for(session, agent)
@@ -700,12 +713,45 @@ def _provider_spec(session: Session, project: Project, provider: str) -> dict:
 # ── execution ───────────────────────────────────────────────────────────────────
 
 
+def _woke_for(trigger) -> str:
+    """The wake's reasons in a few words: `messages (urgent), heartbeat:planning`."""
+    reasons = trigger.get("reasons") if isinstance(trigger, dict) else None
+    if not isinstance(reasons, list) or not reasons:
+        return str(trigger.get("type", "?")) if isinstance(trigger, dict) else "?"
+    said = []
+    for reason in reasons:
+        if not isinstance(reason, dict):
+            continue
+        word = str(reason.get("kind", "?"))
+        if reason.get("name"):
+            word += f":{reason['name']}"
+        if reason.get("urgent"):
+            word += " (urgent)"
+        said.append(word)
+    return ", ".join(dict.fromkeys(said))
+
+
+def _says_runs(job: RunJob) -> bool:
+    """Model runs only. A check is the platform running a command, and one
+    whose test keeps failing re-queues every fifteen seconds: a line each
+    would bury the runs a person opened this log to find."""
+    return job.kind in MODEL_RUN_KINDS
+
+
 def execute_job(job: RunJob, backend=None) -> RunResult:
     if not _still_ours(job.run_id):
         # The janitor ended it while it waited for a worker, and requeued its
         # work if it was owed. Running it now would do that work twice.
         log.warning("run %s was ended before a worker was free; not starting it", job.run_id)
         return RunResult(ok=False, summary="not started: the run was ended before a worker was free")
+    # The log used to say nothing about a run that started and worked, so a
+    # quiet log read the same whether an agent woke or not — the question a
+    # person opens it to answer. After the guard above: a run it stops never
+    # started, and must not be logged as though it had.
+    if _says_runs(job):
+        who = (job.context_pack.get("you") or {}).get("name") or job.agent_id
+        log.info("run %s started: %s, attempt %s, %s on %s, woke for %s", job.run_id, who,
+                 job.attempt, job.model, job.harness or "?", _woke_for(job.trigger))
     stop_heartbeat = threading.Event()
     revoked = threading.Event()
     beat = threading.Thread(
@@ -841,6 +887,16 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         _clear_staged_inputs(job)
         run.summary = (result.summary or "")[:4000]
         run.error_kind = result.error_kind
+        if _says_runs(job):
+            took = (run.finished_at - run.started_at).total_seconds() if run.started_at else 0
+            spent = f"${run.cost_usd:.4f}" if run.cost_usd is not None else "unpriced"
+            line = ("run %s ended %s after %.0fs: %s tokens in, %s out, %s"
+                    + ("" if run.status == RunStatus.DONE else "; %s"))
+            args = [run.id, run.status, took, run.tokens_in, run.tokens_out, spent]
+            if run.status != RunStatus.DONE:
+                args.append((run.summary or "no summary").strip().splitlines()[-1][:300])
+            log.log(logging.INFO if run.status == RunStatus.DONE else logging.WARNING,
+                    line, *args)
 
         # Outcome metering. A wake cannot be known to be empty until it has
         # happened, so the refund is retroactive: the run is logged, billed to
@@ -1141,6 +1197,16 @@ def stash_context_doc(run_id: str, system_prompt: str | None,
 MAX_RUN_ATTEMPTS = 3
 
 
+def _reached_a_model(run: Run) -> bool:
+    """Did a model read this run's pack, or act on it? Billed tokens say one
+    was sent it; every accepted write counts in `produced`. A trace does not
+    count: a harness that started and never got an answer — a sandbox that
+    could not look up its provider's name — writes one, and no model read a
+    word. Re-showing mail to a wake that wrote nothing cannot make anyone say
+    anything twice; marking it read can make the chairman go unanswered."""
+    return bool(run.produced or run.tokens_in or run.tokens_out)
+
+
 def _retry_failed_run(session: Session, run: Run) -> None:
     """A failed run consumed its trigger (notices marked read, suggestions
     marked read, message cursors advanced) without a model ever acting on it.
@@ -1168,7 +1234,15 @@ def _retry_failed_run(session: Session, run: Run) -> None:
         suggestion.consumed_by_run_id = None
 
     if run.attempt >= MAX_RUN_ATTEMPTS:
-        log.warning("run %s failed at attempt %s; giving up", run.id, run.attempt)
+        # The retries re-showed the wake's mail; giving up must not keep it
+        # marked read by nobody. Where a model did act on some attempt, it
+        # read the mail, and the cursor stays where that read left it.
+        if not any(_reached_a_model(attempt) for attempt in wake_attempts(session, run)):
+            give_back_reads(session, run.agent_id, wake_read_from(session, run))
+            log.warning("run %s failed at attempt %s before any model acted; giving up, "
+                        "and the mail it was woken for is unread again", run.id, run.attempt)
+        else:
+            log.warning("run %s failed at attempt %s; giving up", run.id, run.attempt)
         return
     session.add(
         RunQueue(

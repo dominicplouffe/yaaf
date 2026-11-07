@@ -31,7 +31,7 @@ unit of work, and go back to sleep. Everything is recorded.
 
 ## Before you start, have these ready
 
-1. **The stack running** — `http://localhost:8080/app` loads and you can sign
+1. **The stack running** — `http://localhost:24247/app` loads and you can sign
    in. You chair whatever you found; add co-chairs or observers afterwards
    from the project's Settings → People.
 2. **An Anthropic API key** (from console.anthropic.com) — this is how agents

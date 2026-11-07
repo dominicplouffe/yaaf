@@ -11,7 +11,7 @@
 #
 # Usage:
 #   deploy/deploy_single_server.sh --admin-email you@example.com   # first install
-#   deploy/deploy_single_server.sh                  # dashboard on 127.0.0.1:8080
+#   deploy/deploy_single_server.sh                  # dashboard on 127.0.0.1:24247
 #   deploy/deploy_single_server.sh --bind 0.0.0.0   # publish it (see the warning)
 #   deploy/deploy_single_server.sh --bind 127.0.0.1 --bind 192.168.0.5   # both
 #   deploy/deploy_single_server.sh --port 9090
@@ -107,7 +107,9 @@ EOF
 fi
 [ ${#BINDS[@]} -eq 0 ] && BINDS=("127.0.0.1")
 [ -n "$PORT" ] || PORT="$(current_port)"
-PORT="${PORT:-8080}"
+# A first install publishes on 24247 (yaaf.core.config.DEFAULT_PORT); one that
+# already published elsewhere — 8080, before that default — keeps its port.
+PORT="${PORT:-24247}"
 
 # Everything below here — the health wait, the seeding, the login token —
 # talks to 127.0.0.1. A binding that leaves loopback out would fail all of it

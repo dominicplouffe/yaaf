@@ -3,7 +3,7 @@
 Observation plus the few powers the chairman actually has: boardroom speech,
 approval decisions, hypothesis extension, kill switches, spot audits.
 
-  export YAAF_API=http://localhost:8080
+  export YAAF_API=http://localhost:24247
   yaaf login            # email + password, once; keeps a personal token
 
 `YAAF_TOKEN` overrides the stored token, for a script that was handed one
@@ -34,7 +34,9 @@ def _register_spend() -> None:
 
 
 def _api_base() -> str:
-    return os.environ.get("YAAF_API", "http://localhost:8080").rstrip("/")
+    from yaaf.core.config import DEFAULT_PORT
+
+    return os.environ.get("YAAF_API", f"http://localhost:{DEFAULT_PORT}").rstrip("/")
 
 
 def _credentials_path() -> Path:
@@ -1204,6 +1206,8 @@ STATE_GLYPHS = {
     # Stopped is over, like done, but not delivered: filled, and not the diamond.
     "stopped": "■",
     "paused": "‖",
+    # A hold too, but one the clock lifts: out of runs until midnight UTC.
+    "capped": "‖",
     "idle": "○", "not_started": "○",
 }
 #: An older server's verdict this CLI has never heard of still lines up.
@@ -1757,9 +1761,23 @@ def _register_users() -> None:
 
 
 def _register_up() -> None:
+    from yaaf.cli.desk import desk, signal
+    from yaaf.cli.desktop import desktop_app, letter, nudge
+    from yaaf.cli.setup import setup
     from yaaf.cli.up import up
+    from yaaf.cli.update import update
 
+    app.command()(setup)
     app.command()(up)
+    app.command()(update)
+    app.command()(desk)
+    app.command()(signal)
+    app.command()(letter)
+    app.command()(nudge)
+    app.add_typer(desktop_app, name="desktop")
+    from yaaf.cli.theme import theme_app
+
+    app.add_typer(theme_app, name="theme")
 
 
 _register_spend()
@@ -1769,12 +1787,12 @@ _register_up()
 #: Where each command sits in `yaaf --help`, in the order somebody new reaches
 #: for them. The help used to be sixty commands in the order they were written.
 PANELS = {
-    "Get started": ("up", "login", "logout", "whoami", "doctor", "rehearse",
+    "Get started": ("setup", "up", "update", "login", "logout", "whoami", "doctor", "rehearse",
                     "create_project", "projects", "status"),
     "Run a project": ("start", "pause", "stop", "configure", "amend"),
-    "Decide": ("say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",
+    "Decide": ("desk", "signal", "say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",
                "audit_evidence"),
-    "Read": ("briefing", "agenda", "receipt", "dashboard", "board", "org", "activity",
+    "Read": ("letter", "briefing", "agenda", "receipt", "dashboard", "board", "org", "activity",
              "channels", "inbox", "tail", "runs", "ledger", "evidence", "hypotheses",
              "approvals", "asks", "flags", "spend", "spend_report"),
 }
@@ -1788,7 +1806,15 @@ def _panel(name: str) -> str:
 
 for _info in app.registered_commands:
     _info.rich_help_panel = _panel(_info.callback.__name__)
-app.registered_commands.sort(key=lambda info: _ORDER.index(info.rich_help_panel))
+def _place(info) -> tuple[int, int]:
+    # Within a panel, the order PANELS names them in — so `setup`, the first
+    # thing somebody new runs, is the first thing they read.
+    names = PANELS.get(info.rich_help_panel, ())
+    name = info.callback.__name__
+    return _ORDER.index(info.rich_help_panel), names.index(name) if name in names else len(names)
+
+
+app.registered_commands.sort(key=_place)
 for _group in app.registered_groups:
     _group.rich_help_panel = "Set up the install"
 

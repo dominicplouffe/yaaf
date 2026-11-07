@@ -1748,6 +1748,62 @@ def _check(name: str, ok: bool, detail: str, fix: str, *, problem: bool = True) 
             "detail": detail, "fix": None if ok else fix}
 
 
+def _sandbox_checks(cfg) -> list[dict]:
+    """Host mode's one way to look alive and do nothing: a runner that cannot
+    make a jail fails every run it leases. Asked here, where the runner's own
+    machine answers it — host mode is the native install, one box, one env."""
+    if cfg.sandbox_mode != "host":
+        return []
+    from yaaf.runner import host_jail, host_tools
+
+    problem = host_jail.unavailable()
+    checks = [_check("agent sandbox", problem is None,
+                     "agents run on this machine, each in a bubblewrap jail" if problem is None
+                     else problem.removeprefix("Refused: "),
+                     "install bubblewrap (Arch: pacman -S bubblewrap; Debian/Ubuntu: apt "
+                     "install bubblewrap), or set YAAF_SANDBOX_MODE=docker")]
+    uncapped = host_jail.limits_problem()
+    caps = (f"{cfg.host_run_cpus:g} CPUs" if cfg.host_run_cpus > 0 else "no CPU cap",
+            f"{cfg.host_run_memory_gb:g} GB" if cfg.host_run_memory_gb > 0 else "no memory cap")
+    checks.append(_check(
+        "run limits", uncapped is None,
+        f"each agent run may use {caps[0]} and {caps[1]}" if uncapped is None
+        else f"runs are NOT capped: {uncapped}",
+        "run yaaf under a systemd user session (`yaaf setup` installs one), or set "
+        "YAAF_HOST_RUN_CPUS=0 and YAAF_HOST_RUN_MEMORY_GB=0 to run uncapped on purpose",
+        problem=False))
+    # The image's tools, as an agent in the jail finds them. Older than the
+    # image is a problem: a seat on it behaves differently here than on a
+    # server. Missing is a suggestion: it only matters to a seat on that tool.
+    for row in host_tools.report():
+        tool = row["tool"]
+        if row["problem"] == "old":
+            detail = (f"{row['version']} at {row['path']}; the sandbox image runs "
+                      f"{tool.minimum}, so {tool.needed_for} may behave differently here")
+        elif row["problem"] == "missing":
+            detail = f"not found where agents look; {tool.needed_for} cannot run"
+        else:
+            detail = f"{row['version'] or 'found'} at {row['path']}"
+        fix = tool.install + (", then run yaaf setup again so the jail can see it"
+                              if row["problem"] == "missing" else "")
+        checks.append(_check(f"tool: {tool.command}", row["problem"] is None, detail, fix,
+                             problem=row["problem"] == "old"))
+    browser = host_tools.browser_available()
+    checks.append(_check(
+        "browser", browser,
+        "agents can drive Chromium through Playwright" if browser
+        else "no Chromium for Playwright, so agents are not offered a browser",
+        f"{up_python()} -m playwright install chromium (deploy/install_desktop.sh does this)",
+        problem=False))
+    return checks
+
+
+def up_python() -> str:
+    import sys
+
+    return sys.executable
+
+
 @router.get("/doctor", dependencies=[authority.INSTANCE_ADMIN])
 def doctor(session: Session = Depends(db)) -> dict:
     """Every way this install can look alive and do nothing, checked at once,
@@ -1811,6 +1867,7 @@ def doctor(session: Session = Depends(db)) -> dict:
                f"{waiting} run(s) waiting over 10 minutes, none started" if waiting and not started
                else "runs are being picked up",
                "start yaaf-runner — the server queues runs but never executes them"),
+        *_sandbox_checks(cfg),
         _check("public address", bool(cfg.public_base_url),
                cfg.public_base_url or "YAAF_PUBLIC_BASE_URL is unset",
                "set YAAF_PUBLIC_BASE_URL to the address people open — notices link to "

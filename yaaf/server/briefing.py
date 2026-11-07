@@ -86,7 +86,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import heads_up, policy
-from yaaf.server.dispatcher import heartbeat_only
+from yaaf.server.dispatcher import TALK_RUN_KINDS, heartbeat_only
 from yaaf.server.rows import chairman_time
 
 #: A window with no mark falls back to this. Only reached for a member row
@@ -787,7 +787,7 @@ def _run_lines(session: Session, project: Project, since, until) -> list[dict]:
             Run.project_id == project.id,
             Run.created_at > since,
             Run.created_at <= until,
-            Run.kind != RunKind.CHAT_SESSION,
+            Run.kind.not_in(TALK_RUN_KINDS),
         )
     ).scalars())
     if not rows:

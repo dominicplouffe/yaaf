@@ -43,6 +43,19 @@ dev = [
     # the contract suite drives that harness against the SDK's own types.
     "anthropic>=1.13",
 ]
+# Host mode (YAAF_SANDBOX_MODE=host) runs agents on the runner's own Python
+# instead of the sandbox image's, so the image's libraries have to be here:
+# the Messages API client the anthropic_api harness drives, and the two data
+# libraries the image bakes in so an agent counts rows with SQL instead of
+# reading them into its context (deploy/sandbox/Dockerfile says why).
+host = [
+    "anthropic>=1.13,<2",
+    "pandas",
+    "duckdb",
+    # The browser lane: the image's Chromium-through-Playwright, which the
+    # installer completes with `playwright install chromium`.
+    "playwright",
+]
 # S3-compatible artifact store backend (MinIO, R2, AWS). The base install
 # stays boto3-free: yaaf.core.artifacts imports it lazily, only when
 # YAAF_ARTIFACT_S3_ENDPOINT is set.

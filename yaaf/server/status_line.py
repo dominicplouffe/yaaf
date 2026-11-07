@@ -19,10 +19,11 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from yaaf.core.models import CommitmentStatus, ProjectStatus, utcnow
+from yaaf.server.rows import chairman_time
 
 #: The verdicts, in the words a filter or a colour can key on.
 VERDICTS = ("done", "stopped", "not_started", "blocked", "paused", "failing", "late",
-            "at_risk", "needs_you", "spinning", "stalled", "on_track", "idle")
+            "at_risk", "needs_you", "spinning", "capped", "stalled", "on_track", "idle")
 
 #: How many runs in a row must fail before the project's line says so. One
 #: failure is retried and usually gone; three is a project that is spending
@@ -48,6 +49,19 @@ _FAILURE = {
 }
 
 
+def _capped(out: dict, open_tasks: int, timezone: str | None) -> str:
+    """The day's work allowance is spent: how far, and the clock it lifts at.
+
+    Past the plan minus the reserve only reporting may spend (the dispatcher's
+    governance slice), so the work waits there too — said as such, or "13 of
+    14" would read as a run still to spare."""
+    resumes = chairman_time(out["resets_at"], timezone)
+    used, wall = out["used"], out["wall"]
+    spent = (f"Out of runs for today ({used} of {wall})" if used >= wall else
+             f"Out of work runs for today ({used} of {wall}; the rest are kept for reports)")
+    return f"{spent}; work resumes {resumes}. {open_tasks} task(s) waiting."
+
+
 def _money(unit: str, spent: float, cap: float) -> str:
     if unit == "usd":
         return f"${spent:,.0f} of ${cap:,.0f} this month."
@@ -60,7 +74,7 @@ def status_line(*, status: str, status_reason: str | None, unpaid: bool,
                 unit: str, spent: float, cap: float,
                 failed_in_a_row: int = 0, last_error_kind: str | None = None,
                 spinning_runs: int = 0, signoff: dict | None = None,
-                timezone: str | None = None) -> dict:
+                timezone: str | None = None, out_of_runs: dict | None = None) -> dict:
     """{verdict, headline, sentence} for one project, from the facts the desk
     holds. The headline is the verdict in words; the sentence adds the money,
     for a surface that has no money column of its own."""
@@ -69,7 +83,8 @@ def status_line(*, status: str, status_reason: str | None, unpaid: bool,
         waiting=waiting, open_tasks=open_tasks, runs_running=runs_running,
         last_run_at=last_run_at, stall_hours=stall_hours,
         failed_in_a_row=failed_in_a_row, last_error_kind=last_error_kind,
-        spinning_runs=spinning_runs, signoff=signoff, timezone=timezone)
+        spinning_runs=spinning_runs, signoff=signoff, timezone=timezone,
+        out_of_runs=out_of_runs)
     sentence = f"{headline} {_money(unit, spent, cap)}" if with_money else headline
     return {"verdict": verdict, "headline": headline, "sentence": sentence}
 
@@ -77,7 +92,7 @@ def status_line(*, status: str, status_reason: str | None, unpaid: bool,
 def _verdict(*, status, status_reason, unpaid, commitment, waiting, open_tasks,
              runs_running, last_run_at, stall_hours, failed_in_a_row=0,
              last_error_kind=None, spinning_runs=0,
-             signoff=None, timezone=None) -> tuple[str, str, bool]:
+             signoff=None, timezone=None, out_of_runs=None) -> tuple[str, str, bool]:
     if status == ProjectStatus.COMPLETED:
         return "done", "Finished.", True
     if status == ProjectStatus.STOPPED:
@@ -133,6 +148,12 @@ def _verdict(*, status, status_reason, unpaid, commitment, waiting, open_tasks,
         return ("spinning", f"Busy, nothing to show: {spinning_runs} paid runs in "
                 f"{SPINNING_DAYS} days, and nothing finished, met, published or proven.",
                 True)
+    if open_tasks and out_of_runs is not None:
+        # Before "stalled", which it used to read as: quiet, work open, and a
+        # link to "See who is stuck" — over a project whose own banner said
+        # exactly why and when. Nobody is stuck. And before "Working.", which
+        # it read as whenever a reply or a report happened to be running.
+        return "capped", _capped(out_of_runs, open_tasks, timezone), True
     quiet_for = (utcnow() - last_run_at) if last_run_at else None
     if (open_tasks and not runs_running and stall_hours > 0 and quiet_for is not None
             and quiet_for > timedelta(hours=stall_hours)):

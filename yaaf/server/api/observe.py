@@ -94,8 +94,10 @@ from yaaf.server.dispatcher import (
     MODEL_RUN_KINDS,
     activity_state,
     chat_session_live,
+    daily_runs_used,
     day_start,
     inbox_runs_used,
+    run_walls,
     unread_messages_for,
 )
 from yaaf.server.identity import Person, person_auth, signed_in
@@ -371,6 +373,14 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
                 break
             failed_in_a_row += 1
         spinning = _spinning_runs(session, project, now)
+        # The dispatcher's own count against its own walls: past the plan
+        # minus the reserve, the work on the board waits for midnight UTC.
+        today = day_start(now)
+        used_today = daily_runs_used(session, project, today)
+        wall, reserved = run_walls(cons)
+        out_of_runs = ({"used": used_today, "wall": wall, "reserved": reserved,
+                        "resets_at": today + timedelta(days=1)}
+                       if used_today >= wall - reserved else None)
         # Each asked once: the row, the count and the status line all read them.
         awaiting = policy.awaiting_chairman(session, project, cons)
         signoff = policy.signoff_waiting(session, project, cons)
@@ -465,7 +475,7 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             spent=row["budget"]["spent"], cap=row["budget"]["cap"],
             failed_in_a_row=failed_in_a_row,
             last_error_kind=recent[0][1] if failed_in_a_row else None,
-            spinning_runs=spinning)
+            spinning_runs=spinning, out_of_runs=out_of_runs)
     # The reader's own "not now"s, so every surface that draws their Inbox
     # leaves out the same rows. Personal: nobody else's Inbox changes.
     from yaaf.server.api import me as me_api
@@ -2072,10 +2082,54 @@ def inbox(project_id: str, session: Session = Depends(db)) -> dict:
 
 
 @router.get("/channels/{channel_id}/typing", dependencies=[authority.READ])
-def channel_typing(channel_id: str) -> dict:
+def channel_typing(channel_id: str, session: Session = Depends(db)) -> dict:
     """Ephemeral presence for the chat UI — true while the CEO's chat session
-    is composing a reply. In-memory, self-expiring, never stored."""
-    return {"typing": typing_state.is_typing(channel_id)}
+    is composing a reply (in-memory, self-expiring, never stored), or, where
+    there is no resident session, while a run woken by this room is on its way
+    to the reply."""
+    return {"typing": typing_state.is_typing(channel_id)
+            or _reply_on_its_way(session, channel_id)}
+
+
+def _reply_on_its_way(session: Session, channel_id: str) -> bool:
+    """A queued or running model run that woke for this boardroom and has not
+    yet spoken in it.
+
+    Only the resident chat session ever set the typing flag, so on host and
+    subprocess installs — no session, the reply rides a queued run — the
+    chairman sent a message into a room that showed nothing at all for the
+    minute or two the answer took. Read from the run rows rather than flagged
+    by the harness: every harness gets it, and it ends when the run does."""
+    channel = session.get(Channel, channel_id)
+    if channel is None or channel.kind != ChannelKind.BOARDROOM:
+        return False
+
+    def for_this_room(trigger) -> bool:
+        reasons = (trigger or {}).get("reasons") if isinstance(trigger, dict) else None
+        return any(isinstance(r, dict) and r.get("kind") == "messages"
+                   and r.get("channel_id") == channel_id for r in reasons or ())
+
+    queued = session.execute(
+        select(RunQueue.trigger).where(RunQueue.project_id == channel.project_id,
+                                       RunQueue.kind.in_(MODEL_RUN_KINDS))
+    ).scalars()
+    if any(for_this_room(t) for t in queued):
+        return True
+    for run in session.execute(
+        select(Run).where(Run.project_id == channel.project_id,
+                          Run.kind.in_(MODEL_RUN_KINDS), Run.status == RunStatus.RUNNING)
+    ).scalars():
+        if not for_this_room(run.trigger):
+            continue
+        since = run.started_at or run.created_at
+        spoke = session.execute(
+            select(func.count(Message.id)).where(Message.channel_id == channel_id,
+                                                 Message.sender_agent_id == run.agent_id,
+                                                 Message.created_at >= since)
+        ).scalar_one()
+        if not spoke:
+            return True
+    return False
 
 
 @router.get("/channels/{channel_id}/messages", dependencies=[authority.READ])

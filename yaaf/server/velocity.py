@@ -212,14 +212,19 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
     sending it. `inbox` is reading; `noop` is a wake that changed nothing and
     was refunded; `work` is the rest.
     """
+    from yaaf.server.dispatcher import TALK_RUN_KINDS
+
     total, dead, attributed, usd, attributed_usd = 0, 0, 0, 0.0, 0.0
     probed = 0
     inbox, noop, work = 0, 0, 0
+    # Talk in either vehicle is not one of the lanes: a reply to the chairman
+    # is never refunded, so it would read as work and inflate the very share
+    # this split exists to make honest.
     rows = session.execute(
         select(Run.status, Run.requirement_id, Run.cost_usd, Run.kind,
                Run.metered).where(
             Run.project_id == project_id,
-            Run.kind != RunKind.CHAT_SESSION,
+            Run.kind.not_in(TALK_RUN_KINDS),
             Run.created_at >= since,
         )
     ).all()

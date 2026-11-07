@@ -38,7 +38,7 @@ cd web && npm install && npm run build && cd ..
 #    project's Anthropic key answers 500 and the project can never start.
 export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
        YAAF_SANDBOX_MODE=subprocess \
-       YAAF_API=http://localhost:8080 \
+       YAAF_API=http://localhost:24247 \
        YAAF_MASTER_KEY=$(.venv/bin/python -c \
          "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
 
@@ -60,18 +60,20 @@ export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
 .venv/bin/yaaf doctor              # checks all of the above, names any fix
 ```
 
-If the API is not on port 8080, also export `YAAF_API_BASE_URL`: it is what
+If the API is not on port 24247, also export `YAAF_API_BASE_URL`: it is what
 the runner calls and what the bootstrap link is built from, and it defaults to
-`http://localhost:8080` — so on another port the runner talks to nothing, or
+`http://localhost:24247` — so on another port the runner talks to nothing, or
 to somebody else's server, without an error you would notice.
 
 Open the link `bootstrap` printed, choose a password, and you are in the
-dashboard at **http://localhost:8080/app**. See [AUTH.md](AUTH.md) for who
+dashboard at **http://localhost:24247/app**. See [AUTH.md](AUTH.md) for who
 may do what once more people are on the box.
 
 4. is the one you do not have to do: the chat lane is a container, so in
 subprocess mode the supervisor stands down with one log line and the boardroom
-answers through ordinary queued runs instead.
+answers through queued runs instead. They are the same talk lane in another
+vehicle (`boardroom_run`): like the chat session they spend none of the run
+allowance, so the chairman is answered on a day the work has used all of it.
 
 > **This is not a free mode.** The agents are real Claude agents, paid for with
 > the API key you attach to the project. `runtime: mock` swaps them for scripted
@@ -80,7 +82,10 @@ answers through ordinary queued runs instead.
 > and exits. It is a test harness, not a demo.
 
 > `YAAF_SANDBOX_MODE=subprocess` provides **no isolation**. It exists for dev
-> machines and CI, and yaaf refuses it unless you configure it explicitly.
+> machines and CI, and yaaf refuses it unless you configure it explicitly. It
+> also does not run real agents: their runs still need Docker, and without it
+> each one fails. For real agents on your own machine without Docker, use
+> [host mode](#host-mode--real-agents-on-your-own-machine-without-docker).
 
 ### The mock runtime
 
@@ -94,6 +99,214 @@ completions, evidence and every governance trip at $0. That is what CI runs.
 context pack and exits, which is exactly right for testing the platform and
 useless as a demo. If you want to watch a scripted project move, run the eval
 harness (`python -m evals.run`) rather than pointing a project at mock.
+
+## Host mode — real agents on your own machine, without Docker
+
+For a desktop or a laptop: yaaf, its runner and its agents all on the machine
+you are using, on SQLite, with no Docker daemon and no image to build.
+
+```bash
+git clone https://github.com/dominicplouffe/yaaf && cd yaaf
+deploy/install_desktop.sh
+```
+
+The script installs what is missing (git, bubblewrap, node and npm, and uv
+for a pinned Python — on Arch with pacman, on Debian and Ubuntu with apt),
+installs yaaf with the `[host]` extra, puts `yaaf` in `~/.local/bin`, and hands
+over to **`yaaf setup`**, which asks for three things:
+
+1. **This machine** — that bubblewrap can make a sandbox; builds the dashboard
+   if it is not built.
+2. **Your account** — an email and a password (12 characters or more). You
+   become the box's admin; no setup link to open.
+3. **Starting yaaf** — as a systemd user service that starts when you log in
+   (`systemctl --user stop yaaf` stops it), or a background process where
+   there is no systemd. This terminal is signed in, and the role library is
+   loaded before it moves on.
+4. **The AI your agents run on** — any of the providers yaaf supports, listed
+   by what each needs beyond a key: some need only the key; most also need a
+   web search key, because their API cannot search and 35 of the 38 roles
+   browse; Ollama and LM Studio need no key; Azure, Bedrock, Vertex and a
+   custom endpoint need their address. The key is pasted hidden and checked
+   with the provider's own free model list before it is kept — a refused key
+   is removed and asked for again. Then whatever a project would still be
+   refused for on that provider is asked for, from the server's own readiness
+   report: a model when the provider ships no lineup (picked from the models
+   the key lists), a price when the price feed has none (a local model is
+   priced at zero), and a search service, tested with one real query.
+5. **The Founder** — drafts on the same key.
+
+It ends with anything `yaaf doctor` would still call a problem, and the
+address. Run it again any time: every step skips what is done.
+
+In a graphical session it then asks whether to **add yaaf to the desktop**
+(`yaaf desktop install`, or `--desktop`/`--no-desktop` to answer up front): the
+dashboard, the desk and the morning letter in your app menu, the letter at
+login when something happened, and a nudge — at most once a day — when a
+decision is about to decide itself. All of it through freedesktop standards,
+so it is the same on Ubuntu's GNOME, KDE, Omarchy's Hyprland or Sway, and all
+of it in your own folders; `yaaf desktop remove` takes it out again.
+
+**On Omarchy** it also puts the number in the bar (a shell plugin beside the
+clock, hidden while nothing needs you, highlighted when something is about to
+decide itself), a `yaaf` submenu in the Omarchy menu, and `Super+Y` for the
+desk in a floating window. Each goes in through the route Omarchy documents
+for a third party — `omarchy plugin enable`, the menu's extension file, a
+`require` in your `bindings.lua` — and nothing is written into Omarchy's own
+folders, so an Omarchy update leaves it alone. The desk follows your Omarchy
+theme on its own, since it draws in the terminal's colors, and the dashboard
+follows it too: a theme-set hook runs `yaaf theme sync` on every switch, and the
+dashboard picks the new theme up when its window next gets focus. Omarchy's own
+tests are the check: the bar plugin passes
+Omarchy's plugin validator and the edited menu parses with Omarchy's menu code
+(`tests/fixtures/omarchy`), and `yaaf desktop remove` puts the menu and
+bindings files back byte for byte.
+
+**Who can reach it.** A desktop install listens on `127.0.0.1`: this machine
+only, which is also all your agents need, since the jail shares this machine's
+network. To open it to a network, say so once — `yaaf setup --bind 0.0.0.0`
+for every network, or `--bind <address>` for one — and setup restarts yaaf
+there and remembers it; `yaaf setup --bind 127.0.0.1` closes it again. The
+dashboard speaks plain HTTP, so on a network anyone can read the traffic, your
+password at sign-in included. To use it from a phone or another computer, an
+SSH tunnel (`ssh -N -L 24247:localhost:24247 you@this-machine`) or a private
+network such as Tailscale, bound to its address, keeps it private.
+(`yaaf up --bind` is the same switch for one run.)
+
+By hand, the same thing is `pip install -e ".[host]"`, a dashboard build
+(`cd web && npm install && npm run build`), and `yaaf up --host --email
+you@example.com`.
+
+Every agent run, and every success test an agent wrote, runs as an ordinary
+process on your machine's own Python and CLIs, inside a
+[bubblewrap](https://github.com/containers/bubblewrap) jail made for that run
+and gone when it ends (`yaaf/runner/host_jail.py`). The jail is there for two
+reasons:
+
+- **The path.** Every role, the context pack and the agent's tools say the
+  work lives in `/workspace`, and the checks agents write name that path. The
+  jail mounts the project's workspace there, so nothing an agent reads or
+  writes differs from docker mode — and a project started here can move to a
+  Docker box later with every check it wrote still pointing at the right place.
+- **What it hides.** A process running as you could otherwise read your home
+  folder, yaaf's database (the record), its master key (every stored
+  credential), and the runner's environment through `/proc`. Inside the jail,
+  your home folder is not there, `/run` and `/tmp` are empty and private, the
+  run sees only its own processes, and its environment is built from nothing:
+  `PATH`, `HOME`, the locale, your proxy and CA settings, and the run's own
+  variables. A run pays with the project's credential, never with a key in your
+  shell.
+
+What a run *can* see: `/usr`, `/etc`, `/opt` and `/sys` read-only, the Python
+yaaf runs on read-only, its own workspace read-write, and the network. The
+Python's folders are mounted at their real paths, and any symlinks on the way
+to them are recreated inside as symlinks. One example is uv's `cpython-3.13`
+link to `cpython-3.13.18`, which a uv-made venv's `bin/python` goes through.
+Only the folders themselves are mounted, never the folder holding them.
+Name lookup gets the same care. On a systemd-resolved desktop (Arch and so
+Omarchy, Ubuntu, Fedora), `/etc/resolv.conf` is a symlink into `/run`, and a
+run's `/run` is its own. So the one file each name-lookup setting resolves to
+is mounted at its own path: `resolv.conf`, `hosts`, `nsswitch.conf`,
+`host.conf` and `gai.conf`. The folder that holds resolved's control socket is
+not mounted.
+
+`bwrap` is required, not preferred. Without it, or on a kernel or AppArmor
+policy that forbids unprivileged user namespaces, `yaaf up --host` stops before
+starting, `yaaf doctor` says why, and a runner that is somehow started anyway
+refuses every run (exit 126) rather than run an agent bare. The same happens,
+naming the interpreter, if the jail can be made but cannot start the Python
+yaaf runs on. It also happens, naming the file, if a jail cannot read this
+machine's DNS settings, since every run's first act is to reach its model's
+API by name. One case is a Python installed into the home folder itself,
+which the jail will not mount.
+
+**On Ubuntu 23.10 and later**, bwrap is installed but blocked by default:
+Ubuntu moves a program that creates a user namespace into an AppArmor profile
+with no capabilities unless a profile of its own grants `userns`, and it ships
+profiles for flatpak, podman and others but none for bwrap. `yaaf setup` stops
+at its first step and says so. Two ways through, both your call, because both
+reopen user namespaces Ubuntu restricts to shrink the kernel's attack surface:
+
+- **A profile for bwrap alone** — Ubuntu's own pattern. Save as
+  `/etc/apparmor.d/bwrap-userns` and load it:
+
+  ```
+  abi <abi/4.0>,
+  include <tunables/global>
+
+  profile bwrap-userns /usr/bin/bwrap flags=(unconfined) {
+    userns,
+    include if exists <local/bwrap-userns>
+  }
+  ```
+
+  then `sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns`. Any program on
+  the machine can then use bwrap to make a namespace; bwrap is built to be
+  safe for exactly that, and was setuid on Debian for years.
+- **Lift the restriction for the whole machine**:
+  `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`, and the same
+  line in `/etc/sysctl.d/` to keep it. Broader than the profile.
+
+Or run agents in Docker instead (`YAAF_SANDBOX_MODE=docker`). Arch (Omarchy),
+Fedora and Debian do not restrict user namespaces this way and need none of it.
+
+**Harness CLIs.** The Agent SDK brings its own Claude CLI, inside the Python
+environment the jail already mounts, so Anthropic seats need nothing more. A
+Codex, Gemini or OpenCode seat needs its CLI visible in the jail: under `/usr`
+or `/opt` it already is; in your home folder (`~/.npm-global`, `~/.local/bin`)
+list it in `YAAF_HOST_JAIL_BINDS` (colon-separated, read-only, its `bin/` put on
+`PATH`). `yaaf setup` does this for you when `npm prefix -g` is in your home
+folder. A path that would expose your whole home folder or yaaf's data folder
+is refused and logged, not bound.
+
+**What host mode does the same as Docker:**
+
+- **The boardroom is a live conversation.** The CEO's chat session runs in a
+  jail that stays up, as it runs in a container: replies in seconds, the typing
+  dots, and none of the run allowances. Queued runs answer only while it is down.
+- **Every run is capped.** 2 CPUs and 2 GB per run, as Docker gives a container;
+  `yaaf setup` asks, and 0 means no cap. Enforced with a systemd user scope;
+  where the machine has none, runs go uncapped and `yaaf doctor` says so.
+- **The browser.** The installer adds Playwright and its Chromium, and agents
+  are told about the browser only where it is there.
+- **The tools.** Each command-line tool the image pins (Node, Claude Code,
+  Codex, opencode, Gemini, git, curl, jq, gawk) has the image's version as its
+  floor here. `yaaf doctor` — and so the end of `yaaf setup` — names one that is
+  missing or older, looked up where agents look, and setup binds a CLI a
+  version manager (mise, asdf) installed in your home folder. A run whose
+  seat needs a missing or older CLI is refused before it starts, by name and
+  with the install command.
+- **The fallback reply.** While the chat session is down, the CEO answers the
+  boardroom with a queued run that is the same conversation: the chat rules,
+  no run allowance, no wake ceiling or concurrency cap, the second-draft
+  escape — held only by the chat lane's own backstop (three failed replies in
+  ten minutes).
+
+**What host mode does differently, on purpose:**
+
+- **It is far less contained.** An agent runs on your machine, inside a
+  bubblewrap jail that hides your home folder and yaaf's keys, but reads the
+  system's software and settings (/usr, /etc, /opt). The installer says this
+  first and asks before it installs anything.
+- **The network is your machine's.** Docker's sandbox network is open too, but a
+  bridge cannot reach your `localhost` and a jail can — a local database, a dev
+  server, an Ollama. Neither restricts it. See [SECURITY.md](../SECURITY.md).
+- **A sleeping laptop runs nothing.** A run in flight when the lid closes can
+  miss its lease heartbeat and be reaped as a dead run when the machine wakes.
+- **Updating is `yaaf update`.** It refuses a checkout with edits of its own or
+  a branch that has diverged; backs the database up (SQLite's own backup, the
+  newest five kept in `~/.yaaf/backups`); pulls, fast-forward only; reinstalls
+  the Python packages only when `pyproject.toml` changed and rebuilds the
+  dashboard only when `web/` did; restarts yaaf, which migrates the database as
+  it starts (`yaaf/core/schema_upkeep.py`); and refreshes the desktop pieces. A
+  step that fails stops it, with the commands that put the code and the
+  database back. `yaaf update --check` says what an update would bring and
+  changes nothing. (A database `yaaf up` built before migrations is adopted once
+  on its next start: what it lacks is added and its rows are kept.)
+
+`yaaf up` keeps the workspaces and artifacts in its own folder (`~/.yaaf` by
+default) beside the database, in every mode — the server default under
+`/var/lib/yaaf` is not writable by a desktop user.
 
 ## The real thing — your own server
 
@@ -117,10 +330,10 @@ that in plain English.
 
 | Flag | Effect |
 |---|---|
-| *(none)* | dashboard on `127.0.0.1:8080`, reachable over an SSH tunnel — or whatever the last run published on |
+| *(none)* | dashboard on `127.0.0.1:24247`, reachable over an SSH tunnel — or whatever the last run published on |
 | `--bind 0.0.0.0` | publish it on every interface — read the warning it prints |
 | `--bind 127.0.0.1 --bind 192.168.0.5` | repeatable: one published port per address, so localhost and the LAN address both answer |
-| `--port 9090` | somewhere other than 8080 |
+| `--port 9090` | somewhere other than 24247 |
 | `--skip-roles` | do not touch the role or crew libraries |
 
 ### What it actually does
@@ -232,10 +445,10 @@ there is nothing to firewall. Reach it by forwarding the port from your
 laptop:
 
 ```bash
-ssh -N -L 8080:localhost:8080 you@your-server
+ssh -N -L 24247:localhost:24247 you@your-server
 ```
 
-Then open **http://localhost:8080/app** and sign in. On a first install the
+Then open **http://localhost:24247/app** and sign in. On a first install the
 script ends with the one-time link that sets the first admin's password; lost
 it, or forgot the password later? From a shell on the box:
 
@@ -263,7 +476,7 @@ cat > deploy/docker-compose.override.yml <<'YML'
 services:
   api:
     ports: !override
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:24247:8080"
 YML
 
 docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .
@@ -278,13 +491,13 @@ docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .
 
 # The first admin, and a short-lived token to load the library with.
 (cd deploy && docker compose exec -T api yaaf users bootstrap --email you@example.com \
-   --base-url http://localhost:8080)
+   --base-url http://localhost:24247)
 TOKEN=$(cd deploy && docker compose exec -T api yaaf users token --first-admin \
           --name deploy --minutes 10)
 
 # roles/ is not in the image, so this is an HTTP load from the checkout.
 for f in roles/*.json; do
-  curl -fsS -X POST http://localhost:8080/admin/roles \
+  curl -fsS -X POST http://localhost:24247/admin/roles \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     --data-binary @"$f" > /dev/null && echo "seeded ${f##*/}"
@@ -293,8 +506,8 @@ done
 
 ### Things that bite on a remote box
 
-**Publishing 8080 is not firewalled by ufw.** Docker writes its own iptables
-rules ahead of ufw's, so `ports: "8080:8080"` is reachable from anywhere the
+**A published port is not firewalled by ufw.** Docker writes its own iptables
+rules ahead of ufw's, so `ports: "24247:8080"` is reachable from anywhere the
 box is, whatever `ufw status` claims. The loopback binding the script writes
 is what actually keeps it private — binding to `127.0.0.1` means there is nothing to firewall.
 Drop the override only when a TLS-terminating reverse proxy is in front,
@@ -306,14 +519,14 @@ session cookie is marked `Secure` from it.
 list values when it merges, so an override without the tag leaves you with
 both bindings — the loopback one you wanted and the original `0.0.0.0` one
 you were trying to remove. `docker compose config | grep -E 'host_ip|published'`
-is the check: exactly one `published: "8080"`, carrying `host_ip: 127.0.0.1`.
+is the check: exactly one `published: "24247"`, carrying `host_ip: 127.0.0.1`.
 
 **`docker compose exec api yaaf seed-roles roles/` looks like it works and
 does nothing.** The image has no `roles/` directory, and the command globs an
 empty path, prints nothing, and exits 0. `deploy/deploy_single_server.sh` loads them
 over HTTP; by hand it is the loop above, or from a checkout with the CLI
 installed:
-`YAAF_API=http://localhost:8080 yaaf login && yaaf seed-roles roles/` (an
+`YAAF_API=http://localhost:24247 yaaf login && yaaf seed-roles roles/` (an
 instance admin's account — the library is the box's).
 
 **Skipping the role seed is survivable only if your bundles carry their
@@ -444,7 +657,7 @@ the work, not only answer.
 ## Exposing the MCP server to claude.ai
 
 Only needed if you want to chair from the browser. Claude Code and Claude
-Desktop reach `http://localhost:8080/mcp` with a minted token and need none of
+Desktop reach `http://localhost:24247/mcp` with a minted token and need none of
 this ([MCP_SERVER.md](MCP_SERVER.md)).
 
 claude.ai connects **inbound, from Anthropic's servers**, so the install needs a
@@ -477,9 +690,9 @@ server {
     server_name yaaf.example.com;
     listen 443 ssl;
 
-    location = /mcp                          { proxy_pass http://127.0.0.1:8080; }
-    location ^~ /.well-known/oauth-           { proxy_pass http://127.0.0.1:8080; }
-    location ^~ /oauth/                       { proxy_pass http://127.0.0.1:8080; }
+    location = /mcp                          { proxy_pass http://127.0.0.1:24247; }
+    location ^~ /.well-known/oauth-           { proxy_pass http://127.0.0.1:24247; }
+    location ^~ /oauth/                       { proxy_pass http://127.0.0.1:24247; }
     location / { return 404; }
 }
 ```
@@ -487,7 +700,7 @@ server {
 ```caddy
 yaaf.example.com {
     @public path /mcp /.well-known/oauth-* /oauth/*
-    handle @public { reverse_proxy 127.0.0.1:8080 }
+    handle @public { reverse_proxy 127.0.0.1:24247 }
     handle { respond 404 }
 }
 ```
@@ -521,20 +734,21 @@ in env vars. See [GOVERNANCE.md](GOVERNANCE.md).
 | `YAAF_DATABASE_URL` | `postgresql+psycopg://yaaf:yaaf@localhost:5432/yaaf` | SQLite works for dev |
 | `YAAF_MASTER_KEY` | — | Fernet key (url-safe base64, 32 bytes, padded) for envelope-encrypting secrets — see [The master key](#the-master-key) |
 | `YAAF_ADMIN_EMAIL` | — | Read by the deploy and update scripts only: the account to make the first admin on a box with none. People sign in with accounts — see [AUTH.md](AUTH.md); `YAAF_ADMIN_TOKEN` is retired and nothing reads it |
-| `YAAF_API_BASE_URL` | `http://localhost:8080` | How sandboxes reach the platform API |
-| `YAAF_API_HOST` / `YAAF_API_PORT` | `0.0.0.0` / `8080` | |
+| `YAAF_API_BASE_URL` | `http://localhost:24247` | How sandboxes reach the platform API |
+| `YAAF_API_HOST` / `YAAF_API_PORT` | `0.0.0.0` / `24247` | |
 
 ### Runner and sandbox
 
 | Variable | Default | Notes |
 |---|---|---|
 | `YAAF_WORKER_NAME` | `worker-1` | Identifies this runner in leases |
-| `YAAF_SANDBOX_MODE` | `docker` | `docker` (isolation) or `subprocess` (dev/CI only — **no isolation**) |
+| `YAAF_SANDBOX_MODE` | `docker` | `docker` (isolation), `host` (agents on this machine, each in a bubblewrap jail — [Host mode](#host-mode--real-agents-on-your-own-machine-without-docker)), or `subprocess` (dev/CI only — **no isolation**, and real agent runs still need Docker) |
+| `YAAF_HOST_JAIL_BINDS` | *(empty)* | Host mode only. Extra paths a run may read, colon-separated — where a harness CLI lives outside `/usr` and `/opt`. A path that would expose a whole home folder or yaaf's data folder is refused. |
 | `YAAF_ALLOW_HOST_SUCCESS_TESTS` | `false` | Under `subprocess` mode only, lets an agent-authored success test run on a host that holds the Docker socket. **Leave it off on a deployed runner** — there the socket is root on the box. The test suite sets it for itself. |
 | `YAAF_SANDBOX_IMAGE` | `yaaf-sandbox:latest` | |
 | `YAAF_SANDBOX_NETWORK` | `yaaf_sandbox` | |
-| `YAAF_WORKSPACES_ROOT` | `/var/lib/yaaf/workspaces` | Host path must equal container path |
-| `YAAF_ARTIFACTS_ROOT` | `/var/lib/yaaf/artifacts` | |
+| `YAAF_WORKSPACES_ROOT` | `/var/lib/yaaf/workspaces` | Host path must equal container path. `yaaf up` uses `<its folder>/workspaces`. |
+| `YAAF_ARTIFACTS_ROOT` | `/var/lib/yaaf/artifacts` | `yaaf up` uses `<its folder>/artifacts`. |
 
 ### Artifact store (optional)
 
@@ -599,6 +813,14 @@ Pull, back up, rebuild both images, apply migrations, verify. **An update that
 carries migrations needs no extra step** — they run from the entrypoint at
 container start, and the script checks `alembic current` really says `(head)`
 afterwards instead of assuming.
+
+**The default port moved from 8080 to 24247.** A box deployed before keeps the
+port it published — the scripts read it back from
+`deploy/docker-compose.override.yml` — so nothing on the server changes. What
+changes is the CLI's own default: from a laptop tunnelled to such a box, keep
+the tunnel on 8080 and `export YAAF_API=http://localhost:8080`, or move the
+tunnel to `-L 24247:localhost:8080` and need neither. An MCP client set up
+against `localhost:8080/mcp` keeps working through the old tunnel.
 
 By hand it is the same three things, minus the checks:
 

@@ -534,7 +534,7 @@ def _tick(client: httpx.Client) -> int:
     from yaaf.core.models import Project
     from yaaf.runner.backends import mock as mock_backend
     from yaaf.runner.daemon import execute_job, lease_and_prepare
-    from yaaf.server.dispatcher import dispatch_once
+    from yaaf.server.dispatcher import MODEL_RUN_KINDS, dispatch_once
     from yaaf.server.janitor import _janitor_project
 
     with db_session() as session:
@@ -552,8 +552,12 @@ def _tick(client: httpx.Client) -> int:
         if not leased:
             break
         for job in leased:
+            # Every kind where an agent thinks gets the mock model; a check is
+            # the platform's own command. Testing for "agent_run" alone sent the
+            # inbox lane, and then the boardroom's talk lane, to the seat's real
+            # harness in the middle of a drill.
             backend = (mock_backend.MockBackend(client=client)
-                       if job.kind == "agent_run" else None)
+                       if job.kind in MODEL_RUN_KINDS else None)
             execute_job(job, backend=backend)
             jobs += 1
     with db_session() as session:

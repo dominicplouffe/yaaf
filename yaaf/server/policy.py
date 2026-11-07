@@ -2427,9 +2427,11 @@ def check_chairman_report(
     if agent.kind != AgentKind.CEO or channel.kind != ChannelKind.BOARDROOM:
         return
     # The chat lane is the conversation, not the report: it speaks only when
-    # the chairman does, and its replies are delivered by the harness rather
-    # than through this endpoint at all.
-    if run.kind == RunKind.CHAT_SESSION:
+    # the chairman does. Both of its vehicles — the session, and the queued run
+    # woken only by his message while the session is down.
+    from yaaf.server.dispatcher import TALK_RUN_KINDS
+
+    if run.kind in TALK_RUN_KINDS:
         return
     cadence = report_cadence(session, project)
     if not cadence.enforced:
@@ -2488,7 +2490,8 @@ def check_plain_to_chairman(
     chairman unanswered because the CEO wrote badly twice, so the session sends
     its rewrite with `redrafted` and it lands — recorded, so a CEO that cannot
     write plainly is visible rather than silenced. A work run has no such need:
-    it rewrites and posts again, as it would against any other refusal.
+    it rewrites and posts again, as it would against any other refusal. The
+    queued boardroom run is the chat lane's other vehicle, and shares the way.
     """
     if agent.kind != AgentKind.CEO or channel.kind != ChannelKind.BOARDROOM:
         return
@@ -2497,7 +2500,17 @@ def check_plain_to_chairman(
     found = plain.problems(body)
     if not found:
         return
-    if redrafted and run.kind == RunKind.CHAT_SESSION:
+    from yaaf.server.dispatcher import TALK_RUN_KINDS
+
+    # Either vehicle of the talk lane: the queued reply is the same live
+    # conversation, and refusing its second draft left him unanswered exactly
+    # as refusing the session's would.
+    if not redrafted and run.kind == RunKind.BOARDROOM_RUN:
+        # The queued vehicle's tool has no flag to say "second draft", so the
+        # record says it: a reply run whose last refusal was this one is
+        # posting its rewrite.
+        redrafted = (run.last_refusal or "").startswith(plain.refusal_text([])[:40])
+    if redrafted and run.kind in TALK_RUN_KINDS:
         session.add(AuditLog(
             id=ids.new_id(ids.AUDIT), project_id=project.id, actor=f"agent:{agent.id}",
             action="boardroom.plain_override", entity="agent", entity_id=agent.id,

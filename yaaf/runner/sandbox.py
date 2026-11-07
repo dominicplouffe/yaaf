@@ -1,4 +1,5 @@
-"""Sandbox execution: fresh Docker containers per run.
+"""Sandbox execution: fresh Docker containers per run — or, in host mode, a
+fresh bubblewrap jail per run (yaaf/runner/host_jail.py).
 
 Every agent run gets a fresh container: no privileges, resource caps, the
 project workspace mounted, and the open network — the chairman's decision
@@ -74,6 +75,12 @@ def run_check_command(command: str, workspace_dir: str, timeout_s: int) -> tuple
     if not command.strip():
         return 1, "empty success-test command"
     mode = getattr(settings(), "sandbox_mode", "docker")
+    if mode == "host":
+        # No socket refusal here: inside the jail /run and /var are not the
+        # host's, so the command cannot reach the socket it guards against.
+        from yaaf.runner import host_jail
+
+        return host_jail.run_check(command, workspace_dir, timeout_s)
     if mode == "subprocess":
         if _host_holds_the_keys() and not getattr(settings(), "allow_host_success_tests", False):
             # Fails rather than silently passing: an unrun test has not been
@@ -141,6 +148,19 @@ def _docker_check(command: str, workspace_dir: str, timeout_s: int) -> tuple[int
     finally:
         with contextlib.suppress(Exception):
             container.remove(force=True)
+
+
+def run_agent(*, workspace_dir: str, env: dict[str, str], timeout_s: int,
+              stop_event=None, entrypoint: str = "sandbox_entry.py") -> tuple[int, str]:
+    """Run an agent where this runner's sandbox mode says: a container, or a
+    bubblewrap jail on the host. Same inputs, same exit codes, same logs."""
+    if getattr(settings(), "sandbox_mode", "docker") == "host":
+        from yaaf.runner import host_jail
+
+        return host_jail.run_agent(entrypoint=entrypoint, workspace_dir=workspace_dir,
+                                   env=env, timeout_s=timeout_s, stop_event=stop_event)
+    return run_agent_container(workspace_dir=workspace_dir, env=env, timeout_s=timeout_s,
+                               stop_event=stop_event, entrypoint=entrypoint)
 
 
 def run_agent_container(
@@ -247,7 +267,15 @@ def start_chat_container(*, project_id: str, run_id: str, name: str,
     the file sat on disk two directories away. Read-only because a resident
     session writing into the working tree is the race the split was built to
     avoid; the CEO reads the project's output, it does not edit it.
+
+    Host mode holds the same session in a jail that stays up (host_jail).
     """
+    if getattr(settings(), "sandbox_mode", "docker") == "host":
+        from yaaf.runner import host_jail
+
+        return host_jail.start_chat(project_id=project_id, run_id=run_id,
+                                    workspace_dir=workspace_dir, env=env,
+                                    project_dir=project_dir)
     import docker
 
     client = docker.from_env()
@@ -283,6 +311,10 @@ def start_chat_container(*, project_id: str, run_id: str, name: str,
 def chat_container_run_ids(project_id: str) -> set[str]:
     """Run ids of the RUNNING chat containers for a project. More than one, or
     one that doesn't match the live run row, means zombies to clear."""
+    if getattr(settings(), "sandbox_mode", "docker") == "host":
+        from yaaf.runner import host_jail
+
+        return host_jail.chat_run_ids(project_id)
     import docker
 
     client = docker.from_env()
@@ -296,6 +328,10 @@ def stop_chat_container(project_id: str) -> str:
     """Stop and remove the project's chat container(s); returns forensics +
     logs for every container found — the corpse is removed here, so this is
     the only chance to record why it died."""
+    if getattr(settings(), "sandbox_mode", "docker") == "host":
+        from yaaf.runner import host_jail
+
+        return host_jail.stop_chat(project_id)
     import docker
 
     client = docker.from_env()

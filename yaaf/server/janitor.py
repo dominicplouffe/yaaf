@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, inbox
 from yaaf.core.config import settings
 from yaaf.core.constitution import (
     ConstitutionDoc,
@@ -2550,7 +2550,7 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
     if spent >= hard_stop:
         project.status = ProjectStatus.PAUSED
         project.status_reason = (
-            f"hard stop: {spent:,.0f} {unit} this month against a budget of "
+            f"{inbox.HARD_STOP}: {spent:,.0f} {unit} this month against a budget of "
             f"{budget:,.0f} and a wall at {hard_stop:,.0f}"
         )
         for run in session.execute(
@@ -3126,10 +3126,15 @@ def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> Non
     if brief["clears_at"]:
         return
 
+    from yaaf.server.dispatcher import TALK_RUN_KINDS
+
     since = utcnow() - timedelta(hours=float(cons.stall_hours))
+    # Talk in either vehicle is not work happening: a project whose only runs
+    # were the CEO answering the chairman has stalled exactly as much as one
+    # whose only activity was the resident chat session.
     started = session.execute(
         select(func.count(Run.id)).where(Run.project_id == project.id,
-                                         Run.kind != RunKind.CHAT_SESSION,
+                                         Run.kind.not_in(TALK_RUN_KINDS),
                                          Run.created_at >= since)
     ).scalar_one()
     if started:

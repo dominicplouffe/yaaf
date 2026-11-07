@@ -17,11 +17,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import desktop_theme, ids
 from yaaf.core.models import Approval, ApprovalStatus, Ask, Snooze, User, utcnow
 from yaaf.server import authority
 from yaaf.server.deps import db
@@ -185,3 +185,52 @@ def set_pins(body: PinsIn, person: Person = Depends(signed_in),
     user = session.get(User, person.id)
     user.pins = kept
     return _pins_view(session, person, user)
+
+
+# ── the desktop's theme ──────────────────────────────────────────────────────────
+#
+# The dashboard wears the theme of the desktop it is read on, when that desktop
+# says what it is (`yaaf theme sync`, run by an Omarchy theme hook). Stored per
+# person, like pins. What is stored is colours and nothing else — every value
+# a #rrggbb, every name one a desktop theme uses — because what the page does
+# with them is write CSS custom properties, and a value that is not a colour is
+# text a stylesheet would interpret.
+
+
+class DesktopThemeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=60)
+    mode: str = Field(max_length=5)
+    colors: dict[str, str] = Field(max_length=len(desktop_theme.KEYS))
+
+
+@router.get("/desktop-theme", dependencies=[authority.SIGNED_IN])
+def get_desktop_theme(person: Person = Depends(signed_in),
+                      session: Session = Depends(db)) -> dict:
+    stored = session.get(User, person.id).desktop_theme
+    return {"palette": stored, "theme": desktop_theme.view(stored)}
+
+
+@router.put("/desktop-theme", dependencies=[authority.SIGNED_IN])
+def put_desktop_theme(body: DesktopThemeIn, person: Person = Depends(signed_in),
+                      session: Session = Depends(db)) -> dict:
+    """What this person's desktop is themed in now. Refused whole when any
+    part is not a colour a desktop theme names."""
+    palette = body.model_dump()
+    problem = desktop_theme.valid(palette)
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
+    if desktop_theme.view(palette) is None:
+        raise HTTPException(status_code=422,
+                            detail="no text colour in this palette reads on its background")
+    palette["colors"] = {k: v.lower() for k, v in palette["colors"].items()}
+    session.get(User, person.id).desktop_theme = palette
+    return {"palette": palette, "theme": desktop_theme.view(palette)}
+
+
+@router.delete("/desktop-theme", dependencies=[authority.SIGNED_IN])
+def delete_desktop_theme(person: Person = Depends(signed_in),
+                         session: Session = Depends(db)) -> dict:
+    session.get(User, person.id).desktop_theme = None
+    return {"palette": None, "theme": None}

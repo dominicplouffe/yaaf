@@ -28,7 +28,7 @@ function greeting(): string {
 /** The order a reader wants the rows in: what needs them, then what is in
     trouble, then what is fine, then what has not started. */
 const RANK: Record<string, number> = {
-  needs_you: 0, blocked: 1, failing: 1, late: 1, at_risk: 2, stalled: 2, spinning: 2,
+  needs_you: 0, blocked: 1, failing: 1, late: 1, at_risk: 2, stalled: 2, spinning: 2, capped: 2,
   paused: 3, on_track: 4, idle: 5, done: 6, not_started: 7, stopped: 8,
 };
 
@@ -38,11 +38,14 @@ function stateCounts(projects: DeskProject[], decisions: number): string[] {
   const trouble = n(["blocked", "failing"]);
   const late = n(["late"]);
   const risk = n(["at_risk", "stalled", "spinning"]);
+  // Not "at risk": a spent day is a wait with a clock on it, not a forecast.
+  const capped = n(["capped"]);
   const fine = n(["on_track"]);
   const idle = n(["idle"]);
   if (trouble) out.push(`${trouble} blocked`);
   if (late) out.push(`${late} late`);
   if (risk) out.push(`${risk} at risk`);
+  if (capped) out.push(`${capped} out of runs`);
   if (fine) out.push(`${fine} on track`);
   if (idle) out.push(`${idle} idle`);
   const done = n(["done"]);

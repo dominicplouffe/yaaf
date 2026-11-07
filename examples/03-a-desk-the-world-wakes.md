@@ -40,7 +40,7 @@ BODY='{"description":"checkout returned 500 for user 4471, stack trace attached"
        "source_url":"https://your-logs.example/abc123",
        "wake":"Nadia"}'
 SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "<generic secret>" | cut -d' ' -f2)
-curl -X POST "http://localhost:8080/webhooks/generic/proj_…" \
+curl -X POST "http://localhost:24247/webhooks/generic/proj_…" \
   -H "Content-Type: application/json" -H "X-Yaaf-Signature: $SIG" -d "$BODY"
 ```
 

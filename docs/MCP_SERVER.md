@@ -156,7 +156,7 @@ plumbing everyone expects.
 
 | Client | Credential it accepts | Reaches yaaf how |
 |---|---|---|
-| **Claude Code** | Bearer header, or OAuth | Any URL, `http://localhost:8080/mcp` included |
+| **Claude Code** | Bearer header, or OAuth | Any URL, `http://localhost:24247/mcp` included |
 | **Claude Desktop / Cursor** | Bearer header, or OAuth | Any URL |
 | **Messages API MCP connector** | `authorization_token` (a bearer) | Public HTTPS only |
 | **claude.ai custom connector** | **OAuth only** — DCR, or a pasted client id/secret | Public HTTPS, inbound from Anthropic |
@@ -361,7 +361,7 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 | Tool | Does | Backing routes | Status |
 |---|---|---|---|
 | `whoami` | What this client may do: the chairman it acts for, its scopes, the projects it reaches. | — (the principal describing itself) | **done** (M0) |
-| `desk` | Cross-project standing: what needs you, everywhere. Leads with `summary`, one platform-written paragraph naming every project that is not fine (written before any trim, so none is cut) — and, under `also_yours`, the flags, heads-ups and open reviews the desk rows do not carry, so "what needs me?" is one call. Each row's `needs_you` is every decision on it counted once — the same number the badge, `yaaf status` and the briefing quote — including a finished delivery's `pending_signoff`. | `GET /observe/desk` | **done** (M1) |
+| `desk` | Cross-project standing: what needs you, everywhere. Leads with `summary`, one platform-written paragraph naming every project that is not fine (written before any trim, so none is cut) — and, under `also_yours`, the flags, heads-ups and open reviews the desk rows do not carry, so "what needs me?" is one call. Each row's `needs_you` is every decision on it counted once — the same number the badge, `yaaf status`, `yaaf signal` and the briefing quote — including a finished delivery's `pending_signoff`. | `GET /observe/desk` | **done** (M1) |
 | `projects` | List the projects this client can see: status, shape, goal preview. | `GET /observe/projects` | **done** (M0) |
 | `project` | One project's cockpit. `view`: `overview` \| `health` \| `setup` \| `flags` \| `heads_ups` \| `agenda` \| `briefing`. `setup` is a new project's checklist: each step, whether the project already has it, and which were skipped. The briefing takes `hours` or `since` for "what changed since yesterday?"; without them it is since you last looked. `overview` leads with `summary`, the project's status sentence. | `GET /observe/projects/{id}` + `/health` `/setup` `/flags` `/agenda` `/briefing` | **done** (M1) |
 | `plan` | Requirements by stage, dependencies, burn-up, the commitment and its risk. | `GET /observe/projects/{id}/plan`, `GET /admin/projects/{id}/requirements` | **done** (M1) |

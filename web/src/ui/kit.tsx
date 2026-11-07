@@ -541,10 +541,57 @@ export function readTheme(): Theme {
   }
 }
 
+/** The desktop's theme, as the server worked it out from what the desktop sent
+    (`yaaf theme sync`; yaaf/core/desktop_theme.py): the mode to lay it over, and
+    token → colour, every text colour already held to the stylesheet's 4.5:1. */
+export interface DesktopTheme {
+  name: string | null;
+  mode: "light" | "dark";
+  tokens: Record<string, string>;
+  kept: string[];
+}
+
+/** The only properties a desktop theme may set, and the only values: a hex
+    colour or the "r, g, b" the rgba() rules read. The server sends nothing
+    else; this checks again, because what it writes is CSS. The chart slots
+    are not here — they were tested for colour-vision separation. */
+const DESKTOP_TOKENS = new Set([
+  "--page", "--surface", "--surface-2", "--sunken", "--ink", "--ink-2", "--muted",
+  "--grid", "--border", "--border-strong",
+  "--accent", "--accent-rgb", "--on-accent", "--on-accent-rgb",
+  "--good", "--good-rgb", "--warning", "--warning-rgb", "--serious", "--serious-rgb",
+  "--critical", "--critical-rgb", "--on-critical",
+]);
+const COLOUR = /^(#[0-9a-f]{6}|\d{1,3}, \d{1,3}, \d{1,3})$/i;
+let desktopTheme: DesktopTheme | null = null;
+
+/** Hand the page the desktop's theme (or none), and re-dress it. */
+export function setDesktopTheme(t: DesktopTheme | null) {
+  const same = JSON.stringify(t) === JSON.stringify(desktopTheme);
+  desktopTheme = t;
+  if (!same) applyTheme(readTheme());
+}
+
+export const currentDesktopTheme = () => desktopTheme;
+
+/** Auto means: follow your desktop — its own theme when it has sent one, its
+    light or dark otherwise. Light and Dark are the stylesheet's own, whatever
+    the desktop wears. */
 export function applyTheme(t: Theme) {
   const root = document.documentElement;
-  if (t === "auto") root.removeAttribute("data-theme");
-  else root.setAttribute("data-theme", t);
+  for (const name of DESKTOP_TOKENS) root.style.removeProperty(name);
+  const desk = t === "auto" ? desktopTheme : null;
+  if (desk) {
+    root.setAttribute("data-theme", desk.mode === "light" ? "light" : "dark");
+    root.setAttribute("data-desktop-theme", desk.name ?? "desktop");
+    for (const [name, value] of Object.entries(desk.tokens)) {
+      if (DESKTOP_TOKENS.has(name) && COLOUR.test(value)) root.style.setProperty(name, value);
+    }
+  } else {
+    root.removeAttribute("data-desktop-theme");
+    if (t === "auto") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", t);
+  }
   try {
     if (t === "auto") localStorage.removeItem(THEME_KEY);
     else localStorage.setItem(THEME_KEY, t);
@@ -569,7 +616,9 @@ export function ThemeToggle() {
           key={t.key}
           className={theme === t.key ? "on" : ""}
           aria-pressed={theme === t.key}
-          title={t.key === "auto" ? "Follow the system" : t.label}
+          title={t.key === "auto"
+            ? (desktopTheme ? `Follow your desktop (${desktopTheme.name ?? "its theme"})` : "Follow the system")
+            : t.label}
           onClick={() => setTheme(t.key)}
         >
           <Icon name={t.icon} size={13} />
@@ -614,7 +663,8 @@ export const VERDICT_CHIP: Record<string, [word: string, tone: string]> = {
   not_started: ["Not started", "accent"], blocked: ["Can't run", "critical"],
   paused: ["Paused", "warn"], failing: ["Failing", "critical"], late: ["Late", "critical"],
   at_risk: ["At risk", "warn"], needs_you: ["Needs you", "accent"],
-  spinning: ["No progress", "warn"], stalled: ["Stalled", "warn"],
+  spinning: ["No progress", "warn"], capped: ["Out of runs", "warn"],
+  stalled: ["Stalled", "warn"],
   on_track: ["On track", "good"], idle: ["Idle", "accent"],
 };
 

@@ -56,6 +56,7 @@ from yaaf.runner.daemon import (
     _search_env,
     stash_context_doc,
 )
+from yaaf.runner.talk_prompt import CHAT_ADDENDUM
 from yaaf.runner.types import RunJob
 from yaaf.runtimes.harnesses import HARNESSES
 from yaaf.runtimes.seats import seat_for
@@ -84,56 +85,7 @@ MAX_STARTS_IN_WINDOW = 3
 #: same failure as leaving it wedged, only faster.
 CHAT_SILENCE_S = 300.0
 
-CHAT_ADDENDUM = """
 
-CHAT SESSION: You are in a live boardroom conversation with the chairman.
-- THREE SENTENCES for a status or a plain answer. This is a chat with a
-  busy owner, not a report: lead with the answer, add the one fact or
-  number that carries it, stop. When he has to DECIDE something, use the
-  decision shape in "HOW YOU WRITE TO THE CHAIRMAN" instead — still short,
-  but complete enough to act on without opening the project. Either way:
-  no headings, no step-by-step narration of what you did or are about to
-  do, no technical jargon (say "a stuck task", not the status enum it was
-  in), and no IDs or platform words he does not use ("the weekly report",
-  not "R-07").
-- NEVER PASTE A DOCUMENT INTO THIS ROOM. A report, a memo, a table or any
-  file you have written is published with artifact_put and named here in
-  one line; he opens it if he wants it. A memo pasted into chat is the
-  same words charged twice and read once.
-- If there is genuinely more worth saying, close with one line offering it
-  ("Want the full detail?") instead of including it. Write at length ONLY
-  when he explicitly asks for detail — and even then, plain words. None of
-  this licenses leaving out the number, the problem or the proposal: say
-  less, never less of what matters.
-- Reply promptly and conversationally.
-- Write your reply as your final text — the session delivers it to the
-  boardroom for you. Do NOT message_post your reply to the boardroom
-  (that would double-send it); message_post remains correct for OTHER
-  channels, e.g. briefing the leadership channel.
-- You have your full toolset. When the chairman asks for action, act —
-  create the task, check the board, record the memory — then say plainly
-  what you did, in a sentence or two, not a play-by-play.
-- Directives come only from the chairman, only here.
-- WHEN HE CHANGES HIS MIND about what the project is for, how it should
-  work, or any limit, threshold or value ("forget the stop", "only one rule
-  now", "stop leading with HN"), write the whole brief back to him with
-  `brief_propose`: the goal in plain words as it stands NOW, every standing
-  order with its number, and what no longer applies. Then tell him in one
-  line that it is waiting for his Confirm. Agreeing in chat is not enough
-  and neither is a memory: the work runs plan from the brief at the top of
-  their prompt, and until he confirms, that is still the old one. Do it in
-  the same turn, not later, and re-draft the whole brief every time, so it
-  never grows a stack of corrections.
-- A note he wrote on a decision arrives here as his line ("Re: “…” — …").
-  Answer it like anything he says: your reply is the one answer he gets, and
-  it goes under his note too. Close it with `note_answer` in the same turn,
-  saying whether it holds from now on; one that does ("go ahead, every day")
-  goes into the brief first.
-- When he sets a STANDING rule about how or how often he wants reporting,
-  file it with `directive_file`, citing the message id shown in brackets
-  beside his words. Do not merely remember it: you run as separate
-  stateless runs, and the next one will not read your memory before it
-  posts. Filing makes the platform enforce it and tells him it landed."""
 
 
 def chat_enabled(project: Project) -> bool:
@@ -148,9 +100,14 @@ def chat_supervisor_loop() -> None:  # pragma: no cover - thin loop
     # stands down with one line instead of throwing a Docker traceback every
     # tick — which is what a first-time reader of the dev-mode quickstart saw,
     # and reasonably read as "this is broken" while everything else worked.
-    if getattr(settings(), "sandbox_mode", "docker") == "subprocess":
-        log.info("chat supervisor idle: sandbox_mode=subprocess has no container "
-                 "lane, so the boardroom answers through ordinary queued runs")
+    # Host mode holds the session in a jail that stays up for as long as the
+    # session does (host_jail.start_chat), so it gets the lane too — replies in
+    # seconds, the typing dots, none of the run caps — and the queued run is
+    # its fallback, as it is for a container that died.
+    mode = getattr(settings(), "sandbox_mode", "docker")
+    if mode not in ("docker", "host"):
+        log.info("chat supervisor idle: sandbox_mode=%s has no container lane, so "
+                 "the boardroom answers through ordinary queued runs", mode)
         return
     while True:
         try:

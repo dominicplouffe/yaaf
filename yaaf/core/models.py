@@ -410,6 +410,17 @@ class RunKind(enum.StrEnum):
     # ready tasks got nothing. Reading is not free, but charging it to the same
     # purse as the work means the reading crowds the work out.
     INBOX_RUN = "inbox_run"
+    # The talk lane where there is no resident session to hold it. Subprocess
+    # and host mode end a sandbox with its run, so the chairman's boardroom is
+    # answered by a queued CEO run instead of a chat_session — the same lane in
+    # another vehicle. It spends none of the project's run allowance, because
+    # chat is not work; it still meets every per-agent brake, because a seat
+    # whose every run dies is a wake loop whoever it is answering.
+    #
+    # The vehicle used to be an agent_run. On a few-times-a-day tempo the
+    # day's twelve runs were gone by 04:00, and the chairman's "hello" waited
+    # until midnight UTC for an allowance that had never been his to spend.
+    BOARDROOM_RUN = "boardroom_run"
 
 
 class ApprovalKind(enum.StrEnum):
@@ -594,6 +605,12 @@ class User(Base):
     #: — so a default changed later reaches everyone who kept it, and an empty
     #: list stays the deliberate "nothing pinned" it was.
     pins: Mapped[list | None] = mapped_column(JSONVariant)
+    #: The colours this person's desktop is themed in, as their desktop last
+    #: sent them (`yaaf theme sync`): {"name", "mode", "colors": {name: #rrggbb}}.
+    #: The dashboard's tokens are worked out from it on every read
+    #: (yaaf.core.desktop_theme), never stored, so a better contrast rule
+    #: reaches everyone without a resync. NULL is no desktop theme.
+    desktop_theme: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
 class UserSession(Base):
@@ -1943,6 +1960,12 @@ class Run(Base):
     requirement_id: Mapped[str | None] = mapped_column(String(40))
     attempt: Mapped[int] = mapped_column(Integer, default=1)
     prior_run_id: Mapped[str | None] = mapped_column(String(40))
+    # Where this run's context pack found each read cursor it moved, keyed by
+    # channel: {channel_id: last_read_at before, or None for no cursor yet}.
+    # Moving a cursor is how a pack marks mail read, and a run can die before
+    # any model reads the pack — so the wake's retries re-show from here, and
+    # a wake given up on puts its cursors back (contextpack.give_back_reads).
+    read_from: Mapped[dict | None] = mapped_column(JSONVariant)
     status: Mapped[str] = mapped_column(String(24), default=RunStatus.RUNNING)
     worker: Mapped[str | None] = mapped_column(String(120))
     token_hash: Mapped[str | None] = mapped_column(String(64))

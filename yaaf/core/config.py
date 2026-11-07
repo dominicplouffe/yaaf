@@ -10,6 +10,15 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: The port yaaf answers on when nothing names another: C-H-A-I-R on a phone
+#: keypad, for the chairman. It was 8080, the most crowded port in development
+#: (Jenkins, Tomcat, proxies, half of every tutorial), which a desktop install
+#: shares with whatever else the person runs. This one is registered to nobody
+#: with IANA, absent from nmap's service database, below Linux's ephemeral
+#: range, and claimed by no common dev tool. Containers keep 8080 inside their
+#: own network (deploy/docker-compose.yml), where nothing can clash with it.
+DEFAULT_PORT = 24247
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="YAAF_", env_file=".env", extra="ignore")
@@ -21,7 +30,7 @@ class Settings(BaseSettings):
     master_key: str = ""
 
     # Base URL agents use to reach the platform API from inside sandboxes.
-    api_base_url: str = "http://localhost:8080"
+    api_base_url: str = f"http://localhost:{DEFAULT_PORT}"
 
     # Browser-facing origin of this install (e.g. https://yaaf.example.com) —
     # used to build the OAuth redirect URI when connecting an OAuth-protected
@@ -39,7 +48,7 @@ class Settings(BaseSettings):
     mcp_redirect_hosts: str = "claude.ai,claude.com,localhost,127.0.0.1"
 
     api_host: str = "0.0.0.0"
-    api_port: int = 8080
+    api_port: int = DEFAULT_PORT
 
     # Runner
     worker_name: str = "worker-1"
@@ -54,8 +63,19 @@ class Settings(BaseSettings):
     # project ids. Without this label its supervisor reads the live session as
     # a zombie and removes it.
     stack: str = "deploy"
-    # "docker" (isolation; default) or "subprocess" (dev/CI only — NO isolation)
+    # "docker" (isolation; default), "host" (agents run on this machine inside
+    # bubblewrap, no Docker — yaaf/runner/host_jail.py), or "subprocess"
+    # (dev/CI only — NO isolation, and real agent runs still need Docker)
     sandbox_mode: str = "docker"
+    # Host mode only: extra paths a run may read, os.pathsep-separated — where
+    # a harness CLI lives outside /usr and /opt (~/.npm-global, ~/.local/bin).
+    # A path that would expose yaaf's data folder or a whole home is refused.
+    host_jail_binds: str = ""
+    # Host mode only: what one agent run may use, as Docker gives each run
+    # (2 CPUs, 2 GB). `yaaf setup` asks; 0 means no cap. Enforced with a
+    # systemd user scope around the jail, where the machine has one.
+    host_run_cpus: float = 2.0
+    host_run_memory_gb: float = 2.0
     # A task's success test can be a command string an *agent* wrote. Under
     # sandbox_mode="subprocess" that string runs on the runner host, which
     # mounts the Docker socket — so the platform refuses it unless an operator

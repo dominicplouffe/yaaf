@@ -1,4 +1,5 @@
-"""The real backend: a harness inside a Docker sandbox.
+"""The real backend: a harness inside a Docker sandbox (or, in host mode, a
+bubblewrap jail that mounts the same paths — yaaf/runner/host_jail.py).
 
 The host side (this file) stages inputs into the workspace, launches the
 sandbox container, and reads the result back. The model runs *inside* the
@@ -69,7 +70,7 @@ class SandboxBackend:
         self.entrypoint = entrypoint
 
     def execute(self, job: RunJob, stop_event=None) -> RunResult:
-        from yaaf.runner.sandbox import run_agent_container
+        from yaaf.runner.sandbox import run_agent
 
         workspace = Path(job.workspace_dir)
         staging = workspace / ".yaaf"
@@ -108,7 +109,7 @@ class SandboxBackend:
             "YAAF_AGENT_KIND": job.agent_kind,
             **job.billing_env,
         }
-        exit_code, logs = run_agent_container(
+        exit_code, logs = run_agent(
             workspace_dir=str(workspace), env=env, timeout_s=job.timeout_s,
             stop_event=stop_event, entrypoint=self.entrypoint,
         )

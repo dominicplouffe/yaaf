@@ -4,7 +4,7 @@ Everything the dashboard does, scriptable. Useful for provisioning, CI, and
 poking at a running deployment.
 
 ```bash
-export YAAF_API=http://localhost:8080      # the default, so usually omitted
+export YAAF_API=http://localhost:24247      # the default, so usually omitted
 yaaf login                                 # your email and password, once
 ```
 
@@ -27,6 +27,12 @@ Every command that takes a project accepts **either a slug or an id**.
 | Command | What it does |
 |---|---|
 | `yaaf doctor` | Check the install end to end — server, your sign-in, the dashboard build, the master key, roles and crews, a key to pay with, the Founder's key, the runner, the public address, email — and print the command or page that fixes each failure. Exits 1 while a problem stands. |
+| `yaaf desktop install [--dry-run] [--key K]` | **Add yaaf to this desktop**, through the standards nearly every Linux desktop follows (GNOME, KDE, Hyprland and Omarchy, Sway, Xfce): app-menu entries for the dashboard (in a window of its own when your default browser can make one), the desk and the morning letter; the letter at login, when something happened; and a nudge on a systemd user timer. Writes only in your own folders, each file marked and listed in a manifest. A file already there that it did not write, or that you edited since, is left alone and named. **On Omarchy** it adds three more, each the way Omarchy documents for a third party: the number in the bar (a shell plugin, `yaaf.signal`, enabled with `omarchy plugin enable`, beside the clock and hidden while nothing needs you; click for the desk, right-click for the dashboard), a `yaaf` submenu in the Omarchy menu, and `Super+Y` for the desk, floating (`--key` for another; a key already bound is skipped, never doubled). The menu and the bindings files are yours with no drop-in folder, so yaaf's lines are marked, the menu is parsed with Omarchy's own rules before it is saved, the first edit keeps a `.before-yaaf` copy, and a symlinked file is never written through. |
+| `yaaf theme sync [--from FILE] [--quiet]` | **Dress the dashboard in your desktop's theme**: Omarchy's current one (`~/.local/state/omarchy/current/theme/colors.toml`), or any colors.toml with `--from`. Stored for you alone, colours only. The dashboard's tokens are worked out from it so that every text and status colour still clears 4.5:1 on its ground — a colour that would not is moved toward the text colour until it does — and the chart colours are never touched. Shows while the theme toggle is on Auto; Light and Dark stay the dashboard's own. On Omarchy, `yaaf desktop install` runs it on every theme switch. |
+| `yaaf theme show` / `yaaf theme clear` | What the dashboard wears now; back to its own light and dark. |
+| `yaaf desktop remove` | Take out exactly what install put in. A file you edited since is kept and named. |
+| `yaaf desktop status` | Each piece install put in — in place, edited since, or missing — whether the nudge timer runs, and which terminal and browser it would open. |
+| `yaaf desktop launch dashboard\|desk\|letter [--if-new]` | Open one the way this desktop opens things — what the menu entries run. A terminal is `YAAF_TERMINAL` if set (a command prefix, e.g. `foot`), else `xdg-terminal-exec`, `$TERMINAL`, or the first one installed. |
 | `yaaf seed-roles [DIR] [--only-missing]` | Load every `*.json` in the directory (default `roles/`) into the role library. Re-running creates new role *versions* — which is how an edited prompt reaches a running install. `--only-missing` skips the slugs the library already has, which is what you want after an update adds roles to the checkout; it still refiles those roles' **category and domains**, because those live on the role rather than the version and so can move without putting a live team behind its prompt. |
 | `yaaf seed-crews [DIR] [--only-missing]` | Load every `*.json` in the directory (default `crews/`) into the crew library — the pre-staffed teams the hiring desk offers. Crews are not versioned: one is read at hiring time and copied into the project's own teams, so re-seeding an edited crew can never reach a project that already started. Run it after `seed-roles`. |
 | `yaaf create-user EMAIL NAME [--admin]` | Invite somebody (instance admins only). Prints the one-time link that lets them choose a password — the box sends no mail, so hand it on. Idempotent by email. |
@@ -153,9 +159,14 @@ yaaf stop  my-slug --reason "shipped"
 
 | Command | Shows |
 |---|---|
-| `yaaf up --no-isolation [--email E] [--home DIR] [--port N]` | Start yaaf on this machine in one command — key, database, schema, server, runner, first admin, role library — and print the address. Refuses to pick the unsandboxed mode for you. See DEPLOYMENT.md. |
+| `yaaf setup [--port N] [--bind ADDR] [--home DIR] [--no-service]` | **Set yaaf up on this machine, step by step**: checks bubblewrap and the dashboard, makes you the admin with a password, starts yaaf in host mode as a systemd user service (or a background process), signs this CLI in, connects any provider — its key checked with the provider before it is kept, then whatever a project would still be refused for (a model, a price, a search service) — and points the Founder at it. Safe to run again — every step skips what is done. `deploy/install_desktop.sh` installs the packages and runs this. |
+| `yaaf update [--check] [--home DIR] [--port N]` | **Update a desktop install to the newest yaaf**: refuses a checkout with edits to tracked files or a diverged branch, backs the database up first (newest five kept in `~/.yaaf/backups`), pulls fast-forward only, reinstalls packages only if `pyproject.toml` changed, rebuilds the dashboard only if `web/` changed, restarts yaaf (which migrates), and refreshes `yaaf desktop install`'s pieces. Stops at the first failure with the commands that go back. `--check` lists what would come and changes nothing. |
+| `yaaf up --host\|--no-isolation [--email E] [--home DIR] [--port N] [--bind ADDR]` | Start yaaf on this machine in one command — key, database, schema, server, runner, first admin, role library — and print the address. `--host` runs real agents here, each in a bubblewrap jail, with no Docker; `--no-isolation` runs scripted agents with no sandbox at all. Refuses to pick either for you. Listens on `127.0.0.1` unless `--bind` names another address. See DEPLOYMENT.md. |
 | `yaaf projects [--json]` | Every project as one line: status, spend against the budget, the hard stop, and how many things wait on you. `--json` for the raw payload. |
 | `yaaf status [PROJECT] [--json]` | Is everything OK, in sentences: one paragraph across your projects, each project's status line (the same words Home, the project's Inbox and Claude's `desk` say), then everything waiting on you, with ids. `--json` for the status lines alone. |
+| `yaaf signal [--format text\|waybar\|json\|count] [--prefix P]` | **What needs you, for a status bar**: the dashboard badge's number (running projects, minus what you snoozed), and empty when it is zero. `waybar`/`json` print one line of `{text, tooltip, class}` — Waybar's custom-module format, which Omarchy's bar command module also reads; `class` is `active` only when a decision decides itself within a day or a project is paused at its spending wall, `waiting`, `clear`, or `offline`/`signed-out` (still valid JSON, so a bar never breaks). `count` prints the number for a script and exits 1 when yaaf cannot be read. Runs once and exits; put it on an interval. |
+| `yaaf letter` | **The morning letter**: the briefing across your live projects, in the platform's own words, in this terminal; `s` marks it read, `d` opens the desk. At login it opens itself (`yaaf desktop install`) once a day, and only when something happened. |
+| `yaaf nudge [--dry-run]` | **At most one desktop notification a day**, only when a decision is about to decide itself (within a day) or a project has stopped at its spending wall, never twice about the same thing, never between 22:00 and 08:00. Normal urgency, so Do Not Disturb silences it. Through `notify-send` (with an "Open the desk" button where it can) or D-Bus. The timer `yaaf desktop install` sets up runs it every 30 minutes. |
 | `yaaf rehearse SPEC_FILE [--days N] [--usd-per-run N] [--json]` | **A fire drill: run the spec as a project for nothing, before you fund it.** Needs no deployment and no key — `yaaf rehearse examples/01-your-first-hour.json` works on a fresh checkout. See [FEATURES §13](FEATURES.md). |
 | `yaaf briefing [PROJECT] [--hours N] [--seen]` | **What happened since you last read one.** Omit the project for every live project. Composed from the record at zero tokens, so it works on a paused project and a broke one. Reading never moves your mark; `--seen` does, and only to the edge of the window it just printed. |
 | `yaaf agenda PROJECT [--days 14]` | **What it is scheduled to do next**: the wall-clock wakes, the standing meeting, the cycle roll, the kill dates, the clocks that decide themselves, and the promised date with the platform's projection beside it. |
@@ -180,6 +191,7 @@ yaaf stop  my-slug --reason "shipped"
 
 | Command | What it does |
 |---|---|
+| `yaaf desk` | **The Inbox in a terminal.** What needs you, one decision at a time — the Inbox's rows, in its order, minus what you snoozed. It settles what the Inbox settles in place, with the Inbox's safeguards: approve (a purchase says what it spends and asks first), decline (only with a reason), answer a question (one key per option; the answer is a boardroom line and settles the questions asked before it), accept proposed scope and sign off a finished delivery (both ask twice). A verdict, a date, an expired bet or a frozen thread opens its row in the dashboard (`o`). `s` speaks to the CEO, `z` is "not now". Every write goes out on this CLI's token and is recorded as such. |
 | `yaaf say PROJECT "message"` | Speak in the boardroom — your only channel. |
 | `yaaf decide APPROVAL_ID --approve\|--deny [--note …]` | Decide an approval. |
 | `yaaf extend HYPOTHESIS_ID NEW_KILL_DATE REASON` | Your one-time extension of an expired bet (ISO datetime). |
@@ -291,7 +303,7 @@ current calendar month.
 ## A full provisioning script
 
 ```bash
-export YAAF_API=http://localhost:8080
+export YAAF_API=http://localhost:24247
 yaaf login                                                    # an instance admin
 
 yaaf seed-roles roles/                                        # once per deployment
@@ -357,3 +369,24 @@ yaaf agenda my-slug           # and what the next fortnight holds
 Set `brief_daily_at` (Settings → **Rules in force** → Rhythm & reporting, or
 `yaaf amend`) and the same briefing arrives by email every morning without
 anyone typing anything.
+
+### In a status bar
+
+`yaaf signal` runs once and exits, so any bar that runs a command on an
+interval can show it. Waybar (Sway, Hyprland, and anything else it runs on):
+
+```json
+"custom/yaaf": {
+  "exec": "yaaf signal --format waybar",
+  "return-type": "json",
+  "interval": 30,
+  "on-click": "xdg-terminal-exec yaaf desk"
+}
+```
+
+`on-click` is your terminal's way to run a command: `xdg-terminal-exec` on
+Omarchy and newer desktops, `gnome-terminal --` on stock Ubuntu,
+`x-terminal-emulator -e` on any Debian-family system.
+`#custom-yaaf.active` is the one class worth styling. On KDE, a "Command
+Output" widget runs `yaaf signal`; in tmux, `#(yaaf signal)` in
+`status-right`.

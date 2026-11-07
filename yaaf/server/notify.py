@@ -72,6 +72,13 @@ from sqlalchemy.orm import Session
 
 from yaaf.core import ids
 from yaaf.core.config import settings
+from yaaf.core.inbox import (  # noqa: F401 — re-exported: the mail links these rows
+    commitment_item,
+    frozen_item,
+    scope_item,
+    signoff_item,
+    verdict_item,
+)
 from yaaf.core.models import (
     AuditLog,
     Channel,
@@ -140,24 +147,9 @@ def inbox_url(item_key: str, tab: str | None = None) -> str | None:
     return f"{origin}/app/#/inbox?{on}item={quote(item_key, safe='')}" if origin else None
 
 
-# The Inbox's keys for the rows that are not one database row. The Inbox builds
-# them (`itemsFor` in web/src/desk.tsx) and selects `?item=` by exact match, so
-# a key spelled differently here opens his first row instead of this one;
-# `tests/selftest_invariants/test_inbox_links.py` holds the two spellings together.
-def signoff_item(project_id: str) -> str:
-    return f"{project_id}-signoff"
-
-
-def scope_item(project_id: str) -> str:
-    return f"{project_id}-plan"
-
-
-def commitment_item(project_id: str) -> str:
-    return f"{project_id}-commitment"
-
-
-def verdict_item(project_id: str, requirement_key: str) -> str:
-    return f"{project_id}-verdict-{requirement_key}"
+# The Inbox's keys for the rows that are not one database row are spelled once,
+# in yaaf.core.inbox — cheap to import, for `yaaf signal` — and re-exported
+# here for the mail that links them.
 
 
 def inbox_link(item_key: str, label: str) -> str:

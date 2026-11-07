@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 // Served by FastAPI under /app/ in production; hash routing means no
-// server-side fallback is needed. `npm run dev` proxies API calls to :8080.
+// server-side fallback is needed. `npm run dev` proxies API calls to :24247 (yaaf's default port).
 export default defineConfig({
   plugins: [react()],
   base: "/app/",
@@ -15,12 +15,12 @@ export default defineConfig({
     // against the Host it arrived on, and keeping the browser's Host is what
     // lets localhost:5173 count as this install's own pages in development.
     proxy: {
-      "/auth": "http://localhost:8080",
-      "/admin": "http://localhost:8080",
-      "/observe": "http://localhost:8080",
-      "/agent": "http://localhost:8080",
-      "/healthz": "http://localhost:8080",
-      "/ws": { target: "ws://localhost:8080", ws: true },
+      "/auth": "http://localhost:24247",
+      "/admin": "http://localhost:24247",
+      "/observe": "http://localhost:24247",
+      "/agent": "http://localhost:24247",
+      "/healthz": "http://localhost:24247",
+      "/ws": { target: "ws://localhost:24247", ws: true },
     },
   },
 });

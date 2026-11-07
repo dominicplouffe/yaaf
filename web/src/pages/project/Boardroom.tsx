@@ -199,13 +199,15 @@ export default function Boardroom({ projectId, dash, org }: {
     dash.chat_live ? 2000 : 4000,
     [channelId],
   );
+  // Polled in both modes: without a resident session the server reads
+  // "typing" off the queued run that is on its way to the reply.
   const { data: typing } = usePoll(
     () =>
-      channelId && dash.chat_live
+      channelId
         ? get<{ typing: boolean }>(`/observe/channels/${channelId}/typing`)
         : Promise.resolve({ typing: false }),
     2000,
-    [channelId, dash.chat_live],
+    [channelId],
   );
 
   useEffect(() => {
@@ -416,8 +418,9 @@ export default function Boardroom({ projectId, dash, org }: {
     return out;
   }, [loaded, runs]);
 
-  // The CEO is the agent with no team, and these are the two kinds of run that
-  // mean it is working on something a reply could come out of.
+  // The CEO is the agent with no team, and these are the kinds of run that
+  // mean it is working on something a reply could come out of — boardroom_run
+  // most of all: on an install with no resident session, it IS the reply.
   //
   // Named rather than excluded. The old test was "any running run of the CEO's
   // that is not a success_check", and a live chat session is exactly that: a
@@ -429,7 +432,7 @@ export default function Boardroom({ projectId, dash, org }: {
   // not.
   const ceoRun = (runs ?? []).find(
     (r) => r.status === "running" && !r.team_name
-      && (r.kind === "agent_run" || r.kind === "inbox_run"),
+      && (r.kind === "agent_run" || r.kind === "inbox_run" || r.kind === "boardroom_run"),
   );
   // The wall the live session last hit. A refused task_create looks exactly
   // like a CEO that decided not to bother, and the difference only existed in
@@ -479,7 +482,7 @@ export default function Boardroom({ projectId, dash, org }: {
           {/* With a live chat session the boardroom IS a chat: the typing dots
               below carry presence. The wait-explainer banners only matter in
               fallback mode, when replies ride the run queue. */}
-          {!dash.chat_live && dash.runs.running > 0 ? (
+          {typing?.typing ? null : !dash.chat_live && dash.runs.running > 0 ? (
             <div className="notice-box working">
               <span className="working-dot" aria-hidden="true" />
               {ceoFirst} is working on{" "}

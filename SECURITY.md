@@ -32,7 +32,9 @@ scoped so that a compromised agent is bounded by the project it belongs to.
 Four things, and it is worth being exact because a fifth used to be on this list:
 
 1. **A fresh container per run.** No privileges (`no-new-privileges`), CPU and
-   memory caps, and it dies when the run does.
+   memory caps, and it dies when the run does. In host mode it is a fresh
+   bubblewrap jail per run instead — see the sharp edges below for what that
+   does and does not give you.
 2. **A role-scoped credential set.** A role declares `secret_scopes`; it gets
    those and nothing else. File-shaped credentials are written to a tmpfs
    outside `/workspace`, mode 0600, so a key never reaches a disk and cannot be
@@ -98,6 +100,17 @@ Stated here rather than waiting for someone to find them:
   refuses it unless `allow_host_success_tests` is set explicitly. Docker mode,
   the default, is unaffected: there the command runs in a throwaway container
   with no credentials.
+- **`sandbox_mode="host"` is a jail, not a container.** Agents run as you, on
+  your machine, each inside a bubblewrap jail (`yaaf/runner/host_jail.py`). It
+  hides your home folder, yaaf's database and master key, the host's `/run`
+  (the Docker socket, the session bus) and every process outside the run, and
+  gives the run an environment built from nothing — each attacked in
+  `tests/selftest_invariants/test_host_jail.py`. It does **not** cap memory or
+  CPU; it leaves `/etc`, `/opt` and `/usr` readable; and it shares your network
+  namespace, so a run can reach services listening on `localhost` and abstract
+  Unix sockets, which a Docker bridge cannot. It is as strong as your kernel's
+  user namespaces, with none of a container runtime's seccomp profile. Right
+  for a desktop you are sitting at; on a box other people reach, use docker.
 - **Sandboxes share one Docker bridge.** Concurrent runs from different
   projects can reach each other on the network. Per-project networks are the
   obvious fix and are not built.
