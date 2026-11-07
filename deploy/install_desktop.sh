@@ -30,6 +30,9 @@ if have pacman; then
     as_root pacman -S --needed --noconfirm "${pkgs[@]}"
   fi
 elif have apt-get; then
+  # Ubuntu ships python3 without venv; ask for it whenever it is missing, not
+  # only when something else is.
+  have uv || python3 -c 'import ensurepip' 2>/dev/null || missing+=(python3-venv)
   if [ ${#missing[@]} -gt 0 ]; then
     pkgs=()
     for tool in "${missing[@]}"; do
@@ -37,7 +40,7 @@ elif have apt-get; then
     done
     echo "installing: ${pkgs[*]} (your password may be asked once)"
     as_root apt-get update -qq
-    as_root apt-get install -y -qq "${pkgs[@]}" python3-venv
+    as_root apt-get install -y -qq "${pkgs[@]}"
   fi
 elif [ ${#missing[@]} -gt 0 ]; then
   echo "Install these with your package manager, then run this again: ${missing[*]}" >&2

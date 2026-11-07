@@ -272,3 +272,22 @@ def test_a_success_check_runs_jailed_at_slash_workspace(jail):
         f"test -f /workspace/out/report.md && ! test -e {data}/master.key && "
         "test -z \"$YAAF_MASTER_KEY\"", str(workspace), 30)
     assert code == 0, out
+
+
+def test_ubuntus_restriction_is_named_with_what_fixes_it(box, monkeypatch, tmp_path):
+    """On Ubuntu 23.10 and later bwrap is installed and still cannot make a
+    jail: AppArmor strips its capabilities. "Install bubblewrap" is then the
+    wrong advice; the refusal says what is actually in the way and what moves
+    it — and never runs anything bare instead."""
+    switch = tmp_path / "apparmor_restrict_unprivileged_userns"
+    switch.write_text("1\n")
+    monkeypatch.setattr(host_jail, "USERNS_RESTRICTION", switch)
+    monkeypatch.setattr(host_jail, "_bwrap", lambda: "/usr/bin/bwrap")
+    monkeypatch.setattr(host_jail, "_probe",
+                        lambda bwrap: "bubblewrap is installed but cannot make a sandbox "
+                                      "here: setting up uid map: Permission denied")
+    said = host_jail.unavailable()
+    assert said.startswith("Refused") and "AppArmor" in said
+    assert "userns" in said and "apparmor_restrict_unprivileged_userns=0" in said
+    switch.write_text("0\n")
+    assert "AppArmor" not in host_jail.unavailable(), "only where the restriction is on"

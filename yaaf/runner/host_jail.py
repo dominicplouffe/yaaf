@@ -253,8 +253,32 @@ def unavailable() -> str | None:
                 "without it.")
     problem = _probe(bwrap)
     if problem:
-        return f"Refused: sandbox_mode is 'host' and {problem}"
+        return f"Refused: sandbox_mode is 'host' and {problem}" + _restricted_userns()
     return None
+
+
+#: Ubuntu's switch for its user-namespace restriction (1 is on, its default).
+USERNS_RESTRICTION = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
+
+
+def _restricted_userns() -> str:
+    """Ubuntu 23.10 and later move a program that creates a user namespace
+    into an AppArmor profile with no capabilities, unless a profile of its own
+    grants `userns` — and Ubuntu ships none for bwrap. Installing bwrap again
+    cannot fix that, so the refusal says what can."""
+    try:
+        restricted = USERNS_RESTRICTION.read_text().strip() == "1"
+    except OSError:
+        return ""
+    if not restricted:
+        return ""
+    return ("\nThis system restricts user namespaces with AppArmor (Ubuntu 23.10 and "
+            "later), and has no AppArmor profile letting bwrap create one. Either give "
+            "bwrap one — Ubuntu's own pattern, as it does for flatpak and podman — or lift "
+            "the restriction for the whole machine (sudo sysctl "
+            "kernel.apparmor_restrict_unprivileged_userns=0). Both reopen user namespaces, "
+            "which Ubuntu restricts to shrink the kernel's attack surface; or use "
+            "sandbox_mode=docker. docs/DEPLOYMENT.md, Host mode, has the profile.")
 
 
 def _tail(handle) -> str:

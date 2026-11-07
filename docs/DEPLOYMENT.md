@@ -203,6 +203,36 @@ policy that forbids unprivileged user namespaces, `yaaf up --host` stops before
 starting, `yaaf doctor` says why, and a runner that is somehow started anyway
 refuses every run (exit 126) rather than run an agent bare.
 
+**On Ubuntu 23.10 and later**, bwrap is installed but blocked by default:
+Ubuntu moves a program that creates a user namespace into an AppArmor profile
+with no capabilities unless a profile of its own grants `userns`, and it ships
+profiles for flatpak, podman and others but none for bwrap. `yaaf setup` stops
+at its first step and says so. Two ways through, both your call, because both
+reopen user namespaces Ubuntu restricts to shrink the kernel's attack surface:
+
+- **A profile for bwrap alone** — Ubuntu's own pattern. Save as
+  `/etc/apparmor.d/bwrap-userns` and load it:
+
+  ```
+  abi <abi/4.0>,
+  include <tunables/global>
+
+  profile bwrap-userns /usr/bin/bwrap flags=(unconfined) {
+    userns,
+    include if exists <local/bwrap-userns>
+  }
+  ```
+
+  then `sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns`. Any program on
+  the machine can then use bwrap to make a namespace; bwrap is built to be
+  safe for exactly that, and was setuid on Debian for years.
+- **Lift the restriction for the whole machine**:
+  `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`, and the same
+  line in `/etc/sysctl.d/` to keep it. Broader than the profile.
+
+Or run agents in Docker instead (`YAAF_SANDBOX_MODE=docker`). Arch (Omarchy),
+Fedora and Debian do not restrict user namespaces this way and need none of it.
+
 **Harness CLIs.** The Agent SDK brings its own Claude CLI, inside the Python
 environment the jail already mounts, so Anthropic seats need nothing more. A
 Codex, Gemini or OpenCode seat needs its CLI visible in the jail: under `/usr`

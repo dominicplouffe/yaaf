@@ -62,6 +62,7 @@ def _check_machine(folder: Path) -> None:
     problem = host_jail.unavailable()
     if problem:
         _stop(problem.removeprefix("Refused: "),
+              "" if shutil.which("bwrap") else
               "sudo pacman -S bubblewrap   (Debian/Ubuntu: sudo apt install bubblewrap)")
     _ok("bubblewrap can make a sandbox, so agents run on this machine without Docker")
     dist = up_cmd.REPO / "web" / "dist"
