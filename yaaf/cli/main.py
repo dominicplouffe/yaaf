@@ -1760,6 +1760,13 @@ def _register_users() -> None:
     app.add_typer(users, name="users")
 
 
+def _register_keys() -> None:
+    # Lazily, like users: it opens the database directly.
+    from yaaf.cli.keys import rotate_master_key
+
+    app.command("rotate-master-key")(rotate_master_key)
+
+
 def _register_up() -> None:
     from yaaf.cli.desk import desk, signal
     from yaaf.cli.desktop import desktop_app, letter, nudge
@@ -1782,6 +1789,7 @@ def _register_up() -> None:
 
 _register_spend()
 _register_users()
+_register_keys()
 _register_up()
 
 #: Where each command sits in `yaaf --help`, in the order somebody new reaches

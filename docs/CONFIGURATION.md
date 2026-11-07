@@ -61,12 +61,24 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
 Do not use Python's `secrets.token_urlsafe(32)`. It drops the padding and
 fails the first time you save a secret.
 
-- **If you change it,** every stored key becomes unreadable.
-- **If you lose it,** the same. There is no recovery.
+- **If you lose it,** every stored secret is unreadable. There is no recovery.
+- **If you edit it by hand,** the same. To change it, rotate it (below).
 - **If it is empty,** the server refuses to save or read any secret.
 
 Docker keeps it in `deploy/.env`. Native mode keeps it in `~/.yaaf/master.key`.
 Keep a copy somewhere safe, away from the machine.
+
+**Rotating it.** This re-encrypts every stored secret under a new key, all at
+once. If any value can't be read, nothing changes.
+
+| Install | Command |
+|---|---|
+| Docker | `deploy/rotate_master_key.sh` (backs up, stops yaaf, rotates, updates `deploy/.env`, starts yaaf) |
+| Native | `systemctl --user stop yaaf`, then `yaaf rotate-master-key`, then `systemctl --user start yaaf` |
+
+Keep the old key. Backups taken before the rotation can only be read with it.
+The Docker script saves it as `deploy/.env.<date>.bak`; native mode keeps it
+as `~/.yaaf/master.key.<date>.old`.
 
 ## Runner and sandboxes
 

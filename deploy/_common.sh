@@ -343,3 +343,21 @@ current_port() {
     sed -n 's/.*"[0-9.]*:\([0-9]\+\):8080".*/\1/p' "$REPO/deploy/docker-compose.override.yml" | head -1
   fi
 }
+
+# A gzipped pg_dump of the stack's database into $1. A dump that failed halfway
+# still leaves a valid-looking .gz, so it is judged by size as well as by exit
+# status. Returns non-zero, with the half-written file removed, on failure.
+dump_database() {
+  local out="$1" size
+  mkdir -p "$(dirname "$out")"
+  if compose exec -T db pg_dump -U yaaf yaaf 2>/dev/null | gzip > "$out"; then
+    size=$(wc -c < "$out")
+    if [ "$size" -gt 1000 ]; then
+      ok "$out ($(( size / 1024 )) KB)"
+      return 0
+    fi
+    warn "the dump is only ${size} bytes. Check: compose logs db"
+  fi
+  rm -f "$out"
+  return 1
+}

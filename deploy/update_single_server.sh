@@ -85,18 +85,8 @@ if [ "$BACKUP" = "no" ]; then
 elif ! compose ps --status running --services 2>/dev/null | grep -q '^db$'; then
   warn "the db container is not running — nothing to back up yet"
 else
-  mkdir -p backups
-  stamp="$(date +%Y%m%d-%H%M%S)"
-  if compose exec -T db pg_dump -U yaaf yaaf 2>/dev/null | gzip > "backups/yaaf-${stamp}.sql.gz"; then
-    # A dump that failed halfway still leaves a valid-looking .gz, so judge it
-    # by size rather than by exit status alone.
-    size=$(wc -c < "backups/yaaf-${stamp}.sql.gz")
-    [ "$size" -gt 1000 ] || die "the backup is only ${size} bytes — refusing to continue. Check: compose logs db"
-    ok "backups/yaaf-${stamp}.sql.gz ($(( size / 1024 )) KB)"
-  else
-    rm -f "backups/yaaf-${stamp}.sql.gz"
-    die "pg_dump failed — refusing to migrate without a backup (override with --no-backup)"
-  fi
+  dump_database "backups/yaaf-$(date +%Y%m%d-%H%M%S).sql.gz" \
+    || die "pg_dump failed — refusing to migrate without a backup (override with --no-backup)"
 fi
 
 # ── 3. images ─────────────────────────────────────────────────────────────────
