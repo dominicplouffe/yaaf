@@ -1,4 +1,4 @@
-# The `yaaf` command
+# The yaaf command
 
 Everything the dashboard does, from a terminal. Every command takes `--help`.
 
