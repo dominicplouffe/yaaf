@@ -303,7 +303,9 @@ dates are its cycles' (§4).
 ## 8. Loops that can't burn a night
 
 - **Wakes per agent per hour** — the runaway-loop brake. Every wake is a paid
-  model call.
+  model call. A wake counts once however many times the runner retries a
+  failed run of it, so a three-minute sandbox failure cannot hold an agent
+  for the next hour — and a seat that fails every wake still meets the brake.
 - **Runs per project per day** — the project-wide activity ceiling.
 - **Pair circuit breaker.** Two agents exchanging N messages in one thread with
   no task changing state are talking, not working: the thread **freezes**. Only

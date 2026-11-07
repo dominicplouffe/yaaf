@@ -387,6 +387,68 @@ def _burn_wakes(project: dict, agent_id: str, ages_minutes: list[float]) -> None
                             created_at=at, started_at=at, finished_at=at))
 
 
+def _failed_wake(project: dict, agent_id: str, age_minutes: float) -> None:
+    """One wake whose run died before any model acted, retried by the runner
+    to its limit: three rows of one wake, a minute or two apart."""
+    from yaaf.core.models import Run, RunKind, RunStatus
+    from yaaf.runner.daemon import MAX_RUN_ATTEMPTS
+
+    prior = None
+    with db_session() as session:
+        for attempt in range(1, MAX_RUN_ATTEMPTS + 1):
+            at = utcnow() - timedelta(minutes=age_minutes - attempt)
+            run = Run(id=ids.new_id(ids.RUN), project_id=project["id"], agent_id=agent_id,
+                      kind=RunKind.AGENT_RUN, status=RunStatus.FAILED,
+                      trigger={"type": "wake"}, attempt=attempt, prior_run_id=prior,
+                      summary="sandbox exited 1 without a result file",
+                      created_at=at, started_at=at, finished_at=at)
+            session.add(run)
+            prior = run.id
+
+
+def test_a_wake_the_runner_retried_is_still_one_wake(client):
+    """The night this was found: a CEO on two wakes an hour, one wake that
+    died in the sandbox and was retried twice, then the sandbox fixed. Every
+    retry counted as a wake, so the chairman's next messages woke nobody for
+    the hour after the fix. A retry is the runner recovering one wake, not
+    the agent waking again."""
+    from tests.conftest import ADMIN
+
+    project = make_project(client, constitution={"wakes_per_agent_per_hour": 2})
+    _drain()
+    ceo = project["ceo_agent_id"]
+    _failed_wake(project, ceo, age_minutes=10)
+    assert client.post(f"/admin/projects/{project['id']}/boardroom",
+                       json={"body": "are you there?"}, headers=ADMIN).status_code == 200
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 1, "one wake used of two: she answers"
+        assert session.query(RunQueue).one().agent_id == ceo
+
+
+def test_a_seat_that_fails_every_wake_still_meets_the_brake(client):
+    """What the brake is for, kept: a seat whose every run dies is a wake
+    loop, and each of its wakes still spends a slot whatever its retries did.
+    Counting only first attempts must not turn failures into free wakes."""
+    from tests.conftest import ADMIN
+
+    project = make_project(client, constitution={"wakes_per_agent_per_hour": 2})
+    _drain()
+    ceo = project["ceo_agent_id"]
+    _failed_wake(project, ceo, age_minutes=40)
+    _failed_wake(project, ceo, age_minutes=20)
+    assert client.post(f"/admin/projects/{project['id']}/boardroom",
+                       json={"body": "are you there?"}, headers=ADMIN).status_code == 200
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 0, "two wakes of two: the brake holds"
+    state = _activity(project)
+    assert state["blocked_by"] == "wake_ceiling"
+    from datetime import datetime
+    minutes_out = (datetime.fromisoformat(state["wake_ceiling"]["frees_at"])
+                   - utcnow()).total_seconds() / 60
+    assert 20 < minutes_out < 22, \
+        f"it lifts when the first wake, not its last retry, leaves the hour: {minutes_out}"
+
+
 def test_the_wake_ceiling_names_the_minute_it_lifts(client):
     """A throttle that clears itself has to say when. The moment is the oldest
     wake in the window plus an hour — the instant `_wakes_last_hour` drops back

@@ -1514,18 +1514,33 @@ def _agent_busy(session: Session, agent: Agent) -> bool:
     return bool(running)
 
 
+def _wake_stamps(session: Session, agent: Agent, since) -> list:
+    """When each of this agent's wakes since `since` was made, run or still
+    queued — each counted once, however many times the runner retried it.
+
+    A failed run is retried up to MAX_RUN_ATTEMPTS times, each a new row for
+    the same wake, and every row used to count as a wake of its own. One
+    failure then spent the brake three times over: on a tempo of two wakes an
+    hour, a CEO whose sandbox was broken for three minutes could not be woken
+    by its chairman for the hour after it was fixed. The wake still counts,
+    whatever became of it — that is what keeps this a brake on a seat that
+    fails every time, rather than a wake loop with nothing in its way."""
+    runs = session.execute(
+        select(Run.created_at).where(Run.agent_id == agent.id,
+                                     Run.kind != RunKind.CHAT_SESSION,
+                                     Run.attempt == 1,
+                                     Run.created_at >= since)
+    ).scalars()
+    queued = session.execute(
+        select(RunQueue.created_at).where(RunQueue.agent_id == agent.id,
+                                          RunQueue.attempt == 1,
+                                          RunQueue.created_at >= since)
+    ).scalars()
+    return [*runs, *queued]
+
+
 def _wakes_last_hour(session: Session, agent: Agent) -> int:
-    hour_ago = utcnow() - timedelta(hours=1)
-    n = session.execute(
-        select(func.count(Run.id)).where(Run.agent_id == agent.id,
-                                         Run.kind != RunKind.CHAT_SESSION,
-                                         Run.created_at >= hour_ago)
-    ).scalar_one()
-    n += session.execute(
-        select(func.count(RunQueue.id)).where(RunQueue.agent_id == agent.id,
-                                              RunQueue.created_at >= hour_ago)
-    ).scalar_one()
-    return n
+    return len(_wake_stamps(session, agent, utcnow() - timedelta(hours=1)))
 
 
 def _wake_slot_frees_at(session: Session, agent: Agent, cap: int):
@@ -1543,19 +1558,7 @@ def _wake_slot_frees_at(session: Session, agent: Agent, cap: int):
     """
     if cap <= 0:
         return None
-    hour_ago = utcnow() - timedelta(hours=1)
-    stamps = [
-        row for (row,) in session.execute(
-            select(Run.created_at).where(Run.agent_id == agent.id,
-                                         Run.kind != RunKind.CHAT_SESSION,
-                                         Run.created_at >= hour_ago)
-        )
-    ] + [
-        row for (row,) in session.execute(
-            select(RunQueue.created_at).where(RunQueue.agent_id == agent.id,
-                                              RunQueue.created_at >= hour_ago)
-        )
-    ]
+    stamps = _wake_stamps(session, agent, utcnow() - timedelta(hours=1))
     if len(stamps) < cap:
         return None
     stamps.sort()

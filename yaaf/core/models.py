@@ -1949,6 +1949,12 @@ class Run(Base):
     requirement_id: Mapped[str | None] = mapped_column(String(40))
     attempt: Mapped[int] = mapped_column(Integer, default=1)
     prior_run_id: Mapped[str | None] = mapped_column(String(40))
+    # Where this run's context pack found each read cursor it moved, keyed by
+    # channel: {channel_id: last_read_at before, or None for no cursor yet}.
+    # Moving a cursor is how a pack marks mail read, and a run can die before
+    # any model reads the pack — so the wake's retries re-show from here, and
+    # a wake given up on puts its cursors back (contextpack.give_back_reads).
+    read_from: Mapped[dict | None] = mapped_column(JSONVariant)
     status: Mapped[str] = mapped_column(String(24), default=RunStatus.RUNNING)
     worker: Mapped[str | None] = mapped_column(String(120))
     token_hash: Mapped[str | None] = mapped_column(String(64))

@@ -12,7 +12,7 @@ stamps amendment disclosure — the CEO can never claim it wasn't told.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
@@ -629,11 +629,18 @@ def _speaker(session: Session, project_id: str, user_id: str | None) -> dict:
     return {"from_name": label} if label else {}
 
 
-def _unread_messages(session: Session, agent: Agent, include_recent: bool = False,
-                     advance: bool = True) -> list[dict]:
-    """Unread per cursor — or, on retry attempts, the recent tail regardless of
-    cursor: a failed prior attempt advanced the cursor without any model ever
-    reading the words, and a chairman's message must never be silently eaten.
+def _unread_messages(session: Session, agent: Agent, since: dict | None = None,
+                     advance: bool = True, moved: dict | None = None) -> list[dict]:
+    """Unread per cursor — or, on a retry, per where the wake's first attempt
+    found the cursor (`since`, from `wake_read_from`): that attempt advanced
+    it without any model ever reading the words, and a chairman's message
+    must never be silently eaten. Every cursor this moves is recorded in
+    `moved` as where it was, so a wake that is given up on can put it back.
+
+    Retries used to take "the recent tail regardless of cursor", which stopped
+    meaning that when the slice below became the oldest pending: with no
+    cursor in the query it was the channel's ten oldest messages ever, and the
+    one that woke the agent was not among them.
 
     That promise used to hold only up to `UNREAD_PER_CHANNEL`. The query took
     the NEWEST ten pending and then advanced the cursor to *now* regardless of
@@ -664,8 +671,11 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
             )
         ).scalar_one_or_none()
         stmt = select(Message).where(Message.channel_id == channel_id)
-        if cursor is not None and not include_recent:
-            stmt = stmt.where(Message.created_at > cursor.last_read_at)
+        start = cursor.last_read_at if cursor is not None else None
+        if since is not None and channel_id in since:
+            start = _when(since[channel_id])
+        if start is not None:
+            stmt = stmt.where(Message.created_at > start)
         # Oldest first, so what is cut is the tail we have not reached yet
         # rather than the head we are about to mark read. One extra row tells
         # us a backlog exists without a second COUNT query.
@@ -674,9 +684,9 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
         ).scalars())
         more = len(pending) > UNREAD_PER_CHANNEL
         shown = pending[:UNREAD_PER_CHANNEL]
-        # The cursor may never pass a message no model was shown. On a pure
-        # retry (include_recent) the tail is re-rendered and the cursor must
-        # not rewind, so only ever move it forward.
+        # The cursor may never pass a message no model was shown. On a retry
+        # the first attempt's mail is re-rendered and the cursor must not
+        # rewind, so only ever move it forward.
         watermark = shown[-1].created_at if shown else utcnow()
         rows = [m for m in shown if m.sender_agent_id != agent.id]
         if rows:
@@ -711,12 +721,80 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
             )
         if not advance:
             continue
+        # Recorded only where mail was shown: a cursor that moves over nothing
+        # (or over the agent's own lines) has nothing a dead run could eat.
+        record = rows and moved is not None and channel_id not in moved
         if cursor is None:
+            if record:
+                moved[channel_id] = None
             session.add(ChannelRead(agent_id=agent.id, channel_id=channel_id,
                                     last_read_at=watermark))
         elif watermark > cursor.last_read_at:
+            if record:
+                moved[channel_id] = cursor.last_read_at.isoformat()
             cursor.last_read_at = watermark
     return out
+
+
+def _read_mail(session: Session, run: Run, agent: Agent, *, advance: bool) -> list[dict]:
+    """The pack's unread mail for `run`, keeping the record of what reading
+    it moved. A retry starts from where its wake's first attempt did."""
+    moved: dict = {}
+    since = wake_read_from(session, run) if run.attempt > 1 else None
+    out = _unread_messages(session, agent, since=since, advance=advance, moved=moved)
+    if moved:
+        # A run can build its pack twice (GET /agent/context); where the first
+        # build found a cursor is the position worth keeping.
+        run.read_from = {**moved, **(run.read_from or {})}
+    return out
+
+
+def _when(stamp: str | None) -> datetime | None:
+    if stamp is None:
+        return None
+    at = datetime.fromisoformat(stamp)
+    return at if at.tzinfo is not None else at.replace(tzinfo=UTC)
+
+
+def wake_attempts(session: Session, run: Run) -> list[Run]:
+    """This run and every earlier attempt of the same wake, newest first —
+    the runner's retries link back through `prior_run_id`."""
+    chain: list[Run] = []
+    seen: set[str] = set()
+    while run is not None and run.id not in seen:
+        chain.append(run)
+        seen.add(run.id)
+        run = session.get(Run, run.prior_run_id) if run.prior_run_id else None
+    return chain
+
+
+def wake_read_from(session: Session, run: Run) -> dict:
+    """Where the wake that `run` belongs to found each cursor it moved: the
+    earliest position across its attempts, None (no cursor) earliest of all."""
+    merged: dict = {}
+    for attempt in reversed(wake_attempts(session, run)):
+        for channel_id, at in (attempt.read_from or {}).items():
+            held = merged.get(channel_id, ...)
+            if held is ... or (held is not None and (at is None or _when(at) < _when(held))):
+                merged[channel_id] = at
+    return merged
+
+
+def give_back_reads(session: Session, agent_id: str, read_from: dict) -> None:
+    """Put an agent's cursors back where a wake found them, so the mail that
+    wake was shown is unread again. Only ever backwards: this undoes a read
+    nobody made, it never marks anything read."""
+    for channel_id, at in read_from.items():
+        cursor = session.execute(
+            select(ChannelRead).where(ChannelRead.agent_id == agent_id,
+                                      ChannelRead.channel_id == channel_id)
+        ).scalar_one_or_none()
+        if cursor is None:
+            continue
+        if at is None:
+            session.delete(cursor)
+        elif _when(at) < cursor.last_read_at:
+            cursor.last_read_at = _when(at)
 
 
 CHAT_HEARD_LIMIT = 12
@@ -1467,8 +1545,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         "roster": _roster(session, project),
         "notices": [{"kind": n.kind, "body": n.body, "at": n.created_at.isoformat()}
                     for n in notices],
-        "unread": _unread_messages(session, agent, include_recent=run.attempt > 1,
-                                   advance=not observing),
+        "unread": _read_mail(session, run, agent, advance=not observing),
         "memory_hint": {
             "note": "Query memory, do not recite it: GET /agent/memory/search?q=...",
             # Occupancy, not just the cap. The cap alone is a number an agent
