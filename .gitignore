@@ -20,6 +20,9 @@ dist/
 data/
 *.db
 deploy/.env
+# Copies the rotate, restore and backup scripts save. Each holds a master key.
+deploy/.env.*
+!deploy/.env.example
 # Per-machine compose tweaks (loopback port binding on remote boxes, etc.)
 deploy/docker-compose.override.yml
 notes.txt

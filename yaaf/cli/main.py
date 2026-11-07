@@ -1766,6 +1766,11 @@ def _register_keys() -> None:
 
     app.command("rotate-master-key")(rotate_master_key)
 
+    from yaaf.cli.backup import backup, restore
+
+    app.command()(backup)
+    app.command()(restore)
+
 
 def _register_up() -> None:
     from yaaf.cli.desk import desk, signal

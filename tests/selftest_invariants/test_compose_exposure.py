@@ -51,3 +51,10 @@ def test_app_containers_read_all_of_deploy_env(services, name):
     files = services[name].get("env_file", [])
     paths = [f["path"] if isinstance(f, dict) else f for f in files]
     assert ".env" in paths, f"{name} must read deploy/.env as a whole"
+
+
+def test_saved_copies_of_deploy_env_are_never_committed():
+    """The rotate, restore and backup scripts save deploy/.env beside itself
+    (deploy/.env.<date>.bak and the like). Each copy holds a master key."""
+    ignore = (COMPOSE.parents[1] / ".gitignore").read_text().splitlines()
+    assert "deploy/.env.*" in ignore and "!deploy/.env.example" in ignore

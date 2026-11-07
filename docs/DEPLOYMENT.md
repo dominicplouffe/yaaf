@@ -115,9 +115,10 @@ server logs the address it advertises at startup.
 deploy/update_single_server.sh
 ```
 
-It refuses to run on a checkout with local edits, then: pulls, backs up the
+It refuses to run on a checkout with local edits, then: pulls, dumps the
 database to `backups/`, rebuilds both images, restarts, and checks the
-migrations applied. Migrations need no extra step.
+migrations applied. Migrations need no extra step. That dump is for undoing a
+bad migration; for real backups, see [Backups](#backups).
 
 | Flag | Effect |
 |---|---|
@@ -139,7 +140,7 @@ to `~/.yaaf/backups`, pulls, rebuilds only what changed, and restarts.
 
 ## Backups
 
-Three things matter. Back up all three, off the server.
+Three things matter, and one command saves all three in a single file:
 
 | What | Where | Why |
 |---|---|---|
@@ -147,20 +148,31 @@ Three things matter. Back up all three, off the server.
 | **Master key** | `deploy/.env` | Without it, every stored API key is unreadable. **It cannot be recovered.** |
 | **Artifacts** | `/var/lib/yaaf/artifacts` | Files your agents produced |
 
-Workspaces (`/var/lib/yaaf/workspaces`) are working files. Back them up if
-agents keep work there, or connect a GitHub repo to the project and let git
-hold it.
-
-A manual database backup:
-
 ```bash
-mkdir -p backups
-docker compose -f deploy/docker-compose.yml exec -T db pg_dump -U yaaf yaaf \
-  | gzip > "backups/yaaf-$(date +%Y%m%d-%H%M%S).sql.gz"
+deploy/backup_single_server.sh
 ```
 
-The backups the update script takes live on the same disk. They protect you
-from a bad migration, not from a dead disk.
+It writes `backups/yaaf-backup-<date>.tar.gz`, readable by you only. **The file
+holds your master key**: store it like a password, and copy it off the server.
+A backup on the same disk doesn't survive the disk.
+
+| Flag | Effect |
+|---|---|
+| `--out PATH` | Write it somewhere else, like a mounted backup drive |
+| `--workspaces` | Also include the agents' working folders |
+
+To run it nightly, add a cron line (`crontab -e`) that runs the script with
+`--out` pointing at your backup drive.
+
+**Restore** a backup. It saves the current database, `deploy/.env` and
+artifacts first, then restores and restarts yaaf:
+
+```bash
+deploy/restore_single_server.sh backups/yaaf-backup-<date>.tar.gz
+```
+
+**Native installs** use `yaaf backup` and `yaaf restore <file>`. Same contents,
+from `~/.yaaf`.
 
 ## Stopping
 

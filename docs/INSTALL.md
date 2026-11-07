@@ -134,10 +134,12 @@ Arch, Fedora and Debian need nothing extra.
 | Update | `yaaf update` (backs up the database first) |
 | See what an update brings | `yaaf update --check` |
 | Open to your network | `yaaf setup --bind <address>` |
+| Back up | `yaaf backup` (copy the file off this machine) |
 | Health check | `yaaf doctor` |
 
 Data lives in `~/.yaaf`: the database, the master key, workspaces and
-artifacts. Back up that folder.
+artifacts. `yaaf backup` saves the parts you can't rebuild into one file;
+`yaaf restore <file>` puts them back.
 
 ---
 
