@@ -279,3 +279,12 @@ def test_setup_says_what_native_mode_gives_up_and_remembers_the_answer(tmp_path,
     assert (tmp_path / setup.ACCEPTED_FILE).exists()
     assert "far less contained than Docker" in setup.NATIVE_WARNING
     assert "network" in setup.NATIVE_WARNING
+
+
+def test_a_session_that_died_with_the_runner_still_says_why(cfg, monkeypatch, tmp_path):
+    """A container's logs outlive the runner; the jail's log file does too, and
+    is read once."""
+    log = host_jail._chat_log("p9")
+    log.write_text("Traceback: the last thing it said")
+    assert "the last thing it said" in host_jail.stop_chat("p9")
+    assert host_jail.stop_chat("p9") == "", "read once, not on every later stop"

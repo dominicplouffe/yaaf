@@ -653,7 +653,17 @@ def stop_chat(project_id: str) -> str:
     the only chance to read why, as with a container's corpse."""
     entry = _chats.pop(project_id, None)
     if entry is None:
-        return ""
+        # The session died with a runner that has since restarted. Its log is
+        # still on disk, as a dead container's is in Docker: read it once, and
+        # set it aside so the next stop does not report it again.
+        path = _chat_log(project_id)
+        if not path.exists():
+            return ""
+        try:
+            tail = path.read_bytes()[-LOG_TAIL * 4:].decode(errors="replace")[-LOG_TAIL:]
+        finally:
+            path.replace(path.with_suffix(".previous.log"))
+        return ("exit=unknown (the runner restarted) jail=bubblewrap\n" + tail).strip()
     run_id, proc, path, started = entry
     if proc.poll() is None:
         _kill(proc)
