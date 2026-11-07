@@ -52,6 +52,12 @@ services:
       YAAF_DATABASE_URL: postgresql+psycopg://yaaf:yaaf@db:5432/yaaf
       YAAF_MASTER_KEY: ${YAAF_MASTER_KEY:-}
       YAAF_API_BASE_URL: http://api:8080
+      # Inside the stack's network the API keeps 8080, which the published port
+      # maps onto and every internal URL here names. Pinned, because the app's
+      # own default is the desktop's 24247 (yaaf.core.config.DEFAULT_PORT), and
+      # the CLI run inside this container talks to its own API through it.
+      YAAF_API_PORT: "8080"
+      YAAF_API: http://localhost:8080
       # Browser-facing origin (https://yaaf.example.com). Two surfaces need
       # it, and the second one fails silently without it: OAuth-protected MCP
       # data sources redirect their sign-in back to it, and yaaf's OWN
@@ -97,7 +103,7 @@ services:
       # only the runner (which owns the sandboxes) ever writes here.
       - ${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces:${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces:ro
     ports:
-      - "8080:8080"
+      - "127.0.0.1:24247:8080"
     depends_on:
       db:
         condition: service_healthy

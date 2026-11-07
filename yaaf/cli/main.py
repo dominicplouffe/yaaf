@@ -3,7 +3,7 @@
 Observation plus the few powers the chairman actually has: boardroom speech,
 approval decisions, hypothesis extension, kill switches, spot audits.
 
-  export YAAF_API=http://localhost:8080
+  export YAAF_API=http://localhost:24247
   yaaf login            # email + password, once; keeps a personal token
 
 `YAAF_TOKEN` overrides the stored token, for a script that was handed one
@@ -34,7 +34,9 @@ def _register_spend() -> None:
 
 
 def _api_base() -> str:
-    return os.environ.get("YAAF_API", "http://localhost:8080").rstrip("/")
+    from yaaf.core.config import DEFAULT_PORT
+
+    return os.environ.get("YAAF_API", f"http://localhost:{DEFAULT_PORT}").rstrip("/")
 
 
 def _credentials_path() -> Path:

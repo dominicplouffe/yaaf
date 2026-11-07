@@ -290,8 +290,8 @@ deploy/deploy_single_server.sh --admin-email you@example.com
 Secrets, images, Postgres, migrations, the role library, and — on a first
 install, with `--admin-email you@example.com` — a one-time link to choose your
 password, printed at the end. Safe to re-run. The dashboard binds to `127.0.0.1`, so reach
-it over SSH (`ssh -N -L 8080:localhost:8080 you@your-server`, then
-`localhost:8080/app`). Just trying it on your own machine? From a checkout,
+it over SSH (`ssh -N -L 24247:localhost:24247 you@your-server`, then
+`localhost:24247/app`). Just trying it on your own machine? From a checkout,
 `deploy/install_desktop.sh` installs what is missing and walks you through
 `yaaf setup`: an email, a password, a key, and yaaf running in the background —
 real agents on your machine, each in a bubblewrap jail, no Docker
@@ -304,7 +304,7 @@ yaaf doctor                                  # checks the install, says what to 
 yaaf mcp-token mint my-laptop --scopes read
 # → ymt_…
 
-claude mcp add --transport http yaaf http://localhost:8080/mcp \
+claude mcp add --transport http yaaf http://localhost:24247/mcp \
   --header "Authorization: Bearer ymt_…"
 ```
 

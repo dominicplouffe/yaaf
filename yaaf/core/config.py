@@ -10,6 +10,15 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: The port yaaf answers on when nothing names another: C-H-A-I-R on a phone
+#: keypad, for the chairman. It was 8080, the most crowded port in development
+#: (Jenkins, Tomcat, proxies, half of every tutorial), which a desktop install
+#: shares with whatever else the person runs. This one is registered to nobody
+#: with IANA, absent from nmap's service database, below Linux's ephemeral
+#: range, and claimed by no common dev tool. Containers keep 8080 inside their
+#: own network (deploy/docker-compose.yml), where nothing can clash with it.
+DEFAULT_PORT = 24247
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="YAAF_", env_file=".env", extra="ignore")
@@ -21,7 +30,7 @@ class Settings(BaseSettings):
     master_key: str = ""
 
     # Base URL agents use to reach the platform API from inside sandboxes.
-    api_base_url: str = "http://localhost:8080"
+    api_base_url: str = f"http://localhost:{DEFAULT_PORT}"
 
     # Browser-facing origin of this install (e.g. https://yaaf.example.com) —
     # used to build the OAuth redirect URI when connecting an OAuth-protected
@@ -39,7 +48,7 @@ class Settings(BaseSettings):
     mcp_redirect_hosts: str = "claude.ai,claude.com,localhost,127.0.0.1"
 
     api_host: str = "0.0.0.0"
-    api_port: int = 8080
+    api_port: int = DEFAULT_PORT
 
     # Runner
     worker_name: str = "worker-1"

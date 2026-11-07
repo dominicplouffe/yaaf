@@ -52,7 +52,7 @@ def has_admin() -> None:
         raise typer.Exit(0 if _active_admins(session) else 1)
 
 
-BASE_HELP = ("The origin the link should open on, e.g. http://localhost:8080. "
+BASE_HELP = ("The origin the link should open on, e.g. http://localhost:24247. "
              "Defaults to YAAF_PUBLIC_BASE_URL, then YAAF_API_BASE_URL.")
 
 

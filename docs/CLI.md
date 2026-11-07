@@ -4,7 +4,7 @@ Everything the dashboard does, scriptable. Useful for provisioning, CI, and
 poking at a running deployment.
 
 ```bash
-export YAAF_API=http://localhost:8080      # the default, so usually omitted
+export YAAF_API=http://localhost:24247      # the default, so usually omitted
 yaaf login                                 # your email and password, once
 ```
 
@@ -153,7 +153,7 @@ yaaf stop  my-slug --reason "shipped"
 
 | Command | Shows |
 |---|---|
-| `yaaf setup [--port N] [--home DIR] [--no-service]` | **Set yaaf up on this machine, step by step**: checks bubblewrap and the dashboard, makes you the admin with a password, starts yaaf in host mode as a systemd user service (or a background process), signs this CLI in, takes one key and checks it with the provider before keeping it, and points the Founder at it. Safe to run again — every step skips what is done. `deploy/install_desktop.sh` installs the packages and runs this. |
+| `yaaf setup [--port N] [--home DIR] [--no-service]` | **Set yaaf up on this machine, step by step**: checks bubblewrap and the dashboard, makes you the admin with a password, starts yaaf in host mode as a systemd user service (or a background process), signs this CLI in, connects any provider — its key checked with the provider before it is kept, then whatever a project would still be refused for (a model, a price, a search service) — and points the Founder at it. Safe to run again — every step skips what is done. `deploy/install_desktop.sh` installs the packages and runs this. |
 | `yaaf up --host\|--no-isolation [--email E] [--home DIR] [--port N]` | Start yaaf on this machine in one command — key, database, schema, server, runner, first admin, role library — and print the address. `--host` runs real agents here, each in a bubblewrap jail, with no Docker; `--no-isolation` runs scripted agents with no sandbox at all. Refuses to pick either for you. See DEPLOYMENT.md. |
 | `yaaf projects [--json]` | Every project as one line: status, spend against the budget, the hard stop, and how many things wait on you. `--json` for the raw payload. |
 | `yaaf status [PROJECT] [--json]` | Is everything OK, in sentences: one paragraph across your projects, each project's status line (the same words Home, the project's Inbox and Claude's `desk` say), then everything waiting on you, with ids. `--json` for the status lines alone. |
@@ -269,7 +269,7 @@ current calendar month.
 ## A full provisioning script
 
 ```bash
-export YAAF_API=http://localhost:8080
+export YAAF_API=http://localhost:24247
 yaaf login                                                    # an instance admin
 
 yaaf seed-roles roles/                                        # once per deployment

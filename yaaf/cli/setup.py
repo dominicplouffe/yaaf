@@ -16,6 +16,7 @@ the last two.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,16 +27,9 @@ import httpx
 import typer
 
 from yaaf.cli import up as up_cmd
+from yaaf.core.config import DEFAULT_PORT
 
 STEPS = 5
-
-#: The providers this wizard offers, with where a person gets a key. Every
-#: other provider is one form away in Settings → Providers; a menu of thirty
-#: is not a wizard.
-PROVIDERS = {
-    "1": ("anthropic", "Anthropic (Claude)", "https://console.anthropic.com/settings/keys"),
-    "2": ("openai", "OpenAI", "https://platform.openai.com/api-keys"),
-}
 
 SERVICE = "yaaf.service"
 
@@ -336,46 +330,284 @@ def _client(base: str) -> httpx.Client:
                         headers={"Authorization": f"Bearer {cli._token()}"})
 
 
-def _key(base: str) -> dict | None:
-    """One LLM credential, checked with the provider's own free model list
-    before it is kept: a key that does not answer is removed and asked for
-    again, so the box never holds a credential nobody has seen work."""
+#: Where a server on this machine answers. The catalog's own examples name a
+#: compose service (http://ollama:11434/v1); in host mode a run shares this
+#: machine's network, so its localhost is the one that answers.
+LOCAL_ADDRESS = {"ollama": "http://localhost:11434/v1", "lmstudio": "http://localhost:1234/v1"}
+
+#: What each blank of a cloud provider's address template is, said plainly.
+BLANKS = {"base_url": "Its base URL (ending in /v1 for most servers)",
+          "resource": "Your Azure OpenAI resource name",
+          "region": "The region (e.g. us-east-1, europe-west4)",
+          "project": "Your Google Cloud project id"}
+
+
+def provider_groups(catalog: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Every provider the install can pay with an API key, grouped by what
+    choosing it costs beyond the key — said before it is chosen, rather than
+    ranked. Read from the server, so a provider added to the catalog is on
+    this list the day it lands."""
+    one, search, local, address = [], [], [], []
+    for p in catalog:
+        if not any(k["mode"] == "api_key" for k in p["kinds"]):
+            continue
+        if p["local"]:
+            local.append(p)
+        elif p["credential_base_url"]:
+            address.append(p)
+        elif p["search"]:
+            one.append(p)
+        else:
+            search.append(p)
+    return [(title, group) for title, group in (
+        ("A key is all it needs", one),
+        ("A key, and a web search key (most roles browse; this provider cannot)", search),
+        ("Runs on this machine, no key", local),
+        ("Your own cloud account or server", address)) if group]
+
+
+def _choose_provider(client: httpx.Client) -> dict | None:
+    listed = client.get("/admin/providers")
+    catalog = listed.json() if listed.status_code == 200 else []
+    numbered: list[dict] = []
+    typer.echo("     Which provider should your agents run on? You can add others later.")
+    for title, group in provider_groups(catalog):
+        typer.echo(f"     {title}:")
+        row = []
+        for p in group:
+            numbered.append(p)
+            row.append(f"{len(numbered):>2} {p['label']}")
+        for i in range(0, len(row), 3):
+            typer.echo("       " + "".join(f"{cell:<26}" for cell in row[i:i + 3]).rstrip())
+    typer.echo("      s skip for now (Settings → Providers, any time)")
+    while True:
+        choice = typer.prompt("     Choose a number").strip().lower()
+        if choice == "s":
+            return None
+        if choice.isdigit() and 1 <= int(choice) <= len(numbered):
+            return numbered[int(choice) - 1]
+        typer.echo(f"       A number from 1 to {len(numbered)}, or s.")
+
+
+def _address(p: dict) -> str | None:
+    if not p["credential_base_url"]:
+        return None
+    template = p.get("base_url_template") or "{base_url}"
+    blanks = list(dict.fromkeys(re.findall(r"{(\w+)}", template)))
+    values = {}
+    for blank in blanks:
+        default = LOCAL_ADDRESS.get(p["name"]) if blank == "base_url" else None
+        values[blank] = typer.prompt(f"     {BLANKS.get(blank, blank)}",
+                                     **({"default": default} if default else {})).strip()
+    return template.format(**values)
+
+
+def _value(p: dict) -> str:
+    kind = next(k for k in p["kinds"] if k["mode"] == "api_key")
+    if kind.get("multiline"):
+        # A key file (Vertex's service account) is pasted whole in the
+        # dashboard; a terminal reads it from where it was downloaded.
+        while True:
+            path = Path(typer.prompt(f"     Path to the {kind['label'].lower()} file")).expanduser()
+            try:
+                return path.read_text()
+            except OSError as exc:
+                typer.echo(f"       Cannot read it: {exc.strerror}")
+    if p["local"]:
+        return typer.prompt(f"     {kind['label']} (Enter if your server takes none)",
+                            hide_input=True, default="", show_default=False).strip()
+    return typer.prompt(f"     Paste your {p['label']} {kind['label']} (hidden)",
+                        hide_input=True).strip()
+
+
+def _connect(client: httpx.Client, p: dict) -> tuple[dict, dict] | None:
+    """One credential, checked with the provider's own free model list before
+    it is kept: a key that does not answer is removed and asked for again, so
+    the box never holds a credential nobody has seen work."""
     from yaaf.cli import main as cli
 
+    if p.get("console_url"):
+        typer.echo(f"     Get a key at {p['console_url']}")
+    for _ in range(3):
+        # The address first: you name the server, then the key it takes.
+        address = _address(p)
+        body = {"name": p["name"], "mode": "api_key", "value": _value(p), "provider": p["name"]}
+        if address:
+            body["base_url"] = address
+        made = client.post("/admin/settings/llm-credentials", json=body)
+        if made.status_code != 201:
+            typer.echo(f"       Not saved: {cli._detail(made)}")
+            continue
+        row = made.json()
+        answer = client.get(f"/admin/settings/llm-credentials/{row['id']}/models")
+        if answer.status_code == 200:
+            served = answer.json()
+            count = len(served.get("models") or [])
+            listed = f" — {count} model{'' if count == 1 else 's'}" if count else ""
+            _ok(f"{p['label']} answered{listed}; "
+                f"saved as {p['name']!r}")
+            return row, served
+        client.delete(f"/admin/settings/llm-credentials/{row['id']}")
+        typer.echo(f"       {p['label']} did not accept it: {cli._detail(answer)}")
+    return None
+
+
+def _pick_model(models: list[dict], why: str) -> str | None:
+    """A model the key can call, by the name a lineup uses. A key that lists
+    hundreds (OpenRouter) is narrowed by typing part of a name first."""
+    choices = [m for m in models if m.get("chat") is not False]
+    if not choices:
+        typed = typer.prompt(f"     {why} — the model's name, as the provider spells it").strip()
+        return typed or None
+    while True:
+        shown = choices
+        if len(choices) > 20:
+            typed = typer.prompt(f"     {why}: type part of a model name "
+                                 f"({len(choices)} to choose from)").strip().lower()
+            shown = [m for m in choices if typed in m["id"].lower()] or choices
+        shown = shown[:20]
+        for i, m in enumerate(shown, 1):
+            price = m.get("price") or {}
+            cost = (f"  ${price['input']:g} in / ${price['output']:g} out per M"
+                    if price.get("input") is not None else "")
+            typer.echo(f"       {i:>2} {m['id']}{cost}")
+        choice = typer.prompt("     Choose a number").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(shown):
+            return shown[int(choice) - 1]["id"]
+        typer.echo(f"       A number from 1 to {len(shown)}.")
+
+
+def _search(client: httpx.Client, label: str) -> bool:
+    """A search backend for a provider whose API cannot search. 35 of the 38
+    shipped roles browse, and every one of them is refused without it."""
+    from yaaf.runtimes.wire import SEARCH_BACKENDS
+
+    typer.echo(f"     {label} cannot search the web itself, and most roles do. "
+               "Pick a search service:")
+    backends = list(SEARCH_BACKENDS.values())
+    for i, b in enumerate(backends, 1):
+        typer.echo(f"       {i} {b.label}" + (f"  — key at {b.console_url}" if b.console_url
+                                               and b.key else ""))
+    typer.echo("       s skip (roles that browse are refused until one is set)")
+    for _ in range(3):
+        choice = typer.prompt("     Choose a number").strip().lower()
+        if choice == "s":
+            return False
+        if not (choice.isdigit() and 1 <= int(choice) <= len(backends)):
+            continue
+        b = backends[int(choice) - 1]
+        body = {"backend": b.name, "key": None, "base_url": None, "price_usd": None}
+        if b.key:
+            body["key"] = typer.prompt(f"     Paste your {b.label} key (hidden)",
+                                       hide_input=True).strip()
+        else:
+            body["base_url"] = typer.prompt(f"     Your {b.label} address").strip()
+        saved = client.put("/admin/settings/web-search", json=body)
+        tried = client.post("/admin/settings/web-search/test") if saved.status_code == 200 \
+            else saved
+        if tried.status_code == 200 and tried.json().get("ok"):
+            _ok(tried.json().get("detail") or f"{b.label} answered")
+            return True
+        typer.echo(f"       That did not work: "
+                   f"{(tried.json() or {}).get('detail', tried.text[:200])}")
+    return False
+
+
+def _readiness(client: httpx.Client, name: str) -> dict | None:
+    report = client.get("/admin/settings/providers/readiness")
+    if report.status_code != 200:
+        return None
+    return next((p for p in report.json().get("providers", []) if p["provider"] == name), None)
+
+
+def _make_ready(client: httpx.Client, p: dict, served: dict) -> None:
+    """Whatever the doors would still refuse on this provider, asked here: a
+    model for each class it has none for, a price for a model it cannot meter,
+    a search backend when its API cannot search. The server's own readiness
+    report says which — the same one Settings → Providers draws."""
+    client.put("/admin/settings/models/default-provider", json={"provider": p["name"]})
+    handled: set[str] = set()
+    for _ in range(6):
+        state = _readiness(client, p["name"])
+        if state is None:
+            return
+        todo = [i for i in state["issues"]
+                if i["code"] in ("no_model", "unpriced", "no_search") and i["code"] not in handled]
+        if not todo:
+            break
+        issue = todo[0]
+        handled.add(issue["code"])
+        fix = issue.get("fix") or {}
+        if issue["code"] == "no_model":
+            model = _pick_model(served.get("models") or [],
+                                "Which model should your agents run on")
+            if model:
+                for cls in fix.get("classes") or [fix.get("class")]:
+                    client.put("/admin/settings/models/lineup",
+                               json={"provider": p["name"], "class": cls, "model": model})
+        elif issue["code"] == "unpriced":
+            _price(client, p, fix)
+        elif issue["code"] == "no_search":
+            _search(client, p["label"])
+    state = _readiness(client, p["name"]) or {"tiers": [], "issues": []}
+    tiers = [f"{t['label']} → {t['model']}" for t in state["tiers"] if t.get("model")]
+    if tiers:
+        _ok("agents run on " + " · ".join(tiers))
+    for issue in state["issues"]:
+        if issue["severity"] == "block":
+            _note(issue["text"])
+    if state.get("ready") and not [i for i in state["issues"] if i["code"] == "no_search"]:
+        _ok(f"{p['label']} is ready")
+
+
+def _price(client: httpx.Client, p: dict, fix: dict) -> None:
+    """A budget cannot stop what it cannot price. The feed knows most models;
+    a model on this machine costs nothing per token; anything else is asked."""
+    models = fix.get("models") or []
+    if fix.get("action") == "import_prices" and models:
+        client.post("/admin/settings/model-prices/import",
+                    json={"source": "feed", "apply": True, "models": models})
+        _ok(f"priced {', '.join(models)} from the price feed")
+        return
+    for model in models:
+        if p["local"]:
+            cost = (0.0, 0.0)
+        else:
+            typer.echo(f"     {model} has no published price here. From {p['label']}'s pricing page:")
+            cost = (float(typer.prompt("     USD per million input tokens")),
+                    float(typer.prompt("     USD per million output tokens")))
+        client.put(f"/admin/settings/model-prices/{model}",
+                   json={"input": cost[0], "output": cost[1]})
+        _ok(f"{model}: ${cost[0]:g} in / ${cost[1]:g} out per million"
+            + ("  (it runs on this machine)" if p["local"] else ""))
+
+
+def _key(base: str) -> dict | None:
+    """Step 4: one provider, connected and made ready to run a project."""
     with _client(base) as client:
         have = client.get("/admin/settings/llm-credentials")
         listed = have.json() if have.status_code == 200 else []
         if listed:
             _ok(f"{len(listed)} key(s) on file: {', '.join(c['name'] for c in listed)}")
-            return listed[0]
-        typer.echo("     Which provider should pay for your agents?")
-        for choice, (_, label, _url) in PROVIDERS.items():
-            typer.echo(f"       {choice}  {label}" + ("   (recommended)" if choice == "1" else ""))
-        typer.echo("       s  skip for now (Settings → Providers, any time)")
-        choice = typer.prompt("     Choose", default="1").strip().lower()
-        if choice not in PROVIDERS:
+            row = listed[0]
+            catalog = client.get("/admin/providers")
+            p = next((x for x in (catalog.json() if catalog.status_code == 200 else [])
+                      if x["name"] == (row.get("provider") or "anthropic")), None)
+            if p is not None:
+                served = client.get(f"/admin/settings/llm-credentials/{row['id']}/models")
+                _make_ready(client, p, served.json() if served.status_code == 200 else {})
+            return row
+        p = _choose_provider(client)
+        if p is None:
             _note("no key yet — projects cannot start until one is added")
             return None
-        provider, label, url = PROVIDERS[choice]
-        typer.echo(f"     Create a key at {url}")
-        for _ in range(3):
-            value = typer.prompt(f"     Paste your {label} key (hidden)", hide_input=True).strip()
-            made = client.post("/admin/settings/llm-credentials", json={
-                "name": provider, "mode": "api_key", "value": value, "provider": provider})
-            if made.status_code != 201:
-                typer.echo(f"       Not saved: {cli._detail(made)}")
-                continue
-            row = made.json()
-            answer = client.get(f"/admin/settings/llm-credentials/{row['id']}/models")
-            if answer.status_code == 200:
-                served = answer.json().get("models") or []
-                _ok(f"{label} answered{f' — {len(served)} models' if served else ''}; "
-                    f"saved as {provider!r}")
-                return row
-            client.delete(f"/admin/settings/llm-credentials/{row['id']}")
-            typer.echo(f"       {label} did not accept it: {cli._detail(answer)}")
-        _note("no key yet — add one under Settings → Providers")
-        return None
+        connected = _connect(client, p)
+        if connected is None:
+            _note("no key yet — add one under Settings → Providers")
+            return None
+        row, served = connected
+        _make_ready(client, p, served)
+        return row
 
 
 def _founder(base: str, key: dict | None) -> None:
@@ -407,7 +639,8 @@ def _problems(base: str) -> list[dict]:
 
 
 def setup(
-    port: int = typer.Option(8080, "--port", help="The port the dashboard listens on"),
+    port: int = typer.Option(DEFAULT_PORT, "--port",
+                             help="The port the dashboard listens on"),
     home: str = typer.Option("", "--home",
                              help="Where the database and key live (default ~/.yaaf)"),
     service: bool = typer.Option(True, "--service/--no-service",
@@ -437,7 +670,7 @@ def setup(
     stop = _start(port, folder, base, service)
     _sign_in(base, account)
     _library(base)
-    _step(4, "A key to pay for the agents")
+    _step(4, "The AI your agents run on")
     key = _key(base)
     _step(5, "The Founder, who drafts projects with you")
     _founder(base, key)
@@ -451,7 +684,7 @@ def setup(
     typer.echo(f"{'Almost' if problems else 'Done'}. yaaf is at {base}/app")
     typer.echo(f"  data and key: {folder}  (back up master.key: it unlocks every stored key)")
     typer.echo(f"  stop it: {stop}")
-    if port != 8080:
+    if port != DEFAULT_PORT:
         typer.echo(f"  this CLI talks to it with: export YAAF_API={base}")
     typer.echo("  try a company for $0 first: yaaf rehearse examples/01-your-first-hour.json")
     graphical = os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")

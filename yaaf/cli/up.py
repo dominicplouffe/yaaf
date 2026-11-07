@@ -25,6 +25,8 @@ from pathlib import Path
 import httpx
 import typer
 
+from yaaf.core.config import DEFAULT_PORT
+
 #: The repository this package was installed from, when it was (an editable
 #: install from a checkout). Its web/dist, roles/ and crews/ are what a dev
 #: box serves and seeds.
@@ -133,7 +135,8 @@ def up(
     home: str = typer.Option("", "--home",
                              help="Where the database and the master key live "
                                   "(default ~/.yaaf, or YAAF_HOME)"),
-    port: int = typer.Option(8080, "--port", help="The port the dashboard and API listen on"),
+    port: int = typer.Option(DEFAULT_PORT, "--port",
+                             help="The port the dashboard and API listen on"),
 ) -> None:
     """Start yaaf on this machine — API, dashboard, runner — in one command, and
     print the address. Ctrl-C stops it."""

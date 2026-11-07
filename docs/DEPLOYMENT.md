@@ -38,7 +38,7 @@ cd web && npm install && npm run build && cd ..
 #    project's Anthropic key answers 500 and the project can never start.
 export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
        YAAF_SANDBOX_MODE=subprocess \
-       YAAF_API=http://localhost:8080 \
+       YAAF_API=http://localhost:24247 \
        YAAF_MASTER_KEY=$(.venv/bin/python -c \
          "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
 
@@ -60,13 +60,13 @@ export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
 .venv/bin/yaaf doctor              # checks all of the above, names any fix
 ```
 
-If the API is not on port 8080, also export `YAAF_API_BASE_URL`: it is what
+If the API is not on port 24247, also export `YAAF_API_BASE_URL`: it is what
 the runner calls and what the bootstrap link is built from, and it defaults to
-`http://localhost:8080` — so on another port the runner talks to nothing, or
+`http://localhost:24247` — so on another port the runner talks to nothing, or
 to somebody else's server, without an error you would notice.
 
 Open the link `bootstrap` printed, choose a password, and you are in the
-dashboard at **http://localhost:8080/app**. See [AUTH.md](AUTH.md) for who
+dashboard at **http://localhost:24247/app**. See [AUTH.md](AUTH.md) for who
 may do what once more people are on the box.
 
 4. is the one you do not have to do: the chat lane is a container, so in
@@ -121,9 +121,17 @@ over to **`yaaf setup`**, which asks for three things:
    (`systemctl --user stop yaaf` stops it), or a background process where
    there is no systemd. This terminal is signed in, and the role library is
    loaded before it moves on.
-4. **A key** — Anthropic or OpenAI, pasted hidden, and checked with the
-   provider's own free model list before it is kept. A refused key is removed
-   and asked for again. Any other provider: Settings → Providers.
+4. **The AI your agents run on** — any of the providers yaaf supports, listed
+   by what each needs beyond a key: some need only the key; most also need a
+   web search key, because their API cannot search and 35 of the 38 roles
+   browse; Ollama and LM Studio need no key; Azure, Bedrock, Vertex and a
+   custom endpoint need their address. The key is pasted hidden and checked
+   with the provider's own free model list before it is kept — a refused key
+   is removed and asked for again. Then whatever a project would still be
+   refused for on that provider is asked for, from the server's own readiness
+   report: a model when the provider ships no lineup (picked from the models
+   the key lists), a price when the price feed has none (a local model is
+   priced at zero), and a search service, tested with one real query.
 5. **The Founder** — drafts on the same key.
 
 It ends with anything `yaaf doctor` would still call a problem, and the
@@ -214,10 +222,10 @@ that in plain English.
 
 | Flag | Effect |
 |---|---|
-| *(none)* | dashboard on `127.0.0.1:8080`, reachable over an SSH tunnel — or whatever the last run published on |
+| *(none)* | dashboard on `127.0.0.1:24247`, reachable over an SSH tunnel — or whatever the last run published on |
 | `--bind 0.0.0.0` | publish it on every interface — read the warning it prints |
 | `--bind 127.0.0.1 --bind 192.168.0.5` | repeatable: one published port per address, so localhost and the LAN address both answer |
-| `--port 9090` | somewhere other than 8080 |
+| `--port 9090` | somewhere other than 24247 |
 | `--skip-roles` | do not touch the role or crew libraries |
 
 ### What it actually does
@@ -329,10 +337,10 @@ there is nothing to firewall. Reach it by forwarding the port from your
 laptop:
 
 ```bash
-ssh -N -L 8080:localhost:8080 you@your-server
+ssh -N -L 24247:localhost:24247 you@your-server
 ```
 
-Then open **http://localhost:8080/app** and sign in. On a first install the
+Then open **http://localhost:24247/app** and sign in. On a first install the
 script ends with the one-time link that sets the first admin's password; lost
 it, or forgot the password later? From a shell on the box:
 
@@ -360,7 +368,7 @@ cat > deploy/docker-compose.override.yml <<'YML'
 services:
   api:
     ports: !override
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:24247:8080"
 YML
 
 docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .
@@ -375,13 +383,13 @@ docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .
 
 # The first admin, and a short-lived token to load the library with.
 (cd deploy && docker compose exec -T api yaaf users bootstrap --email you@example.com \
-   --base-url http://localhost:8080)
+   --base-url http://localhost:24247)
 TOKEN=$(cd deploy && docker compose exec -T api yaaf users token --first-admin \
           --name deploy --minutes 10)
 
 # roles/ is not in the image, so this is an HTTP load from the checkout.
 for f in roles/*.json; do
-  curl -fsS -X POST http://localhost:8080/admin/roles \
+  curl -fsS -X POST http://localhost:24247/admin/roles \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     --data-binary @"$f" > /dev/null && echo "seeded ${f##*/}"
@@ -390,8 +398,8 @@ done
 
 ### Things that bite on a remote box
 
-**Publishing 8080 is not firewalled by ufw.** Docker writes its own iptables
-rules ahead of ufw's, so `ports: "8080:8080"` is reachable from anywhere the
+**A published port is not firewalled by ufw.** Docker writes its own iptables
+rules ahead of ufw's, so `ports: "24247:8080"` is reachable from anywhere the
 box is, whatever `ufw status` claims. The loopback binding the script writes
 is what actually keeps it private — binding to `127.0.0.1` means there is nothing to firewall.
 Drop the override only when a TLS-terminating reverse proxy is in front,
@@ -403,14 +411,14 @@ session cookie is marked `Secure` from it.
 list values when it merges, so an override without the tag leaves you with
 both bindings — the loopback one you wanted and the original `0.0.0.0` one
 you were trying to remove. `docker compose config | grep -E 'host_ip|published'`
-is the check: exactly one `published: "8080"`, carrying `host_ip: 127.0.0.1`.
+is the check: exactly one `published: "24247"`, carrying `host_ip: 127.0.0.1`.
 
 **`docker compose exec api yaaf seed-roles roles/` looks like it works and
 does nothing.** The image has no `roles/` directory, and the command globs an
 empty path, prints nothing, and exits 0. `deploy/deploy_single_server.sh` loads them
 over HTTP; by hand it is the loop above, or from a checkout with the CLI
 installed:
-`YAAF_API=http://localhost:8080 yaaf login && yaaf seed-roles roles/` (an
+`YAAF_API=http://localhost:24247 yaaf login && yaaf seed-roles roles/` (an
 instance admin's account — the library is the box's).
 
 **Skipping the role seed is survivable only if your bundles carry their
@@ -541,7 +549,7 @@ the work, not only answer.
 ## Exposing the MCP server to claude.ai
 
 Only needed if you want to chair from the browser. Claude Code and Claude
-Desktop reach `http://localhost:8080/mcp` with a minted token and need none of
+Desktop reach `http://localhost:24247/mcp` with a minted token and need none of
 this ([MCP_SERVER.md](MCP_SERVER.md)).
 
 claude.ai connects **inbound, from Anthropic's servers**, so the install needs a
@@ -574,9 +582,9 @@ server {
     server_name yaaf.example.com;
     listen 443 ssl;
 
-    location = /mcp                          { proxy_pass http://127.0.0.1:8080; }
-    location ^~ /.well-known/oauth-           { proxy_pass http://127.0.0.1:8080; }
-    location ^~ /oauth/                       { proxy_pass http://127.0.0.1:8080; }
+    location = /mcp                          { proxy_pass http://127.0.0.1:24247; }
+    location ^~ /.well-known/oauth-           { proxy_pass http://127.0.0.1:24247; }
+    location ^~ /oauth/                       { proxy_pass http://127.0.0.1:24247; }
     location / { return 404; }
 }
 ```
@@ -584,7 +592,7 @@ server {
 ```caddy
 yaaf.example.com {
     @public path /mcp /.well-known/oauth-* /oauth/*
-    handle @public { reverse_proxy 127.0.0.1:8080 }
+    handle @public { reverse_proxy 127.0.0.1:24247 }
     handle { respond 404 }
 }
 ```
@@ -618,8 +626,8 @@ in env vars. See [GOVERNANCE.md](GOVERNANCE.md).
 | `YAAF_DATABASE_URL` | `postgresql+psycopg://yaaf:yaaf@localhost:5432/yaaf` | SQLite works for dev |
 | `YAAF_MASTER_KEY` | — | Fernet key (url-safe base64, 32 bytes, padded) for envelope-encrypting secrets — see [The master key](#the-master-key) |
 | `YAAF_ADMIN_EMAIL` | — | Read by the deploy and update scripts only: the account to make the first admin on a box with none. People sign in with accounts — see [AUTH.md](AUTH.md); `YAAF_ADMIN_TOKEN` is retired and nothing reads it |
-| `YAAF_API_BASE_URL` | `http://localhost:8080` | How sandboxes reach the platform API |
-| `YAAF_API_HOST` / `YAAF_API_PORT` | `0.0.0.0` / `8080` | |
+| `YAAF_API_BASE_URL` | `http://localhost:24247` | How sandboxes reach the platform API |
+| `YAAF_API_HOST` / `YAAF_API_PORT` | `0.0.0.0` / `24247` | |
 
 ### Runner and sandbox
 
@@ -697,6 +705,14 @@ Pull, back up, rebuild both images, apply migrations, verify. **An update that
 carries migrations needs no extra step** — they run from the entrypoint at
 container start, and the script checks `alembic current` really says `(head)`
 afterwards instead of assuming.
+
+**The default port moved from 8080 to 24247.** A box deployed before keeps the
+port it published — the scripts read it back from
+`deploy/docker-compose.override.yml` — so nothing on the server changes. What
+changes is the CLI's own default: from a laptop tunnelled to such a box, keep
+the tunnel on 8080 and `export YAAF_API=http://localhost:8080`, or move the
+tunnel to `-L 24247:localhost:8080` and need neither. An MCP client set up
+against `localhost:8080/mcp` keeps working through the old tunnel.
 
 By hand it is the same three things, minus the checks:
 

@@ -156,7 +156,7 @@ plumbing everyone expects.
 
 | Client | Credential it accepts | Reaches yaaf how |
 |---|---|---|
-| **Claude Code** | Bearer header, or OAuth | Any URL, `http://localhost:8080/mcp` included |
+| **Claude Code** | Bearer header, or OAuth | Any URL, `http://localhost:24247/mcp` included |
 | **Claude Desktop / Cursor** | Bearer header, or OAuth | Any URL |
 | **Messages API MCP connector** | `authorization_token` (a bearer) | Public HTTPS only |
 | **claude.ai custom connector** | **OAuth only** — DCR, or a pasted client id/secret | Public HTTPS, inbound from Anthropic |
