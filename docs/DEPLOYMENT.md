@@ -273,7 +273,14 @@ is refused and logged, not bound.
   Codex, opencode, Gemini, git, curl, jq, gawk) has the image's version as its
   floor here. `yaaf doctor` — and so the end of `yaaf setup` — names one that is
   missing or older, looked up where agents look, and setup binds a CLI a
-  version manager (mise, asdf) installed in your home folder.
+  version manager (mise, asdf) installed in your home folder. A run whose
+  seat needs a missing or older CLI is refused before it starts, by name and
+  with the install command.
+- **The fallback reply.** While the chat session is down, the CEO answers the
+  boardroom with a queued run that is the same conversation: the chat rules,
+  no run allowance, no wake ceiling or concurrency cap, the second-draft
+  escape — held only by the chat lane's own backstop (three failed replies in
+  ten minutes).
 
 **What host mode does differently, on purpose:**
 

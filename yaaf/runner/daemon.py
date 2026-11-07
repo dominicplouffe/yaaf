@@ -301,6 +301,12 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
     run.token_hash = token_hash
     job.api_token = token_plain
     job.system_prompt = build_system_prompt(session, agent, project)
+    if job.kind == RunKind.BOARDROOM_RUN:
+        # The talk lane's rules, in its queued vehicle: the chairman's answer
+        # is the same conversation whichever one carries it.
+        from yaaf.runner.talk_prompt import BOARDROOM_ADDENDUM
+
+        job.system_prompt += BOARDROOM_ADDENDUM
     job.context_pack = build_context_pack(session, run, agent, project)
 
     role_version = role_version_for(session, agent)

@@ -428,16 +428,19 @@ def test_a_wake_the_runner_retried_is_still_one_wake(client):
 def test_a_seat_that_fails_every_wake_still_meets_the_brake(client):
     """What the brake is for, kept: a seat whose every run dies is a wake
     loop, and each of its wakes still spends a slot whatever its retries did.
-    Counting only first attempts must not turn failures into free wakes."""
-    from tests.conftest import ADMIN
+    Counting only first attempts must not turn failures into free wakes.
 
+    The wake here is work (an urgent notice). It used to be the chairman's
+    boardroom message; his answer now rides the talk lane, which no work brake
+    stands in front of — as none stands in front of the chat session — and a
+    failing seat there meets the lane's own backstop instead
+    (test_boardroom_lane: a ceo whose replies keep failing is held)."""
     project = make_project(client, constitution={"wakes_per_agent_per_hour": 2})
     _drain()
     ceo = project["ceo_agent_id"]
     _failed_wake(project, ceo, age_minutes=40)
     _failed_wake(project, ceo, age_minutes=20)
-    assert client.post(f"/admin/projects/{project['id']}/boardroom",
-                       json={"body": "are you there?"}, headers=ADMIN).status_code == 200
+    _add_notice(project, kind=NoticeKind.BUDGET_WARNING)
     with db_session() as session:
         assert dispatcher.dispatch_once(session) == 0, "two wakes of two: the brake holds"
     state = _activity(project)

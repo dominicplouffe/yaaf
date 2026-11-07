@@ -576,6 +576,12 @@ def run_agent(*, entrypoint: str, workspace_dir: str, env: dict[str, str],
     """An agent run: the same entry script the image runs, on this Python."""
     if entrypoint not in ENTRY_FILES:
         return 126, f"Refused: {entrypoint!r} is not an entry script this runner ships."
+    from yaaf.runner import host_tools
+
+    refused = host_tools.refusal_for(entrypoint, jail_path(extra_binds()))
+    if refused:
+        log.warning("%s", refused)
+        return 126, refused
     return run([sys.executable, f"{ENTRY_DIR}/{entrypoint}"], workspace_dir=workspace_dir,
                env=env, timeout_s=timeout_s, stop_event=stop_event, entries=True)
 
@@ -614,6 +620,11 @@ def start_chat(*, project_id: str, run_id: str, workspace_dir: str, env: dict[st
     problem = unavailable()
     if problem:
         raise RuntimeError(problem)
+    from yaaf.runner import host_tools
+
+    refused = host_tools.refusal_for(env.get("YAAF_CHAT_ENTRY", ""), jail_path(extra_binds()))
+    if refused:
+        raise RuntimeError(refused)
     stop_chat(project_id)
     Path(workspace_dir).mkdir(parents=True, exist_ok=True)
     argv = limits_prefix() + jail_argv(workspace_dir, [sys.executable,

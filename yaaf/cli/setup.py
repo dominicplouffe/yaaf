@@ -84,6 +84,35 @@ def _check_machine(folder: Path) -> None:
     _ok("the dashboard is built")
 
 
+NATIVE_WARNING = """\
+     Native mode runs your agents on this computer, not in Docker.
+     Each agent works in a bubblewrap sandbox that hides your home folder and
+     yaaf's keys, and each run is capped (you choose the numbers next). But it
+     is far less contained than Docker. An agent can use your network as you
+     can, including this machine's own services; read the system's installed
+     software and settings (/usr, /etc, /opt); and use the CPU, memory and disk
+     you give it. If this machine holds anything you would not hand to a
+     stranger's script, run yaaf with Docker instead (docs/DEPLOYMENT.md)."""
+
+#: Written once the warning has been accepted, so a re-run does not ask again.
+ACCEPTED_FILE = "native-accepted"
+
+
+def _warn_native(folder: Path) -> None:
+    """Said by the installer before it installs anything; said here too, for
+    whoever runs setup on its own. Asked once, then remembered."""
+    if (folder / ACCEPTED_FILE).exists():
+        return
+    typer.echo(NATIVE_WARNING)
+    if os.environ.get("YAAF_ACCEPT_NATIVE") or not sys.stdin.isatty():
+        accepted = True
+    else:
+        accepted = typer.confirm("     Continue with native mode?", default=False)
+    if not accepted:
+        _stop("stopped before anything was set up", "run yaaf with Docker: docs/DEPLOYMENT.md")
+    (folder / ACCEPTED_FILE).write_text("yes\n")
+
+
 # ── step 2: the account ─────────────────────────────────────────────────────────
 
 
@@ -814,6 +843,7 @@ def setup(
 
     typer.echo("yaaf setup — about two minutes. Safe to run again: it skips what is done.")
     _step(1, "This machine")
+    _warn_native(folder)
     _check_machine(folder)
     cpus, memory = chosen_limits(folder, ask=sys.stdin.isatty())
     _ok(f"each agent run may use {cpus:g} CPUs and {memory:g} GB "

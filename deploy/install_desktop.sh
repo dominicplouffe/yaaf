@@ -36,6 +36,7 @@ if [ -t 0 ] && [ -z "${YAAF_ACCEPT_NATIVE:-}" ]; then
   read -r -p "Continue with native mode? [y/N] " answer
   case "$answer" in [yY]*) ;; *) echo "Stopped; nothing was installed."; exit 1 ;; esac
 fi
+export YAAF_ACCEPT_NATIVE=1  # answered here; yaaf setup does not ask again
 
 say "System packages"
 missing=()

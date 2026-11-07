@@ -217,22 +217,76 @@ def test_an_agent_cannot_buy_itself_a_free_run_through_the_boardroom(client):
         assert dispatcher.dispatch_once(session) == 0
 
 
-def test_a_failing_ceo_still_meets_its_wake_brake_in_the_talk_lane(client):
-    """Free of the allowances is not free of the brakes. A seat whose every run
-    dies is a wake loop whoever it is answering, so the per-agent brake still
-    holds a reply — see test_a_seat_that_fails_every_wake_still_meets_the_brake."""
-    project = make_project(client, constitution={**TIGHT, "wakes_per_agent_per_hour": 1})
+def test_no_work_brake_stands_between_the_chairman_and_his_answer(client):
+    """The chat session passes the agent's wake ceiling, the project's
+    concurrency cap and a run the CEO is in the middle of. So does its queued
+    vehicle: a CEO at its ceiling, in a work run, on a full project still
+    answers him."""
+    project = make_project(client, constitution={**TIGHT, "wakes_per_agent_per_hour": 1,
+                                                 "max_concurrent_runs": 1})
     _drain()
     ceo = project["ceo_agent_id"]
     with db_session() as session:
         at = utcnow()
         session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"], agent_id=ceo,
-                        kind=RunKind.BOARDROOM_RUN, status=RunStatus.FAILED,
-                        trigger={"type": "wake"}, created_at=at, started_at=at,
-                        finished_at=at))
+                        kind=RunKind.AGENT_RUN, status=RunStatus.RUNNING,
+                        trigger={"type": "wake"}, created_at=at, started_at=at))
+    _chairman_says(client, project)
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 1
+    assert _queued_one().kind == RunKind.BOARDROOM_RUN
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 0, "one reply per message, not one per tick"
+
+
+def test_a_ceo_whose_replies_keep_failing_is_held_by_the_lanes_backstop(client):
+    """Free of the work brakes is not free of every brake: a seat whose
+    replies die is a loop, held as the chat supervisor holds a boot-looping
+    session — by failures in a window, never by a chairman talking quickly."""
+    project = make_project(client, constitution=TIGHT)
+    _drain()
+    ceo = project["ceo_agent_id"]
+    with db_session() as session:
+        for attempt in (1, 2, 3):
+            at = utcnow()
+            session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"], agent_id=ceo,
+                            kind=RunKind.BOARDROOM_RUN, status=RunStatus.FAILED,
+                            trigger={"type": "wake"}, attempt=attempt, created_at=at,
+                            started_at=at, finished_at=at))
     _chairman_says(client, project)
     with db_session() as session:
         assert dispatcher.dispatch_once(session) == 0
+
+
+def test_a_reply_run_is_given_the_chat_lanes_rules():
+    """Same conversation, same rules, one text: only the delivery differs."""
+    from yaaf.runner.talk_prompt import BOARDROOM_ADDENDUM, CHAT_ADDENDUM
+
+    for rule in ("THREE SENTENCES", "NEVER PASTE A DOCUMENT", "brief_propose",
+                 "directive_file", "note_answer"):
+        assert rule in BOARDROOM_ADDENDUM and rule in CHAT_ADDENDUM, rule
+    assert "Post your reply to the boardroom with message_post" in BOARDROOM_ADDENDUM
+    assert "Do NOT message_post your reply" not in BOARDROOM_ADDENDUM
+
+
+def test_a_reply_runs_second_draft_lands_as_the_sessions_does(client):
+    """Refused once for unclear writing, the rewrite goes through — recorded —
+    so a live conversation never leaves him unanswered over style. A work run
+    has no such way: it rewrites until it passes."""
+    from yaaf.server import plain
+
+    project = make_project(client, constitution=TIGHT)
+    boardroom = channel_of(client, project["id"], "boardroom")
+    long = "This " + "very " * 40 + "long sentence is hard to read."
+    for kind, lands in ((RunKind.BOARDROOM_RUN, True), (RunKind.AGENT_RUN, False)):
+        run_id, token = live_token(project["id"], project["ceo_agent_id"], kind=kind)
+        with db_session() as session:
+            session.get(Run, run_id).last_refusal = plain.refusal_text(["x"])
+        posted = client.post("/agent/messages", headers=bearer(token),
+                             json={"channel_id": boardroom, "body": long})
+        assert (posted.status_code == 200) is lands, (kind, posted.text)
+        with db_session() as session:
+            session.get(Run, run_id).status = RunStatus.DONE
 
 
 def test_the_spent_day_banner_says_he_is_still_answered(client):
@@ -250,3 +304,4 @@ def test_the_spent_day_banner_says_he_is_still_answered(client):
     detail = state["brief"]["detail"]
     assert "Nothing starts" not in detail, detail
     assert "still answered" in detail, detail
+    assert "still spent the allowance" not in detail, "dead runs that did nothing are given back"

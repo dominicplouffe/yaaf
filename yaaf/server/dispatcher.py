@@ -324,11 +324,12 @@ def inbox_runs_used(session: Session, project: Project, since) -> int:
 def _in_flight(session: Session, project: Project) -> int:
     running = session.execute(
         select(func.count(Run.id)).where(Run.project_id == project.id,
-                                         Run.kind != RunKind.CHAT_SESSION,
+                                         Run.kind.not_in(TALK_RUN_KINDS),
                                          Run.status == RunStatus.RUNNING)
     ).scalar_one()
     running += session.execute(
-        select(func.count(RunQueue.id)).where(RunQueue.project_id == project.id)
+        select(func.count(RunQueue.id)).where(RunQueue.project_id == project.id,
+                                              RunQueue.kind.not_in(TALK_RUN_KINDS))
     ).scalar_one()
     return running
 
@@ -426,7 +427,7 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     max_concurrent = _max_concurrent(cons)
     in_flight = _in_flight(session, project)
 
-    enqueued = 0
+    enqueued = enqueued_work = 0
     agents = list(
         session.execute(
             select(Agent).where(Agent.project_id == project.id,
@@ -434,17 +435,22 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
         ).scalars()
     )
     for agent in agents:
-        if in_flight + enqueued >= max_concurrent:
-            break
-        # Only the CEO sits in the boardroom, so on a spent project nobody
-        # else has anything a run could still be for.
-        if talk_only and agent.kind != AgentKind.CEO:
+        full = in_flight + enqueued_work >= max_concurrent
+        # Only the CEO sits in the boardroom, so on a spent or full project
+        # nobody else has anything a run could still be for.
+        if (talk_only or full) and agent.kind != AgentKind.CEO:
             continue
-        if _agent_busy(session, agent):
+        if _talk_busy(session, agent, boardroom_ids):
             continue
-        if _wakes_last_hour(session, agent) >= cons.wakes_per_agent_per_hour:
-            continue
-        if talk_only:
+        # Every brake below is the work's. The chat session passes all of
+        # them — concurrency, the agent's own wake ceiling, a run it is in the
+        # middle of — and its queued vehicle passes them too, held instead by
+        # the lane's own backstop (`_talk_backstop`).
+        work_closed = (talk_only or full or _agent_busy(session, agent)
+                       or _wakes_last_hour(session, agent) >= cons.wakes_per_agent_per_hour)
+        if work_closed:
+            if agent.kind != AgentKind.CEO or _talk_backstop(session, agent):
+                continue
             # Not `_wake_reasons`: it advances the planning heartbeat and the
             # daily wake as it reads them, and on this tick neither could run —
             # they would be spent, and not due again when the allowance came
@@ -463,8 +469,18 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
         # answering the chairman must not be stopped by either.
         kind = run_kind_for_reasons(reasons)
         talk = _talk_reasons(agent, reasons, boardroom_ids)
-        if talk and len(talk) == len(reasons):
+        if talk and not work_closed and _talk_backstop(session, agent):
+            # Held, not rerouted: a seat whose replies keep dying would only
+            # die again as a work run, and spend the work's allowance doing it.
+            reasons = [r for r in reasons if r not in talk]
+            talk = []
+            if not reasons:
+                continue
+            kind = run_kind_for_reasons(reasons)
+        if work_closed or (talk and len(talk) == len(reasons)):
             kind = RunKind.BOARDROOM_RUN
+            if not talk:
+                continue
         elif kind == RunKind.INBOX_RUN:
             # Counted as we go: one tick may enqueue several agents, and a
             # broadcast makes every agent unread in the same instant — exactly
@@ -498,6 +514,7 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
         )
         notify(session, "yaaf_run_queue", project.id)
         enqueued += 1
+        enqueued_work += kind != RunKind.BOARDROOM_RUN
     return enqueued
 
 
@@ -1013,8 +1030,8 @@ def _activity_brief(state: dict) -> dict:
             f"out of runs for today ({d['used']} of {wall}), resumes {_midnight(state)}",
             f"Out of runs for today — {d['used']} of {wall} used.",
             f"No work starts until the count resets at {_midnight(state)}; your messages "
-            f"in the boardroom are still answered.{queue} Runs that "
-            f"died still spent the allowance.{over} Raise 'Runs per day, whole "
+            f"in the boardroom are still answered.{queue} A run that "
+            f"died having changed nothing was given back.{over} Raise 'Runs per day, whole "
             "project' in Settings if this is tighter than you meant it to be.",
             sig="daily_runs", clears_at=d["resets_at"])
 
@@ -1573,12 +1590,13 @@ def _wake_stamps(session: Session, agent: Agent, since) -> list:
     fails every time, rather than a wake loop with nothing in its way."""
     runs = session.execute(
         select(Run.created_at).where(Run.agent_id == agent.id,
-                                     Run.kind != RunKind.CHAT_SESSION,
+                                     Run.kind.not_in(TALK_RUN_KINDS),
                                      Run.attempt == 1,
                                      Run.created_at >= since)
     ).scalars()
     queued = session.execute(
         select(RunQueue.created_at).where(RunQueue.agent_id == agent.id,
+                                          RunQueue.kind.not_in(TALK_RUN_KINDS),
                                           RunQueue.attempt == 1,
                                           RunQueue.created_at >= since)
     ).scalars()
@@ -1665,6 +1683,49 @@ def chat_session_live(session: Session, project: Project) -> bool:
                                          Run.status == RunStatus.RUNNING,
                                          Run.heartbeat_at >= cutoff)
     ).scalar_one())
+
+
+#: The talk lane's own backstop, the chat supervisor's numbers
+#: (yaaf.runner.chat.RESTART_WINDOW / MAX_STARTS_IN_WINDOW): this many failed
+#: reply runs inside the window is a seat that cannot answer, and the lane
+#: holds until the window drains instead of failing on every tick.
+TALK_FAILURE_WINDOW = timedelta(minutes=10)
+TALK_FAILURES_IN_WINDOW = 3
+
+
+def _talk_backstop(session: Session, agent: Agent) -> bool:
+    """Whether this CEO's queued replies are boot-looping. Failures only: a
+    chairman talking quickly to a healthy seat is never held."""
+    failed = session.execute(
+        select(func.count(Run.id)).where(
+            Run.agent_id == agent.id, Run.kind == RunKind.BOARDROOM_RUN,
+            Run.status == RunStatus.FAILED,
+            Run.created_at >= utcnow() - TALK_FAILURE_WINDOW)
+    ).scalar_one()
+    return failed >= TALK_FAILURES_IN_WINDOW
+
+
+def _talk_busy(session: Session, agent: Agent, boardroom_ids: set[str]) -> bool:
+    """A reply to the boardroom already on its way: one queued or running in
+    the talk lane, or any queued run that woke for the boardroom and has not
+    yet read it — answering that again would be a second reply to one
+    message. A run already running has read what it woke for, so a newer
+    message is the talk lane's to answer, as it is the session's."""
+    if agent.kind != AgentKind.CEO:
+        return False
+    if session.execute(
+        select(func.count(Run.id)).where(Run.agent_id == agent.id,
+                                         Run.kind == RunKind.BOARDROOM_RUN,
+                                         Run.status == RunStatus.RUNNING)
+    ).scalar_one():
+        return True
+    for kind, trigger in session.execute(
+        select(RunQueue.kind, RunQueue.trigger).where(RunQueue.agent_id == agent.id)
+    ):
+        if kind == RunKind.BOARDROOM_RUN or _talk_reasons(
+                agent, (trigger or {}).get("reasons") or [], boardroom_ids):
+            return True
+    return False
 
 
 def _chat_lane_channels(session: Session, project: Project, agent: Agent) -> set[str]:

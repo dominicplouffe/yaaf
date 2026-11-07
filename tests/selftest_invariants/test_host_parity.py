@@ -245,3 +245,37 @@ def test_the_installer_warns_before_it_installs_anything():
     assert warning < script.index('say "System packages"')
     assert "network" in script[warning:warning + 900]
     assert "playwright install chromium" in script
+
+
+def test_a_seat_whose_cli_is_missing_or_old_is_refused_by_name(tmp_path, monkeypatch):
+    """At the run, not three layers down: refused before the jail starts, with
+    the command that fixes it."""
+    monkeypatch.setattr(host_tools, "_checked", {})
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    old = bin_dir / "codex"
+    old.write_text("#!/bin/sh\necho 'codex-cli 0.120.0'\n")
+    old.chmod(0o755)
+    why = host_tools.refusal_for("codex_cli_entry.py", str(bin_dir))
+    assert why.startswith("Refused:") and "0.120.0" in why and "0.162.1" in why
+    missing = host_tools.refusal_for("gemini_cli_entry.py", str(bin_dir))
+    assert "no gemini is installed" in missing and "npm install -g" in missing
+    assert host_tools.refusal_for("loop_entry.py", str(bin_dir)) is None, "needs no CLI"
+
+
+def test_a_refused_seat_never_starts_a_jail(cfg, monkeypatch, tmp_path):
+    monkeypatch.setattr(host_tools, "refusal_for", lambda entry, path: "Refused: no codex")
+    monkeypatch.setattr(host_jail, "run", lambda *a, **k: pytest.fail("a jail started"))
+    code, out = host_jail.run_agent(entrypoint="codex_cli_entry.py",
+                                    workspace_dir=str(tmp_path), env={}, timeout_s=10)
+    assert code == 126 and "no codex" in out
+
+
+def test_setup_says_what_native_mode_gives_up_and_remembers_the_answer(tmp_path, monkeypatch):
+    from yaaf.cli import setup
+
+    monkeypatch.setenv("YAAF_ACCEPT_NATIVE", "1")
+    setup._warn_native(tmp_path)
+    assert (tmp_path / setup.ACCEPTED_FILE).exists()
+    assert "far less contained than Docker" in setup.NATIVE_WARNING
+    assert "network" in setup.NATIVE_WARNING

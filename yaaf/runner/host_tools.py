@@ -127,3 +127,44 @@ def browser_available() -> bool:
         return False
     root = browsers_path()
     return root.is_dir() and any(root.glob("chromium*"))
+
+
+#: The CLI each harness's entry script drives. yaaf's own loop and the Agent
+#: SDK run on the virtualenv's Python and need none.
+ENTRY_TOOL = {
+    "claude_cli_entry.py": "claude",
+    "codex_cli_entry.py": "codex",
+    "opencode_cli_entry.py": "opencode",
+    "gemini_cli_entry.py": "gemini",
+}
+
+_checked: dict[str, tuple[float, str | None]] = {}
+_CHECK_TTL_S = 60.0
+
+
+def refusal_for(entrypoint: str, path: str) -> str | None:
+    """Why a run on this entry cannot start here, or None. Missing or older
+    than the image's floor is refused before the jail starts, by name and with
+    the fix, rather than dying on its first command three layers down. Asked
+    at most once a minute per tool: `--version` is a process start."""
+    import time
+
+    command = ENTRY_TOOL.get(entrypoint)
+    if command is None:
+        return None
+    hit = _checked.get(command)
+    if hit is not None and time.monotonic() - hit[0] < _CHECK_TTL_S:
+        return hit[1]
+    tool = next(t for t in TOOLS if t.command == command)
+    row = next(r for r in report(path) if r["tool"].command == command)
+    if row["problem"] == "missing":
+        why = (f"Refused: this seat runs on {command}, and no {command} is installed "
+               f"where agents look. {tool.install}, then run yaaf setup again so the "
+               "sandbox can see it.")
+    elif row["problem"] == "old":
+        why = (f"Refused: this seat runs on {command} {row['version']}, older than the "
+               f"{tool.minimum} the sandbox image runs. {tool.install}.")
+    else:
+        why = None
+    _checked[command] = (time.monotonic(), why)
+    return why
