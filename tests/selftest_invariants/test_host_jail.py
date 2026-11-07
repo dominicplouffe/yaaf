@@ -367,6 +367,53 @@ def test_a_python_the_jail_cannot_start_is_refused_once_by_name(jail, monkeypatc
     assert code == 126 and exe in out, "said once, and every run after gets the same refusal"
 
 
+@pytest.fixture()
+def resolved(tmp_path, monkeypatch):
+    """resolv.conf the way systemd-resolved leaves it — Arch, so Omarchy;
+    Ubuntu; Fedora: the real file in a run-time folder beside resolved's
+    control socket, and the name everything opens a link to it. The folder
+    sits under /tmp, which the jail replaces with its own exactly as it does
+    /run."""
+    folder = tmp_path / "run/systemd/resolve"
+    folder.mkdir(parents=True)
+    (folder / "stub-resolv.conf").write_text("nameserver 127.0.0.53\noptions edns0\n")
+    (folder / "io.systemd.Resolve").write_text("a socket, standing in")
+    (tmp_path / "etc").mkdir()
+    link = tmp_path / "etc/resolv.conf"
+    link.symlink_to(folder / "stub-resolv.conf")
+    monkeypatch.setattr(host_jail, "NAME_SERVICE", (str(link),))
+    return SimpleNamespace(link=link, folder=folder)
+
+
+def test_dns_settings_kept_in_run_are_mounted_as_one_file(box, resolved):
+    """The file the link resolves to is mounted at its own path; its folder,
+    which holds resolved's control socket, is not."""
+    _, _, _, workspace = box
+    binds = _binds(host_jail.jail_argv(str(workspace), ["true"]))
+    assert str(resolved.folder / "stub-resolv.conf") in binds
+    assert str(resolved.folder) not in binds, "the file, never the folder beside it"
+
+
+def test_a_jailed_run_can_read_dns_settings_kept_in_run(jail, resolved):
+    """The bug every run on a systemd-resolved desktop hit once the jail
+    could start Python: `ConnectError('[Errno -3] Temporary failure in name
+    resolution')` at the first call to its model's API, because the link
+    pointed into a /run the jail had replaced."""
+    _, _, _, workspace = jail
+    code, out = host_jail.run(["cat", str(resolved.link)], workspace_dir=str(workspace),
+                              env={}, timeout_s=30)
+    assert code == 0 and "nameserver 127.0.0.53" in out, out
+
+
+def test_a_jail_that_cannot_read_dns_settings_is_refused_by_name(jail, resolved, monkeypatch):
+    """Should the mount ever be missing again, it is one refusal naming the
+    file and where it points — not a name-resolution error per dead run."""
+    monkeypatch.setattr(host_jail, "_name_service", lambda: ([], []))
+    said = host_jail.unavailable()
+    assert said and said.startswith("Refused") and "DNS" in said
+    assert str(resolved.link) in said and str(resolved.folder / "stub-resolv.conf") in said
+
+
 def test_ubuntus_restriction_is_named_with_what_fixes_it(box, monkeypatch, tmp_path):
     """On Ubuntu 23.10 and later bwrap is installed and still cannot make a
     jail: AppArmor strips its capabilities. "Install bubblewrap" is then the

@@ -201,13 +201,21 @@ Python's folders are mounted at their real paths, and any symlinks on the way
 to them are recreated inside as symlinks. One example is uv's `cpython-3.13`
 link to `cpython-3.13.18`, which a uv-made venv's `bin/python` goes through.
 Only the folders themselves are mounted, never the folder holding them.
+Name lookup gets the same care. On a systemd-resolved desktop (Arch and so
+Omarchy, Ubuntu, Fedora), `/etc/resolv.conf` is a symlink into `/run`, and a
+run's `/run` is its own. So the one file each name-lookup setting resolves to
+is mounted at its own path: `resolv.conf`, `hosts`, `nsswitch.conf`,
+`host.conf` and `gai.conf`. The folder that holds resolved's control socket is
+not mounted.
 
 `bwrap` is required, not preferred. Without it, or on a kernel or AppArmor
 policy that forbids unprivileged user namespaces, `yaaf up --host` stops before
 starting, `yaaf doctor` says why, and a runner that is somehow started anyway
 refuses every run (exit 126) rather than run an agent bare. The same happens,
 naming the interpreter, if the jail can be made but cannot start the Python
-yaaf runs on. One case is a Python installed into the home folder itself,
+yaaf runs on. It also happens, naming the file, if a jail cannot read this
+machine's DNS settings, since every run's first act is to reach its model's
+API by name. One case is a Python installed into the home folder itself,
 which the jail will not mount.
 
 **On Ubuntu 23.10 and later**, bwrap is installed but blocked by default:

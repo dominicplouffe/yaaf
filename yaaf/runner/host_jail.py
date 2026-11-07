@@ -100,6 +100,17 @@ PASS_THROUGH = (
 _PATH_VALUED = {"SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
                 "NODE_EXTRA_CA_CERTS", "PLAYWRIGHT_BROWSERS_PATH"}
 
+#: How a process finds a host by name. /etc is mounted whole, but on a
+#: desktop the real resolv.conf is rarely there: systemd-resolved (Arch, so
+#: Omarchy; Ubuntu; Fedora), NetworkManager and Debian's resolvconf keep it
+#: in /run and link /etc/resolv.conf to it — and the jail's /run is its own,
+#: empty one. The link dangled, and every run died at its first lookup with
+#: "Temporary failure in name resolution". So the file each of these names
+#: resolves to is mounted at its own path: the one file, never its folder,
+#: which beside it holds resolved's control socket.
+NAME_SERVICE = ("/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/host.conf",
+                "/etc/gai.conf")
+
 HOME = "/home/agent"
 LOG_TAIL = 16000
 
@@ -264,6 +275,18 @@ def jail_env(job_env: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
+def _name_service() -> tuple[list[str], list[str]]:
+    """The files name lookup needs mounted, and the names they are opened by.
+    One that resolves into a read-only root is already there and is left out
+    of the mounts by the caller; a dangling one is the host's own problem."""
+    files, names = [], []
+    for name in NAME_SERVICE:
+        if os.path.exists(name):
+            files.append(str(Path(name).resolve()))
+            names.append(name)
+    return files, names
+
+
 def jail_argv(workspace_dir: str, command: list[str], *, entries: bool = False) -> list[str]:
     """The bwrap command line for one run. Order matters to bwrap: a later
     mount lands on top of an earlier one, so the private binds come after the
@@ -286,6 +309,9 @@ def jail_argv(workspace_dir: str, command: list[str], *, entries: bool = False) 
     # The names a run opens by: the interpreter's own path and prefixes, the
     # home its venv names, the CA files its environment points at.
     names = [sys.executable, sys.prefix, sys.base_prefix, sys.exec_prefix, *_venv_home()]
+    lookup_files, lookup_names = _name_service()
+    private += lookup_files
+    names += lookup_names
     for name in PASS_THROUGH:
         value = os.environ.get(name)
         if name in _PATH_VALUED and value and Path(value).exists():
@@ -347,6 +373,26 @@ def _starts_python(bwrap: str, executable: str) -> str | None:
     return None
 
 
+@functools.lru_cache(maxsize=4)
+def _reads_resolver(bwrap: str, resolver: str) -> str | None:
+    """Can a jail read this machine's DNS settings? Every agent run's first
+    act is to reach its model's API by name, so a jail that cannot is a mode
+    where every run dies at its first lookup — said once, naming the file."""
+    if not os.path.exists(resolver):
+        return None  # the host has none to share; nothing a jail could lack
+    with tempfile.TemporaryDirectory() as scratch:
+        try:
+            proc = subprocess.run(jail_argv(scratch, ["cat", resolver]), capture_output=True,
+                                  text=True, timeout=20, env={"PATH": "/usr/bin:/bin"})
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return f"the sandbox could not read {resolver}: {exc!r}"
+    if proc.returncode == 0:
+        return None
+    where = f"{resolver} → {os.path.realpath(resolver)}" if os.path.islink(resolver) else resolver
+    return (f"the sandbox cannot read this machine's DNS settings ({where}), so no agent "
+            f"run could reach its model's API: {proc.stderr.strip()[-300:]}")
+
+
 def unavailable() -> str | None:
     """Why host mode cannot run anything on this machine, or None."""
     bwrap = _bwrap()
@@ -359,7 +405,8 @@ def unavailable() -> str | None:
     problem = _probe(bwrap)
     if problem:
         return f"Refused: sandbox_mode is 'host' and {problem}" + _restricted_userns()
-    problem = _starts_python(bwrap, sys.executable)
+    problem = (_starts_python(bwrap, sys.executable)
+               or _reads_resolver(bwrap, NAME_SERVICE[0]))
     if problem:
         return f"Refused: sandbox_mode is 'host' and {problem}"
     return None
