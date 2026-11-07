@@ -226,12 +226,16 @@ is refused and logged, not bound.
   mounts it.
 - **A sleeping laptop runs nothing.** A run in flight when the lid closes can
   miss its lease heartbeat and be reaped as a dead run when the machine wakes.
-- **Updating is migrating.** `yaaf up` and `yaaf setup` bring the database to
-  the current release every time they start (`yaaf/core/schema_upkeep.py`): a new
-  one is built by the migration chain, so it is versioned from its first day; one
-  `yaaf up` made before with `create_all` is adopted once — the tables and columns
-  it lacks are added, its rows kept, and it is stamped current. Back up
-  `~/.yaaf/yaaf.db` before an update anyway; it is one file.
+- **Updating is `yaaf update`.** It refuses a checkout with edits of its own or
+  a branch that has diverged; backs the database up (SQLite's own backup, the
+  newest five kept in `~/.yaaf/backups`); pulls, fast-forward only; reinstalls
+  the Python packages only when `pyproject.toml` changed and rebuilds the
+  dashboard only when `web/` did; restarts yaaf, which migrates the database as
+  it starts (`yaaf/core/schema_upkeep.py`); and refreshes the desktop pieces. A
+  step that fails stops it, with the commands that put the code and the
+  database back. `yaaf update --check` says what an update would bring and
+  changes nothing. (A database `yaaf up` built before migrations is adopted once
+  on its next start: what it lacks is added and its rows are kept.)
 
 `yaaf up` keeps the workspaces and artifacts in its own folder (`~/.yaaf` by
 default) beside the database, in every mode — the server default under

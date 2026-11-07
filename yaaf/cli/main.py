@@ -1683,9 +1683,11 @@ def _register_up() -> None:
     from yaaf.cli.desktop import desktop_app, letter, nudge
     from yaaf.cli.setup import setup
     from yaaf.cli.up import up
+    from yaaf.cli.update import update
 
     app.command()(setup)
     app.command()(up)
+    app.command()(update)
     app.command()(desk)
     app.command()(signal)
     app.command()(letter)
@@ -1703,7 +1705,7 @@ _register_up()
 #: Where each command sits in `yaaf --help`, in the order somebody new reaches
 #: for them. The help used to be sixty commands in the order they were written.
 PANELS = {
-    "Get started": ("setup", "up", "login", "logout", "whoami", "doctor", "rehearse",
+    "Get started": ("setup", "up", "update", "login", "logout", "whoami", "doctor", "rehearse",
                     "create_project", "projects", "status"),
     "Run a project": ("start", "pause", "stop", "configure", "amend"),
     "Decide": ("desk", "signal", "say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",
