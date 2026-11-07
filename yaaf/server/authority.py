@@ -1,6 +1,6 @@
 """Who may do what — declared on every human route, and the declaration is the check.
 
-Two levels of authority exist (docs/AUTH.md). On the box, the *instance admin*
+Two levels of authority exist. On the box, the *instance admin*
 runs it: people, platform settings, the libraries. On a project, a row in
 `project_members` says what a person is there:
 

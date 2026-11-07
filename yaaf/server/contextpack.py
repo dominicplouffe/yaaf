@@ -1877,7 +1877,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             # "the chairman accepts them" at every setting, which is false on a
             # project whose chairman handed the verb over — and now that a spec
             # with no opinion is created autonomous, false by default. Same
-            # defect as the three surfaces in docs/AUTONOMY.md: read the
+            # defect as the three surfaces before it: read the
             # constitution before naming a party.
             accepts = ("you accept them yourself (scope_act), on the record"
                        if policy.ceo_holds(cons, "plan_authority")

@@ -1,6 +1,6 @@
 """An irreversible write cannot happen in one call.
 
-Rule 4 of docs/MCP_SERVER.md. The attack it defends against is not a determined
+The attack it defends against is not a determined
 adversary holding the chairman's token — it is the ordinary failure this whole
 surface invites: a confident model, a channel message telling it what to do,
 and a verb within reach. The preview is the turn where that stops, and the

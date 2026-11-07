@@ -1,5 +1,5 @@
 """Runs INSIDE the sandbox container: one stateless run on yaaf's own agent loop,
-on whichever wire the seat's provider speaks (docs/PROVIDERS.md §3).
+on whichever wire the seat's provider speaks.
 
 The loop is `loop_harness`; the run is `sandbox_entry.run_harness`; this file
 is the client the loop drives — chosen by the provider's protocol, which the

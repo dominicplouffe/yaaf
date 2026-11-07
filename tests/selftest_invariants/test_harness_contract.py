@@ -1,4 +1,4 @@
-"""Invariant selftests: the contract every harness signs (docs/RUNTIMES.md).
+"""Invariant selftests: the contract every harness signs.
 
 A harness is transport. It may change how a model is driven; it may not change
 what a run is metered at, how a dead credential is read, when a run retries,
@@ -198,7 +198,7 @@ def test_a_reply_is_metered_the_same_on_every_harness(fresh):
 
 
 def test_every_harness_prices_the_run_beside_the_bill_it_reports(fresh):
-    """The gap check's input (docs/RUNTIMES.md): a harness that reports its own
+    """The gap check's input: a harness that reports its own
     bill is priced from the catalog too, and the two are compared. The
     recorded run wrote its whole prompt to the 1-hour cache, priced above the
     5-minute one, so a pricer that ignored the TTL split would be wrong by

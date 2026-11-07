@@ -3,7 +3,7 @@
 This module was the first slice of people auth — argon2id against the
 `password_hash` column, and a signed cookie scoped to the OAuth consent flow —
 and was sized to be absorbed by the real thing. It has been: passwords,
-sessions and the throttle live in `yaaf.server.identity` (docs/AUTH.md).
+sessions and the throttle live in `yaaf.server.identity`.
 
 What stays here is the cookie the consent screen sets after it asks for the
 password, which deliberately is *not* the dashboard session. Handing a model a

@@ -53,8 +53,7 @@ def get_settings(session: Session = Depends(db)) -> dict:
     founder = {
         "configured": platform.has_credential(session),
         "billing_mode": platform.billing_mode(session),
-        # Which provider it pays: the Founder runs on whichever one this says
-        # (docs/PROVIDERS.md §7).
+        # Which provider it pays: the Founder runs on whichever one this says.
         "provider": platform.credential_provider(session),
         "model": platform.founder_model(session),
         # As set: a class resolves on whatever the credential pays.
@@ -948,7 +947,7 @@ class PriceImportIn(BaseModel):
 
 @router.post("/model-prices/import", dependencies=[authority.INSTANCE_ADMIN])
 def import_model_prices(body: PriceImportIn, session: Session = Depends(db)) -> dict:
-    """Price models from a feed (docs/PROVIDERS.md §5): a preview by default,
+    """Price models from a feed: a preview by default,
     written only with `apply`, every row labelled with where it came from.
     Hand-set prices and the catalog's checked ones are kept unless asked."""
     import httpx
@@ -1090,7 +1089,7 @@ def delete_model_price(model: str, session: Session = Depends(db)) -> dict:
 def get_models(session: Session = Depends(db)) -> dict:
     """Settings → Models: what each class names on each provider, where bare
     classes resolve when a project pays nobody yet, and how many runs each
-    provider may carry at once (docs/PROVIDERS.md §1, §8) — plus the app's
+    provider may carry at once — plus the app's
     own defaults, what a seat runs on when neither it nor its role names a
     model or a harness (PLAN-09)."""
     from yaaf.core import model_policy, model_upkeep, provider_check_runs
@@ -1333,8 +1332,8 @@ def _unrunnable_seats(session: Session) -> list[str]:
 def discover_models(credential_id: str, session: Session = Depends(db)) -> dict:
     """What the provider actually serves for this credential, by the names a
     seat or a lineup would use (`provider/model` for one the catalog does not
-    list) — so a Groq lineup is picked from Groq's list, not typed from memory
-    (docs/PROVIDERS.md §8). One free call to the provider's own model list.
+    list) — so a Groq lineup is picked from Groq's list, not typed from memory.
+    One free call to the provider's own model list.
 
     Each model comes with what the price feed says of it — its price, its
     window, whether it reasons, and whether it is a chat model at all (a key's
@@ -1476,7 +1475,7 @@ class SmokeIn(BaseModel):
 def smoke_credential(credential_id: str, body: SmokeIn | None = None,
                      session: Session = Depends(db)) -> dict:
     """One real, trivial call on this credential, through the wire a seat on it
-    runs (docs/PROVIDERS.md §8): a one-line prompt with one tool offered, and
+    runs: a one-line prompt with one tool offered, and
     back the model that answered, whether it called the tool, its usage, and
     what that call cost at this install's price. It spends a few hundred tokens
     of the credential's own money — which is the point: nothing else can be
@@ -1810,7 +1809,7 @@ def doctor(session: Session = Depends(db)) -> dict:
     each with the command or the page that fixes it.
 
     The dev path alone has four steps that, missed, leave "a project that looks
-    alive and never moves" (docs/DEPLOYMENT.md), and a fresh box met them one
+    alive and never moves" (the old docs/DEPLOYMENT.md), and a fresh box met them one
     at a time: an empty crew picker, a 500 on the first saved secret, runs
     queued forever, a Founder asking for a second key. `yaaf doctor` reads this.
     """

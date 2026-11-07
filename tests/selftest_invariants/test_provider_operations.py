@@ -1,5 +1,4 @@
-"""Invariant selftests: the control plane's side of every provider
-(docs/PROVIDERS.md §4, §6, §8).
+"""Invariant selftests: the control plane's side of every provider.
 
 - A credential is checked live through the wire a run will use: the same
   address, the key presented the provider's own way.

@@ -1,5 +1,5 @@
 The chairman's real brief — what he actually typed into an outside coding agent
-to get `docs/projects/idea-to-customer.json` back. Kept verbatim, typos and
+to get `evals/fixtures/idea-to-customer.json` back. Kept verbatim, typos and
 all: the Founder has to work from what people really write, not from a tidied
 version of it.
 

@@ -96,3 +96,41 @@ def test_column_and_index_guards_are_idempotent(tmp_path):
             add_column_if_missing("tasks", sa.Column("cycle_id", sa.String(40)))
             create_index_if_missing("ix_tasks_cycle", "tasks", ["cycle_id"])
         assert has_column("tasks", "cycle_id")
+
+
+# ── /readyz: the health check that would have caught it ─────────────────────
+
+
+def test_readyz_answers_ok_when_the_schema_is_there(client):
+    response = client.get("/readyz")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "database": "ok"}
+
+
+def test_readyz_answers_503_on_a_database_with_no_schema(client, tmp_path):
+    """The box this file is about: alive, signed in, no tables. /healthz says
+    200 there; /readyz must not."""
+    from yaaf.core.db import swap_engine
+
+    restore = swap_engine(f"sqlite:///{tmp_path / 'empty.db'}")
+    try:
+        response = client.get("/readyz")
+    finally:
+        restore()
+    assert client.get("/healthz").status_code == 200
+    assert response.status_code == 503
+    # Unauthenticated, so it says what is wrong without saying where.
+    assert response.json() == {"ok": False, "database": "unavailable"}
+
+
+def test_the_server_listens_on_this_machine_unless_told_otherwise():
+    """Plain HTTP on every interface was the default for `yaaf-server` started
+    by hand. Only the container image may widen it, because there the published
+    port is the boundary."""
+    from pathlib import Path
+
+    from yaaf.core.config import Settings
+
+    assert Settings.model_fields["api_host"].default == "127.0.0.1"
+    dockerfile = (Path(__file__).resolve().parents[2] / "deploy" / "Dockerfile").read_text()
+    assert "ENV YAAF_API_HOST=0.0.0.0" in dockerfile

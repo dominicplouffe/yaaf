@@ -1,4 +1,4 @@
-"""Has a key been seen to work, and when (docs/PROVIDERS.md §8).
+"""Has a key been seen to work, and when.
 
 The readiness report says what yaaf itself would refuse: a class with no model,
 a model with no price, a browsing role with nothing to search through. It

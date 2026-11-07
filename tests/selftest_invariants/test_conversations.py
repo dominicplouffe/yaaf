@@ -1,4 +1,4 @@
-"""Invariant selftests: the conversations (docs/RUNTIMES.md, M6) — the
+"""Invariant selftests: the conversations — the
 boardroom chat held on the CEO's own seat, on any harness that can hold one.
 
 The rule under attack is R7: a CEO seat holding the boardroom chat must be on
@@ -548,7 +548,7 @@ def test_a_platform_credential_the_founder_cannot_run_on_is_refused(client, body
 
 
 def test_a_key_is_enough_where_the_provider_has_a_frontier_model(client):
-    """The Founder's model is a class (docs/PROVIDERS.md §7): pasting a DeepSeek
+    """The Founder's model is a class: pasting a DeepSeek
     key with no model named gives a Founder on DeepSeek's frontier model —
     where it used to be refused for defaulting to Claude's."""
     installed = client.put(PLATFORM, headers=ADMIN, json={

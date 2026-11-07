@@ -1,6 +1,6 @@
 """Every human route says who may call it, and the saying is the check.
 
-docs/AUTH.md rule 1. The failure this exists for is the commonest one in
+The failure this exists for is the commonest one in
 multi-user software, and another agent platform shipped it as a security
 advisory: an administrative route that authenticated the caller and never asked
 whether *this* caller could touch *this* thing. Nothing fails when a handler

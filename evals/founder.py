@@ -7,7 +7,7 @@ It grades the two ends of a real, documented gap:
 
 - **The brief** (`fixtures/founder_brief.md`) — what the chairman actually
   typed to get a project designed.
-- **The goal** (`docs/projects/idea-to-customer.json`) — what came back, which
+- **The goal** (`evals/fixtures/idea-to-customer.json`) — what came back, which
   he approved and shipped as the worked example.
 
 Both are real artifacts, which is what makes this worth running. The grade has
@@ -33,7 +33,7 @@ from evals.judge import LOAD_BEARING, GoalGrade, grade_goal
 
 ROOT = Path(__file__).resolve().parent.parent
 BRIEF = Path(__file__).resolve().parent / "fixtures" / "founder_brief.md"
-REFERENCE = ROOT / "docs" / "projects" / "idea-to-customer.json"
+REFERENCE = ROOT / "evals" / "fixtures" / "idea-to-customer.json"
 
 #: What the finished goal added that the brief never said. Established by
 #: reading both: the brief already carries the bias-as-a-bias, the chairman's

@@ -1,7 +1,7 @@
 """A person in a browser: signing in, staying in, and being put out.
 
-docs/AUTH.md rules 7 and 8, attacked over HTTP the way a browser — or
-somebody holding a copied cookie, or a page on another origin — would. The
+Attacked over HTTP the way a browser — or somebody holding a copied cookie,
+or a page on another origin — would. The
 session replaced a static bearer kept in localStorage, so the attacks are the
 ones that bearer was exposed to and a cookie must not be: replay after logout,
 use from another origin, guessing at speed, and outliving a password change.

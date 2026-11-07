@@ -1,5 +1,5 @@
 """Invariant selftests: provider readiness — what the doors would refuse, read
-before anybody is refused (yaaf.core.readiness, docs/PROVIDERS.md §8).
+before anybody is refused (yaaf.core.readiness).
 
 A provider half set up used to be found one refusal at a time, by creating a
 project. The readiness view must say every gap at once, each with its fix, and

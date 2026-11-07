@@ -1,12 +1,11 @@
 """Invariant selftest: every harness renders the tools the model has always seen.
 
-The platform tools are declared once, as data, and rendered per harness
-(docs/RUNTIMES.md). The Agent SDK used to own both the declaration and the
-conversion to the schema the model receives — through a helper the SDK keeps
-private. Every harness after it renders from `wire_schema` instead, so that
-function is held here to the record of what the SDK actually sent:
-`tests/fixtures/tool_catalog.json` was captured through the SDK's own
-conversion, before the tools stopped being SDK objects.
+The platform tools are declared once, as data, and rendered per harness. The
+Agent SDK used to own both the declaration and the conversion to the schema the
+model receives — through a helper the SDK keeps private. Every harness after it
+renders from `wire_schema` instead, so that function is held here to the record
+of what the SDK actually sent: `tests/fixtures/tool_catalog.json` was captured
+through the SDK's own conversion, before the tools stopped being SDK objects.
 
 A diff here is a change in what agents see, which CONTRIBUTING house rule #3
 says is regression-gated. If it is deliberate, re-record and say so in the PR:

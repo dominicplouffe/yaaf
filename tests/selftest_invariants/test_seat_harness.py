@@ -1,6 +1,6 @@
 """Invariant selftests: a seat chooses its harness, and no door seats one that cannot run.
 
-docs/RUNTIMES.md M1. The choice lives where the model does — on the role
+The choice lives where the model does — on the role
 version, and per seat beside `model_override` — and every door a seat comes
 through runs one check (yaaf.runtimes.seats.refusal): the harness must exist,
 serve the seat's model, be able to take away what the role withholds (R2), and

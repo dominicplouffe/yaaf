@@ -1,5 +1,5 @@
 """Is this install ready to run projects on each provider it pays — and if not,
-what exactly is missing and what fixes it (docs/PROVIDERS.md §8).
+what exactly is missing and what fixes it.
 
 Every way a provider can be half set up was already refused somewhere: a class
 with no model (R8), a model with no price (R3), a web role on a provider that

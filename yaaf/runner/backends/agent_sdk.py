@@ -13,7 +13,7 @@ them is only the entry script — ``sandbox_entry.py`` drives the Agent SDK,
 ``gemini_cli_entry.py`` the Gemini CLI, ``opencode_cli_entry.py`` OpenCode,
 ``loop_entry.py`` yaaf's own loop on whichever wire the provider speaks — and
 every one of them reads the same staged files and writes
-the same result.json (docs/RUNTIMES.md).
+the same result.json.
 """
 
 from __future__ import annotations

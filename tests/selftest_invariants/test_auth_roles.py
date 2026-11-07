@@ -1,6 +1,6 @@
 """Who may do what on a project, attacked by everyone who is not supposed to.
 
-docs/AUTH.md rules 2, 3 and 5. One project, five people:
+One project, five people:
 
     the chairman   (the suite's own person, who is also the instance admin)
     a co-chair     decides as a peer, and is recorded as themselves

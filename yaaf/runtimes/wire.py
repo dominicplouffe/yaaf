@@ -15,7 +15,7 @@ is OpenAI and Azure OpenAI; `gemini` is the Gemini API and Vertex AI. Which
 protocol a provider speaks, at which address, authenticated how, is the
 provider registry's (yaaf.runtimes.providers) — handed to this file as a plain
 `Endpoint`, so a new provider of a known shape is a registry row and nothing
-here (docs/PROVIDERS.md §3).
+here.
 
 The Anthropic protocol is here for the control plane's own calls (the live
 check, discovery, smoke). Inside the sandbox the loop keeps the official
@@ -1153,7 +1153,7 @@ async def _inference_profiles(http: httpx.AsyncClient, endpoint: Endpoint) -> li
     return out
 
 
-# ── web search backends: the platform's own search (docs/PROVIDERS.md §6) ──────
+# ── web search backends: the platform's own search ──────
 
 
 @dataclass(frozen=True)

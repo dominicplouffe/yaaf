@@ -257,7 +257,7 @@ def _active_admins(session: Session) -> int:
 def update_user(user_id: str, body: UserPatch, session: Session = Depends(db)) -> dict:
     """Rename, promote, demote, deactivate, reactivate.
 
-    Two refusals keep the box governable (rule 6 of docs/AUTH.md): it always
+    Two refusals keep the box governable: it always
     has an active admin, and a live project always has a chairman who can sign
     in. A person who chairs something is handed off it first — the instance
     admin can transfer the chair — rather than leaving a project nobody may
@@ -345,7 +345,7 @@ def add_member(project_id: str, body: MemberIn, session: Session = Depends(db)) 
     """Put somebody who already has an account on this project.
 
     The chairman's alone: co-chairs decide as peers, but only the chairman
-    decides who decides (docs/AUTH.md). Accounts themselves are an instance
+    decides who decides. Accounts themselves are an instance
     admin's to create, because a box's people share its credentials and budget.
     """
     from yaaf.server.identity import find_user
@@ -809,8 +809,8 @@ def list_crews(session: Session = Depends(db)) -> list[dict]:
         for role in session.execute(select(Role)).scalars()
     }
     out = []
-    # Not alphabetical: eleven of these are the examples, and examples/README
-    # orders them "in the order worth doing them" — which puts the one-team
+    # Not alphabetical: eleven of these are the examples, and their numbers
+    # order them "in the order worth doing them" — which puts the one-team
     # starter first and the four-team desks last. Alphabetical put every crew
     # whose name begins with "A" in front of the ones a new chairman wants.
     crews = sorted(
@@ -5525,7 +5525,7 @@ def requirement_verdict(
 
 # ── the missing verbs: reopen, restage, reestimate, unsequence ──────────────────
 #
-# Stage A of the CEO Charter (docs/AUTONOMY.md). Until these existed, MET and
+# Stage A of the CEO Charter. Until these existed, MET and
 # CUT were terminal for every principal including the chairman, a stage could
 # never be moved, an estimate could never honestly grow, and an edge was a
 # one-way ratchet. Each verb writes a requirement_event, so history is
@@ -6778,8 +6778,7 @@ def create_mcp_client(body: McpClientIn, session: Session = Depends(db),
 
     This is the only place a person's authority is ever narrowed rather than
     copied: their own credential stays where it is, and what leaves is a
-    scoped, revocable, attributable credential that names them. See
-    docs/MCP_SERVER.md.
+    scoped, revocable, attributable credential that names them.
 
     Only ever for yourself — an instance admin included. Running the box is
     not acting as the people on it, and a model holding a grant in somebody

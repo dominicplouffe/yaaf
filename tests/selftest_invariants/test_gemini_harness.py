@@ -1,5 +1,5 @@
 """Invariant selftests: the Gemini CLI harness, held to the contract every
-harness signs (docs/RUNTIMES.md, M5).
+harness signs.
 
 The streams replayed here are the real CLI's (0.63.0) — recorded against a
 stand-in Gemini API with the network cut to loopback, because Google's API was
@@ -423,7 +423,7 @@ def test_a_gemini_seat_runs_on_the_gemini_cli_and_its_efforts_are_held(client):
     from yaaf.runtimes.providers import provider
 
     # A Google login pays only the Gemini CLI; a Gemini API key runs on yaaf's
-    # loop over the native API by default (docs/PROVIDERS.md §3).
+    # loop over the native API by default.
     assert provider("google").default_harness("subscription") == "gemini_cli"
     assert provider("google").default_harness("api_key") == "yaaf_loop"
 

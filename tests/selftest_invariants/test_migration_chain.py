@@ -71,7 +71,7 @@ STAGE_10_COLUMNS = (
     ("requirements", "recurrence"),
 )
 
-# 0041: what a run executed on, and what a credential pays (docs/RUNTIMES.md).
+# 0041: what a run executed on, and what a credential pays.
 # `secrets.provider` is NOT NULL with a server default — the shape most likely
 # to break an ALTER on a table that already has rows.
 RUNTIMES_COLUMNS = (
@@ -88,7 +88,7 @@ RUNTIMES_COLUMNS = (
     ("secrets", "base_url"),
 )
 RUNTIMES_TABLES = ("project_llm_credentials", "model_prices")
-# 0046: people (docs/AUTH.md).
+# 0046: people.
 PEOPLE_TABLES = ("user_sessions", "user_tokens", "user_setup_links", "login_failures")
 PEOPLE_COLUMNS = (("users", "deactivated_at"),)
 # 0055: provider-neutral by construction — where a price came from and the

@@ -1,6 +1,6 @@
 """A machine's signature is never mistaken for the chairman's.
 
-Rule 3 of docs/MCP_SERVER.md. The design lets a model hold the chairman's eyes
+The design lets a model hold the chairman's eyes
 and, at `steer`, some of the chairman's verbs — and the whole bargain depends on
 the record keeping the difference. Six weeks later, in a review, "the chairman
 accepted this" and "the chairman's model client accepted this" must not read

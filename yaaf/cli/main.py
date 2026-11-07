@@ -8,7 +8,7 @@ approval decisions, hypothesis extension, kill switches, spot audits.
 
 `YAAF_TOKEN` overrides the stored token, for a script that was handed one
 (`yaaf users token` on the box mints a short-lived one). The static admin token
-this used to read was retired — see docs/AUTH.md.
+this used to read was retired.
 """
 
 from __future__ import annotations
@@ -1194,7 +1194,7 @@ def projects(as_json: bool = typer.Option(False, "--json", help="the raw payload
 
 
 #: One shape per verdict, so a list of projects scans before it is read: the
-#: design's state ladder (docs/ux-redesign), where colour never travels alone
+#: design's state ladder, where colour never travels alone
 #: and a terminal has none. Keyed on `status_line.VERDICTS`;
 #: `test_cli_messages` refuses a verdict that has no shape here.
 STATE_GLYPHS = {
@@ -1760,6 +1760,18 @@ def _register_users() -> None:
     app.add_typer(users, name="users")
 
 
+def _register_keys() -> None:
+    # Lazily, like users: it opens the database directly.
+    from yaaf.cli.keys import rotate_master_key
+
+    app.command("rotate-master-key")(rotate_master_key)
+
+    from yaaf.cli.backup import backup, restore
+
+    app.command()(backup)
+    app.command()(restore)
+
+
 def _register_up() -> None:
     from yaaf.cli.desk import desk, signal
     from yaaf.cli.desktop import desktop_app, letter, nudge
@@ -1782,6 +1794,7 @@ def _register_up() -> None:
 
 _register_spend()
 _register_users()
+_register_keys()
 _register_up()
 
 #: Where each command sits in `yaaf --help`, in the order somebody new reaches

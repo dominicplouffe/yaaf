@@ -1,6 +1,6 @@
 """Invariant selftests: the first example teaches what the product does.
 
-`examples/01-your-first-hour.md` is the page a new chairman follows first, and
+`examples/01-your-first-hour.json` is the project a new chairman runs first, and
 its lesson is the plan gate: the CEO proposes, *you* accept, and nothing is
 created until you do. Its setup file named none of the five authority rules,
 so the platform created it Autonomous — the CEO accepted its own plan, and the
@@ -28,7 +28,6 @@ def test_the_first_hour_is_created_supervised_the_way_its_page_says():
     # for him.
     assert preset_name(default_autonomy(_constitution("01-your-first-hour.json"))) == \
         "supervised"
-    assert "Supervised" in (EXAMPLES / "01-your-first-hour.md").read_text()
 
 
 def test_the_first_hour_hires_only_the_writer_its_page_describes():

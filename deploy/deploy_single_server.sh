@@ -16,6 +16,7 @@
 #   deploy/deploy_single_server.sh --bind 127.0.0.1 --bind 192.168.0.5   # both
 #   deploy/deploy_single_server.sh --port 9090
 #   deploy/deploy_single_server.sh --skip-roles
+#   deploy/deploy_single_server.sh --build        # build images from source, never pull
 #
 set -euo pipefail
 
@@ -23,14 +24,16 @@ BINDS=()
 PORT=""
 SKIP_ROLES="no"
 ADMIN_EMAIL=""
+BUILD_MODE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --bind)  BINDS+=("${2:?--bind needs an address}"); shift 2 ;;
     --port)  PORT="${2:?--port needs a port}"; shift 2 ;;
     --skip-roles) SKIP_ROLES="yes"; shift ;;
+    --build) BUILD_MODE="build"; shift ;;
     --admin-email) ADMIN_EMAIL="${2:?--admin-email needs an address}"; shift 2 ;;
-    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -61,7 +64,9 @@ for d in "$YAAF_STATE_ROOT/workspaces" "$YAAF_STATE_ROOT/artifacts"; do
   if [ -d "$d" ]; then
     ok "$d exists"
   else
-    sudo mkdir -p "$d" && ok "created $d"
+    # Only as root where it has to be: /var/lib needs it, a folder in your home
+    # (YAAF_STATE_ROOT, as on a Mac) does not.
+    { mkdir -p "$d" 2>/dev/null || sudo mkdir -p "$d"; } && ok "created $d"
   fi
 done
 
@@ -69,21 +74,44 @@ done
 # YAAF_MASTER_KEY must be a Fernet key (32 url-safe base64 bytes, padded) —
 # `openssl rand -base64 32` satisfies it; secrets.token_urlsafe(32) does NOT, it
 # strips the padding. There is no login secret here any more: people sign in
-# with an account (docs/AUTH.md), and the first one is made in step 8.
+# with an account, and the first one is made in step 8.
 say "Secrets (deploy/.env)"
 if [ -f deploy/.env ]; then
-  ok "deploy/.env already exists — leaving it alone"
-  # Changing YAAF_MASTER_KEY strands every secret already encrypted with it,
-  # so a half-populated file is worth stopping for rather than "fixing".
-  grep -qE "^YAAF_MASTER_KEY=.+" deploy/.env \
-    || die "deploy/.env has no value for YAAF_MASTER_KEY. Fill it in (see deploy/.env.example) and re-run."
-  ok "the master key is set"
+  ok "deploy/.env already exists — keeping what it says"
+  if grep -qE "^YAAF_MASTER_KEY=.+" deploy/.env; then
+    ok "the master key is set"
+  elif ! $DOCKER volume inspect "${YAAF_STACK}_pgdata" >/dev/null 2>&1; then
+    # A first install whose .env was started by hand (YAAF_STATE_ROOT on a
+    # Mac, or a copy of .env.example): no database exists, so no secret was
+    # ever encrypted, and a new key strands nothing. Any empty
+    # YAAF_MASTER_KEY= line is replaced rather than left to shadow it.
+    tmp="$(mktemp deploy/.env.XXXXXX)"
+    grep -vE "^YAAF_MASTER_KEY=" deploy/.env > "$tmp" || true
+    echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)" >> "$tmp"
+    chmod 600 "$tmp"; mv "$tmp" deploy/.env
+    ok "added a master key to deploy/.env (no database yet, so nothing was encrypted before)"
+    warn "back up YAAF_MASTER_KEY somewhere off this box — losing it makes every"
+    warn "stored secret unreadable, and there is no recovery path."
+  else
+    # A database exists, so its secrets were encrypted under SOME key. Making
+    # a new one would strand every one of them: stop, rather than "fix" it.
+    die "deploy/.env has no value for YAAF_MASTER_KEY, but this box already has a database.
+    Put back the key it was encrypted with (from your backup of deploy/.env) and re-run."
+  fi
 else
   echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)" > deploy/.env
   chmod 600 deploy/.env
   ok "generated deploy/.env"
   warn "back up YAAF_MASTER_KEY somewhere off this box — losing it makes every"
   warn "stored secret unreadable, and there is no recovery path."
+fi
+# The optional MinIO store (--profile s3) has no default password: MinIO refuses
+# to start without one, so a box never runs it on a password from the repo.
+# Added to an existing deploy/.env too, which is why this is not in the branch
+# above. Appending never changes a value that is already there.
+if ! grep -qE "^MINIO_ROOT_PASSWORD=.+" deploy/.env; then
+  echo "MINIO_ROOT_PASSWORD=$(openssl rand -hex 24)" >> deploy/.env
+  ok "generated a password for the optional MinIO store"
 fi
 
 set -a; . ./deploy/.env; set +a
@@ -153,18 +181,16 @@ if [ "$exposed" = "yes" ]; then
 fi
 
 # ── 5. images ─────────────────────────────────────────────────────────────────
-# Two images, and compose only knows about one of them. The sandbox image is
-# what agent runs execute inside; forgetting it leaves runs starting against a
-# missing or stale image.
-say "Building images (this is the slow part)"
-$DOCKER build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest . \
-  || die "sandbox image build failed"
-ok "yaaf-sandbox:latest built"
+# Pulled when CI published this exact commit, built from source otherwise
+# (prepare_images in _common.sh). Both images, every time: the sandbox image is
+# what agent runs execute inside, and a stale one runs old code.
+say "Images"
+prepare_images "$BUILD_MODE"
 
 migrate_sandbox_network
 # --remove-orphans: the proxy service was removed with the egress allowlist;
 # an orphaned squid container would sit there advertising containment nothing uses.
-compose up -d --build --remove-orphans || die "compose up failed"
+compose up -d --no-build --remove-orphans || die "compose up failed"
 ok "control plane up"
 
 # ── 6. wait for the API ───────────────────────────────────────────────────────
@@ -279,7 +305,7 @@ cat <<EOF
   Next: create a project in the dashboard. That step needs an Anthropic API
   key, which this script does NOT create — bring your own from
   console.anthropic.com and give it to the project in Settings. No agent can
-  run until it has one. See docs/CREATING_A_PROJECT.md
+  run until it has one.
 
   Re-run this script any time; it is idempotent.
 EOF

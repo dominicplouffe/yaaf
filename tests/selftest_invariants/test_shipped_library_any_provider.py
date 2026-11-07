@@ -1,5 +1,5 @@
 """Acceptance: the shipped role library and every shipped crew run on any
-provider (docs/PROVIDERS.md).
+provider.
 
 This is the sentence the whole design answers to — *a chairman who has never
 held an Anthropic key creates a project from what ships, on the key they do

@@ -1,5 +1,5 @@
 """Invariant selftests: an install's models and prices kept current
-(docs/PROVIDERS.md §5, §8, yaaf.core.model_upkeep).
+(yaaf.core.model_upkeep).
 
 A lineup and a price list rot. The promises:
 

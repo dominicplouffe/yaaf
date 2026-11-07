@@ -44,7 +44,7 @@ GOAL_ELEMENTS = (
 #: own brief. A goal missing any of these is not ready.
 #:
 #: `standard` was held out of this list while the reference goal in
-#: `docs/projects/` did not satisfy it — a load-bearing element the worked
+#: `evals/fixtures/` did not satisfy it — a load-bearing element the worked
 #: example fails teaches the Founder that the bar is negotiable. The reference
 #: names a practice now, so it is promoted. It earns the place on the same
 #: argument the grammar makes for it: every other element, missing, produces a

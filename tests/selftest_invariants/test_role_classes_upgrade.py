@@ -1,6 +1,6 @@
 """Invariant selftests: an install that already has the role library moves it
 onto model classes on update, without a decision forced on anybody
-(docs/PROVIDERS.md, migration; yaaf.core.role_versions).
+(migration; yaaf.core.role_versions).
 
 - `adopt-class` stamps a version identical but for its model, only where the
   role still names the Claude model its class means on Anthropic; a role moved

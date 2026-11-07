@@ -1,7 +1,7 @@
 """Runs INSIDE the sandbox container: one stateless run on the Claude Code CLI,
 driven directly (``claude -p``) instead of through the Agent SDK.
 
-The reference implementation of a CLI harness (docs/RUNTIMES.md, M1). Same
+The reference implementation of a CLI harness. Same
 model, same credential, same tools under the same names — ``mcp__yaaf__board``
 either way — so a difference between an SDK run and a CLI run is this file's
 fault, not a vendor's. That is why the flags below are the ones the SDK itself

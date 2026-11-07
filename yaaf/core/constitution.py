@@ -242,7 +242,7 @@ class ConstitutionDoc(BaseModel):
         help="A CEO past this must wait for an answer or a window to close before asking "
              "again. Asking is cheap for it and expensive for you.")
 
-    # The authority dial (CEO Charter, stage B — docs/AUTONOMY.md). Integrity
+    # The authority dial (CEO Charter, stage B). Integrity
     # rules never move; these decide only WHO holds each verb. 'chairman' is
     # today's behavior; 'ceo' hands the verb to the CEO, exercised through the
     # same machinery, with every use audited and disclosed. Autonomy is
@@ -337,7 +337,7 @@ class ConstitutionDoc(BaseModel):
              "difference between a project posting to LinkedIn and one trading a real "
              "account, and until it existed both ran under identical caution because "
              "the platform had no way to be told which was which.")
-    # The spend envelope (CEO Charter, stage C — docs/AUTONOMY.md). Real-world
+    # The spend envelope (CEO Charter, stage C). Real-world
     # purchases, as distinct from model spend. There is no spend_authority
     # switch on purpose: the money dial IS these numbers, and a switch would
     # only duplicate them. Inside the envelope an autonomous CEO buys without
@@ -710,7 +710,7 @@ def effective_version(session: Session, project_id: str, at: datetime | None = N
     return int(version or 0)
 
 
-# The authority dial as two named bundles (docs/AUTONOMY.md). The five rules
+# The authority dial as two named bundles. The five rules
 # only ever move together at creation — that is what a preset is — and they
 # were spelled out in three places free to disagree: the New-project form, the
 # Founder's prompt, and whatever a caller happened to send. They live here now,
@@ -855,7 +855,7 @@ TEMPO_PRESETS: dict[str, dict[str, Any]] = {
         "mail_max_per_day": 5,
         "queue_ceiling": 8,
     },
-    # Not invented here. These are `docs/projects/idea-to-customer.md`'s
+    # Not invented here. These are the reference project's
     # starting numbers, which a chairman wrote by hand, one rule at a time,
     # with a justification per row — because there was no card. Its own
     # reasons are worth keeping: 40 a day is "roughly one run every 35

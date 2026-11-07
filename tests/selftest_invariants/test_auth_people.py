@@ -1,6 +1,6 @@
 """People on the box: who manages them, and the two things that must always hold.
 
-docs/AUTH.md rule 6: **the box always has an admin, and a live project always
+The rule: **the box always has an admin, and a live project always
 has a chairman who can sign in.** Both are refusals rather than warnings,
 because a box nobody can administer and a project nobody may decide on are
 each a deadlock that no amount of telling anybody fixes.

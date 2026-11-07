@@ -4,8 +4,7 @@ A provider is data: where it is, which wire it speaks (yaaf.runtimes.wire), how
 a key is presented, the credential kinds it takes, the lineup a role's model
 class resolves to on it, and the few facts that change what the platform may
 allow — whether it searches, states its costs, reports a plan meter. Every
-screen, every door and every wire reads this file; none names a provider
-(docs/PROVIDERS.md).
+screen, every door and every wire reads this file; none names a provider.
 
 A credential kind is one way to pay a provider. Two names carry the meter for
 every provider: a kind billed in dollars is `api_key`, a kind metered in tokens
@@ -75,9 +74,9 @@ class Provider:
     #: How that address is spelled, with its blanks in braces — what the
     #: credential form asks for and composes.
     base_url_template: str | None = None
-    #: What each model class resolves to on this provider (docs/PROVIDERS.md
-    #: §1). None or a missing class: the install's lineup must name it, or a
-    #: class seat on this provider is refused (R8).
+    #: What each model class resolves to on this provider. None or a missing
+    #: class: the install's lineup must name it, or a class seat on this
+    #: provider is refused (R8).
     lineup: Mapping[str, str] | None = None
     #: Whether its wire searches the web itself, for yaaf's loop to offer.
     search: bool = False
@@ -93,7 +92,7 @@ class Provider:
     #: A server on the chairman's own network, which takes no key.
     local: bool = False
     #: The credential is a key file the control plane mints short-lived tokens
-    #: from; the file itself never enters a sandbox (docs/PROVIDERS.md §4).
+    #: from; the file itself never enters a sandbox.
     mints_tokens: bool = False
     #: Where a key for it is made, for the credential form to link.
     console_url: str | None = None
@@ -380,7 +379,7 @@ BEDROCK = Provider(
 def _chat(name: str, label: str, base_url: str, env_var: str, markers: tuple[str, ...],
           console_url: str, **extra) -> Provider:
     """A provider on the OpenAI chat shape: an address, a key and its words
-    for a dead one. Each is a row and nothing else (docs/RUNTIMES.md, M3)."""
+    for a dead one. Each is a row and nothing else."""
     help_text = extra.pop("help", f"Create a key in the {label} console.")
     return Provider(name=name, label=label, protocol="openai_chat", base_url=base_url,
                     kinds=(_api_key(label, env_var, help=help_text),), failure_markers=markers,
@@ -410,7 +409,7 @@ MISTRAL = _chat("mistral", "Mistral", "https://api.mistral.ai/v1", "MISTRAL_API_
                 lineup={"frontier": "mistral-large-latest",
                         "balanced": "mistral-medium-latest", "fast": "mistral-small-latest"})
 
-#: The long tail (docs/RUNTIMES.md, M5; docs/PROVIDERS.md §4): each speaks the
+#: The long tail: each speaks the
 #: OpenAI shape, so each is a row and nothing else. None ships a lineup: their
 #: lineups move monthly and no model could be checked. A provider that sells its
 #: own family (`family`) has each class filled from the key's own list by price

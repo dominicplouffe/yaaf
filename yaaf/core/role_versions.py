@@ -5,7 +5,7 @@ checklist's drift line, the Team page's "Adopt", the Roles page's count of
 teams behind. Each of those is a request for a decision, and a request with
 nothing to decide is noise that trains a chairman to ignore the next one.
 
-Moving the shipped library onto model classes (docs/PROVIDERS.md, migration)
+Moving the shipped library onto model classes (migration)
 stamps a version on every role whose only change is `claude-sonnet-5-5` →
 `@balanced` — which, on a project paying Anthropic, resolves to the very model
 it named. Nothing a team runs would change, so nothing is offered. Elsewhere

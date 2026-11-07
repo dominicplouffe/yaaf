@@ -402,9 +402,9 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     container after this transaction commits."""
     role_version = role_version_for(session, ceo)
     # The boardroom is held on the CEO's own seat — its model, its harness,
-    # its provider's credential — like any run of that seat (docs/RUNTIMES.md,
-    # M6). The harness's own entry holds the conversation; the SDK's entry
-    # is the SDK's resident client.
+    # its provider's credential — like any run of that seat. The harness's own
+    # entry holds the conversation; the SDK's entry is the SDK's resident
+    # client.
     seat = seat_for(ceo, role_version, (project.integrations or {}).get("runtime"),
                     context=model_policy.context(session, project))
     run = Run(

@@ -1,5 +1,5 @@
 """Invariant selftests: the OpenCode CLI harness, held to the contract every
-harness signs (docs/RUNTIMES.md, M5).
+harness signs.
 
 The streams replayed here are the real CLI's (1.19.0) — recorded against a
 stand-in chat API with the network cut to loopback, because no provider was

@@ -15,13 +15,14 @@
 #   deploy/update_single_server.sh --no-backup    # skip the pg_dump (not advised)
 #   deploy/update_single_server.sh --keep-chat    # leave resident chat sessions running
 #   deploy/update_single_server.sh --skip-roles   # do not load roles new to the checkout
+#   deploy/update_single_server.sh --build        # build images from source, never pull
 #   deploy/update_single_server.sh --admin-email you@example.com
 #                                            # the first update after people
 #                                            # arrived: make this account the admin
 #
 set -euo pipefail
 
-PULL="yes"; BACKUP="yes"; RESTART_CHAT="yes"; SKIP_ROLES="no"; ADMIN_EMAIL=""
+PULL="yes"; BACKUP="yes"; RESTART_CHAT="yes"; SKIP_ROLES="no"; ADMIN_EMAIL=""; BUILD_MODE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -29,8 +30,9 @@ while [ $# -gt 0 ]; do
     --no-backup) BACKUP="no"; shift ;;
     --keep-chat) RESTART_CHAT="no"; shift ;;
     --skip-roles) SKIP_ROLES="yes"; shift ;;
+    --build)     BUILD_MODE="build"; shift ;;
     --admin-email) ADMIN_EMAIL="${2:?--admin-email needs an address}"; shift 2 ;;
-    -h|--help)   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)   sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -85,31 +87,19 @@ if [ "$BACKUP" = "no" ]; then
 elif ! compose ps --status running --services 2>/dev/null | grep -q '^db$'; then
   warn "the db container is not running — nothing to back up yet"
 else
-  mkdir -p backups
-  stamp="$(date +%Y%m%d-%H%M%S)"
-  if compose exec -T db pg_dump -U yaaf yaaf 2>/dev/null | gzip > "backups/yaaf-${stamp}.sql.gz"; then
-    # A dump that failed halfway still leaves a valid-looking .gz, so judge it
-    # by size rather than by exit status alone.
-    size=$(wc -c < "backups/yaaf-${stamp}.sql.gz")
-    [ "$size" -gt 1000 ] || die "the backup is only ${size} bytes — refusing to continue. Check: compose logs db"
-    ok "backups/yaaf-${stamp}.sql.gz ($(( size / 1024 )) KB)"
-  else
-    rm -f "backups/yaaf-${stamp}.sql.gz"
-    die "pg_dump failed — refusing to migrate without a backup (override with --no-backup)"
-  fi
+  dump_database "backups/yaaf-$(date +%Y%m%d-%H%M%S).sql.gz" \
+    || die "pg_dump failed — refusing to migrate without a backup (override with --no-backup)"
 fi
 
 # ── 3. images ─────────────────────────────────────────────────────────────────
 # Two images, and compose only knows about one. The sandbox image is what agent
 # runs execute inside; skipping it leaves runs on stale code after an update.
-say "Rebuilding images"
-$DOCKER build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest . >/dev/null \
-  || die "sandbox image build failed"
-ok "yaaf-sandbox:latest rebuilt"
+say "Images"
+prepare_images "$BUILD_MODE"
 migrate_sandbox_network
 # --remove-orphans: the proxy service was removed with the egress allowlist;
 # an orphaned squid container would sit there advertising containment nothing uses.
-compose up -d --build --remove-orphans || die "compose up failed"
+compose up -d --no-build --remove-orphans || die "compose up failed"
 ok "control plane restarted on the new code"
 
 # ── 4. migrations ─────────────────────────────────────────────────────────────
@@ -139,7 +129,7 @@ fi
 #
 # Only the missing slugs are loaded: a role already in the library is left
 # alone, edits and all.
-# The admin token was retired (docs/AUTH.md). An install that last updated
+# The admin token was retired. An install that last updated
 # before that has accounts but no admin, so nobody can sign in until one is
 # made — from the chairman's own email, which keeps every project they chair.
 say "People"

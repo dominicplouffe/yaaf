@@ -84,7 +84,7 @@ def test_every_shipped_crew_seeds_and_resolves_against_the_library(client):
     desk = next(c for c in crews if c["slug"] == "a-markets-desk")
     assert desk["ceo_role_slug"] == "cio"
 
-    # The examples come first, in the order examples/README recommends them —
+    # The examples come first, in their numbered order —
     # alphabetical put every crew whose name starts with "A" in front.
     sourced = [c["source"] for c in crews if (c["source"] or "").startswith("examples/")]
     assert sourced == sorted(sourced)

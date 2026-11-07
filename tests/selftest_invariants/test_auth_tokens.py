@@ -1,6 +1,6 @@
 """A person at a terminal: personal tokens, and the doors they do not open.
 
-docs/AUTH.md rule 4: **a credential cannot widen itself.** A personal token is
+The rule: **a credential cannot widen itself.** A personal token is
 its person and no more, always expires, and cannot mint a longer-lived one or
 change the password that would let somebody mint more. And each kind of
 credential opens its own door only — a model client's token is not a person's,

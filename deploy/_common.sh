@@ -37,6 +37,21 @@ require_repo_root() {
   REPO="$PWD"
 }
 
+# Bounded where the system can bound it: GNU timeout on Linux, or Homebrew
+# coreutils' gtimeout on macOS, which ships neither. Without either the command
+# runs unbounded, which is how these scripts behaved before the bound existed.
+# --foreground so Ctrl-C reaches the docker client (see on_interrupt).
+with_timeout() {
+  local seconds="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --foreground "$seconds" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout --foreground "$seconds" "$@"
+  else
+    "$@"
+  fi
+}
+
 # Prefer unprivileged docker, fall back to sudo rather than dying: a box where
 # the usermod has not taken effect yet is the common case, not an error.
 resolve_docker() {
@@ -69,7 +84,7 @@ load_env() {
   warn_retired_token
 }
 
-# The admin token was retired (docs/AUTH.md): people sign in with an account.
+# The admin token was retired: people sign in with an account.
 # A line left in deploy/.env is harmless, but somebody will be reading it as
 # their password, so say so rather than letting it look current.
 warn_retired_token() {
@@ -138,7 +153,7 @@ load_stack_env() {
 }
 
 
-# The Charter opened the sandbox network (docs/AUTONOMY.md): the per-role
+# The Charter opened the sandbox network: the per-role
 # egress proxy is gone. A box that deployed before that has a network created
 # with internal:true — with the proxy removed, containers on it would have NO
 # route out at all, and compose refuses to alter a network's internal flag in
@@ -183,7 +198,7 @@ wait_for_api() {
 schema_at_head() {
   local out
   out="$(cd "$REPO/deploy" && COMPOSE_IGNORE_ORPHANS=1 \
-         timeout --foreground "${1:-60}" $DOCKER compose exec -T api \
+         with_timeout "${1:-60}" $DOCKER compose exec -T api \
          alembic current 2>/dev/null)" || return 1
   printf '%s' "$out" | grep -q '(head)'
 }
@@ -195,7 +210,7 @@ schema_at_head() {
 # see, so it is bounded and it prints.
 apply_migrations() {
   ( cd "$REPO/deploy" && COMPOSE_IGNORE_ORPHANS=1 \
-    timeout --foreground "${1:-300}" $DOCKER compose exec -T api \
+    with_timeout "${1:-300}" $DOCKER compose exec -T api \
     alembic upgrade head )
 }
 
@@ -342,4 +357,69 @@ current_port() {
   if [ -f "$REPO/deploy/docker-compose.override.yml" ]; then
     sed -n 's/.*"[0-9.]*:\([0-9]\+\):8080".*/\1/p' "$REPO/deploy/docker-compose.override.yml" | head -1
   fi
+}
+
+# A gzipped pg_dump of the stack's database into $1. A dump that failed halfway
+# still leaves a valid-looking .gz, so it is judged by size as well as by exit
+# status. Returns non-zero, with the half-written file removed, on failure.
+dump_database() {
+  local out="$1" size
+  mkdir -p "$(dirname "$out")"
+  if compose exec -T db pg_dump -U yaaf yaaf 2>/dev/null | gzip > "$out"; then
+    size=$(wc -c < "$out")
+    if [ "$size" -gt 1000 ]; then
+      ok "$out ($(( size / 1024 )) KB)"
+      return 0
+    fi
+    warn "the dump is only ${size} bytes. Check: compose logs db"
+  fi
+  rm -f "$out"
+  return 1
+}
+
+# ── images ────────────────────────────────────────────────────────────────────
+# Two images: the app (api and runner) and the sandbox each agent run executes
+# inside. CI publishes both for every commit on main, tagged sha-<commit>
+# (.github/workflows/images.yml). This pulls the pair built from EXACTLY the
+# commit checked out here, so the code that runs is the code you have; when
+# there is no such pair (local edits, a branch, a commit CI has not finished,
+# or --build) it builds both from source, as it always did.
+YAAF_IMAGE_REGISTRY="${YAAF_IMAGE_REGISTRY:-ghcr.io/dominicplouffe}"
+
+# The checkout's commit, if the tracked files are exactly that commit.
+checkout_commit() {
+  [ -d "$REPO/.git" ] || return 1
+  [ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ] || return 1
+  git -C "$REPO" rev-parse HEAD
+}
+
+# Leaves the app image tagged yaaf-<stack>:local and the sandbox image tagged
+# $YAAF_SANDBOX_IMAGE, ready for `compose up --no-build`. $1 = "build" forces a
+# build from source.
+prepare_images() {
+  load_stack_env
+  local app="yaaf-${YAAF_STACK}:local"
+  local sandbox="${YAAF_SANDBOX_IMAGE:-yaaf-sandbox:latest}"
+  local commit published_app published_sandbox
+  if [ "${1:-}" != "build" ] && commit="$(checkout_commit)"; then
+    published_app="${YAAF_IMAGE_REGISTRY}/yaaf:sha-${commit}"
+    published_sandbox="${YAAF_IMAGE_REGISTRY}/yaaf-sandbox:sha-${commit}"
+    if $DOCKER pull -q "$published_app" >/dev/null 2>&1 \
+       && $DOCKER pull -q "$published_sandbox" >/dev/null 2>&1; then
+      $DOCKER tag "$published_app" "$app"
+      $DOCKER tag "$published_sandbox" "$sandbox"
+      ok "pulled the published images for ${commit:0:12}"
+      return 0
+    fi
+    warn "no published images for ${commit:0:12} yet — building from source (slower)"
+  elif [ "${1:-}" = "build" ]; then
+    ok "building from source (--build)"
+  else
+    warn "the checkout has local changes — building from source so they are included"
+  fi
+  $DOCKER build -f deploy/sandbox/Dockerfile -t "$sandbox" . >/dev/null \
+    || die "sandbox image build failed"
+  ok "$sandbox built"
+  compose build api runner >/dev/null || die "app image build failed"
+  ok "$app built"
 }

@@ -3,7 +3,7 @@
 `deps.py` used to have two principals and the first was a static bearer that
 authenticated a *client* — whoever held `YAAF_ADMIN_TOKEN` was "admin", and
 every write was recorded as the project's chairman. This module is what
-replaced it (docs/AUTH.md): a person signs in with a password and holds either
+replaced it: a person signs in with a password and holds either
 a browser session or a personal token, and the request is bound to them.
 
 `login.py` was the first slice of it — argon2id against the `password_hash`
@@ -372,7 +372,7 @@ def _refuse_bearer(token: str) -> HTTPException:
     and "unknown token" teaches nothing."""
     prefix = token.split("_", 1)[0]
     detail = _WRONG_DOOR.get(prefix) or (
-        "not a personal token. The admin token was retired (docs/AUTH.md): sign in "
+        "not a personal token. The admin token was retired: sign in "
         "at /app, or run `yaaf login` for a personal token")
     return HTTPException(status_code=401, detail=detail)
 

@@ -1,6 +1,6 @@
 """Invariant selftests: the runtime registries are complete, and a run says what it ran on.
 
-docs/RUNTIMES.md promises that adding a provider is a registry entry rather
+The promise: adding a provider is a registry entry rather
 than an edit to every file that ever assumed the first one — and that
 forgetting part of an entry fails a test instead of shipping as a screen that
 is quietly wrong. These are those tests. They read the registries, never a

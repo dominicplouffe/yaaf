@@ -8,7 +8,7 @@ else that speaks the protocol.
 Every tool is a projection of a route that already exists in
 `yaaf.server.api.observe` or `admin`. No rule lives here and nowhere else —
 if a tool would need behavior the HTTP surface lacks, the HTTP surface gets it
-first. See docs/MCP_SERVER.md for the design and the milestones.
+first.
 """
 
 from __future__ import annotations

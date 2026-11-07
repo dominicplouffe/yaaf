@@ -1,5 +1,4 @@
-"""The install's own web search: one backend every harness can search with
-(docs/PROVIDERS.md §6).
+"""The install's own web search: one backend every harness can search with.
 
 A role granted `web` is promised search. Claude, GPT and Gemini search on their
 own wires; most providers do not, and neither does OpenCode. Rather than refuse

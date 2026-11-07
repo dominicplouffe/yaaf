@@ -1,5 +1,4 @@
-"""Invariant selftests: a role names a class of model, the project says whose
-(docs/PROVIDERS.md §1, §2, §8).
+"""Invariant selftests: a role names a class of model, the project says whose.
 
 The promise is that one role library runs on any provider: a project paid by
 an OpenAI key hires the same roles a project paid by an Anthropic key does, and

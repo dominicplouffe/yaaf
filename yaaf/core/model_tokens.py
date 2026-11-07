@@ -1,4 +1,4 @@
-"""Short-lived model tokens minted from a key file (docs/PROVIDERS.md §4).
+"""Short-lived model tokens minted from a key file.
 
 Vertex AI is paid with a Google Cloud service account. Its key file is a
 long-lived credential that can mint tokens for anything the account may do, so

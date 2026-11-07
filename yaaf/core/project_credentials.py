@@ -3,7 +3,7 @@
 A project's billing credential (`Project.billing_secret_id`) pays whichever
 provider it is for, and sets the project's meter. A project whose seats run on
 a second provider holds a credential for it beside the first
-(`ProjectLlmCredential`, docs/RUNTIMES.md M3). Every reader — the seat doors,
+(`ProjectLlmCredential`). Every reader — the seat doors,
 the lease, the health checklist, the credential screens — asks here, so "who
 pays for this seat" has one answer.
 """

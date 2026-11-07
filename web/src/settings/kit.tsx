@@ -1,6 +1,6 @@
 // The Settings kit: the few patterns every section of app-wide Settings is
 // built from, so a ninth section inherits the page's behaviour instead of
-// inventing its own (docs/ux-redesign/settings).
+// inventing its own.
 //
 // The page used to be eight forms built one at a time: four ways to save, six
 // browser confirm() dialogs, a green "connected" for a token that was only

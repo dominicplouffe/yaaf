@@ -1,5 +1,5 @@
 """Invariant selftests: prices an install imports, and the smoke call that
-proves a credential (docs/PROVIDERS.md §5, §8).
+proves a credential.
 
 The rule stands: yaaf ships only prices checked against the vendor's own list.
 An install imports the rest from a feed or its dated snapshot, and the import

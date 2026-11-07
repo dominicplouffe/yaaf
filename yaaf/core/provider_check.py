@@ -1,5 +1,4 @@
-"""Can this model do yaaf's work? A check an administrator runs on a credential
-(docs/PROVIDERS.md §8).
+"""Can this model do yaaf's work? A check an administrator runs on a credential.
 
 `yaaf smoke` proves a key, an address and a wire with one call. It cannot say
 whether the model behind them can *drive an agent*: follow an instruction to

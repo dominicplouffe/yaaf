@@ -92,7 +92,7 @@ NATIVE_WARNING = """\
      can, including this machine's own services; read the system's installed
      software and settings (/usr, /etc, /opt); and use the CPU, memory and disk
      you give it. If this machine holds anything you would not hand to a
-     stranger's script, run yaaf with Docker instead (docs/DEPLOYMENT.md)."""
+     stranger's script, run yaaf with Docker instead (docs/INSTALL.md)."""
 
 #: Written once the warning has been accepted, so a re-run does not ask again.
 ACCEPTED_FILE = "native-accepted"
@@ -109,7 +109,7 @@ def _warn_native(folder: Path) -> None:
     else:
         accepted = typer.confirm("     Continue with native mode?", default=False)
     if not accepted:
-        _stop("stopped before anything was set up", "run yaaf with Docker: docs/DEPLOYMENT.md")
+        _stop("stopped before anything was set up", "run yaaf with Docker: docs/INSTALL.md")
     (folder / ACCEPTED_FILE).write_text("yes\n")
 
 

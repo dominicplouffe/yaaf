@@ -1,5 +1,4 @@
-"""Filling a provider's empty classes from what its key lists, by price
-(docs/PROVIDERS.md §1, §8).
+"""Filling a provider's empty classes from what its key lists, by price.
 
 The long tail — xAI, Moonshot, Z.ai, Groq, Together — ships no lineup, because
 no model of theirs could be checked from here and their lineups move monthly.

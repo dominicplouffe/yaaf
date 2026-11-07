@@ -297,6 +297,6 @@ write it however they write.
 
 ## The worked example
 
-`docs/projects/idea-to-customer.json` carries the goal quoted throughout this
+`evals/fixtures/idea-to-customer.json` carries the goal quoted throughout this
 file. Read it whole before drafting one; it is the standard, and it is the
 regression test (`evals/`) that the Founder is measured against.

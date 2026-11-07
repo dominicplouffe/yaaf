@@ -1,6 +1,5 @@
 """Invariant selftests: a provider that ships no lineup has its empty classes
-filled from its key's own list, by price (yaaf.core.lineup_pick,
-docs/PROVIDERS.md §1, §8).
+filled from its key's own list, by price (yaaf.core.lineup_pick).
 
 Every class on xAI, Groq or Moonshot started empty, so every seat on one was
 refused until an administrator typed three models in. The promises:
