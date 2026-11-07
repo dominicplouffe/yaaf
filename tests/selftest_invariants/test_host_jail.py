@@ -27,6 +27,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -272,6 +273,98 @@ def test_a_success_check_runs_jailed_at_slash_workspace(jail):
         f"test -f /workspace/out/report.md && ! test -e {data}/master.key && "
         "test -z \"$YAAF_MASTER_KEY\"", str(workspace), 30)
     assert code == 0, out
+
+
+#: Stands in for Python: it starts the way Python does, by reading the `home`
+#: its venv's pyvenv.cfg names, and dies the way Python does when that home
+#: cannot be reached — then checks the entry script it was handed is there.
+FAKE_PYTHON = """#!/bin/sh
+home=$(sed -n 's/^home = //p' "$(dirname "$0")/../pyvenv.cfg")
+[ -x "$home/python3.13" ] || { echo "Could not find platform independent libraries" >&2; exit 1; }
+[ "$1" = -c ] || [ -f "$1" ] || { echo "no entry script at $1" >&2; exit 2; }
+echo "python started as $0 and ran $1"
+"""
+
+
+@pytest.fixture(params=["absolute", "relative"])
+def uv_venv(request, box, monkeypatch):
+    """yaaf installed the way deploy/install_desktop.sh installs it wherever uv
+    is: a venv whose `bin/python` points into uv's `cpython-3.13` folder, which
+    is itself a link to the patch release's `cpython-3.13.18`. uv writes that
+    alias absolute today; relative is covered too, since a link means what it
+    says relative to where it sits."""
+    _, home, _, _ = box
+    pythons = home / ".local/share/uv/python"
+    real = pythons / "cpython-3.13.18-linux-x86_64-gnu"
+    (real / "bin").mkdir(parents=True)
+    (real / "bin/python3.13").write_text(FAKE_PYTHON)
+    (real / "bin/python3.13").chmod(0o755)
+    alias = pythons / "cpython-3.13-linux-x86_64-gnu"
+    alias.symlink_to(real if request.param == "absolute" else real.name)
+    venv = home / "yaaf/.venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin/python").symlink_to(alias / "bin/python3.13")
+    (venv / "pyvenv.cfg").write_text(f"home = {alias / 'bin'}\nversion_info = 3.13\n")
+    # What sys says in that venv: the prefix is the venv, the base prefix the
+    # resolved patch folder — never the alias the links run through.
+    monkeypatch.setattr(host_jail, "sys", SimpleNamespace(
+        executable=str(venv / "bin/python"), prefix=str(venv), exec_prefix=str(venv),
+        base_prefix=str(real)))
+    return SimpleNamespace(home=home, venv=venv, alias=alias, real=real)
+
+
+def test_a_link_on_the_way_to_python_is_recreated_not_bound(uv_venv, box):
+    """The folder a link names is bound; the link itself is made again inside,
+    as a link. Binding the alias's parent instead would work and would hand a
+    run every Python uv has — and binding by the unresolved name is what made
+    every run die at exec."""
+    _, home, _, workspace = box
+    argv = host_jail.jail_argv(str(workspace), ["true"], entries=True)
+    link = ["--symlink", os.readlink(uv_venv.alias), str(uv_venv.alias)]
+    assert any(argv[i:i + 3] == link for i in range(len(argv))), \
+        "uv's cpython-3.13 alias must exist inside the jail, or the venv's python dangles"
+    binds = _binds(argv)
+    assert str(uv_venv.real) in binds and str(uv_venv.venv) in binds
+    assert str(uv_venv.alias.parent) not in binds and str(home) not in binds
+
+
+def test_a_venv_made_by_uv_starts_inside_the_jail(jail, uv_venv):
+    """The bug every desktop install made with uv hit: `bwrap: execvp
+    .venv/bin/python: No such file or directory` on every run. The run is
+    started the way the runner starts it, by run_agent and the venv's own
+    python path."""
+    _, _, _, workspace = jail
+    code, out = host_jail.run_agent(entrypoint="sandbox_entry.py", workspace_dir=str(workspace),
+                                    env={}, timeout_s=30)
+    assert code == 0, out
+    assert f"python started as {uv_venv.venv / 'bin/python'}" in out
+    assert f"ran {host_jail.ENTRY_DIR}/sandbox_entry.py" in out
+
+
+def test_a_python_the_jail_cannot_start_is_refused_once_by_name(jail, monkeypatch):
+    """Python built into the home folder itself (`./configure --prefix=$HOME`)
+    is the one interpreter the jail will not mount, since mounting it is
+    mounting the home. Then no run can start — and that is one refusal naming
+    the interpreter and the setting that helps, not a bwrap line per dead run."""
+    _, home, _, workspace = jail
+    (home / "bin").mkdir()
+    (home / "bin/python3").write_text(FAKE_PYTHON)
+    (home / "bin/python3").chmod(0o755)
+    exe = str(home / "bin/python3")
+    monkeypatch.setattr(host_jail, "sys", SimpleNamespace(
+        executable=exe, prefix=str(home), exec_prefix=str(home), base_prefix=str(home)))
+
+    said = host_jail.unavailable()
+    assert said and said.startswith("Refused") and exe in said and "host_jail_binds" in said
+    assert "AppArmor" not in said, "the jail was made; user namespaces are not the problem"
+
+    def spawned(*a, **k):
+        raise AssertionError("a run was started on an interpreter the jail cannot start")
+
+    monkeypatch.setattr(host_jail.subprocess, "Popen", spawned)
+    code, out = host_jail.run_agent(entrypoint="sandbox_entry.py", workspace_dir=str(workspace),
+                                    env={}, timeout_s=30)
+    assert code == 126 and exe in out, "said once, and every run after gets the same refusal"
 
 
 def test_ubuntus_restriction_is_named_with_what_fixes_it(box, monkeypatch, tmp_path):

@@ -196,12 +196,19 @@ reasons:
   shell.
 
 What a run *can* see: `/usr`, `/etc`, `/opt` and `/sys` read-only, the Python
-yaaf runs on read-only, its own workspace read-write, and the network.
+yaaf runs on read-only, its own workspace read-write, and the network. The
+Python's folders are mounted at their real paths, and any symlinks on the way
+to them are recreated inside as symlinks. One example is uv's `cpython-3.13`
+link to `cpython-3.13.18`, which a uv-made venv's `bin/python` goes through.
+Only the folders themselves are mounted, never the folder holding them.
 
 `bwrap` is required, not preferred. Without it, or on a kernel or AppArmor
 policy that forbids unprivileged user namespaces, `yaaf up --host` stops before
 starting, `yaaf doctor` says why, and a runner that is somehow started anyway
-refuses every run (exit 126) rather than run an agent bare.
+refuses every run (exit 126) rather than run an agent bare. The same happens,
+naming the interpreter, if the jail can be made but cannot start the Python
+yaaf runs on. One case is a Python installed into the home folder itself,
+which the jail will not mount.
 
 **On Ubuntu 23.10 and later**, bwrap is installed but blocked by default:
 Ubuntu moves a program that creates a user namespace into an AppArmor profile

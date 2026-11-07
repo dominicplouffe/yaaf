@@ -21,8 +21,9 @@ Docker socket, and the runner's environment through /proc.
 
 What a run sees:
 
-- /usr, /etc, /opt and /sys, read-only; the Python yaaf runs on, read-only;
-  any extra path the operator lists in ``host_jail_binds``, read-only.
+- /usr, /etc, /opt and /sys, read-only; the Python yaaf runs on, read-only,
+  with the symlinks that lead to it made again as symlinks; any extra path the
+  operator lists in ``host_jail_binds``, read-only.
 - its project's workspace, read-write, at /workspace — and nothing else of
   yaaf's data folder.
 - a fresh /tmp, /run and /home/agent per run, in memory. /run/yaaf is where a
@@ -114,8 +115,10 @@ def _under(path: str, roots) -> bool:
 def _protected() -> list[str]:
     """What an operator's extra bind may never expose: the folder holding
     yaaf's database (and, under `yaaf up`, its master key), and a home folder
-    whole. Binding either would undo the reason the jail exists."""
-    found = [str(Path.home())]
+    whole. Binding either would undo the reason the jail exists. The home is
+    named both ways because binds are compared resolved, and on Fedora's
+    atomic desktops /home is itself a link to /var/home."""
+    found = list(dict.fromkeys([str(Path.home()), str(Path.home().resolve())]))
     url = settings().database_url
     if url.startswith("sqlite:///"):
         found.append(str(Path(url.removeprefix("sqlite:///")).expanduser().resolve().parent))
@@ -148,10 +151,85 @@ def extra_binds() -> list[str]:
 def _python_roots() -> list[str]:
     """The interpreter the runner runs on and its libraries: a virtualenv is
     sys.prefix, the Python it was made from is sys.base_prefix, and the
-    executable may resolve to somewhere else again (a version manager)."""
-    roots = {sys.prefix, sys.base_prefix, sys.exec_prefix,
-             str(Path(sys.executable).resolve().parent.parent)}
-    return sorted(r for r in roots if r and not _under(r, READ_ONLY_ROOTS))
+    executable may resolve to somewhere else again (a version manager).
+    Resolved, so a bind lands on the folder itself; the names that lead to it
+    are recreated by `_link_args`. One that is gone is left out: bwrap refuses
+    the whole jail over a missing source, and `_starts_python` says it better."""
+    roots = {str(Path(r).resolve()) for r in
+             (sys.prefix, sys.base_prefix, sys.exec_prefix, Path(sys.executable).resolve().parent.parent)
+             if r}
+    return sorted(r for r in roots if Path(r).exists() and not _under(r, READ_ONLY_ROOTS))
+
+
+def _venv_home() -> list[str]:
+    """The `home` a virtualenv's pyvenv.cfg names: the interpreter inside the
+    jail reads it on startup to find the standard library, and uv writes it as
+    its `cpython-3.13` alias, not the folder that alias points to."""
+    cfg = Path(sys.prefix) / "pyvenv.cfg"
+    try:
+        lines = cfg.read_text().splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == "home" and value.strip():
+            return [value.strip()]
+    return []
+
+
+def _links(name: str, *, hops: int = 40) -> list[tuple[str, str]]:
+    """Every symlink the kernel follows to open `name`, in order, as (where
+    the link is, what it says) — the same walk, one component at a time, so
+    `..` after a link means what it means to the kernel. Stops where a
+    component does not exist, and after `hops` links, as the kernel does."""
+    found: list[tuple[str, str]] = []
+    todo = list(Path(name).parts[1:]) if os.path.isabs(name) else []
+    here = Path("/")
+    while todo and len(found) < hops:
+        part = todo.pop(0)
+        if part == "..":
+            here = here.parent
+            continue
+        step = here / part
+        if not step.is_symlink():
+            if not step.exists():
+                break
+            here = step
+            continue
+        target = os.readlink(step)
+        found.append((str(step), target))
+        if os.path.isabs(target):
+            here = Path("/")
+        todo = [*Path(target).parts[1 if os.path.isabs(target) else 0:], *todo]
+    return found
+
+
+#: What the jail itself puts at these paths. A host link at one of them, or
+#: above one, cannot be recreated without unmaking the jail's own layout.
+_JAIL_OWN = ("/proc", "/dev", "/tmp", "/run", HOME, "/workspace")
+
+
+def _link_args(names: list[str], bound: list[str]) -> list[str]:
+    """`--symlink` for each link on the way from `names` to their files.
+
+    The jail binds folders at their resolved paths, so a name that reaches its
+    file through a link — uv's `cpython-3.13` pointing at `cpython-3.13.18`, a
+    venv whose `bin/python` points into that alias, /home on a system where it
+    links to /var/home — would dangle inside, and every run die at exec. A link
+    is only a name: recreating one shows nothing that is not already bound."""
+    visible = (*READ_ONLY_ROOTS, *TOP_LEVEL_LINKS, *bound)
+    made: dict[str, str] = {}
+    for name in names:
+        for link, target in _links(name):
+            if link in made or _under(link, visible):
+                continue
+            if _under(link, _JAIL_OWN) and not _under(link, ("/tmp", "/run")) \
+                    or any(_under(own, [link]) for own in _JAIL_OWN):
+                log.warning("host jail: cannot recreate %s -> %s, it is where the jail "
+                            "puts its own files", link, target)
+                continue
+            made[link] = target
+    return [arg for link, target in made.items() for arg in ("--symlink", target, link)]
 
 
 def jail_path(extra: list[str] | None = None) -> str:
@@ -205,10 +283,15 @@ def jail_argv(workspace_dir: str, command: list[str], *, entries: bool = False) 
              "--tmpfs", "/tmp", "--tmpfs", "/run", "--dir", HOME]
     extras = extra_binds()
     private = [*_python_roots(), *extras]
+    # The names a run opens by: the interpreter's own path and prefixes, the
+    # home its venv names, the CA files its environment points at.
+    names = [sys.executable, sys.prefix, sys.base_prefix, sys.exec_prefix, *_venv_home()]
     for name in PASS_THROUGH:
         value = os.environ.get(name)
         if name in _PATH_VALUED and value and Path(value).exists():
             private.append(str(Path(value).resolve()))
+            names.append(value)
+    bound: list[str] = []
     for path in dict.fromkeys(private):
         if _under(path, READ_ONLY_ROOTS):
             continue
@@ -219,6 +302,8 @@ def jail_argv(workspace_dir: str, command: list[str], *, entries: bool = False) 
                         ", ".join(_exposes(path)))
             continue
         argv += ["--ro-bind", path, path]
+        bound.append(path)
+    argv += _link_args(names, bound)
     if entries:
         for name, source in ENTRY_FILES.items():
             argv += ["--ro-bind", str(source), f"{ENTRY_DIR}/{name}"]
@@ -242,6 +327,26 @@ def _probe(bwrap: str) -> str | None:
     return None
 
 
+@functools.lru_cache(maxsize=4)
+def _starts_python(bwrap: str, executable: str) -> str | None:
+    """Can a jail start the Python every agent run starts on? A jail that
+    makes but cannot exec its interpreter is a mode where every run dies with
+    one line of bwrap in its log; that should be one refusal, said once."""
+    with tempfile.TemporaryDirectory() as scratch:
+        try:
+            proc = subprocess.run(jail_argv(scratch, [executable, "-c", "import encodings"]),
+                                  capture_output=True, text=True, timeout=30,
+                                  env={"PATH": "/usr/bin:/bin"})
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return f"the sandbox could not start {executable}: {exc!r}"
+    if proc.returncode != 0:
+        return (f"the sandbox cannot start the Python yaaf runs on ({executable}), so no "
+                f"agent run can start either: {proc.stderr.strip()[-400:]}\nIf it lives "
+                "somewhere the jail does not mount, add that folder to host_jail_binds "
+                "(docs/DEPLOYMENT.md, Host mode).")
+    return None
+
+
 def unavailable() -> str | None:
     """Why host mode cannot run anything on this machine, or None."""
     bwrap = _bwrap()
@@ -254,6 +359,9 @@ def unavailable() -> str | None:
     problem = _probe(bwrap)
     if problem:
         return f"Refused: sandbox_mode is 'host' and {problem}" + _restricted_userns()
+    problem = _starts_python(bwrap, sys.executable)
+    if problem:
+        return f"Refused: sandbox_mode is 'host' and {problem}"
     return None
 
 
