@@ -1,6 +1,6 @@
 """Runs INSIDE the sandbox container: one stateless run on the Gemini CLI
 (`gemini --output-format stream-json`), Google's agent, driven the way the
-Claude and Codex CLIs are (docs/RUNTIMES.md, M5).
+Claude and Codex CLIs are.
 
 Every line below was read off the CLI the image pins (0.63.0), run against a
 stand-in Gemini API with the network cut to loopback, and the facts that

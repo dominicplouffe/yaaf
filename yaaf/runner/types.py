@@ -22,7 +22,7 @@ class RunJob:
     context_pack: dict = field(default_factory=dict)
     model: str = DEFAULT_MODEL
     effort: str = DEFAULT_EFFORT
-    # What serves the model and what drives it (docs/RUNTIMES.md). Resolved
+    # What serves the model and what drives it. Resolved
     # with the model, by yaaf.runtimes.seats, and pinned on the run row.
     provider: str = ""
     harness: str = ""
@@ -73,7 +73,7 @@ class RunResult:
     cost_usd: float | None = None
     #: The same run priced from yaaf's catalog. For a harness that prices its
     #: own runs it *is* cost_usd; for one that reports its bill it is the check
-    #: on the catalog (docs/RUNTIMES.md, the gap check). None when unpriced.
+    #: on the catalog (the gap check). None when unpriced.
     priced_usd: float | None = None
     trace_path: str | None = None
     #: The plan meter the SDK volunteered during this run, if it did:

@@ -198,7 +198,7 @@ const MODES = [
     example: "\u201CA weekly blog post, tracked and improved.\u201D" },
 ] as const;
 
-// The authority dial (docs/AUTONOMY.md): who holds the verbs. A preset is
+// The authority dial: who holds the verbs. A preset is
 // nothing but a bundle of five constitution switches — each editable
 // individually later in Settings → Rules in force, changed by amendment.
 // Every preset names all five explicitly so it overrides whatever a loaded
@@ -240,9 +240,8 @@ const STEPS = [
 
 /** Does the brief say the four things a CEO needs to plan from it?
 
-    Straight out of CREATING_A_PROJECT.md, which spends twenty lines on how to
-    write a goal — advice that until now lived only in the docs while the form
-    offered a 90px box and no help at all. Heuristics, deliberately loose:
+    Advice on how to write a goal, which until now lived only in the docs while
+    the form offered a 90px box and no help at all. Heuristics, deliberately loose:
     this nudges, it never blocks, and a goal with none of them ticked still
     creates a project. */
 function briefChecks(goal: string): { label: string; ok: boolean }[] {

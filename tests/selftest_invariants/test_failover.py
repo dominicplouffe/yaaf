@@ -1,6 +1,6 @@
 """Invariant selftests: failover — when a credential's provider keeps failing,
 class seats move to the project's fallback until it recovers
-(docs/PROVIDERS.md §9, yaaf.core.breakers).
+(yaaf.core.breakers).
 
 An automatic state change, held to these promises:
 

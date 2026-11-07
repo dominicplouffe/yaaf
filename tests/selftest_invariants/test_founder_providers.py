@@ -1,5 +1,5 @@
 """Invariant selftests: the Founder and the goal grader run on whatever pays the
-platform (docs/PROVIDERS.md §7).
+platform.
 
 - Its model is a class: a key of any provider with a frontier model is enough,
   and it resolves there — never to a Claude model the key cannot pay for.

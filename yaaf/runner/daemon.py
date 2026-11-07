@@ -147,7 +147,7 @@ def lease_and_prepare(limit: int = 1) -> list[RunJob]:
     needs, in one transaction per row. A row whose seat runs on a provider at
     the install's ceiling for it (Settings → Models) stays queued for a later
     tick — `max_concurrent_runs` caps a project, this caps a provider every
-    project on the box shares (docs/PROVIDERS.md §8)."""
+    project on the box shares."""
     jobs: list[RunJob] = []
     with db_session() as session:
         now = utcnow()
@@ -334,7 +334,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
     job.provider_spec = _provider_spec(session, project, job.provider)
     job.mint_secret_id = _mint_secret_id(session, project, job.provider)
     # Credentials are capabilities: each variable arrives with what it is and
-    # how to use it, where the recognizer library knows (docs/AUTONOMY.md).
+    # how to use it, where the recognizer library knows.
     from yaaf.core.naming import announced_credentials
     from yaaf.server.recognizers import credentials_prompt
 
@@ -399,7 +399,7 @@ def _dial(seat, row, seller) -> bool:
 
 def _search_env(session: Session, job: RunJob) -> dict:
     """The platform's search backend, for a run promised `web` on a harness
-    that searches through yaaf rather than on its own (docs/PROVIDERS.md §6).
+    that searches through yaaf rather than on its own.
     A harness with its own search, or a role without the grant, never holds
     the key."""
     from yaaf.core import web_search

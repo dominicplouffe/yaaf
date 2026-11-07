@@ -665,7 +665,7 @@ def test_the_read_is_not_drawn_as_a_miss_on_a_bundle_that_never_asked(client=Non
 def test_a_seat_priced_by_this_install_is_priced_in_the_drill_too(monkeypatch):
     """A drill runs in a database of its own, which has never heard of the
     prices this install set — and a DeepSeek seat with no price is refused at
-    creation (R3, docs/RUNTIMES.md). So the drill carries the install's prices
+    creation (R3). So the drill carries the install's prices
     over, as configuration rather than credentials. Unavoidably slow: it is a
     whole drill, run for the side effect of getting past creation."""
     monkeypatch.setattr(rehearsal, "_install_prices", lambda: [

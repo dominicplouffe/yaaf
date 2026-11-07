@@ -1,7 +1,7 @@
 """Invariant selftests: the new-project form keeps the promises it prints.
 
 Three traps sat on the shortest path through the form — a goal, one role,
-every default (docs/ux-redesign/product-experience-audit, §C2) — and the suite
+every default — and the suite
 stayed green through all three:
 
 1. "Short name — picked for you" on the first step, and a Name nobody picked.

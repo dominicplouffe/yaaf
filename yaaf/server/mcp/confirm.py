@@ -1,6 +1,6 @@
 """Two-phase confirmation, and the attribution that outlives it.
 
-Two rules from docs/MCP_SERVER.md live here because they are the same moment.
+Two rules live here because they are the same moment.
 
 **Rule 4 — an irreversible write cannot happen in one call.** The first call
 returns a preview and a `confirm_token`; the second spends it. The token is

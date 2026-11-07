@@ -88,7 +88,7 @@ def test_a_reaped_run_books_the_usage_it_checkpointed(client):
 
 
 def test_a_reaped_run_books_its_priced_cost_beside_its_reported_one(client):
-    """The catalog's figure rides the same checkpoint (docs/RUNTIMES.md): on a
+    """The catalog's figure rides the same checkpoint: on a
     harness yaaf prices itself it is the bill, so a reap that dropped it would
     leave the price-gap check a run short and nothing else wrong — quietly."""
     slug = "reaped-priced"

@@ -1,6 +1,6 @@
 """Auth dependencies for the agent surface, and the request-scoped session.
 
-Principals, in full, are in docs/AUTH.md. This module holds the one an agent
+This module holds the one an agent
 acts through: the *agent run* — the short-lived per-run token minted by the
 runner. It maps to exactly one run row, and through it one agent and one
 project. Forging one requires the SHA-256 preimage of a value that never leaves

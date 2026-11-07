@@ -1,7 +1,7 @@
 """Runs INSIDE the sandbox container: one stateless run on the Codex CLI
 (`codex exec --json`), OpenAI's agent, driven the way the Claude CLI is.
 
-The first CLI that is not Claude's (docs/RUNTIMES.md, M4), and so the test of
+The first CLI that is not Claude's, and so the test of
 whether `CliDriver` was general or merely Claude-shaped. What it needed beyond
 `argv` and `parse` is all here, and every line of it was read off the CLI the
 image pins (0.162.1) rather than guessed — its `--strict-config` refuses a key

@@ -2,10 +2,10 @@
 fresh bubblewrap jail per run (yaaf/runner/host_jail.py).
 
 Every agent run gets a fresh container: no privileges, resource caps, the
-project workspace mounted, and the open network — the chairman's decision
-(docs/AUTONOMY.md): the per-role egress allowlist solved one problem at the
-price of making every capability a firewall ticket. Containment is the fresh
-container, role-scoped secrets, budgets, and the audit trail.
+project workspace mounted, and the open network — the chairman's decision: the
+per-role egress allowlist solved one problem at the price of making every
+capability a firewall ticket. Containment is the fresh container, role-scoped
+secrets, budgets, and the audit trail.
 
 ``sandbox_mode = "subprocess"`` exists for dev machines and CI without Docker.
 It provides NO isolation: a task's success test can be a command string an

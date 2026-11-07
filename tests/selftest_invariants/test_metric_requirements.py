@@ -328,8 +328,8 @@ def test_a_season_long_metric_is_not_burned_down_at_the_memo_rate(client):
 def test_the_ledger_source_reads_revenue_nobody_here_can_write(client):
     """The reference goal's finish line, as a row.
 
-    `docs/projects/idea-to-customer.md` says it plainly: revenue booked through
-    the payment processor's signed webhook, "the platform's own record, not a
+    The reference goal (evals/fixtures/idea-to-customer.json) says it plainly:
+    revenue booked through the payment processor's signed webhook, "the platform's own record, not a
     claim in a status report". Those rows were already unforgeable — only the
     connector's signature books one — and were then excluded from every sum in
     the system and read by no requirement, flag or score. This is that channel
@@ -393,7 +393,7 @@ def test_a_deliver_project_can_hold_an_outcome_it_cannot_yet_decompose(client):
 
     PLAN-05's whole finding was that the only mode in which a project could be
     genuinely ambitious was Explore — the one mode with none of the verification
-    machinery. `docs/projects/idea-to-customer.md` says why in as many words:
+    machinery. The reference goal says why in as many words:
     take Deliver "and the project owes a plan before it may create any work at
     all, and in week one it would be writing acceptance tests for a product it
     has not chosen yet. Those requirements would be fiction, and the plan gate

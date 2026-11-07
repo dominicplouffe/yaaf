@@ -2627,7 +2627,7 @@ def _check_report_override(
 
 # ── the spend envelope ──────────────────────────────────────────────────────────
 #
-# Real-world money (CEO Charter, stage C — docs/AUTONOMY.md). The dial for
+# Real-world money (CEO Charter, stage C). The dial for
 # money is three numbers, not a switch: `approval_threshold_usd` (the line
 # above which the chairman is asked regardless), `max_usd_per_purchase` (the
 # line above which a single purchase is asked even below the threshold), and
@@ -3006,7 +3006,7 @@ def check_directive_action(action: dict) -> None:
 
 
 # The verbs the CEO may exercise as ITS OWN authority when the constitution's
-# dial grants them (stage B — docs/AUTONOMY.md). Same shapes as directive
+# dial grants them (stage B). Same shapes as directive
 # orders, plus the verdict; the difference is whose authority is exercised:
 # a directive runs on the chairman's cited word, a self-action on a rule he
 # wrote into the constitution. `verdict` requires `ok` (bool) and is gated on

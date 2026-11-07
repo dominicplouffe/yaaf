@@ -1,4 +1,4 @@
-"""Keeping an install's models and prices current (docs/PROVIDERS.md §5, §8).
+"""Keeping an install's models and prices current.
 
 A lineup and a price list are written once and then rot: a provider retires
 the model a class resolves to, ships a better one beside it, moves a price.

@@ -11,7 +11,7 @@ It serves the very server object the Agent SDK harness serves in process —
 rendering of the catalog, so two harnesses cannot drift into describing one
 tool two ways or converting one result two ways. The tools are the ones this
 agent is sent and no others; the server's 403s are still the only thing that
-decides what it may do (docs/RUNTIMES.md).
+decides what it may do.
 
 It also serves yaaf's own file tools (``loop_harness.BUILTINS`` — Read, Write,
 Edit, Glob, Grep) to a CLI that has none apart from its shell, when the run
@@ -19,7 +19,7 @@ asks for them (``YAAF_SERVE_FILE_TOOLS``): a role granted files but not a shell
 is honoured that way on the Codex CLI, rather than by handing it a shell it was
 not hired with. And it serves the install's own search (``web_search``) to a
 CLI with no search of its own when the run was promised `web` and handed the
-backend (``YAAF_SEARCH``; docs/PROVIDERS.md §6) — each query charged to the
+backend (``YAAF_SEARCH``) — each query charged to the
 run's search ledger, which the driver bills as it goes.
 
 Nothing here may write to stdout: stdout is the protocol.

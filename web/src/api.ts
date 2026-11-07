@@ -1568,7 +1568,7 @@ export interface ProjectBundle {
       model_overrides?: Record<string, string>;
       /** Per-agent reasoning-effort overrides, keyed by employee name. */
       effort_overrides?: Record<string, string>;
-      /** Per-agent harness overrides, keyed by employee name (docs/RUNTIMES.md). */
+      /** Per-agent harness overrides, keyed by employee name. */
       harness_overrides?: Record<string, string>;
     }[];
     solo: boolean;

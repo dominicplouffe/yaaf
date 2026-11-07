@@ -17,11 +17,11 @@ interface RoleDetail {
   description: string;
   system_prompt: string;
   // A model, or a class of one (`@balanced`) — the class runs on whichever
-  // provider pays the project (docs/PROVIDERS.md).
+  // provider pays the project.
   model: string;
   effort: string;
   // What drives the model; null is the default of whatever credential kind
-  // pays the seat (docs/RUNTIMES.md).
+  // pays the seat.
   harness: string | null;
   // Booleans for the sandbox tools — unknown keys
   // are preserved verbatim on save (the proxy generator reads this dict too).
@@ -406,7 +406,7 @@ export default function Roles() {
       // Roles never own MCP servers (data sources are per-project); a stale
       // key from imported data must not round-trip into a save refusal.
       delete detail.tool_permissions["mcp_servers"];
-      // Egress scoping was removed with the allowlist proxy (docs/AUTONOMY.md);
+      // Egress scoping was removed with the allowlist proxy;
       // stale keys from old role data must not round-trip as false promises.
       delete detail.tool_permissions["egress_allow"];
       delete detail.tool_permissions["egress_ports"];

@@ -4,7 +4,7 @@ import { failOnPageErrors } from "./desk";
 /* App-wide Settings on the demo install, which holds no provider key: it lands
    on what needs you, every rail entry states its section's state rather than
    describing it, each section opens without an error, and an old link still
-   lands where it did (docs/ux-redesign/settings). */
+   lands where it did. */
 
 const SECTIONS: [rail: RegExp, heading: string][] = [
   [/^Providers/, "Providers"], [/^Models/, "Models"], [/^Model prices/, "Model prices"],

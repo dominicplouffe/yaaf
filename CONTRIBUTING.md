@@ -123,10 +123,9 @@ via GitHub (profile email or a private security advisory on this repo).
 
 ## Where to start
 
-Read [docs/PLAN.md](docs/PLAN.md) first — the thesis, the kill conditions, an
-honest ledger of what exists, and what is deliberately not built.
-[docs/FEATURES.md](docs/FEATURES.md) is the map of the surface;
-[docs/AGENT_API.md](docs/AGENT_API.md) is what an agent actually sees.
+Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first: the parts, how a run
+moves through them, and where the rules live. Then
+[docs/INSTALL.md](docs/INSTALL.md#option-3-from-source) to run it from source.
 
 Good first contributions: more invariant attacks, more chaos, more golden-eval
 scenarios, evidence connectors for new services, and roles for a domain the

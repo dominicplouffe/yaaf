@@ -1,4 +1,4 @@
-"""Invariant selftests: the first providers that are not Anthropic (docs/RUNTIMES.md, M3).
+"""Invariant selftests: the first providers that are not Anthropic.
 
 A seat on DeepSeek, OpenRouter or a custom OpenAI-compatible server runs on
 yaaf's own loop, pays with its own provider's credential, and is metered in the
@@ -498,7 +498,7 @@ def test_a_role_that_withholds_files_cannot_run_on_codex(client):
     assert _role(client, "talker", model="gpt-6-sol", harness="codex_cli",
                  tool_permissions={"files": True}).status_code == 200
     # yaaf's own loop withholds every grant — the road an OpenAI key takes by
-    # default now (docs/PROVIDERS.md §3) — so the same role runs there once
+    # default now — so the same role runs there once
     # its model has a price to be metered by.
     assert _price(client, "gpt-6-sol").status_code == 200
     assert _role(client, "talker", model="gpt-6-sol", harness="yaaf_loop",

@@ -14,11 +14,10 @@ the conversation, under the same server-side refusals.
 Imports sandbox_entry (staged next to this file in the image) for the tool
 definitions and HTTP plumbing; do not import from the yaaf package here.
 
-Any harness that can hold a conversation holds this one (docs/RUNTIMES.md,
-M6). The Agent SDK holds it as it always has, in one resident client; every
-other harness holds it with the same driver that runs the seat's work, one
-attempt per turn, each resumed from the last — the CLI's own session, or the
-transcript yaaf's loop keeps.
+Any harness that can hold a conversation holds this one. The Agent SDK holds it
+as it always has, in one resident client; every other harness holds it with the
+same driver that runs the seat's work, one attempt per turn, each resumed from
+the last — the CLI's own session, or the transcript yaaf's loop keeps.
 """
 
 from __future__ import annotations

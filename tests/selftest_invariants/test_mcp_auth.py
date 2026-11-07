@@ -1,6 +1,6 @@
 """The MCP surface's principal, attacked the way a client would attack it.
 
-Rule 1 of docs/MCP_SERVER.md: an MCP client is never a person's own principal.
+The rule: an MCP client is never a person's own principal.
 The attacks here are the ones a model client actually makes by accident and an
 attacker makes on purpose — reach for its person's own token, guess a token,
 keep using a revoked one, or skip the credential entirely.

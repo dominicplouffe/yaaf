@@ -1,6 +1,6 @@
-"""Invariant selftests: the loop family's half of the harness contract
-(docs/RUNTIMES.md, M2) — `anthropic_api`, yaaf's own agent loop on the Messages
-API, held to what test_harness_contract.py holds the Claude CLI harnesses to.
+"""Invariant selftests: the loop family's half of the harness contract —
+`anthropic_api`, yaaf's own agent loop on the Messages API, held to what
+test_harness_contract.py holds the Claude CLI harnesses to.
 
 The model is a fake HTTP server speaking the API's own streaming protocol into
 the real `anthropic` SDK, so what is tested is the whole client: request built,

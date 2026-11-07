@@ -7,7 +7,7 @@ copy is a place for the next field to be added to two of three. Here once.
 A seat names a model reference (yaaf.runtimes.catalog): a model, or a class of
 one. A class resolves on the project's primary provider through its lineup,
 so the same role is a Claude seat on a project Anthropic pays and a GPT seat on
-one OpenAI pays (docs/PROVIDERS.md §1). This module knows no database: the
+one OpenAI pays. This module knows no database: the
 caller hands it a `ModelContext` (yaaf.core.model_policy builds one per
 project) saying which provider is primary, what the install's lineups say, how
 each provider is paid, and whether the install has a search backend.
@@ -264,7 +264,7 @@ def _problems(harness: str | None, model: str, tool_permissions: dict | None,
     — the CEO's, where the chat is on. `pinned` is whether the seat names
     this model rather than a class: only a pinned model's efforts are held
     strictly (R6). Every rule here reads the registries and none names a
-    harness (docs/RUNTIMES.md, "The rules this adds"; docs/PROVIDERS.md)."""
+    harness."""
     if catalog.is_class(model):
         # R8 — a class with no model on its provider is refused, never filled
         # in with some other model.
@@ -302,7 +302,7 @@ def _problems(harness: str | None, model: str, tool_permissions: dict | None,
     # fetch and search, and search is the harness's own, the provider's wire
     # (yaaf's loop), the platform's search backend, or nobody's: a seat with
     # none cannot give a role that grants `web` what it was hired with.
-    # Refused rather than quietly halved (docs/RUNTIMES.md, open question 6).
+    # Refused rather than quietly halved (open question 6).
     if (tool_permissions or {}).get("web"):
         searches = (found.search == "own"
                     or (found.search == "loop" and (seller.search or platform_search))

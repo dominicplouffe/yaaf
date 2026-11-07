@@ -217,7 +217,7 @@ def person(email: str, *, admin: bool = False, name: str | None = None,
 
 
 #: What the dashboard's own pages send with every write: the origin check on
-#: cookie-authenticated requests (docs/AUTH.md, rule 7) reads it.
+#: cookie-authenticated requests (rule 7) reads it.
 ORIGIN = {"Origin": "http://testserver"}
 PASSWORD = "a-long-enough-passphrase"
 

@@ -6,7 +6,6 @@ deployment leaks authority. PKCE stripped, a code replayed, a redirect target
 swapped, a token minted for somewhere else presented here, scopes widened at
 the token endpoint past what the consent screen granted.
 
-The rule each defends is in docs/MCP_SERVER.md under "Full claude.ai support".
 """
 
 from __future__ import annotations

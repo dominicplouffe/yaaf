@@ -1,5 +1,5 @@
 """Runs INSIDE the sandbox container: yaaf's own agent loop, the harness family
-for every provider reached by plain API (docs/RUNTIMES.md, M2).
+for every provider reached by plain API.
 
 A CLI harness hands the model to someone else's loop. This one is the loop:
 send the transcript, run the tool calls, send it again, until the model stops.

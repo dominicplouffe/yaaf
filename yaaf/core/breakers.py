@@ -1,6 +1,6 @@
 """Failover: when a credential's provider keeps failing, the projects it bills
 move their class seats to their fallback credential's provider until it
-recovers (docs/PROVIDERS.md §9).
+recovers.
 
 An automatic state change, not a notice — the house rule. A provider outage
 used to stop every project on it: each run failed transient, was retried,

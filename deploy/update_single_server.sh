@@ -129,7 +129,7 @@ fi
 #
 # Only the missing slugs are loaded: a role already in the library is left
 # alone, edits and all.
-# The admin token was retired (docs/AUTH.md). An install that last updated
+# The admin token was retired. An install that last updated
 # before that has accounts but no admin, so nobody can sign in until one is
 # made — from the chairman's own email, which keeps every project they chair.
 say "People"

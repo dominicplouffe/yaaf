@@ -8,7 +8,7 @@ handler that calls the agent HTTP API with the per-run token — then drives one
 stateless run on the Agent SDK: context in, one unit of work, result.json out.
 
 The tools are declared as plain data, not as SDK objects, because the SDK is
-one harness among several that will need them (docs/RUNTIMES.md). The SDK sees
+one harness among several that will need them. The SDK sees
 them through `render_sdk` and nowhere else.
 
 Refusals come back to the model as tool output — the refusal text *is* the
@@ -65,7 +65,7 @@ MODEL_FLAGS = json.loads(os.environ.get("YAAF_MODEL_FLAGS") or "{}")
 # its key is injected under, whether it states costs and searches.
 PROVIDER = json.loads(os.environ.get("YAAF_PROVIDER") or "{}")
 # The install's own search backend, for a run promised `web` on a harness that
-# searches through yaaf (docs/PROVIDERS.md §6): its name, address and price
+# searches through yaaf: its name, address and price
 # per query. Its key is YAAF_SEARCH_KEY, which no shell a harness gives the
 # model is handed.
 SEARCH = json.loads(os.environ.get("YAAF_SEARCH") or "null")
@@ -2090,7 +2090,7 @@ def _error_kind(exc: BaseException) -> str:
 
 # ── the run: what every harness does ────────────────────────────────────────────
 #
-# A harness only translates (docs/RUNTIMES.md). It turns the staged prompt into a
+# A harness only translates. It turns the staged prompt into a
 # running model and the model's output into the events below. Everything a run
 # must do whatever drives it — the trace, the checkpoint after every event so a
 # kill is metered rather than free, the per-run cap, the retry policy, the
@@ -2141,7 +2141,7 @@ class AttemptResult:
     cache_creation_1h: int = 0
     web_searches: int = 0
     #: What the install's own search backend charged, in USD, for searches
-    #: made through yaaf rather than the provider (docs/PROVIDERS.md §6).
+    #: made through yaaf rather than the provider.
     search_usd: float = 0.0
     #: Whether the bill is one model call. A long-prompt rate is decided by
     #: one call's prompt, so a bill summing several cannot be judged by its
@@ -2502,7 +2502,7 @@ class SdkDriver:
             # interactive. Containment is the fresh container, the role-scoped
             # credential set, the metered budget and the audited API — NOT the
             # network. There is no egress proxy; the per-role allowlist was
-            # removed deliberately (docs/PLAN.md) and SECURITY.md states what
+            # removed deliberately and SECURITY.md states what
             # follows from that.
             permission_mode="bypassPermissions",
             cwd="/workspace",

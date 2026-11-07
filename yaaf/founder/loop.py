@@ -1,4 +1,4 @@
-"""The Founder and the grader on any provider with a wire (docs/PROVIDERS.md §7).
+"""The Founder and the grader on any provider with a wire.
 
 On an Anthropic credential both run on the Claude Code CLI, through the Agent
 SDK, in this process (`yaaf.founder.session`) — a Claude subscription token is

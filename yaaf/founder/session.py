@@ -15,9 +15,9 @@ drafts a project and calls six read-only tools, so it runs in-process with
 every built-in tool switched off.
 
 That is the Anthropic road. A platform credential of any other provider runs
-both callers on that provider's own wire instead (`yaaf.founder.loop`,
-docs/PROVIDERS.md §7) — chosen by the model's provider, which a door holds to
-the credential's (`refusal`, and `yaaf.server.api.settings`).
+both callers on that provider's own wire instead (`yaaf.founder.loop`) — chosen
+by the model's provider, which a door holds to the credential's (`refusal`, and
+`yaaf.server.api.settings`).
 """
 
 from __future__ import annotations

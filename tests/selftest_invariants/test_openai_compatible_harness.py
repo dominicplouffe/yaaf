@@ -1,7 +1,6 @@
-"""Invariant selftests: the loop on the OpenAI-compatible chat API (docs/RUNTIMES.md,
-M3; docs/PROVIDERS.md §3) — DeepSeek, OpenRouter and a custom server through
-the `openai_chat` wire, held to the contract test_loop_harness.py holds the
-Messages API client to.
+"""Invariant selftests: the loop on the OpenAI-compatible chat API — DeepSeek,
+OpenRouter and a custom server through the `openai_chat` wire, held to the
+contract test_loop_harness.py holds the Messages API client to.
 
 The model is a fake server speaking the chat-completions stream: `data:` lines
 of JSON deltas, usage on the last line, `[DONE]`. Synthetic, built from the

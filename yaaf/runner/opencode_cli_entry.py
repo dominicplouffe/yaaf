@@ -1,6 +1,5 @@
 """Runs INSIDE the sandbox container: one stateless run on the OpenCode CLI
-(`opencode run --format json`), one harness for several providers
-(docs/RUNTIMES.md, M5).
+(`opencode run --format json`), one harness for several providers.
 
 OpenCode reaches any provider through an AI SDK provider package; this driver
 names one — the OpenAI-compatible one, which OpenCode carries built in — and

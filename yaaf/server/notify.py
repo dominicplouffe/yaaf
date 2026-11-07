@@ -288,7 +288,7 @@ def chairman_notify(session: Session, project: Project, subject: str, body: str,
 
     The chairman alone, not the co-chairs, deliberately for now: the inbox
     ration below is one person's, and splitting or multiplying it is a design
-    of its own (docs/AUTH.md, "Later"). Co-chairs read the same decisions on the
+    of its own. Co-chairs read the same decisions on the
     Desk, which lists every project they chair."""
     chairman = session.get(User, project.chairman_user_id)
     log.info("chairman notify [%s] (%s) %s: %s", project.slug, attention, subject, body)

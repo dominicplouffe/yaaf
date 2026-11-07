@@ -69,7 +69,7 @@ load_env() {
   warn_retired_token
 }
 
-# The admin token was retired (docs/AUTH.md): people sign in with an account.
+# The admin token was retired: people sign in with an account.
 # A line left in deploy/.env is harmless, but somebody will be reading it as
 # their password, so say so rather than letting it look current.
 warn_retired_token() {
@@ -138,7 +138,7 @@ load_stack_env() {
 }
 
 
-# The Charter opened the sandbox network (docs/AUTONOMY.md): the per-role
+# The Charter opened the sandbox network: the per-role
 # egress proxy is gone. A box that deployed before that has a network created
 # with internal:true — with the proxy removed, containers on it would have NO
 # route out at all, and compose refuses to alter a network's internal flag in

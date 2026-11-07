@@ -1,7 +1,7 @@
 """The models a seat can be hired on: how they rank, what they cost, what the
 API accepts for each — and the classes a role names instead of any of them.
 
-A role says how much model it needs, not whose (docs/PROVIDERS.md §1): a model
+A role says how much model it needs, not whose: a model
 reference is a concrete model (`gpt-6.1-sol`), a model of a provider the
 catalog does not list (`openrouter/qwen/qwen3-coder`), a class (`@balanced`,
 resolved on the project's primary provider) or a class of a named provider
@@ -23,7 +23,7 @@ list. Every other provider's models ship unpriced, and an install prices them
 in Settings (yaaf.core.prices), which wins over this table for any model. They
 are checked rather than trusted: every run on a harness that reports its own
 bill is also priced, and a model whose two figures drift apart is named on the
-health checklist of every project the price meters (docs/RUNTIMES.md).
+health checklist of every project the price meters.
 """
 
 from __future__ import annotations

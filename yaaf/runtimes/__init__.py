@@ -2,8 +2,7 @@
 
 Four facts that used to be one word (`runtime`) and one vendor. They are kept
 apart here so that a second provider is a registry entry rather than an edit to
-every file that ever assumed the first — see docs/RUNTIMES.md for the design,
-the rules it adds, and the milestones.
+every file that ever assumed the first.
 
 - `providers` — who sells the tokens: credential kinds, the variable each is
   injected as, what a malformed one looks like, what a dead one says.

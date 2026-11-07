@@ -218,7 +218,7 @@ networks:
     # resolve the API by the hostname `api`: on a shared network a run from one
     # stack can reach the other stack's server.
     name: ${YAAF_SANDBOX_NETWORK:-yaaf_sandbox}
-    # Open by the chairman's decision (docs/AUTONOMY.md): the per-role egress
+    # Open by the chairman's decision: the per-role egress
     # allowlist made every capability a firewall ticket. Containment is the
     # fresh container per run, role-scoped secrets, budgets, and the audit
     # trail. The network still isolates stacks from each other by name.

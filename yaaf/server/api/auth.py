@@ -6,7 +6,7 @@ exchanges the same password for a personal token. Both go through one door —
 to their *own* credentials lives here; what an instance admin does to other
 people's lives under `/admin/users`.
 
-Rule 4 of docs/AUTH.md is the one this file is careful about: **a credential
+The rule this file is careful about: **a credential
 cannot widen itself.** A personal token can list and revoke tokens but not mint
 one, and cannot change a password — both need a browser session, which needed
 the password. A leaked token is then bounded by its own expiry instead of being

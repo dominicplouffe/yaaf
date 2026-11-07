@@ -593,7 +593,7 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(120))
     password_hash: Mapped[str | None] = mapped_column(String(255))
     #: The instance admin: runs the box, reads every project, decides nothing on
-    #: a project it does not chair. See docs/AUTH.md.
+    #: a project it does not chair.
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     #: A timestamp rather than a delete, for the reason McpClient.revoked_at
@@ -790,7 +790,7 @@ class ProjectMember(Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     #: chairman (exactly one, mirrors projects.chairman_user_id) | co_chair |
-    #: observer. What each may do is in docs/AUTH.md and yaaf.server.authority.
+    #: observer. What each may do is in yaaf.server.authority.
     role: Mapped[str] = mapped_column(String(16))
     # When this member last read the briefing — the "since you were last here"
     # mark. Per member and per project on purpose: reading one project's brief
@@ -1993,13 +1993,13 @@ class Run(Base):
     # The same run priced from yaaf's model catalog (yaaf.runtimes.catalog).
     # Equal to cost_usd on a harness yaaf prices itself; on one that reports
     # its own bill, the check on the catalog — the health checklist compares
-    # the two (docs/RUNTIMES.md). NULL when unpriced, and where cost_usd is.
+    # the two. NULL when unpriced, and where cost_usd is.
     priced_usd: Mapped[float | None] = mapped_column(Float)
     # Pinned at lease time, not resolved at read time: a role repin or model
     # change must never silently re-attribute historical spend.
     model: Mapped[str | None] = mapped_column(String(128))
     effort: Mapped[str | None] = mapped_column(String(16))
-    # Who served the model and what drove it (docs/RUNTIMES.md), pinned beside
+    # Who served the model and what drove it, pinned beside
     # the model for the same reason. NULL on every run from before they were
     # recorded — all of which were the Agent SDK on Anthropic.
     provider: Mapped[str | None] = mapped_column(String(32))
@@ -2377,7 +2377,7 @@ class ProjectLlmCredential(Base):
     `Project.billing_secret_id` stays the project's billing credential — the
     one its meter is read from — and pays whichever provider it is for. A
     project whose seats run on more than one provider holds one row here per
-    other provider (docs/RUNTIMES.md, M3). Every credential a project holds
+    other provider. Every credential a project holds
     meters in its billing mode's unit (R4): one cap cannot be kept in two."""
 
     __tablename__ = "project_llm_credentials"
@@ -2607,7 +2607,7 @@ class OAuthCode(Base):
 class McpConfirmation(Base):
     """A write this client previewed and may now perform, once.
 
-    Rule 4 of docs/MCP_SERVER.md: an irreversible write cannot happen in one
+    The rule: an irreversible write cannot happen in one
     call. The preview issues this row; the write spends it. Server-side rather
     than left to the host client's permission prompt, because a prompt is a
     suggestion and this platform's whole argument is that rules are not.

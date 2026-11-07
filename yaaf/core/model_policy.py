@@ -1,5 +1,5 @@
 """Which models a class names on this install, and which provider a project's
-classes resolve on (docs/PROVIDERS.md §1).
+classes resolve on.
 
 The rules are `yaaf.runtimes.seats`, which knows no database. This is the half
 that does: the install's lineups over the shipped ones, its default provider,

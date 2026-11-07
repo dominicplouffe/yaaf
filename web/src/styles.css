@@ -1563,7 +1563,7 @@ button.linkish:where(:not(:disabled)):hover { border-color: transparent; filter:
 .stepnav { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; margin-top: 18px; }
 
 /* The goal is the one field the CEO plans from, so it gets the room, and the
-   brief advice that until now lived only in CREATING_A_PROJECT.md. */
+   brief advice that until now lived only in the docs. */
 .goalwrap { display: grid; grid-template-columns: minmax(0, 1fr) 216px; gap: 12px; align-items: start; }
 @media (max-width: 700px) { .goalwrap { grid-template-columns: minmax(0, 1fr); } }
 textarea.goalbox { min-height: 176px; }

@@ -65,7 +65,7 @@ SLACK_AUTO_CREATE = "slack.auto_create_channels"  # "true" | "false"
 
 #: The Founder's model when nobody named one: the frontier class, resolved on
 #: whatever provider the platform credential pays — so pasting a Gemini key is
-#: enough to have a Founder (docs/PROVIDERS.md §7).
+#: enough to have a Founder.
 DEFAULT_FOUNDER_MODEL = "@frontier"
 DEFAULT_SLACK_VISIBILITY = "private"
 

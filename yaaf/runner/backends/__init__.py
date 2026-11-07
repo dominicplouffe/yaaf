@@ -1,7 +1,7 @@
 """Runner backends.
 
 A backend executes one leased job and returns a result — one per harness
-(yaaf.runtimes.harnesses; docs/RUNTIMES.md):
+(yaaf.runtimes.harnesses):
 
 - ``mock``: scripted behaviors that drive the *real* HTTP API — the framework's
   orchestration is CI-testable end to end at $0 in model tokens

@@ -69,7 +69,7 @@ done
 # YAAF_MASTER_KEY must be a Fernet key (32 url-safe base64 bytes, padded) —
 # `openssl rand -base64 32` satisfies it; secrets.token_urlsafe(32) does NOT, it
 # strips the padding. There is no login secret here any more: people sign in
-# with an account (docs/AUTH.md), and the first one is made in step 8.
+# with an account, and the first one is made in step 8.
 say "Secrets (deploy/.env)"
 if [ -f deploy/.env ]; then
   ok "deploy/.env already exists — leaving it alone"
@@ -287,7 +287,7 @@ cat <<EOF
   Next: create a project in the dashboard. That step needs an Anthropic API
   key, which this script does NOT create — bring your own from
   console.anthropic.com and give it to the project in Settings. No agent can
-  run until it has one. See docs/CREATING_A_PROJECT.md
+  run until it has one.
 
   Re-run this script any time; it is idempotent.
 EOF

@@ -1,5 +1,5 @@
 """Invariant selftests: the Codex CLI harness, held to the contract every harness
-signs (docs/RUNTIMES.md, M4).
+signs.
 
 The streams replayed here are the real CLI's (0.162.1) — recorded against a
 stand-in for the Responses API, because the live one was not reachable from

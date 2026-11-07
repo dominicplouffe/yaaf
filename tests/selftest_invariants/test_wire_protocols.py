@@ -1,7 +1,7 @@
-"""Invariant selftests: yaaf's loop on every wire a provider speaks
-(docs/PROVIDERS.md §3) — OpenAI's Responses API and Azure's, Gemini and
-Vertex, Bedrock's Converse — held to the contract test_loop_harness.py holds
-the Messages API to and test_openai_compatible_harness.py the chat shape:
+"""Invariant selftests: yaaf's loop on every wire a provider speaks — OpenAI's
+Responses API and Azure's, Gemini and Vertex, Bedrock's Converse — held to the
+contract test_loop_harness.py holds the Messages API to and
+test_openai_compatible_harness.py the chat shape:
 
 1. usage parses to the bill, cached and reasoning tokens where each provider
    puts them, and the run is priced;

@@ -5,8 +5,7 @@
 // every rail entry carries its section's state rather than a description of
 // it. The sections themselves are built from one kit (settings/kit.tsx): one
 // header, one status vocabulary in which green means a key has answered, one
-// way to save, and confirmations that state the consequence before the press
-// (docs/ux-redesign/settings).
+// way to save, and confirmations that state the consequence before the press.
 //
 // The section lives in the URL, so a link to the credentials list is a link to
 // the credentials list; every older link still lands where it did. On a phone

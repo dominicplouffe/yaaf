@@ -1,6 +1,6 @@
 """Scopes and reach, attacked over HTTP.
 
-Rule 2 of docs/MCP_SERVER.md: a token holds only the scopes it was issued for,
+The rule: a token holds only the scopes it was issued for,
 and reaches only what its chairman chairs. The interesting attacks are not
 "call a tool you were not given" — they are the quieter ones: name someone
 else's project by slug, name it by id, or ask the list tool and count what

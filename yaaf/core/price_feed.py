@@ -1,4 +1,4 @@
-"""Prices an install imports, from a feed or a dated snapshot (docs/PROVIDERS.md §5).
+"""Prices an install imports, from a feed or a dated snapshot.
 
 The rule this serves stands unchanged: yaaf ships only prices it could check
 against the vendor's own published list, because a budget trusts the number it

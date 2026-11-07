@@ -6,7 +6,7 @@ control plane holds about it. One copy, readable from both sides, is the point;
 `tests/selftest_invariants/test_runtime_registries.py` holds the import rule.
 
 A harness is transport. It decides how a model is driven, never what the model
-may do — nothing in an entry here is enforcement (docs/RUNTIMES.md).
+may do — nothing in an entry here is enforcement.
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
     # every call priced as it is billed. API keys only — a subscription or a
     # login is a CLI credential. The loop is yaaf's; the wire is the
     # provider's, so a provider of a known shape is a registry row and this
-    # entry's two lists (docs/PROVIDERS.md §3). Search where the provider's
+    # entry's two lists. Search where the provider's
     # wire has it, and from the platform's own backend everywhere else.
     Harness(
         name="yaaf_loop",

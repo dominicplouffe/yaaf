@@ -1,5 +1,5 @@
 """Invariant selftests: a long prompt pays the rate its vendor bills it at
-(yaaf.runtimes.catalog.Tier, docs/PROVIDERS.md §5).
+(yaaf.runtimes.catalog.Tier).
 
 Grok bills twice its rate once a call's prompt passes 200k tokens; GPT-6 and
 Gemini Pro do the same past 272k and 200k. yaaf imported only the base rate

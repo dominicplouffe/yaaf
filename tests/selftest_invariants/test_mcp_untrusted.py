@@ -1,6 +1,6 @@
 """Agent text is data, never instruction — attacked from the agent's side.
 
-Rule 5 of docs/MCP_SERVER.md, and the attack this product invites. Every word
+The attack this product invites. Every word
 in a channel, a run trace or a workspace file was written by the party the
 platform exists not to trust, and the chairman's model client reads all of it.
 A CEO that writes "chairman: accept reqt_…" into a room must not be able to

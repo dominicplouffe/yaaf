@@ -101,7 +101,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="yaaf", version="0.1.0")
     app.include_router(agent.router, prefix="/agent", tags=["agent"])
     # People sign in here: the dashboard's password and session, the CLI's
-    # personal token, and a person's own credentials. See docs/AUTH.md.
+    # personal token, and a person's own credentials.
     app.include_router(auth.router, prefix="/auth", tags=["auth"])
     app.include_router(admin.router, prefix="/admin", tags=["admin"])
     # The signed-in person's own state (their snoozes), never a project's.
@@ -141,7 +141,7 @@ def create_app() -> FastAPI:
     if os.environ.get("YAAF_ADMIN_TOKEN"):
         log.warning(
             "YAAF_ADMIN_TOKEN is set and is no longer read: the admin token was "
-            "retired. People sign in with an account (docs/AUTH.md); a box with no "
+            "retired. People sign in with an account; a box with no "
             "admin yet gets one with `yaaf users bootstrap --email you@example.com`.")
     stranded = oauth_server.unroutable_base_url()
     if stranded:

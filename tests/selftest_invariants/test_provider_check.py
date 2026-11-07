@@ -1,5 +1,5 @@
 """Invariant selftests: the provider check — can this model do yaaf's work?
-(docs/PROVIDERS.md §8, yaaf.core.provider_check).
+(yaaf.core.provider_check).
 
 A smoke call proves a key answers. This proves a model can drive a seat, and
 is held to four promises:
