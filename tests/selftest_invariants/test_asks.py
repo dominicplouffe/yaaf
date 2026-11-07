@@ -41,6 +41,7 @@ from tests.conftest import (
     finish_runs,
     live_token,
     make_project,
+    told_the_chairman,
 )
 from yaaf.core import ids
 from yaaf.core.constitution import effective
@@ -107,6 +108,7 @@ def _lapse(project: dict) -> None:
     with db_session() as session:
         for ask in session.query(Ask).filter(Ask.project_id == project["id"]):
             ask.answer_by = utcnow() - timedelta(minutes=1)
+    told_the_chairman(project["id"])
 
 
 def _tick(project: dict) -> None:

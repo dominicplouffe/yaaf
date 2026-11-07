@@ -16,7 +16,7 @@ import hashlib
 import hmac
 import json
 
-from tests.conftest import ADMIN, make_project
+from tests.conftest import ADMIN, make_project, told_the_chairman
 from yaaf.core.db import db_session
 from yaaf.core.models import Project
 from yaaf.server import notify
@@ -210,7 +210,7 @@ class Recorded:
         self.calls: list[dict] = []
 
     def __call__(self, session, project, subject, body, *, attention,
-                 kind=None, data=None):  # noqa: ARG002
+                 kind=None, data=None, item_key=None):  # noqa: ARG002
         self.calls.append({"subject": subject, "body": body, "kind": kind, "data": data or {}})
 
     def of(self, kind: str) -> list[dict]:
@@ -284,6 +284,7 @@ def test_an_expired_approval_notifies_with_its_row(client, monkeypatch):
     assert filed.status_code == 200, filed.text
     with db_session() as session:
         session.get(Approval, filed.json()["id"]).expires_at = utcnow() - timedelta(minutes=1)
+    told_the_chairman(project["id"])
     with db_session() as session:
         row = session.get(Project, project["id"])
         janitor.expire_approvals(session, row, effective(session, row.id))

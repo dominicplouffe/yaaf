@@ -160,6 +160,10 @@ def verdict_item(project_id: str, requirement_key: str) -> str:
     return f"{project_id}-verdict-{requirement_key}"
 
 
+def frozen_item(project_id: str) -> str:
+    return f"{project_id}-frozen"
+
+
 def inbox_link(item_key: str, label: str) -> str:
     """`project_link` for a thing waiting on him: a last line opening that one
     Inbox row, or nothing when this install has no browser-facing origin.
@@ -278,7 +282,7 @@ def _spend_mail_budget(session: Session, project: Project, attention: Attention,
 
 def chairman_notify(session: Session, project: Project, subject: str, body: str,
                     *, attention: Attention, kind: str | None = None,
-                    data: dict | None = None) -> None:
+                    data: dict | None = None, item_key: str | None = None) -> None:
     """Send subject/body to the project's chairman via every configured channel.
 
     `attention` says how much of the chairman is being asked for (see the module
@@ -297,7 +301,13 @@ def chairman_notify(session: Session, project: Project, subject: str, body: str,
     The chairman alone, not the co-chairs, deliberately for now: the inbox
     ration below is one person's, and splitting or multiplying it is a design
     of its own (docs/AUTH.md, "Later"). Co-chairs read the same decisions on the
-    Desk, which lists every project they chair."""
+    Desk, which lists every project they chair.
+
+    `item_key` names the Inbox item a notice is about. When it is given and the
+    notice actually leaves for a configured channel, that is recorded as the
+    item having reached him (`yaaf.server.needs_you`): silence may decide only
+    for somebody who was told, and this is how the platform knows it told him.
+    A notice held by the ration, or with nowhere to go, reaches nobody."""
     chairman = session.get(User, project.chairman_user_id)
     log.info("chairman notify [%s] (%s) %s: %s", project.slug, attention, subject, body)
     cfg = settings()
@@ -325,6 +335,16 @@ def chairman_notify(session: Session, project: Project, subject: str, body: str,
         else None
     )
     project_id = project.id
+    # Every approval and question notice already carries its row; naming the
+    # item again at each of the dozen call sites would be a dozen chances to
+    # forget one.
+    item_key = (item_key or ((data or {}).get("approval") or {}).get("id")
+                or (data or {}).get("ask_id"))
+    if item_key and chairman is not None and (email or hook):
+        from yaaf.server.needs_you import record_delivered
+
+        record_delivered(session, project_id, item_key, chairman.id,
+                         "email" if email else "webhook")
 
     def _deliver() -> None:
         try:

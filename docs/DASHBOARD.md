@@ -7,8 +7,12 @@ the install prints, and everybody else's from an invite (see
 script, and no credential is kept in `localStorage`.
 
 Two places are about people rather than projects. **Settings → Account** is
-yours: your password, the personal tokens the CLI and your scripts hold, and the
-browsers you are signed in on. **Settings → People** is the instance admin's:
+yours: your password, the personal tokens the CLI and your scripts hold, the
+browsers you are signed in on, and **Your decisions** — the last thirty days of
+what the projects you decide for asked of you, how long it waited for you, what
+silence decided instead, and how many decisions settled without ever reaching
+you (it should read zero). Worked out on the box from its own rows; nothing is
+sent anywhere. **Settings → People** is the instance admin's:
 invite somebody (the link is shown, not mailed), send a fresh password link,
 promote, deactivate. A project's own people — its chairman, co-chairs and
 observers — are under that project's **Settings → People**, and anybody who is
@@ -315,6 +319,18 @@ the whole case:
 
 The sidebar badge, Home, the project switcher and each project's Inbox
 card all read the same list from the same request, so they cannot disagree.
+Every row that needs you is drawn from the server's own item for it
+(`needs_you_items`, also `GET /observe/needs-you`) — the same object an email,
+Claude through the connector, or a future push or Slack card renders — so the
+words on the row, including what silence does and when, are the same words
+everywhere.
+
+**Your Inbox showing a decision is how the platform knows it reached you.**
+Silence settles an approval, a question or a finished delivery only once it
+reached you or a co-chair — a notice that left for your mail or webhook, or a
+list that showed it to you. One that reached nobody waits a day longer (the row
+says so) and then settles the safe way: an approval is declined. See
+[GOVERNANCE.md](GOVERNANCE.md#silence-counts-only-if-you-were-told).
 
 **Only live projects appear.** Stopped and completed ones are the Projects
 page's business.

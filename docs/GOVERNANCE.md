@@ -88,7 +88,7 @@ Also enforced here, and not tunable because they're structural:
 | Rule | Default | What it does |
 |---|---|---|
 | `approval_threshold_usd` | 250.0 | Spends at or above this — and anything legally ambiguous — wait for you. |
-| `approval_timeout_days` | 7 | An unanswered approval decides itself here, so a vacationing chairman degrades the project instead of deadlocking it. |
+| `approval_timeout_days` | 7 | An unanswered approval decides itself here, so a vacationing chairman degrades the project instead of deadlocking it — once it has reached you ([Silence counts only if you were told](#silence-counts-only-if-you-were-told)). |
 | `approval_timeout_decision` | `"deny"` | What that expiry decides. Default-deny: silence is not consent. |
 | `complete_after_hours` | 24.0 | A Deliver project whose every requirement is settled tells you, then completes itself this long afterwards — the same receipt your Complete button writes — unless its scope moves first. Reopen it from the project page (or `lifecycle reopen` over MCP) for 14 days; a reopened delivery does not close again until its scope has moved. `0`: it waits for your Complete. |
 | `ask_window_hours_max` | 72.0 | The longest window your CEO may give you to answer a question. It names a shorter one when the work has a deadline. There is no setting for what an unanswered question decides — the CEO writes that down before it asks, and you see it in your Inbox. |
@@ -311,8 +311,14 @@ Running every ~15s per project, without an agent asking:
 - **Reaps stale runs** past `run_timeout_s` and **releases dead claims**, so a
   crashed run's task returns to the queue instead of being held forever.
 - **Expires hypotheses** at their kill date.
+- **Pauses every clock for the time the box was down.** When two sweeps are
+  further apart than ten minutes (or ten poll intervals) — a laptop that slept,
+  a server that was off — every open approval and question on a running
+  project has its deadline moved later by the gap, with a `clock.paused` audit
+  row. A clock measures time in which somebody could have been told.
 - **Nags then expires approvals** per `approval_timeout_days` /
-  `approval_timeout_decision`.
+  `approval_timeout_decision` — but only once the approval **reached** you or a
+  co-chair (below).
 - **Answers, nags and lapses asks**: a question the CEO put to you is marked
   answered the moment you say anything in the boardroom after it, chased
   halfway through its window (proportional, because an ask's window can be
@@ -323,6 +329,35 @@ Running every ~15s per project, without an agent asking:
 - **Warns on memory pressure** at `memory_warn_ratio` and on an active
   **drought**, to the scope's curator.
 - **Applies due amendments**, turning each into a new constitution version.
+
+### Silence counts only if you were told
+
+An approval that expires, a question that lapses to the CEO's default and a
+finished delivery that closes itself are all decisions taken on your behalf by
+your silence. That is fair to somebody who heard about them, so the platform
+holds itself to it — a platform rule, not a constitution setting, because no
+project should be able to switch it off:
+
+- An item **reached** you when a notice about it left for a configured channel
+  (an email inside the daily ration, or the chairman webhook), or when your
+  Inbox, Claude through the connector, or the CLI listed it to you or a
+  co-chair — at least a quarter of its window before the deadline, and never
+  needing more than six hours. Observers do not count; they cannot decide.
+- **Unreached at its deadline**, an approval or a question waits **one more
+  day**, once. The boardroom gets a line, you get an alarm on any channel the
+  install has, and the agent that filed it is told it waits longer.
+- **Still unreached after that**, it settles the safe way: an approval is
+  **declined, even on a project whose rule approves on silence**, and a
+  question takes the CEO's stated default. Both are recorded as
+  `needs_you.unreached`.
+- A finished delivery **closes itself only if its sign-off reached you**;
+  otherwise it waits, spending nothing, for your Complete.
+
+Extension happens once, so a project whose chairman is away still degrades
+rather than deadlocks. What changed is that degrading requires having been
+told. Settings → Account → *Your decisions* shows how often each of these
+happened. Design and rationale:
+[ux-redesign/decide-anywhere](ux-redesign/decide-anywhere/README.md).
 
 ## Reading enforcement after the fact
 

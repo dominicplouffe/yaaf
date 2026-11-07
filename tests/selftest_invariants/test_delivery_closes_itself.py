@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from tests.conftest import ADMIN
+from tests.conftest import ADMIN, told_the_chairman
 from tests.selftest_invariants.test_modes import fabricate_met, run_mode_tick
 from tests.selftest_invariants.test_requirements import (
     accept,
@@ -55,6 +55,7 @@ def _age_announcement(project: dict, hours: float) -> None:
             row.at = row.at - timedelta(hours=hours)
         for event in session.query(RequirementEvent).filter_by(project_id=project["id"]):
             event.at = event.at - timedelta(hours=hours)
+    told_the_chairman(project["id"])
 
 
 def _status(project: dict) -> str:

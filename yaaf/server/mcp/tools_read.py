@@ -233,6 +233,12 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
     # never instruction — cut before it is wrapped, so the trim never splits
     # an envelope (see below).
     for row in filtered.get("projects") or []:
+        # The server's needs-you items are for surfaces a person reads: every
+        # headline, case, option and default on them is the agent's sentence,
+        # and here each one is wrapped field by field on the members below,
+        # which carry the same decisions. An unwrapped second copy of them is
+        # exactly the channel rule 5 exists to close.
+        row.pop("needs_you_items", None)
         for item in row.get("pending_approvals") or []:
             item["title"] = _wrapped(item.get("title"), "approval")
             if item.get("recommendation"):

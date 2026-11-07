@@ -12,6 +12,7 @@ from tests.conftest import (
     bearer,
     live_token,
     make_project,
+    told_the_chairman,
 )
 from yaaf.core import ids
 from yaaf.core.db import db_session
@@ -111,6 +112,7 @@ def test_approval_expires_to_deny_and_wakes_requester(client):
 
     with db_session() as session:
         session.get(Approval, approval["id"]).expires_at = utcnow() - timedelta(minutes=1)
+    told_the_chairman(project["id"])
     with db_session() as session:
         janitor_once(session)
 

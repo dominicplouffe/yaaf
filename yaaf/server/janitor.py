@@ -82,7 +82,16 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import asks as ask_lib
-from yaaf.server import briefing, metrics, plain, policy, scorecard, staffing, standing
+from yaaf.server import (
+    briefing,
+    metrics,
+    needs_you,
+    plain,
+    policy,
+    scorecard,
+    staffing,
+    standing,
+)
 from yaaf.server.notify import (
     Attention,
     boardroom_line,
@@ -118,6 +127,9 @@ def janitor_all() -> None:
     twin of this in `dispatcher.dispatch_all`.
     """
     with db_session() as session:
+        # First, before any clock is read: time the box was down is time in
+        # which nobody could have been told anything (needs_you.pause_for_downtime).
+        needs_you.pause_for_downtime(session)
         project_ids = [row for (row,) in session.execute(select(Project.id))]
     for project_id in project_ids:
         try:
@@ -141,6 +153,7 @@ def janitor_all() -> None:
 def janitor_once(session: Session) -> None:
     """One sweep inside the caller's transaction — the test harness's entry
     point. Production uses `janitor_all`, which isolates each project."""
+    needs_you.pause_for_downtime(session)
     for project in session.execute(select(Project)).scalars():
         _janitor_project(session, project)
     verify_pending_evidence(session)
@@ -1258,7 +1271,7 @@ def check_delivery_ready(session: Session, project: Project) -> None:
     chairman_notify(session, project, "ready to complete",
                     ready("in your Inbox")
                     + inbox_link(signoff_item(project.id), "Sign it off"),
-                    attention=Attention.ACTION)
+                    attention=Attention.ACTION, item_key=signoff_item(project.id))
     boardroom_line(session, project.id,
                    ready("on the project page") + project_link(project.id, "", "Open it"))
     _notice_ceo(
@@ -1299,6 +1312,13 @@ def _complete_itself(session: Session, project: Project, announced_at) -> bool:
             AuditLog.at > announced_at)
     ).scalar_one()
     if reopened:
+        return False
+    # "Since he was told" has to be true. A sign-off nothing shows reached him
+    # or a co-chair waits, spending nothing, for the Complete button: closing
+    # a project on a silence nobody heard is the platform deciding for him.
+    closes_at = announced_at + timedelta(hours=cons.complete_after_hours)
+    if not needs_you.reach_state(session, project, signoff_item(project.id),
+                                 announced_at, closes_at)["ok"]:
         return False
     told = chairman_time(announced_at, cons.timezone)
     done = complete_delivery(
@@ -2186,7 +2206,7 @@ def nag_approvals(session: Session, project: Project, cons: ConstitutionDoc) -> 
             f"the answer is {silence} — that is what this project's rules say.\n"
             + inbox_line(approval.id),
             kind="approval_expiring", data={"approval": approval_row(approval)},
-            attention=Attention.ACTION,
+            attention=Attention.ACTION, item_key=approval.id,
         )
         approval.nag_sent_at = utcnow()
         nagged += 1
@@ -2204,6 +2224,50 @@ def expire_approvals(session: Session, project: Project, cons: ConstitutionDoc) 
             Approval.expires_at <= now,
         )
     ).scalars():
+        # Silence counts only if he was told (yaaf.server.needs_you): an
+        # approval nobody who could decide it has seen gets one more day and an
+        # alarm, and if it is still unseen then it is declined — never approved,
+        # whatever this project's rule says, because "approved by a silence
+        # nobody heard" is the one outcome this platform must not produce.
+        reach = needs_you.reach_state(session, project, approval.id,
+                                      approval.created_at, approval.expires_at)
+        if not reach["ok"] and not reach["extended"]:
+            approval.expires_at = now + needs_you.EXTENSION
+            needs_you.extend(session, project, approval.id, approval.title,
+                             approval.expires_at, cons)
+            _notice_agent(
+                session, project, approval.requested_by_agent_id, NoticeKind.DECISION_EXTENDED,
+                f"Approval '{approval.title}' reached its deadline before the platform had "
+                f"reached the chairman about it, so it waits until "
+                f"{approval.expires_at:%Y-%m-%d %H:%M} UTC. If he has still not seen it "
+                "then, it is declined. Keep planning as if the answer is no.")
+            continue
+        if not reach["ok"]:
+            approval.status = ApprovalStatus.EXPIRED
+            approval.decision_note = (
+                "expired unseen: it never reached anyone who could decide it, so it is "
+                "declined whatever this project's rule says about silence")
+            approval.decided_at = now
+            session.add(AuditLog(
+                id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:needs_you",
+                action="needs_you.unreached", entity="approval", entity_id=approval.id,
+                detail={"title": approval.title}))
+            chairman_notify(
+                session, project, f"declined without reaching you: {approval.title}",
+                f"'{approval.title}' ran out of time, extension included, and nothing shows "
+                "it ever reached you or a co-chair. It is declined — the safe answer, "
+                "whatever your rules say about silence. If you wanted it, tell the CEO in "
+                "chat and it will ask again."
+                + project_link(project.id, "activity/decisions", "See the decision"),
+                kind="approval_expired", data={"approval": approval_row(approval)},
+                attention=Attention.FYI,
+            )
+            _notice_agent(
+                session, project, approval.requested_by_agent_id, NoticeKind.APPROVAL_EXPIRED,
+                f"Approval '{approval.title}' expired without ever reaching the chairman and "
+                "is DENIED. Re-plan without it; ask again once he is reachable.")
+            expired += 1
+            continue
         if approve_on_timeout:
             approval.status = ApprovalStatus.APPROVED
             approval.decision_note = (
@@ -2286,7 +2350,7 @@ def nag_asks(session: Session, project: Project, cons: ConstitutionDoc) -> int:
             f"{chairman_time(ask.answer_by, cons.timezone)}. "
             f"If you say nothing, your CEO will: {ask.default_action}"
             + inbox_link(ask.id, "Answer it"),
-            attention=Attention.ACTION,
+            attention=Attention.ACTION, item_key=ask.id,
         )
         ask.nag_sent_at = now
         nagged += 1
@@ -2309,12 +2373,35 @@ def expire_asks(session: Session, project: Project) -> int:
                           Ask.status == AskStatus.OPEN,
                           Ask.answer_by <= now)
     ).scalars():
+        # The same rule as an approval's: the default is taken on his behalf
+        # only once he could have known. Unseen, it waits one more day.
+        reach = needs_you.reach_state(session, project, ask.id, ask.created_at, ask.answer_by)
+        if not reach["ok"] and not reach["extended"]:
+            ask.answer_by = now + needs_you.EXTENSION
+            needs_you.extend(session, project, ask.id, ask.title, ask.answer_by,
+                             effective(session, project.id))
+            _notice_agent(
+                session, project, ask.asked_by_agent_id, NoticeKind.DECISION_EXTENDED,
+                f"Your question '{ask.title}' reached its window before the platform had "
+                f"reached the chairman about it, so it waits until "
+                f"{ask.answer_by:%Y-%m-%d %H:%M} UTC. If he has still not seen it then, "
+                "do what you said you would.")
+            continue
+        unseen = "" if reach["ok"] else (
+            " Nothing shows the question ever reached him, extension included — say so "
+            "when you report what you did.")
+        if not reach["ok"]:
+            session.add(AuditLog(
+                id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:needs_you",
+                action="needs_you.unreached", entity="ask", entity_id=ask.id,
+                detail={"title": ask.title}))
         ask.status = AskStatus.LAPSED
         ask.lapsed_at = now
         _notice_agent(
             session, project, ask.asked_by_agent_id, NoticeKind.ASK_LAPSED,
             f"Your question '{ask.title}' reached {ask.answer_by:%Y-%m-%d %H:%M} UTC with "
-            f"no answer from the chairman. What you said you would do: {ask.default_action}\n\n"
+            f"no answer from the chairman.{unseen} What you said you would do: "
+            f"{ask.default_action}\n\n"
             "Do that now — it is what he was told would happen, so doing something else "
             "without telling him is worse than never having asked. Then post what you did "
             "in the boardroom (the cadence does not hold this) and close the ask citing "
@@ -3061,7 +3148,7 @@ def nag_awaiting_chairman(
                   "start. Open the Roadmap to accept, reword, or decline."
                 + ("" if not ever else "\n\nThis is a repeat — they are still waiting.")
                 + inbox_link(scope_item(project.id), "Open it"),
-                attention=Attention.ACTION,
+                attention=Attention.ACTION, item_key=scope_item(project.id),
             )
             log.info("nagged chairman on %d proposed requirement(s) (%s)",
                      len(proposed), project.slug)
@@ -3090,7 +3177,7 @@ def nag_awaiting_chairman(
                 "sign it, or set your own."
                 + ("" if not ever else "\n\nThis is a repeat — it is still unsigned.")
                 + inbox_link(commitment_item(project.id), "Open it"),
-                attention=Attention.ACTION,
+                attention=Attention.ACTION, item_key=commitment_item(project.id),
             )
             log.info("nagged chairman on an unsigned commitment (%s)", project.slug)
 

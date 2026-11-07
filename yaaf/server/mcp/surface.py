@@ -212,6 +212,12 @@ WITHHELD = {
         "every project.",
     "GET /admin/roles/{slug}": "`catalog` serves what a drafting client needs of it.",
     "POST /admin/crews": "the crew library is shared the same way the role library is.",
+    "POST /admin/projects/{project_id}/needs-you/preview":
+        "the person-held surfaces' preview (a phone, a Slack card). A model client decides "
+        "through its own steer tools, which reach the same verbs behind mcp/confirm.py's "
+        "gate and its own attribution.",
+    "POST /admin/projects/{project_id}/needs-you/commit":
+        "the person-held surfaces' commit, for the same reason as its preview.",
     "GET /admin/projects/{project_id}/accounts":
         "the real-world account registry; nothing reads it yet and it names outside "
         "services, so it waits for a tool that has a reason.",

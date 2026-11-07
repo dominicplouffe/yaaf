@@ -1,5 +1,8 @@
 # UX redesign — research and proposal
 
+> **Later study:** [`decide-anywhere/`](decide-anywhere/README.md) — decisions that reach you
+> wherever you are, and silence that only counts if you were told. Phase A is built.
+
 **Open the mockup:** [`mockup.html`](mockup.html) (download and open it in a browser; it is one
 self-contained file). Press **Design notes** in its top bar to see the reasoning pinned to each
 screen, or open **Why this design** in its sidebar for the summary.

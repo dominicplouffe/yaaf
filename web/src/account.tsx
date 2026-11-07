@@ -9,6 +9,7 @@
 import { useState } from "react";
 import {
   ApiError,
+  DecisionStats,
   del,
   get,
   MintedToken,
@@ -395,6 +396,71 @@ export function SessionsCard() {
         <p>{leaving.current ? "You will need your password to come back."
           : "It needs your password to come back. If you don’t recognise it, change your password too."}</p>
       </ConfirmModal>}
+    </div>
+  );
+}
+
+/** "1h 20m", "3 days" — a wait, said the way you would say it. */
+function fmtWait(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 48 * 60) {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return m ? `${h}h ${m}m` : `${h}h`;
+  }
+  return `${Math.round(minutes / 1440)} days`;
+}
+
+/** Your own numbers as a decider, over the last thirty days. Read from rows on
+    this box and shown only to you: what the projects you decide for asked of
+    you, how long it waited, and what silence decided instead. The last line is
+    the one that should always read zero — a decision that settled itself
+    without ever reaching you or a co-chair. */
+export function DecisionsCard() {
+  const { data, error } = usePoll(() => get<DecisionStats>("/me/decision-stats?days=30"), 300000);
+  if (error) return <div className="card"><div className="error">{error}</div></div>;
+  if (!data) return <div className="card"><p className="help">Loading…</p></div>;
+  if (data.projects === 0) {
+    return (
+      <div className="card">
+        <p className="help" style={{ margin: 0 }}>
+          You don&apos;t chair or co-chair a project yet, so nothing has asked you to decide anything.
+        </p>
+      </div>
+    );
+  }
+  const filed = data.filed.approvals + data.filed.asks;
+  const silent = data.by_silence.approvals + data.by_silence.asks;
+  const rows: [string, React.ReactNode][] = [
+    ["Asked of you", <>{filed} ({data.filed.per_week} a week) — {data.filed.approvals} approval
+      {data.filed.approvals === 1 ? "" : "s"}, {data.filed.asks} question{data.filed.asks === 1 ? "" : "s"}</>],
+    ["Decided by you", <>{data.decided_by_you}{data.median_minutes_to_decide !== null
+      && <> · usually within {fmtWait(data.median_minutes_to_decide)}</>}</>],
+    ["Decided by silence", <>{silent}{silent > 0 && <> — the project&apos;s default, after you were told</>}</>],
+    ["Waited longer: nobody reached", <>{data.extended_unreached}</>],
+    ["Settled without reaching you", data.resolved_unreached === 0
+      ? <Badge tone="good">0</Badge> : <Badge tone="warn">{data.resolved_unreached}</Badge>],
+  ];
+  return (
+    <div className="card">
+      <p className="help" style={{ marginTop: 0 }}>
+        The last {data.days} days, across the {data.projects} project{data.projects === 1 ? "" : "s"} you
+        decide for. Worked out on this box from its own records; nothing here is sent anywhere.
+      </p>
+      <Why>
+        A decision may settle itself by silence only once it has reached you or a co-chair — a notice
+        that left for your mail or webhook, or your Inbox showing it. One that reached nobody waits a
+        day longer and raises an alarm; if it still reaches nobody, it settles the safe way: an
+        approval is declined, a question takes the CEO&apos;s stated default. The last line counts those,
+        and should stay at zero.
+      </Why>
+      <table>
+        <tbody>
+          {rows.map(([k, v]) => (
+            <tr key={k}><th scope="row" style={{ textAlign: "left", fontWeight: 500 }}>{k}</th><td>{v}</td></tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

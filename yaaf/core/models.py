@@ -567,6 +567,11 @@ class NoticeKind(enum.StrEnum):
     # decision announced after the moment it was supposed to be taken — and on
     # a project whose board emptied while it waited, there is no next anything.
     ASK_LAPSED = "ask_lapsed"
+    # Something the agent filed reached its deadline before the platform had
+    # reached anyone who could decide it, so the clock was given its one
+    # extension (yaaf.server.needs_you). Not urgent: nothing changed except
+    # how long it waits.
+    DECISION_EXTENDED = "decision_extended"
 
 
 # ── people & projects ───────────────────────────────────────────────────────────
@@ -2135,6 +2140,64 @@ class Snooze(Base):
     #: The Inbox row's key: an approval or ask id, or a row the desk derives.
     item_key: Mapped[str] = mapped_column(String(120))
     until: Mapped[datetime] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ReachReceipt(Base):
+    """A decision reached a person who could decide it.
+
+    Silence is a decision in this system — an approval denies (or, by a
+    project's own rule, approves) itself; a question takes the CEO's default; a
+    finished delivery closes itself — and that is only fair to somebody who was
+    told. A clock may decide on a person's behalf only once one of these exists
+    for its item, early enough to act on (`yaaf.server.needs_you.reached`).
+
+    *delivered*: a notice about the item was dispatched to a channel the
+    install has configured (`email`, `webhook`). Dispatch, not a read receipt:
+    the strongest thing a self-hosted box can know without one.
+    *seen*: the item was in a list a decider loaded (`dashboard`, `mcp`, `cli`).
+    *extended*: the platform moved the item's clock because nobody had been
+    reached — recorded here so it happens once.
+
+    Never a decision, and never read as one.
+    """
+
+    __tablename__ = "reach_receipts"
+    __table_args__ = (Index("ix_reach_receipts_project_item", "project_id", "item_key"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    #: The Inbox key (yaaf.server.needs_you): an approval or ask id, or a row
+    #: the platform derives such as `<project>-signoff`.
+    item_key: Mapped[str] = mapped_column(String(120))
+    #: Null only on `extended`, which is the platform's, not a person's.
+    user_id: Mapped[str | None] = mapped_column(String(40))
+    kind: Mapped[str] = mapped_column(String(16))  # delivered | seen | extended
+    channel: Mapped[str] = mapped_column(String(24))
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class CommitTicket(Base):
+    """A decision a person previewed and may now commit, once.
+
+    The off-dashboard twin of `McpConfirmation`: nothing irreversible happens
+    in one step, from any surface. The fingerprint binds the ticket to the
+    item, the option, the note and the item's content when previewed, so a
+    ticket for "approve $199" cannot be spent on a request that has since
+    changed, nor on a different option.
+    """
+
+    __tablename__ = "commit_tickets"
+    __table_args__ = (Index("ix_commit_tickets_token", "token_hash", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(40))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    item_key: Mapped[str] = mapped_column(String(120))
+    token_hash: Mapped[str] = mapped_column(String(64))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

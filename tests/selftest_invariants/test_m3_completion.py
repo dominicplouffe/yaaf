@@ -5,7 +5,14 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
+from tests.conftest import (
+    ADMIN,
+    agent_by_name,
+    bearer,
+    live_token,
+    make_project,
+    told_the_chairman,
+)
 from yaaf.core import ids
 from yaaf.core.db import db_session
 from yaaf.core.models import (
@@ -117,6 +124,7 @@ def test_approval_timeout_honors_constitution_decision(client):
     ).json()
     with db_session() as session:
         session.get(Approval, approval["id"]).expires_at = utcnow() - timedelta(minutes=1)
+    told_the_chairman(project["id"])
     with db_session() as session:
         janitor_once(session)
     with db_session() as session:

@@ -130,6 +130,19 @@ export interface MintedToken extends PersonalToken {
   token: string;
 }
 
+/** GET /me/decision-stats — your own numbers as a decider, from rows on this
+    box (yaaf/server/needs_you.py `stats`). */
+export interface DecisionStats {
+  days: number;
+  projects: number;
+  filed: { approvals: number; asks: number; per_week: number };
+  decided_by_you: number;
+  median_minutes_to_decide: number | null;
+  by_silence: { approvals: number; asks: number };
+  extended_unreached: number;
+  resolved_unreached: number;
+}
+
 export interface SignedInSession {
   id: string;
   user_agent: string | null;
@@ -1036,6 +1049,39 @@ export interface DeskBet {
   blocked_tasks?: number;
 }
 
+/** One decision waiting on a person — the same object every surface renders
+    (yaaf/server/needs_you.py). Keys are the Inbox's keys. */
+export interface NeedsYouItem {
+  schema: string;
+  key: string;
+  project: { id: string; slug: string; name: string };
+  family: "approval" | "ask" | "scope" | "commitment" | "verdict" | "signoff" | "bet" | "frozen";
+  kind: string;
+  label: string;
+  tier: 1 | 2;
+  headline: string;
+  summary: string;
+  case: string | null;
+  recommendation: string | null;
+  amount_usd: number | null;
+  filed_at: string | null;
+  /** When silence decides; null where nothing decides itself. */
+  deadline: string | null;
+  silence: string;
+  undo: string | null;
+  options: { id: string; label: string; consequence: string; style: string;
+    irreversible: boolean; needs_note: boolean }[];
+  commit: boolean;
+  path: string;
+  path_label: string;
+  open: string;
+  version: string;
+  /** Whether silence may count yet: it reached a decider early enough. */
+  reached: { ok: boolean; first_at: string | null; extended: boolean };
+  /** /observe/needs-you only: whether the reader may decide it. */
+  decider?: boolean;
+}
+
 export interface DeskProject {
   id: string;
   slug: string;
@@ -1080,6 +1126,9 @@ export interface DeskProject {
       it does then. Beside the approvals rather than in `awaiting_you`: both
       are clocked things you answer, and neither is gated on the dial. */
   pending_asks: DeskAsk[];
+  /** Every decision waiting on a person, as the server's one object
+      (yaaf.needs_you/1). The Inbox draws its "needs you" rows from these. */
+  needs_you_items?: NeedsYouItem[];
   /** Everything in scope is true and only your Complete is left. A decision
       like any other: Complete, reopen, or let it close itself at `closes_at`. */
   pending_signoff: { met: number; closes_at: string | null } | null;

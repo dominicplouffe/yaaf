@@ -15,6 +15,7 @@ him.
 
 from __future__ import annotations
 
+import inspect
 import pathlib
 from datetime import timedelta
 
@@ -45,7 +46,7 @@ class _Sent:
         self.mail: list[dict] = []
 
     def __call__(self, session, project, subject, body, *, attention,
-                 kind=None, data=None):  # noqa: ARG002
+                 kind=None, data=None, item_key=None):  # noqa: ARG002
         self.mail.append({"subject": subject, "body": body})
 
     def about(self, words: str) -> str:
@@ -72,20 +73,37 @@ def _tick() -> None:
 # ── the keys are the Inbox's own ────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(("built_there", "built_here"), [
-    ("`${p.id}-signoff`", notify.signoff_item("PID")),
-    ("`${p.id}-plan`", notify.scope_item("PID")),
-    ("`${p.id}-commitment`", notify.commitment_item("PID")),
-    ("`${p.id}-verdict-${v.key}`", notify.verdict_item("PID", "R-01")),
+@pytest.mark.parametrize(("helper", "spelled"), [
+    ("signoff_item", "PID-signoff"),
+    ("scope_item", "PID-plan"),
+    ("commitment_item", "PID-commitment"),
+    ("frozen_item", "PID-frozen"),
 ])
-def test_a_link_names_the_row_the_way_the_inbox_names_it(built_there, built_here):
+def test_a_link_names_the_row_the_way_the_inbox_names_it(helper, spelled):
     """The Inbox selects `?item=` by exact match and falls back to its first
     row, so a key spelled differently here does not fail — it quietly opens
-    some other decision. Held against the file that builds them."""
-    assert built_there in DESK_TSX.read_text(), (
-        f"the Inbox no longer builds {built_there}; change notify's spelling with it")
-    assert built_there.strip("`").replace("${p.id}", "PID").replace("${v.key}", "R-01") \
-        == built_here
+    some other decision.
+
+    The Inbox used to build these keys itself, in desk.tsx, and this test held
+    its spelling against notify's. It now draws every decision row from the
+    server's own items, whose keys *are* notify's helpers — so the same
+    property is held where the spelling now lives: the producer builds each key
+    with the helper, and the Inbox takes the server's key verbatim."""
+    from yaaf.server import needs_you
+
+    built_here = getattr(notify, helper)("PID")
+    assert built_here == spelled
+    assert f"key={helper}(pid)" in inspect.getsource(needs_you.items), (
+        f"the producer no longer names this row with notify.{helper}")
+    source = DESK_TSX.read_text()
+    assert "key: it.key" in source, "the Inbox no longer takes the server's key verbatim"
+
+
+def test_a_verdict_row_is_named_by_its_requirement_the_same_way():
+    from yaaf.server import needs_you
+
+    assert notify.verdict_item("PID", "R-01") == "PID-verdict-R-01"
+    assert "key=verdict_item(pid, r.key)" in inspect.getsource(needs_you.items)
 
 
 def test_a_link_opens_the_dashboard_and_decides_nothing(origin):

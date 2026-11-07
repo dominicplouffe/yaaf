@@ -67,6 +67,8 @@ SETUP_LINK = "usetup"  # a single-use link that sets a password
 HEADS_UP = "hdup"  # something the chairman asked to be told
 SNOOZE = "snoz"  # one person's "not now" on one Inbox row
 CHAIRMAN_NOTE = "cnot"  # his note on a decision, held until the CEO answers it
+REACH_RECEIPT = "rch"  # a decision reached a person: delivered to them, or seen by them
+COMMIT_TICKET = "ctk"  # a previewed decision, committable once
 
 
 def new_id(prefix: str) -> str:

@@ -18,7 +18,14 @@ from base64 import b64encode
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
+from tests.conftest import (
+    ADMIN,
+    agent_by_name,
+    bearer,
+    live_token,
+    make_project,
+    told_the_chairman,
+)
 from tests.selftest_invariants.test_requirements import (
     accept,
     ceo_token,
@@ -185,6 +192,7 @@ def test_an_approval_that_timed_out_is_reported_as_having_decided_itself(client)
     with db_session() as session:
         approval = session.get(Approval, filed.json()["id"])
         approval.expires_at = utcnow() - timedelta(minutes=1)
+    told_the_chairman(project["id"])
 
     from yaaf.core.constitution import effective
     from yaaf.server import janitor
@@ -222,6 +230,7 @@ def test_a_question_that_ran_out_of_time_is_named_here_too(client):
 
     with db_session() as session:
         session.get(Ask, asked.json()["ask_id"]).answer_by = utcnow() - timedelta(minutes=1)
+    told_the_chairman(project["id"])
     with db_session() as session:
         janitor.expire_asks(session, session.get(Project, project["id"]))
 

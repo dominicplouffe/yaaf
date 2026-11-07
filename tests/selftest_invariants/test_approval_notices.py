@@ -23,7 +23,7 @@ import pathlib
 
 import pytest
 
-from tests.conftest import ADMIN, bearer, live_token, make_project
+from tests.conftest import ADMIN, bearer, live_token, make_project, told_the_chairman
 from yaaf.server import notify
 
 
@@ -158,6 +158,7 @@ def test_when_silence_decides_the_notice_says_which_way_and_what_now(client, wir
     filed = _file(client, project)
     with db_session() as session:
         session.get(Approval, filed["id"]).expires_at = utcnow() - timedelta(minutes=1)
+    told_the_chairman(project["id"])
     with db_session() as session:
         row = session.get(Project, project["id"])
         janitor.expire_approvals(session, row, effective(session, row.id))

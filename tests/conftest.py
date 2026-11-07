@@ -25,7 +25,7 @@ os.environ.setdefault("YAAF_MASTER_KEY", "kkP1p6Rt0DZ2rWv1w5Zq3o8y6bT4uY9cQ1eS7g
 os.environ.setdefault("YAAF_WORKSPACES_ROOT", tempfile.mkdtemp(prefix="yaaf-test-ws-"))
 os.environ.setdefault("YAAF_ARTIFACTS_ROOT", tempfile.mkdtemp(prefix="yaaf-test-art-"))
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -348,6 +348,32 @@ def agent_by_name(project: dict, name: str) -> str:
             if agent["name"] == name:
                 return agent["id"]
     raise KeyError(name)
+
+
+#: Before any deadline a test can write: a test that winds a clock backwards
+#: still finds the chairman told before it.
+LONG_AGO = datetime(2000, 1, 1, tzinfo=UTC)
+
+
+def told_the_chairman(project_id: str) -> None:
+    """Everything now waiting on this project reached its chairman, long ago.
+
+    Silence decides only for a person who was told in time
+    (yaaf.server.needs_you). A test that writes a deadline backwards to watch
+    silence decide is testing what silence does once he *was* told, and this
+    is that sentence as setup. The other case — nobody told — is
+    test_silence_needs_reach.py's.
+    """
+    from yaaf.core import ids
+    from yaaf.core.models import ReachReceipt
+    from yaaf.server import needs_you
+
+    with db_session() as session:
+        project = session.get(Project, project_id)
+        for item in needs_you.items(session, project):
+            session.add(ReachReceipt(id=ids.new_id(ids.REACH_RECEIPT), project_id=project_id,
+                                     item_key=item["key"], user_id=project.chairman_user_id,
+                                     kind=needs_you.SEEN, channel="dashboard", at=LONG_AGO))
 
 
 def live_token(project_id: str, agent_id: str, kind: str = "agent_run") -> tuple[str, str]:

@@ -185,3 +185,16 @@ def set_pins(body: PinsIn, person: Person = Depends(signed_in),
     user = session.get(User, person.id)
     user.pins = kept
     return _pins_view(session, person, user)
+
+
+@router.get("/decision-stats", dependencies=[authority.SIGNED_IN])
+def decision_stats(days: int = 30, person: Person = Depends(signed_in),
+                   session: Session = Depends(db)) -> dict:
+    """Your own numbers as a decider: what was filed, how long it waited for
+    you, what silence decided, and what never reached you. Read from rows on
+    this box; nothing about it leaves it."""
+    from yaaf.server import needs_you
+
+    if not 1 <= days <= 365:
+        raise HTTPException(status_code=422, detail="days is between 1 and 365")
+    return needs_you.stats(session, person.id, person.is_admin, days)

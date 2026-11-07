@@ -239,144 +239,48 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
   const now = Date.now();
   const to = `/projects/${p.id}`;
 
-  // ── tier 1: stopped, and only the chairman restarts it ──────────────────
-  for (const bet of p.expired_bets) {
-    items.push({
-      key: bet.id, type: "bet", tier: 1, at: 0, yours: true, project: p, kind: "Bet expired",
-      title: `A bet hit its kill date: “${clip(bet.statement, 80)}”`,
-      what: (
-        <>
-          “{clip(bet.statement, 160)}” hit its kill date {fmtWhenShort(bet.kill_date)}
-          {(bet.blocked_tasks ?? 0) > 0 && (
-            <>, and <b>{bet.blocked_tasks} task(s) are blocked</b> behind it</>
-          )}.
-        </>
-      ),
-      consequence: "The CEO pivots. You hold the one extension.",
-      to: `${to}/details/tasks`, toLabel: "Decide on the Tasks page",
-    });
-  }
-  if (p.frozen_threads > 0) {
-    items.push({
-      key: `${p.id}-frozen`, type: "frozen", tier: 1, at: 0, yours: true, project: p,
-      kind: "Thread frozen",
-      title: `${p.frozen_threads} conversation${p.frozen_threads === 1 ? " was" : "s were"} frozen — two agents were looping`,
-      what: (
-        <>
-          The pair breaker froze <b>{p.frozen_threads} thread(s)</b>: two agents were talking in
-          a loop.
-        </>
-      ),
-      consequence: "Those agents stay stuck until you unfreeze the thread.",
-      to: `${to}/details/activity/messages`, toLabel: "Review the thread",
-    });
-  }
-
-  // The dial's own three. Each list is server-side empty where the CEO holds
-  // that switch, so an autonomous project reaches none of this.
-  const w = p.awaiting_you;
-  for (const v of w.verdicts) {
-    items.push({
-      key: `${p.id}-verdict-${v.key}`, type: "verdict", tier: 1, at: 0, yours: true, project: p,
-      kind: "Your verdict",
-      title: `Is this done? “${clip(v.name, 80)}”`,
-      what: (
-        <>
-          <b>{clip(v.name, 80)}</b> has no work left open, and whether it is done is something
-          no script can check{v.name !== v.statement
-            ? <>. What has to be true: “{clip(v.statement, 200)}”</>
-            : "."}
-        </>
-      ),
-      consequence: "It stays open. Nobody on the project can mark it met.",
-      to: `${to}/details/roadmap`, toLabel: "Judge it on the Roadmap",
-    });
-  }
-  if (w.plan > 0) {
-    items.push({
-      key: `${p.id}-plan`, type: "scope", tier: 1, at: 0, yours: true, project: p,
-      kind: "Proposed scope",
-      title: `The CEO proposed ${w.plan} requirement${w.plan === 1 ? "" : "s"} for you to accept`,
-      what: (
-        <>
-          The CEO proposed <b>{w.plan} requirement{w.plan === 1 ? "" : "s"}</b> — what “done”
-          should mean — and is waiting on you.
-        </>
-      ),
-      consequence: "Proposed scope is not scope: no work can be built against it.",
-      to: `${to}/details/roadmap`, toLabel: "Reword or cut on the Roadmap",
-      actions: <ScopeAccept project={p} onDone={reload} compact />,
-    });
-  }
-  if (w.commitment) {
-    items.push({
-      key: `${p.id}-commitment`, type: "commitment", tier: 2, at: NEVER - 1, yours: true,
-      project: p, kind: "Sign the date",
-      title: `Sign a delivery date: ${w.commitment.scope_count} requirement${w.commitment.scope_count === 1 ? "" : "s"} by ${fmtWhenShort(w.commitment.deliver_by)}`,
-      what: (
-        <>
-          The CEO proposes delivering <b>{w.commitment.scope_count} requirement
-          {w.commitment.scope_count === 1 ? "" : "s"}</b> by{" "}
-          <b>{fmtWhenShort(w.commitment.deliver_by)}</b>.
-        </>
-      ),
-      consequence: "The project keeps working, but it is promising nothing until you sign.",
-      to: `${to}/details/roadmap`, toLabel: "Sign or move it on the Roadmap",
-    });
+  // ── the decisions: the server's items, drawn ──────────────────────────
+  // Every row that is yours comes from `needs_you_items` (yaaf/server/
+  // needs_you.py), the one object every surface renders — an email, a push, a
+  // Slack card read the same item. Built here, they were a second spelling of
+  // the same facts with their own words, and a test existed only to keep the
+  // two spellings in step. What stays here is the verb each row offers on the
+  // dashboard, which is this page's business and nobody else's.
+  // The dial decides what is even on this list: where the CEO holds a switch
+  // the server produces nothing for it, so an autonomous project reaches none.
+  for (const it of p.needs_you_items ?? []) {
+    const due = it.deadline ? new Date(it.deadline).getTime() : null;
+    // Unclocked rows keep their place at the end of their tier: a finished
+    // delivery waiting on Complete before a date waiting on a signature.
+    const at = due ?? (it.tier === 1 ? 0 : it.family === "signoff" ? NEVER - 2 : NEVER - 1);
+    const extended = it.reached.extended
+      ? " It was given an extra day because nothing showed it had reached you."
+      : "";
+    const row: Item = {
+      key: it.key, type: it.family, tier: it.tier, at, clocked: due !== null, yours: true,
+      project: p, kind: it.label, title: it.headline, what: <>{it.summary}</>,
+      consequence: it.silence + extended, to: it.path, toLabel: it.path_label,
+    };
+    if (it.family === "scope") row.actions = <ScopeAccept project={p} onDone={reload} compact />;
+    if (it.family === "signoff") row.actions = <CompleteButtons projectId={p.id} onDone={reload} />;
+    if (it.family === "approval") {
+      const a = p.pending_approvals.find((x) => x.id === it.key);
+      if (a) {
+        Object.assign(row, { approvalId: a.id, amountUsd: a.amount_usd, approval: a });
+        row.actions = <DecideButtons approval={a} onDone={reload} />;
+      }
+    }
+    if (it.family === "ask") {
+      const ask = p.pending_asks.find((x) => x.id === it.key);
+      if (ask) {
+        row.ask = { id: ask.id, body: ask.body, defaultAction: ask.default_action,
+          options: ask.options ?? [], recommendation: ask.recommendation ?? null };
+      }
+    }
+    items.push(row);
   }
 
-  // ── tier 2: it resolves without you, at a time we can name ────────────
-  // A finished delivery is a decision with a default, like an approval: it was
-  // announced by email and in the boardroom and was in no "needs you" list, so
-  // every screen said nothing was waiting while it counted down to closing.
-  const so = p.pending_signoff;
-  if (so) {
-    const closes = so.closes_at ? new Date(so.closes_at).getTime() : null;
-    items.push({
-      key: `${p.id}-signoff`, type: "signoff", tier: 2, at: closes ?? NEVER - 2,
-      clocked: closes !== null, yours: true, project: p, kind: "Sign off",
-      title: `Finished: ${so.met} requirement${so.met === 1 ? "" : "s"} true — sign it off`,
-      what: (
-        <>
-          Everything in scope is true (<b>{so.met}</b>). Completing writes the receipt and
-          closes the project.
-        </>
-      ),
-      consequence: closes !== null
-        ? `It completes itself ${fmtSoon(so.closes_at!)} unless its scope moves. You can reopen it for 14 days.`
-        : "It waits, spending nothing, until you complete or reopen it.",
-      to: `${to}/results`, toLabel: "See what was delivered",
-      actions: <CompleteButtons projectId={p.id} onDone={reload} />,
-    });
-  }
-  for (const a of p.pending_approvals) {
-    items.push({
-      key: a.id, type: "approval", tier: 2, at: new Date(a.expires_at).getTime(), clocked: true,
-      yours: true, project: p,
-      kind: a.kind === "assist" ? "For you to do" : `Decision · ${a.kind.replaceAll("_", " ")}`,
-      title: a.title, approvalId: a.id, amountUsd: a.amount_usd, approval: a,
-      // The amount once: titles usually carry it already, and the card's chips
-      // state it again where the decision is made.
-      what: <>{a.title}</>,
-      consequence: `It is ${a.if_silent ?? "declined"} ${fmtSoon(a.expires_at)}. Silence is a decision here.`,
-      to: `${to}/details/activity/decisions`, toLabel: "Read the full request",
-      actions: <DecideButtons approval={a} onDone={reload} />,
-    });
-  }
-  for (const ask of p.pending_asks) {
-    items.push({
-      key: ask.id, type: "ask", tier: 2, at: new Date(ask.answer_by).getTime(), clocked: true,
-      yours: true, project: p, kind: "Question",
-      title: ask.title,
-      ask: { id: ask.id, body: ask.body, defaultAction: ask.default_action,
-        options: ask.options ?? [], recommendation: ask.recommendation ?? null },
-      what: <>{ask.title}</>,
-      consequence: `It stops waiting ${fmtSoon(ask.answer_by)}, then: ${clip(ask.default_action, 160)}`,
-      // With options it is answered with one click, in the Inbox.
-      to: ask.options?.length ? `/inbox?item=${encodeURIComponent(ask.id)}` : `${to}/chat`,
-      toLabel: ask.options?.length ? "Answer" : "Answer in the chat",
-    });
-  }
+  // ── watching: nobody's lever but the CEO's ─────────────────────────────
   for (const bet of p.kill_dates_soon) {
     items.push({
       key: bet.id, type: "kill", tier: 2, at: new Date(bet.kill_date).getTime(), clocked: true,

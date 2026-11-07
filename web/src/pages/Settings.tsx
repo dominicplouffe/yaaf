@@ -20,7 +20,7 @@
 
 import { useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
-import { PasswordCard, SessionsCard, TokensCard } from "../account";
+import { DecisionsCard, PasswordCard, SessionsCard, TokensCard } from "../account";
 import { ModelPrices } from "../llmCredentials";
 import { useMe } from "../me";
 import { People } from "../people";
@@ -110,12 +110,14 @@ export default function Settings() {
 
 function AccountSection() {
   return <>
-    <SectionHead title="Account" lede="Your password, the tokens your scripts use, and where you are signed in." />
+    <SectionHead title="Account" lede="Your password, the tokens your scripts use, where you are signed in, and how deciding is going." />
     <h3 className="set-group-h">Password</h3>
     <PasswordCard />
     <h3 className="set-group-h" style={{ marginTop: "var(--s6)" }}>Personal tokens</h3>
     <TokensCard />
     <h3 className="set-group-h" style={{ marginTop: "var(--s6)" }}>Where you are signed in</h3>
     <SessionsCard />
+    <h3 className="set-group-h" style={{ marginTop: "var(--s6)" }}>Your decisions</h3>
+    <DecisionsCard />
   </>;
 }

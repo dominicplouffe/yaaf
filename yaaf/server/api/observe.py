@@ -83,6 +83,7 @@ from yaaf.server import (
     briefing,
     file_index,
     metrics,
+    needs_you,
     policy,
     spend_rollup,
     typing_state,
@@ -265,6 +266,7 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
                and (only is None or p.id == only)]
 
     projects_out: list[dict] = []
+    seen_by: dict[str, tuple[Project, list[str]]] = {}
     for project in listing:
         cons = effective(session, project.id)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -375,6 +377,12 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
         awaiting = policy.awaiting_chairman(session, project, cons)
         signoff = policy.signoff_waiting(session, project, cons)
         commitment = policy.live_commitment(session, project.id)
+        # The decisions themselves, as the one object every surface renders
+        # (yaaf.server.needs_you). The Inbox draws its "needs you" rows from
+        # these rather than reassembling them from the members below.
+        waiting_items = needs_you.items(session, project, cons, awaiting=awaiting,
+                                        signoff=signoff)
+        seen_by[project.id] = (project, [i["key"] for i in waiting_items])
         projects_out.append({
             "id": project.id, "slug": project.slug, "name": project.name,
             "status": project.status, "status_reason": project.status_reason,
@@ -425,6 +433,7 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             "ceo_judgment": policy.ceo_judgment(session, project.id),
             "pending_approvals": pending,
             "pending_asks": pending_asks,
+            "needs_you_items": waiting_items,
             # The finished delivery, as the decision it is: Complete, reopen, or
             # let it close itself at `closes_at`.
             "pending_signoff": signoff,
@@ -473,8 +482,48 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
     reader = person if isinstance(person, Person) else authority.acting_person(session)
     snoozed = (me_api.active(session, reader.id, {p.id for p in listing})
                if reader is not None else [])
+    # On a decider's screen is a way of having been told: silence may now count
+    # for these items (needs_you.reached). An observer's read records nothing.
+    if reader is not None:
+        for project, keys in seen_by.values():
+            needs_you.record_seen(session, reader.id, project, keys)
     return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out,
             "snoozed": snoozed}
+
+
+@router.get("/needs-you", dependencies=[authority.SIGNED_IN])
+def needs_you_list(project_id: str | None = None, session: Session = Depends(db),
+                   person: Person = Depends(person_auth)) -> dict:
+    """Every decision waiting on this person, as `yaaf.needs_you/1` items:
+    across the running projects they may open, or one project of any status.
+
+    The listing a non-dashboard surface renders — a push, a Slack card, an
+    email with buttons — so it says, per project, whether the reader can
+    decide (`decider`); an observer reads the same items and commits none.
+    """
+    reader = person if isinstance(person, Person) else authority.acting_person(session)
+    reachable = _reachable(session, person)
+    if project_id is not None:
+        listing = [p for p in reachable if p.id == project_id]
+        if not listing:
+            raise HTTPException(status_code=404, detail="unknown project")
+    else:
+        listing = [p for p in reachable if p.status == ProjectStatus.RUNNING]
+    out: list[dict] = []
+    decides: dict[str, bool] = {}
+    for project in listing:
+        rows = needs_you.items(session, project)
+        decides[project.id] = (reader is not None
+                               and reader.id in needs_you.deciders(session, project))
+        for row in rows:
+            row["decider"] = decides[project.id]
+        out.extend(rows)
+        if reader is not None:
+            needs_you.record_seen(session, reader.id, project, [r["key"] for r in rows])
+    never = "9999-12-31T00:00:00+00:00"
+    out.sort(key=lambda i: (i["tier"], i["deadline"] or never))
+    return {"schema": needs_you.SCHEMA, "as_of": utcnow().isoformat(), "items": out,
+            "total": len(out)}
 
 
 def _path_and_next(session: Session, project: Project, hyps: list, aware,
