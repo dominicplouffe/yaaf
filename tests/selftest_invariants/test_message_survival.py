@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
+
 from tests.conftest import ADMIN, ceo_read_the_boardroom, live_token, make_project
 from yaaf.core.db import db_session
 from yaaf.core.models import Agent, Project, Run, RunQueue, RunStatus, utcnow
@@ -177,16 +179,30 @@ def test_a_wake_given_up_before_any_model_acted_leaves_its_mail_unread(client):
                    for r in wake.trigger["reasons"]), "and it wakes her again for it"
 
 
-def test_mail_a_model_read_stays_read_when_the_wake_is_given_up(client):
-    """Give back only a read nobody made. An attempt that got as far as a
-    model — it left a trace — was shown the mail; putting it back would have
-    every failure after a model acted replay the chairman's words."""
+@pytest.mark.parametrize("left", [{"tokens_in": 900}, {"produced": 1}],
+                         ids=["a model was billed for it", "it wrote something"])
+def test_mail_a_model_read_stays_read_when_the_wake_is_given_up(client, left):
+    """Give back only a read nobody made. An attempt a model was billed for
+    was shown the mail, and one that wrote something acted on it; putting the
+    mail back would have every failure after that replay the chairman's words."""
+    project = make_project(client)
+    ceo_read_the_boardroom(project["id"])
+    _say(client, project, "are you there?")
+    _given_up(project, **left)
+
+    assert _unread_for_the_ceo(project) == []
+
+
+def test_a_harness_that_never_got_an_answer_read_nothing(client):
+    """The night after the first: the jail started Python, the harness wrote
+    its trace, and every call to the model's API died at the name lookup. A
+    trace is the harness, not a model — that mail was read by nobody."""
     project = make_project(client)
     ceo_read_the_boardroom(project["id"])
     _say(client, project, "are you there?")
     _given_up(project, trace_path="traces/first-attempt.jsonl")
 
-    assert _unread_for_the_ceo(project) == []
+    assert _unread_for_the_ceo(project) == ["are you there?"]
 
 
 def test_giving_mail_back_never_marks_anything_read(client):

@@ -1129,12 +1129,13 @@ MAX_RUN_ATTEMPTS = 3
 
 
 def _reached_a_model(run: Run) -> bool:
-    """Did anything of this run get past the sandbox's front door? A harness
-    writes its trace as it goes, a model call is metered, and every accepted
-    write counts in `produced` — a run with none of the three died before any
-    model was shown its pack (a sandbox that would not start, a crash at
-    import), and so read nothing."""
-    return bool(run.trace_path or run.produced or run.tokens_in or run.tokens_out)
+    """Did a model read this run's pack, or act on it? Billed tokens say one
+    was sent it; every accepted write counts in `produced`. A trace does not
+    count: a harness that started and never got an answer — a sandbox that
+    could not look up its provider's name — writes one, and no model read a
+    word. Re-showing mail to a wake that wrote nothing cannot make anyone say
+    anything twice; marking it read can make the chairman go unanswered."""
+    return bool(run.produced or run.tokens_in or run.tokens_out)
 
 
 def _retry_failed_run(session: Session, run: Run) -> None:
