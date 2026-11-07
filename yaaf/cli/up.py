@@ -200,9 +200,12 @@ def up(
     env = environment(folder, port, sandbox, bind)
     base = env["YAAF_API"]
 
+    # Migrated, not create_all'd: create_all never adds a column to a table
+    # that exists, so a desktop that updated answered 500 on the first new one
+    # (yaaf.core.schema_upkeep).
     schema = subprocess.run(
-        [sys.executable, "-c", "from yaaf.core.db import engine; from yaaf.core.models "
-         "import Base; Base.metadata.create_all(engine())"],
+        [sys.executable, "-c", "import os; from yaaf.core.schema_upkeep import prepare; "
+         "print(prepare(os.environ['YAAF_DATABASE_URL']))"],
         env=env, capture_output=True, text=True)
     if schema.returncode != 0:
         typer.echo(f"Could not prepare the database at {env['YAAF_DATABASE_URL']}:\n"

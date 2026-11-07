@@ -46,6 +46,7 @@ def box(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("OMARCHY_PATH", str(tmp_path / "omarchy"))
     monkeypatch.setattr(omarchy, "present", lambda: True)
+    monkeypatch.setattr("yaaf.cli.theme.sync_quietly", lambda: True)
     ran: list[tuple] = []
     monkeypatch.setattr(omarchy, "_run", lambda *argv: (ran.append(argv), (True, "ok"))[1])
     return config, ran

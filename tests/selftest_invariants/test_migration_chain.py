@@ -297,3 +297,68 @@ def test_0055_keeps_an_api_key_seat_on_the_cli_it_ran_on(client, monkeypatch):
                          Agent.project_id.in_((on_openai, on_claude)))}
     assert overrides == {(on_openai, "CEO"): "codex_cli", (on_openai, "Ola"): "codex_cli",
                          (on_claude, "CEO"): None, (on_claude, "Cy"): None}
+
+
+# ── a desktop's database, every time `yaaf up` starts (yaaf.core.schema_upkeep) ──
+
+
+def _head() -> str:
+    from alembic.script import ScriptDirectory
+
+    return ScriptDirectory.from_config(_alembic_config("sqlite://")).get_current_head()
+
+
+def _revision(engine) -> str | None:
+    with engine.connect() as connection:
+        return connection.execute(sa.text("select version_num from alembic_version")).scalar()
+
+
+def test_a_desktop_database_starts_life_versioned(scratch_db):
+    """Built by the chain, not by create_all, so the first update after is an
+    ordinary migration instead of the 500 a missing column used to be."""
+    from yaaf.core.schema_upkeep import prepare
+
+    assert prepare(scratch_db) == "created"
+    engine = sa.create_engine(scratch_db)
+    assert _revision(engine) == _head()
+    assert set(_live_schema(engine)) == set(_model_schema())
+
+
+def test_a_create_all_database_is_adopted_with_what_it_lacks_and_keeps_its_rows(scratch_db):
+    """The shape every `yaaf up` install had before: built by create_all, no
+    revision recorded, and missing the newest column. It gains the column, keeps
+    every row, and is versioned from then on — without the data migrations that
+    were written for older shapes running over it."""
+    from yaaf.core.schema_upkeep import prepare
+
+    engine = sa.create_engine(scratch_db)
+    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(sa.text("ALTER TABLE users DROP COLUMN desktop_theme"))
+        connection.execute(sa.text(
+            "INSERT INTO users (id, email, display_name, is_admin, created_at) "
+            "VALUES ('user_1', 'chair@example.com', 'Chair', 1, '2026-11-01 00:00:00')"))
+    engine.dispose()
+
+    assert prepare(scratch_db).startswith("adopted (1 column")
+    engine = sa.create_engine(scratch_db)
+    assert "desktop_theme" in _live_schema(engine)["users"]
+    with engine.connect() as connection:
+        assert connection.execute(sa.text("select email from users")).scalar() == \
+            "chair@example.com"
+    assert _revision(engine) == _head()
+    assert prepare(scratch_db) == "migrated", "adopted once; an ordinary database after"
+
+
+def test_a_required_column_with_no_default_is_not_invented(scratch_db):
+    """Adding NOT NULL with no default means choosing a value for every row
+    that exists. Nobody chose one, so adoption stops and says so."""
+    from yaaf.core import schema_upkeep
+
+    engine = sa.create_engine(scratch_db)
+    table = sa.Table("people", sa.MetaData(), sa.Column("id", sa.Integer, primary_key=True),
+                     sa.Column("must", sa.String, nullable=False))
+    with engine.begin() as connection:
+        connection.execute(sa.text("CREATE TABLE people (id INTEGER PRIMARY KEY)"))
+    with pytest.raises(RuntimeError, match="required and has no default"):
+        schema_upkeep._add(engine, table.c.must)

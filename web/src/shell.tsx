@@ -1,6 +1,6 @@
 import { ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { DeskProject } from "./api";
+import { DeskProject, get } from "./api";
 import { useDesk } from "./desk";
 import { useMe } from "./me";
 import { CommandPalette, Cheatsheet, useShortcuts } from "./palette";
@@ -11,7 +11,7 @@ import { firstName, useProjectFrame } from "./projectCtx";
 import { DETAIL_TABS, PROJECT_PAGES, placeOf, SETTINGS_PAGE } from "./nav";
 import { lastDetailsTab, placeAt, usePins, useRememberPlaces } from "./shortcuts";
 import { Icon, IconName } from "./ui/Icon";
-import { Avatar, Person, ThemeToggle } from "./ui/kit";
+import { Avatar, DesktopTheme, Person, setDesktopTheme, ThemeToggle } from "./ui/kit";
 import { SEAT_LABEL } from "./ui/team";
 
 /** The app's frame: a sidebar you can learn the product from, a top bar that
@@ -323,8 +323,32 @@ function Freshness() {
   );
 }
 
+/** Wear the desktop's theme when it has sent one (`yaaf theme sync`, which an
+    Omarchy theme hook runs on every switch). Read on load, whenever the window
+    comes back into focus — where a theme switch is noticed — and once a
+    minute; a failed read leaves the page as it is. */
+function useDesktopTheme() {
+  useEffect(() => {
+    let alive = true;
+    const read = () => {
+      get<{ theme: DesktopTheme | null }>("/me/desktop-theme")
+        .then((r) => { if (alive) setDesktopTheme(r.theme); })
+        .catch(() => { /* the stylesheet's own theme is a fine answer */ });
+    };
+    read();
+    const every = window.setInterval(read, 60_000);
+    window.addEventListener("focus", read);
+    return () => {
+      alive = false;
+      window.clearInterval(every);
+      window.removeEventListener("focus", read);
+    };
+  }, []);
+}
+
 export function Shell({ children }: { children: ReactNode }) {
   const { me, signOut } = useMe();
+  useDesktopTheme();
   const { data, mine } = useDesk();
   const navigate = useNavigate();
   const location = useLocation();

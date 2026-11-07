@@ -590,6 +590,12 @@ def remove() -> None:
     if manifest.get("omarchy"):
         for line in omarchy.remove():
             typer.echo(f"  {line}")
+        # The theme was the desktop's to give; with the hook gone it would go
+        # stale, so the dashboard goes back to its own.
+        from yaaf.cli import main as cli
+
+        with contextlib.suppress(httpx.HTTPError), cli._client() as client:
+            client.delete("/me/desktop-theme")
     for name in manifest.get("files", {}):
         path = Path(name)
         if not path.exists():

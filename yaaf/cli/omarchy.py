@@ -167,7 +167,21 @@ def plugin_files(yaaf: str) -> dict[Path, str]:
         },
     }
     return {plugin_dir() / "manifest.json": json.dumps(manifest, indent=2) + "\n",
-            plugin_dir() / "Widget.qml": WIDGET_QML}
+            plugin_dir() / "Widget.qml": WIDGET_QML,
+            theme_hook(): theme_hook_script(yaaf)}
+
+
+def theme_hook() -> Path:
+    """A theme-set hook in its drop-in folder: Omarchy runs every file there
+    with bash on each theme switch (bin/omarchy-hook), after the switch."""
+    return config_home() / "omarchy" / "hooks" / "theme-set.d" / "yaaf"
+
+
+def theme_hook_script(yaaf: str) -> str:
+    return ("# Managed by `yaaf desktop install`; `yaaf desktop remove` takes it out.\n"
+            "# The dashboard follows the Omarchy theme: on every switch, tell yaaf.\n"
+            "# Never fails the switch — a yaaf that is down just keeps the last theme.\n"
+            f"{_sh([yaaf, 'theme', 'sync', '--quiet'])} >/dev/null 2>&1 || true\n")
 
 
 def _run(*argv: str) -> tuple[bool, str]:
@@ -366,6 +380,11 @@ def install(yaaf: str, key: str = KEY) -> list[str]:
             said.append(f"✓ {key} opens the desk, floating")
         else:
             said.append(f"! {key}: {bound} — add `{REQUIRE}` to it yourself")
+    from yaaf.cli.theme import sync_quietly
+
+    said.append("✓ the dashboard wears your Omarchy theme, and follows it when it changes"
+                if sync_quietly() else "! the dashboard will follow your Omarchy theme from "
+                "the next theme switch (yaaf did not answer just now)")
     enabled, why = enable_plugin()
     said.append("✓ Omarchy bar: the yaaf number beside the clock, hidden when nothing "
                 "needs you" if enabled else f"! Omarchy bar: plugin written, not enabled ({why})")

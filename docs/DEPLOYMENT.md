@@ -152,8 +152,10 @@ desk in a floating window. Each goes in through the route Omarchy documents
 for a third party — `omarchy plugin enable`, the menu's extension file, a
 `require` in your `bindings.lua` — and nothing is written into Omarchy's own
 folders, so an Omarchy update leaves it alone. The desk follows your Omarchy
-theme on its own, since it draws in the terminal's colors; the dashboard does
-not follow it yet. Omarchy's own tests are the check: the bar plugin passes
+theme on its own, since it draws in the terminal's colors, and the dashboard
+follows it too: a theme-set hook runs `yaaf theme sync` on every switch, and the
+dashboard picks the new theme up when its window next gets focus. Omarchy's own
+tests are the check: the bar plugin passes
 Omarchy's plugin validator and the edited menu parses with Omarchy's menu code
 (`tests/fixtures/omarchy`), and `yaaf desktop remove` puts the menu and
 bindings files back byte for byte.
@@ -224,9 +226,12 @@ is refused and logged, not bound.
   mounts it.
 - **A sleeping laptop runs nothing.** A run in flight when the lid closes can
   miss its lease heartbeat and be reaped as a dead run when the machine wakes.
-- **SQLite upgrades.** `yaaf up` builds the schema with `create_all`, which never
-  changes a table that already exists. Until the migration chain is supported on
-  SQLite, a release that adds a column needs a fresh database or Postgres.
+- **Updating is migrating.** `yaaf up` and `yaaf setup` bring the database to
+  the current release every time they start (`yaaf/core/schema_upkeep.py`): a new
+  one is built by the migration chain, so it is versioned from its first day; one
+  `yaaf up` made before with `create_all` is adopted once — the tables and columns
+  it lacks are added, its rows kept, and it is stamped current. Back up
+  `~/.yaaf/yaaf.db` before an update anyway; it is one file.
 
 `yaaf up` keeps the workspaces and artifacts in its own folder (`~/.yaaf` by
 default) beside the database, in every mode — the server default under

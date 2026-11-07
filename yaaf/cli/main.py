@@ -1691,6 +1691,9 @@ def _register_up() -> None:
     app.command()(letter)
     app.command()(nudge)
     app.add_typer(desktop_app, name="desktop")
+    from yaaf.cli.theme import theme_app
+
+    app.add_typer(theme_app, name="theme")
 
 
 _register_spend()

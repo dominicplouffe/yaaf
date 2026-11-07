@@ -109,11 +109,13 @@ def _account() -> tuple[str, str] | None:
     the CLI in with, or None when the box already has its admin."""
     from yaaf.cli.users import _active_admins, _audit
     from yaaf.core import ids
-    from yaaf.core.db import db_session, engine
-    from yaaf.core.models import Base, User
+    from yaaf.core.config import settings
+    from yaaf.core.db import db_session
+    from yaaf.core.models import User
+    from yaaf.core.schema_upkeep import prepare
     from yaaf.server import identity
 
-    Base.metadata.create_all(engine())
+    prepare(settings().database_url)
     with db_session() as session:
         if _active_admins(session):
             _ok("this box already has its admin")

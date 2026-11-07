@@ -594,6 +594,12 @@ class User(Base):
     #: — so a default changed later reaches everyone who kept it, and an empty
     #: list stays the deliberate "nothing pinned" it was.
     pins: Mapped[list | None] = mapped_column(JSONVariant)
+    #: The colours this person's desktop is themed in, as their desktop last
+    #: sent them (`yaaf theme sync`): {"name", "mode", "colors": {name: #rrggbb}}.
+    #: The dashboard's tokens are worked out from it on every read
+    #: (yaaf.core.desktop_theme), never stored, so a better contrast rule
+    #: reaches everyone without a resync. NULL is no desktop theme.
+    desktop_theme: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
 class UserSession(Base):
