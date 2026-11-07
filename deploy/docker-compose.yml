@@ -48,6 +48,12 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     command: yaaf-server
+    # Every variable in deploy/.env reaches the app. The `environment:` list
+    # below only pins values that must not come from the file (the database
+    # address, the in-stack port) and wins over it.
+    env_file:
+      - path: .env
+        required: false
     environment:
       YAAF_DATABASE_URL: postgresql+psycopg://yaaf:yaaf@db:5432/yaaf
       YAAF_MASTER_KEY: ${YAAF_MASTER_KEY:-}
@@ -91,12 +97,8 @@ services:
       YAAF_SMTP_PASSWORD: ${YAAF_SMTP_PASSWORD:-}
       YAAF_SMTP_FROM: ${YAAF_SMTP_FROM:-}
       YAAF_CHAIRMAN_WEBHOOK_URL: ${YAAF_CHAIRMAN_WEBHOOK_URL:-}
-      # S3 artifact store (optional): start minio with `docker compose --profile s3 up`
-      # and uncomment these on BOTH api and runner. Local files stay the default.
-      # YAAF_ARTIFACT_S3_ENDPOINT: http://minio:9000
-      # YAAF_ARTIFACT_S3_BUCKET: yaaf-artifacts
-      # YAAF_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-yaaf}
-      # YAAF_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-yaaf-minio-dev}
+      # S3 artifact store (optional): set the YAAF_ARTIFACT_S3_* variables in
+      # deploy/.env. env_file gives both api and runner the same values.
     volumes:
       - ${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts:${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts
       # Read-only: the Files view lists and serves agents' work in progress;
@@ -115,6 +117,12 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     command: yaaf-runner
+    # Every variable in deploy/.env reaches the app. The `environment:` list
+    # below only pins values that must not come from the file (the database
+    # address, the in-stack port) and wins over it.
+    env_file:
+      - path: .env
+        required: false
     environment:
       YAAF_DATABASE_URL: postgresql+psycopg://yaaf:yaaf@db:5432/yaaf
       YAAF_API_BASE_URL: http://api:8080
@@ -135,11 +143,6 @@ services:
       YAAF_SMTP_PASSWORD: ${YAAF_SMTP_PASSWORD:-}
       YAAF_SMTP_FROM: ${YAAF_SMTP_FROM:-}
       YAAF_CHAIRMAN_WEBHOOK_URL: ${YAAF_CHAIRMAN_WEBHOOK_URL:-}
-      # S3 artifact store (optional): keep in lockstep with the api service above.
-      # YAAF_ARTIFACT_S3_ENDPOINT: http://minio:9000
-      # YAAF_ARTIFACT_S3_BUCKET: yaaf-artifacts
-      # YAAF_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-yaaf}
-      # YAAF_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-yaaf-minio-dev}
     volumes:
       # The runner launches sibling sandbox containers.
       - /var/run/docker.sock:/var/run/docker.sock
@@ -177,10 +180,16 @@ services:
       - "127.0.0.1:8081:8081"
     depends_on: [api]
 
-  # Optional S3-compatible artifact store. Off by default — plain
-  # `docker compose up` is unchanged; opt in with `docker compose --profile s3 up`
-  # and uncomment the YAAF_ARTIFACT_S3_* lines on api and runner. The bucket is
-  # created by yaaf on first use.
+  # Optional S3-compatible artifact store. Off by default; opt in with
+  # `docker compose --profile s3 up -d` and set, in deploy/.env:
+  #   YAAF_ARTIFACT_S3_ENDPOINT=http://minio:9000
+  #   YAAF_ARTIFACT_S3_ACCESS_KEY=<MINIO_ROOT_USER>
+  #   YAAF_ARTIFACT_S3_SECRET_KEY=<MINIO_ROOT_PASSWORD>
+  # The bucket is created by yaaf on first use.
+  #
+  # There is no default password: deploy_single_server.sh writes a random one
+  # to deploy/.env, and MinIO refuses to start without one. The ports are
+  # published on loopback only, because Docker's published ports bypass ufw.
   minio:
     profiles: ["s3"]
     restart: unless-stopped
@@ -188,12 +197,12 @@ services:
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-yaaf}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-yaaf-minio-dev}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
     volumes:
       - minio:/data
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # web console
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # web console
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s

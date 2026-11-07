@@ -85,6 +85,14 @@ else
   warn "back up YAAF_MASTER_KEY somewhere off this box — losing it makes every"
   warn "stored secret unreadable, and there is no recovery path."
 fi
+# The optional MinIO store (--profile s3) has no default password: MinIO refuses
+# to start without one, so a box never runs it on a password from the repo.
+# Added to an existing deploy/.env too, which is why this is not in the branch
+# above. Appending never changes a value that is already there.
+if ! grep -qE "^MINIO_ROOT_PASSWORD=.+" deploy/.env; then
+  echo "MINIO_ROOT_PASSWORD=$(openssl rand -hex 24)" >> deploy/.env
+  ok "generated a password for the optional MinIO store"
+fi
 
 set -a; . ./deploy/.env; set +a
 warn_retired_token

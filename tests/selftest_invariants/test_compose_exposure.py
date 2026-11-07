@@ -1,0 +1,53 @@
+"""Invariant selftests: what the Docker deployment exposes, and what it reads.
+
+Two regressions this holds:
+
+- **Published ports bypass ufw.** Docker writes its own iptables rules, so a
+  port published without a host address is reachable from anywhere the box is.
+  The optional MinIO store was published that way, with a password from the
+  repository, which made it an open S3 endpoint on any server that enabled it.
+- **deploy/.env reached the app only through a hand-kept list.** Any variable
+  not named in the compose file (the MCP redirect hosts, the S3 settings, the
+  worker name) was silently dropped, with nothing to say so.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+COMPOSE = Path(__file__).resolve().parents[2] / "deploy" / "docker-compose.yml"
+
+
+@pytest.fixture(scope="module")
+def services() -> dict:
+    return yaml.safe_load(COMPOSE.read_text())["services"]
+
+
+def test_every_published_port_names_a_host_address(services):
+    loose = [f"{name}: {port}"
+             for name, svc in services.items()
+             for port in svc.get("ports", [])
+             # "host:published:container" has three parts; two means 0.0.0.0.
+             if isinstance(port, str) and port.split("#")[0].strip().count(":") < 2]
+    assert not loose, f"published on every interface: {loose}"
+
+
+def test_minio_has_no_password_from_the_repository(services):
+    password = services["minio"]["environment"]["MINIO_ROOT_PASSWORD"]
+    assert password == "${MINIO_ROOT_PASSWORD:-}", (
+        "MinIO must take its password from deploy/.env, never a default in this file")
+
+
+def test_deploy_script_generates_the_minio_password():
+    script = (COMPOSE.parent / "deploy_single_server.sh").read_text()
+    assert "MINIO_ROOT_PASSWORD=$(openssl rand" in script
+
+
+@pytest.mark.parametrize("name", ["api", "runner"])
+def test_app_containers_read_all_of_deploy_env(services, name):
+    files = services[name].get("env_file", [])
+    paths = [f["path"] if isinstance(f, dict) else f for f in files]
+    assert ".env" in paths, f"{name} must read deploy/.env as a whole"

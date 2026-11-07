@@ -25,19 +25,8 @@ stored encrypted.
 ## Where to put them
 
 **Docker.** Put them in `deploy/.env`, then re-run `deploy/deploy_single_server.sh`.
+Every variable in that file reaches both the `api` and `runner` containers.
 Containers read settings only when they start.
-
-Only these variables are passed from `deploy/.env` into the containers:
-`YAAF_MASTER_KEY`, `YAAF_PUBLIC_BASE_URL`, the `YAAF_SMTP_*` group,
-`YAAF_CHAIRMAN_WEBHOOK_URL`, and the four [second-stack](#running-a-second-stack)
-variables. For anything else, add it to `deploy/docker-compose.override.yml`:
-
-```yaml
-services:
-  api:
-    environment:
-      YAAF_MCP_REDIRECT_HOSTS: "claude.ai,claude.com,my-client.example.com"
-```
 
 **Native.** `yaaf setup` writes what it needs. To change something, export it
 before `yaaf up`, or edit the service with `systemctl --user edit yaaf`.
@@ -130,8 +119,10 @@ S3, MinIO or Cloudflare R2, install `pip install 'yaaf[s3]'` and set:
 Set the same values on both the server and the runner.
 
 The bundled MinIO (`docker compose --profile s3 up -d`) reads
-`MINIO_ROOT_USER` (default `yaaf`) and `MINIO_ROOT_PASSWORD`. **Change the
-password**; the default is for development.
+`MINIO_ROOT_USER` (default `yaaf`) and `MINIO_ROOT_PASSWORD`. The deploy script
+writes a random password to `deploy/.env`; there is no default. Its ports
+listen on `127.0.0.1` only. Point yaaf at it with
+`YAAF_ARTIFACT_S3_ENDPOINT=http://minio:9000`.
 
 ## Timing
 

@@ -38,6 +38,8 @@ dev = [
     # count rather than test count.
     "pytest-split>=0.9",
     "ruff>=0.5",
+    # The deployment tests read deploy/docker-compose.yml as data.
+    "pyyaml>=6",
     # The sandbox's Messages API client (deploy/sandbox/Dockerfile), never the
     # server's: the anthropic_api harness runs inside the container. Here so
     # the contract suite drives that harness against the SDK's own types.
