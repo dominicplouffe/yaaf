@@ -1206,6 +1206,8 @@ STATE_GLYPHS = {
     # Stopped is over, like done, but not delivered: filled, and not the diamond.
     "stopped": "■",
     "paused": "‖",
+    # A hold too, but one the clock lifts: out of runs until midnight UTC.
+    "capped": "‖",
     "idle": "○", "not_started": "○",
 }
 #: An older server's verdict this CLI has never heard of still lines up.

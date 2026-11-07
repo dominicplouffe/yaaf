@@ -94,8 +94,10 @@ from yaaf.server.dispatcher import (
     MODEL_RUN_KINDS,
     activity_state,
     chat_session_live,
+    daily_runs_used,
     day_start,
     inbox_runs_used,
+    run_walls,
     unread_messages_for,
 )
 from yaaf.server.identity import Person, person_auth, signed_in
@@ -371,6 +373,14 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
                 break
             failed_in_a_row += 1
         spinning = _spinning_runs(session, project, now)
+        # The dispatcher's own count against its own walls: past the plan
+        # minus the reserve, the work on the board waits for midnight UTC.
+        today = day_start(now)
+        used_today = daily_runs_used(session, project, today)
+        wall, reserved = run_walls(cons)
+        out_of_runs = ({"used": used_today, "wall": wall, "reserved": reserved,
+                        "resets_at": today + timedelta(days=1)}
+                       if used_today >= wall - reserved else None)
         # Each asked once: the row, the count and the status line all read them.
         awaiting = policy.awaiting_chairman(session, project, cons)
         signoff = policy.signoff_waiting(session, project, cons)
@@ -465,7 +475,7 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             spent=row["budget"]["spent"], cap=row["budget"]["cap"],
             failed_in_a_row=failed_in_a_row,
             last_error_kind=recent[0][1] if failed_in_a_row else None,
-            spinning_runs=spinning)
+            spinning_runs=spinning, out_of_runs=out_of_runs)
     # The reader's own "not now"s, so every surface that draws their Inbox
     # leaves out the same rows. Personal: nobody else's Inbox changes.
     from yaaf.server.api import me as me_api

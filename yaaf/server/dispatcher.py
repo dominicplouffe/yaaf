@@ -351,6 +351,17 @@ def _is_governance(reasons: list[dict]) -> bool:
     return any(r.get("kind") in GOVERNANCE_REASON_KINDS for r in reasons)
 
 
+def run_walls(cons: ConstitutionDoc) -> tuple[int, int]:
+    """(wall, reserved): where ordinary work stops for the day, and how far
+    below it only governance may still spend — the same sum `_dispatch_project`
+    enforces with, for the surfaces that report it, so "out of runs" on a
+    screen is the number that stopped the work. The reasoning for both is in
+    `_dispatch_project`."""
+    wall = max(cons.runs_per_project_per_day,
+               int(cons.runs_per_project_per_day * cons.runs_hard_stop_multiple))
+    return wall, min(cons.reserved_governance_runs, wall // 2)
+
+
 def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     now = utcnow()
     start = day_start(now)
@@ -1311,9 +1322,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     max_concurrent = _max_concurrent(cons)
     # The same clamp `_dispatch_project` enforces with: past this line ordinary
     # work is done for the day and only governance may still spend.
-    run_wall = max(cons.runs_per_project_per_day,
-                   int(cons.runs_per_project_per_day * cons.runs_hard_stop_multiple))
-    reserved = min(cons.reserved_governance_runs, run_wall // 2)
+    run_wall, reserved = run_walls(cons)
     governance_only = used >= run_wall - reserved
 
     agents = list(

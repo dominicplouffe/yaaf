@@ -663,7 +663,8 @@ export const VERDICT_CHIP: Record<string, [word: string, tone: string]> = {
   not_started: ["Not started", "accent"], blocked: ["Can't run", "critical"],
   paused: ["Paused", "warn"], failing: ["Failing", "critical"], late: ["Late", "critical"],
   at_risk: ["At risk", "warn"], needs_you: ["Needs you", "accent"],
-  spinning: ["No progress", "warn"], stalled: ["Stalled", "warn"],
+  spinning: ["No progress", "warn"], capped: ["Out of runs", "warn"],
+  stalled: ["Stalled", "warn"],
   on_track: ["On track", "good"], idle: ["Idle", "accent"],
 };
 

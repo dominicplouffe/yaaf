@@ -736,6 +736,7 @@ const FIX_AT: Record<string, [string, string]> = {
   late: ["/details/roadmap", "Cut scope or move the date"],
   at_risk: ["/details/roadmap", "See the plan"],
   stalled: ["/team", "See who is stuck"],
+  capped: [`/settings?s=rules&t=${encodeURIComponent("Pace & brakes")}`, "Raise runs per day"],
   spinning: ["/details/activity/runs", "See what the runs did"],
 };
 

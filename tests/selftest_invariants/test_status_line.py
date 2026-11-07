@@ -163,3 +163,67 @@ def test_a_young_project_is_never_spinning(client):
     with db_session() as session:
         session.get(Project, project["id"]).created_at = utcnow() - timedelta(days=3)
     assert _verdict(client, project["id"])["verdict"] != "spinning"
+
+
+# ── out of runs is not stalled ──────────────────────────────────────────────────
+# A project whose day's runs were spent by 04:00 read "Quiet for 3h with 1
+# task(s) open" — stalled, with a link to "See who is stuck" — while its own
+# activity banner said exactly why and exactly when it would lift. Nobody was
+# stuck. The janitor's stall watchdog already knew the difference; the one
+# sentence every surface shows did not.
+
+def _out(used: int = 12, wall: int = 12, reserved: int = 2) -> dict:
+    tomorrow = (utcnow() + timedelta(days=1)).replace(hour=0, minute=0, second=0,
+                                                      microsecond=0)
+    return {"used": used, "wall": wall, "reserved": reserved, "resets_at": tomorrow}
+
+
+def test_work_waiting_on_a_spent_allowance_is_capped_not_stalled():
+    line = _line(runs_running=0, last_run_at=utcnow() - timedelta(hours=7),
+                 out_of_runs=_out(), timezone="America/Toronto")
+    assert line["verdict"] == "capped"
+    assert line["headline"].startswith("Out of runs for today (12 of 12); work resumes ")
+    assert "pm" in line["headline"] or "am" in line["headline"], "a clock he can read"
+    assert "2 task(s) waiting." in line["headline"]
+    assert "Quiet" not in line["sentence"]
+
+
+def test_the_reserved_slice_is_out_of_work_runs_too():
+    """Past the plan minus the reserve only reporting may spend, so the work
+    on the board waits just the same — and the line says what the rest is for."""
+    line = _line(out_of_runs=_out(used=13, wall=14))
+    assert line["verdict"] == "capped"
+    assert line["headline"].startswith(
+        "Out of work runs for today (13 of 14; the rest are kept for reports)")
+
+
+def test_out_of_runs_never_hides_what_he_has_to_hear_first():
+    assert _line(waiting=1, out_of_runs=_out())["verdict"] == "needs_you"
+    due = utcnow() + timedelta(days=2)
+    late = _Commitment(CommitmentStatus.BREACHED, due)
+    assert _line(commitment=late, out_of_runs=_out())["verdict"] == "late"
+    # And with nothing waiting on the runs, the cap is not news.
+    assert _line(open_tasks=0, runs_running=0, out_of_runs=_out())["verdict"] == "idle"
+
+
+def test_the_rollup_reads_a_spent_day_as_capped(client):
+    from yaaf.core.models import Task, TaskStatus
+
+    project = make_project(client, integrations={"runtime": "mock"},
+                           constitution={"runs_per_project_per_day": 2,
+                                         "reserved_governance_runs": 0})
+    with db_session() as session:
+        session.add(Task(
+            id=ids.new_id(ids.TASK), project_id=project["id"],
+            team_id=project["teams"][0]["id"], created_by_agent_id=project["ceo_agent_id"],
+            title="Read the issue", goal="Sign it off.",
+            success_test={"type": "command", "command": "true"},
+            status=TaskStatus.READY, created_at=utcnow(), updated_at=utcnow()))
+        for _ in range(2):
+            at = utcnow()
+            session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"], kind="agent_run",
+                            trigger={"type": "wake"}, status=RunStatus.DONE,
+                            created_at=at, started_at=at, finished_at=at))
+    line = _verdict(client, project["id"])
+    assert line["verdict"] == "capped", line
+    assert "(2 of 2)" in line["headline"]
