@@ -161,7 +161,9 @@ function useCommands({
       }
       const appSections: [string, string, string][] = [
         ["Providers", "providers", "keys credentials llm"], ["Models", "models", "defaults lineup harness"],
-        ["Model prices", "prices", "price cost feed import"], ["Web search", "search", "brave tavily searxng"],
+        ["Model prices", "prices", "price cost feed import"],
+        ["Spend", "spend", "cost usage tokens dollars bill provider model project daily weekly monthly"],
+        ["Web search", "search", "brave tavily searxng"],
         ["Founder", "founder", "draft assistant"], ["Slack", "slack", "channels boardroom"],
         ["People", "people", "users invite admin"],
       ];

@@ -185,6 +185,86 @@ def receipt(
     typer.echo(json.dumps(data, indent=2, default=str) if as_json else render(data))
 
 
+def _local_zone() -> str:
+    """This machine's IANA zone, so "per day" means the reader's days: `TZ`
+    when it names one, else what /etc/localtime points at, else UTC."""
+    from zoneinfo import ZoneInfo
+
+    candidates = [os.environ.get("TZ", "").lstrip(":")]
+    link = os.path.realpath("/etc/localtime")
+    if "zoneinfo/" in link:
+        candidates.append(link.split("zoneinfo/", 1)[1])
+    for name in candidates:
+        try:
+            if name and ZoneInfo(name):
+                return name
+        except Exception:
+            continue
+    return "UTC"
+
+
+@app.command()
+def spend(
+    by: str = typer.Option("provider", "--by", help="provider | model | project"),
+    every: str = typer.Option("day", "--every", help="day | week | month"),
+    days: int = typer.Option(None, "--days",
+                             help="Look back N days; default 30 days, 13 weeks or 12 months"),
+    since: str = typer.Option(None, "--since", help="First day, YYYY-MM-DD"),
+    until: str = typer.Option(None, "--until", help="Last day, YYYY-MM-DD; default today"),
+    project: list[str] = typer.Option(None, "--project", help="A slug or id; repeat for several"),
+    provider: list[str] = typer.Option(None, "--provider", help="e.g. anthropic; repeat"),
+    model: list[str] = typer.Option(None, "--model", help="A model id; repeat for several"),
+    billing: str = typer.Option(None, "--billing",
+                                help="usd: what API keys billed · tokens: what ran on plans"),
+    everything: bool = typer.Option(False, "--everything",
+                                    help="Count purchases and infra too, not only model usage"),
+    tokens: bool = typer.Option(False, "--tokens", help="Chart tokens rather than dollars"),
+    tz: str = typer.Option(None, "--tz", help="IANA timezone for the calendar; default this "
+                                              "machine's"),
+    as_json: bool = typer.Option(False, "--json", help="the payload instead of the text"),
+) -> None:
+    """What each provider, model and project cost, per day, week or month.
+
+    Every project you can open, from any machine signed in to the install —
+    the same answer as Settings → Spend. Dollars are only what API keys
+    billed; a subscription's usage is shown in tokens and never priced.
+
+    `yaaf spend-report` is the other tool: one project's forensics (waste,
+    retries, cost per task), read straight from the database on the box.
+    """
+    from datetime import date, timedelta
+    from zoneinfo import ZoneInfo
+
+    from yaaf.cli.spend_view import choose_measure, render
+
+    zone = tz or _local_zone()
+    if days is not None:
+        if since:
+            typer.echo("give --days or --since, not both", err=True)
+            raise typer.Exit(1)
+        if days < 1:
+            typer.echo("--days must be at least 1", err=True)
+            raise typer.Exit(1)
+        try:
+            today = datetime.now(ZoneInfo(zone)).date()
+        except Exception:
+            today = date.today()
+        last = date.fromisoformat(until) if until else today
+        since = (last - timedelta(days=days - 1)).isoformat()
+    params: list[tuple[str, str]] = [("every", every), ("group_by", by), ("tz", zone),
+                                     ("kind", "all" if everything else "model_usage")]
+    params += [(name, value) for name, value in (("since", since), ("until", until),
+                                                 ("paid_in", billing)) if value]
+    for name, values in (("project", project), ("provider", provider), ("model", model)):
+        params += [(name, value) for value in values or []]
+    with _client() as client:
+        data = _json_or_die(client.get("/observe/spend", params=params))
+    if as_json:
+        typer.echo(json.dumps(data, indent=2, default=str))
+        return
+    typer.echo(render(data, choose_measure(data, "tokens" if tokens else None)))
+
+
 # ── setup ───────────────────────────────────────────────────────────────────────
 
 
@@ -1712,7 +1792,7 @@ PANELS = {
                "audit_evidence"),
     "Read": ("letter", "briefing", "agenda", "receipt", "dashboard", "board", "org", "activity",
              "channels", "inbox", "tail", "runs", "ledger", "evidence", "hypotheses",
-             "approvals", "asks", "flags", "spend_report"),
+             "approvals", "asks", "flags", "spend", "spend_report"),
 }
 _ORDER = [*PANELS, "Set up the install"]
 

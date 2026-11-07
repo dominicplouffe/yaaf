@@ -545,7 +545,7 @@ touches, and whether a new provider edits it:
 | Project Settings → runtime | per seat; project-wide only for `mock` | no |
 | Health checklist, fire drill | R1–R7 as findings | no |
 | Lease (`daemon.py`, `chat.py`) | seat resolution; `RunSpec` | no |
-| Runs page, `spend-report`, receipt, attribution | group by provider / harness / model | no |
+| Runs page, `spend-report`, receipt, attribution, Settings → Spend / `yaaf spend` | group by provider / harness / model | no |
 | Plan meter, "Check now" | provider capability | no |
 | Billing check | `provider.live_check` | no |
 | Credential-failure pause | `error_kind`, provider markers | no |

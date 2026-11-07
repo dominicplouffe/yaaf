@@ -81,14 +81,56 @@ def main() -> None:  # pragma: no cover - process entrypoint
 
     logging.basicConfig(level=logging.INFO)
     pool = ThreadPoolExecutor(max_workers=MAX_PARALLEL)
+    slots = RunSlots(MAX_PARALLEL)
     log.info("runner %s starting", settings().worker_name)
     threading.Thread(target=chat_supervisor_loop, daemon=True).start()
     while True:
-        leased = lease_and_prepare(limit=MAX_PARALLEL)
-        for job in leased:
-            pool.submit(execute_job, job)
-        if not leased:
+        if not dispatch_tick(pool.submit, slots):
             time.sleep(settings().runner_poll_s)
+
+
+class RunSlots:
+    """How many runs this process is executing, against how many it can.
+
+    A leased run is RUNNING with a fresh heartbeat, but its heartbeat thread
+    starts only when a worker thread picks it up. The loop used to lease
+    `MAX_PARALLEL` rows every tick whatever the pool was doing, so with four
+    runs in flight the next four sat in the executor's queue unheartbeated,
+    the janitor reaped them at `lease_ttl_s`, requeued their work, and then
+    they ran anyway with their results thrown away by `finalize`. On 6
+    November 2026 that was 279 of the box's 289 reaped runs in three days.
+    """
+
+    def __init__(self, size: int) -> None:
+        self._size = size
+        self._busy = 0
+        self._lock = threading.Lock()
+
+    def free(self) -> int:
+        with self._lock:
+            return self._size - self._busy
+
+    def take(self) -> None:
+        with self._lock:
+            self._busy += 1
+
+    def give(self, *_ignored) -> None:
+        with self._lock:
+            self._busy -= 1
+
+
+def dispatch_tick(submit, slots: RunSlots) -> int:
+    """Lease only as many runs as there are free workers, and hand them over.
+    Returns how many were leased."""
+    free = slots.free()
+    if free <= 0:
+        return 0
+    leased = lease_and_prepare(limit=free)
+    for job in leased:
+        slots.take()
+        future = submit(execute_job, job)
+        future.add_done_callback(slots.give)
+    return len(leased)
 
 
 # ── leasing ─────────────────────────────────────────────────────────────────────
@@ -691,9 +733,15 @@ def _says_runs(job: RunJob) -> bool:
 
 
 def execute_job(job: RunJob, backend=None) -> RunResult:
+    if not _still_ours(job.run_id):
+        # The janitor ended it while it waited for a worker, and requeued its
+        # work if it was owed. Running it now would do that work twice.
+        log.warning("run %s was ended before a worker was free; not starting it", job.run_id)
+        return RunResult(ok=False, summary="not started: the run was ended before a worker was free")
     # The log used to say nothing about a run that started and worked, so a
     # quiet log read the same whether an agent woke or not — the question a
-    # person opens it to answer.
+    # person opens it to answer. After the guard above: a run it stops never
+    # started, and must not be logged as though it had.
     if _says_runs(job):
         who = (job.context_pack.get("you") or {}).get("name") or job.agent_id
         log.info("run %s started: %s, attempt %s, %s on %s, woke for %s", job.run_id, who,
@@ -765,6 +813,21 @@ def _backend_for(job: RunJob):
         project = session.get(Project, job.project_id)
         runtime = (project.integrations or {}).get("runtime")
     return get_backend(effective_harness(job.harness, runtime))
+
+
+def _still_ours(run_id: str) -> bool:
+    """Whether the run is still RUNNING; if so its heartbeat is stamped now,
+    the moment work actually starts, not at lease. A revoked run that is still
+    RUNNING goes ahead: the heartbeat sees the revocation and `finalize` ends
+    it as KILLED, the path a pause or kill switch has always taken."""
+    with db_session() as session:
+        run = session.get(Run, run_id)
+        if run is None:
+            return True
+        if run.status != RunStatus.RUNNING:
+            return False
+        run.heartbeat_at = utcnow()
+        return True
 
 
 def _heartbeat(run_id: str, stop: threading.Event, revoked: threading.Event) -> None:

@@ -254,3 +254,63 @@ def test_project_pause_mid_queue_drops_jobs(client):
             .count()
         )
         assert running == 0
+
+
+class _HeldPool:
+    """A pool whose workers never finish until released: four runs in flight."""
+
+    def __init__(self) -> None:
+        self.jobs: list = []
+        self.futures: list = []
+
+    def submit(self, fn, job):
+        from concurrent.futures import Future
+
+        self.jobs.append(job)
+        future = Future()
+        self.futures.append(future)
+        return future
+
+    def finish_one(self) -> None:
+        self.futures.pop(0).set_result(None)
+
+
+def test_a_full_runner_leases_nothing_so_nothing_waits_to_be_reaped(client):
+    """6 Nov 2026: 279 of 289 reaped runs on the box were leased while four
+    runs already held every worker. They waited in the pool's queue with no
+    heartbeat, were reaped at lease_ttl_s, and then ran anyway."""
+    from yaaf.runner.daemon import MAX_PARALLEL, RunSlots, dispatch_tick
+
+    project = make_project(client, slug="fullpool", integrations={"runtime": "mock"})
+    for _ in range(MAX_PARALLEL + 3):
+        enqueue(project["id"], project["ceo_agent_id"])
+    pool, slots = _HeldPool(), RunSlots(MAX_PARALLEL)
+
+    assert dispatch_tick(pool.submit, slots) == MAX_PARALLEL
+    assert dispatch_tick(pool.submit, slots) == 0, "no worker is free, so nothing is leased"
+    with db_session() as session:
+        assert session.query(RunQueue).filter(RunQueue.project_id == project["id"]).count() == 3
+
+    pool.finish_one()
+    assert dispatch_tick(pool.submit, slots) == 1, "one worker came free, one run is leased"
+
+
+def test_a_run_reaped_while_it_waited_for_a_worker_never_starts(client):
+    from yaaf.runner.daemon import execute_job
+
+    project = make_project(client, slug="waited", integrations={"runtime": "mock"})
+    enqueue(project["id"], project["ceo_agent_id"])
+    job = lease_and_prepare(limit=1)[0]
+    with db_session() as session:
+        session.get(Run, job.run_id).heartbeat_at = utcnow() - timedelta(seconds=settings().lease_ttl_s + 30)
+    with db_session() as session:
+        janitor_once(session)
+
+    class _MustNotRun:
+        def execute(self, *a, **k):
+            raise AssertionError("a reaped run's work was started")
+
+    result = execute_job(job, backend=_MustNotRun())
+    assert not result.ok and "not started" in result.summary
+    with db_session() as session:
+        assert session.get(Run, job.run_id).status == "reaped"

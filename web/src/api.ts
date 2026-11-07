@@ -811,6 +811,50 @@ export interface SpendReport {
   rows: SpendBucket[];
 }
 
+/** Every measure the install-wide rollup carries. `usd` is only ever what a
+    provider billed; `plan_tokens` is the part of `tokens` that ran on a
+    subscription, whose bill is the plan's flat fee (yaaf.server.spend_rollup). */
+export interface SpendMeasures {
+  tokens_in: number;
+  tokens_out: number;
+  cache_creation: number;
+  cache_read: number;
+  tokens: number;
+  plan_tokens: number;
+  usd: number;
+}
+
+export type SpendEvery = "day" | "week" | "month";
+export type SpendGroupBy = "provider" | "model" | "project";
+
+export interface InstallSpend {
+  every: SpendEvery;
+  group_by: SpendGroupBy;
+  kind: "model_usage" | "all" | "external_spend" | "infra";
+  paid_in: "usd" | "tokens" | null;
+  tz: string;
+  /** Effective window, on the reader's calendar: `since` snapped to its bucket. */
+  since: string;
+  until: string;
+  filters: { project: string[]; provider: string[]; model: string[] };
+  totals: SpendMeasures & { runs: number };
+  groups: (SpendMeasures & { key: string; label: string; runs: number; slug?: string })[];
+  rows: (SpendMeasures & {
+    project_id: string; project: string; slug: string;
+    provider: string; provider_label: string; model: string; runs: number;
+  })[];
+  series: (SpendMeasures & {
+    start: string; end: string;
+    by: Record<string, { usd: number; tokens: number; plan_tokens: number }>;
+  })[];
+  options: {
+    projects: { id: string; slug: string; name: string; spent: boolean }[];
+    providers: { key: string; label: string }[];
+    models: string[];
+  };
+  notes: { dollars: string; tokens: string };
+}
+
 export interface AmendmentRow {
   id: string;
   reason: string;
