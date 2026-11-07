@@ -184,6 +184,15 @@ def day_start(now):
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+#: The talk lane, in whichever vehicle this install has: the resident chat
+#: session where a container can hold one, a queued boardroom run where none
+#: can. Anything asking "is this the conversation with the chairman, or work?"
+#: must consult this rather than test against CHAT_SESSION alone — the lane's
+#: second vehicle is a one-shot run, and every place that excludes the chat
+#: session for being *resident* (presence, hours-long, never timed out) must
+#: go on treating it as the ordinary run it is.
+TALK_RUN_KINDS = (RunKind.CHAT_SESSION, RunKind.BOARDROOM_RUN)
+
 # Kinds that do not spend the project's run allowance. Chat is the talk lane,
 # not work. The two check kinds are the PLATFORM verifying a claim: a command
 # in a container, no model, no token, no dollar — the thing these ceilings
@@ -197,7 +206,7 @@ def day_start(now):
 # A verification storm must never be able to starve the project of the work it
 # takes to end one.
 UNMETERED_RUN_KINDS = (
-    RunKind.CHAT_SESSION,
+    *TALK_RUN_KINDS,
     RunKind.SUCCESS_CHECK,
     RunKind.REQUIREMENT_CHECK,
 )
@@ -211,12 +220,12 @@ INBOX_RUN_KINDS = (RunKind.INBOX_RUN,)
 NON_WORK_RUN_KINDS = (*UNMETERED_RUN_KINDS, *INBOX_RUN_KINDS)
 
 #: Queued kinds where an AGENT thinks, as opposed to the platform running a
-#: check in a container. Both are a model call, both authenticate with the
-#: project's billing credential, both are the agent acting. Anything asking
+#: check in a container. All are a model call, all authenticate with the
+#: project's billing credential, all are the agent acting. Anything asking
 #: "was this an agent or the platform?" must consult this rather than test
 #: against AGENT_RUN alone — the inbox lane was invisible to two such places
 #: the day it was added, and one of them silently stopped running agents.
-MODEL_RUN_KINDS = (RunKind.AGENT_RUN, RunKind.INBOX_RUN)
+MODEL_RUN_KINDS = (RunKind.AGENT_RUN, RunKind.INBOX_RUN, RunKind.BOARDROOM_RUN)
 
 
 def run_kind_for_reasons(reasons: list[dict]) -> str:
@@ -389,12 +398,19 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     inbox_blocked = (inbox_today >= cons.inbox_runs_per_project_per_day
                      or inbox_hour >= cons.inbox_runs_per_project_per_hour)
 
-    if work_blocked and inbox_blocked:
-        return 0
+    # Both purses spent leaves one thing a run may still be for: the chairman
+    # waiting in the boardroom, which neither purse pays for. That used to be a
+    # bare `return 0` here, and on an install with no resident chat session it
+    # held his "hello" until midnight UTC.
+    talk_only = work_blocked and inbox_blocked
 
     # Asked once per tick, not once per agent: it is several queries and
     # `_wake_reasons` runs for every agent, thirty times a minute.
     delivered = policy.delivered_awaiting_confirmation(session, project)
+    boardroom_ids = set(session.execute(
+        select(Channel.id).where(Channel.project_id == project.id,
+                                 Channel.kind == ChannelKind.BOARDROOM)
+    ).scalars())
 
     max_concurrent = _max_concurrent(cons)
     in_flight = _in_flight(session, project)
@@ -409,18 +425,36 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     for agent in agents:
         if in_flight + enqueued >= max_concurrent:
             break
+        # Only the CEO sits in the boardroom, so on a spent project nobody
+        # else has anything a run could still be for.
+        if talk_only and agent.kind != AgentKind.CEO:
+            continue
         if _agent_busy(session, agent):
             continue
         if _wakes_last_hour(session, agent) >= cons.wakes_per_agent_per_hour:
             continue
-        reasons = _wake_reasons(session, project, cons, agent, delivered=delivered)
+        if talk_only:
+            # Not `_wake_reasons`: it advances the planning heartbeat and the
+            # daily wake as it reads them, and on this tick neither could run —
+            # they would be spent, and not due again when the allowance came
+            # back. The boardroom is the one question worth asking.
+            reasons = _talk_reasons(agent, _message_reasons(
+                session, project, cons, agent,
+                skip_channels=_chat_lane_channels(session, project, agent),
+                delivered=delivered, now=now), boardroom_ids)
+        else:
+            reasons = _wake_reasons(session, project, cons, agent, delivered=delivered)
         if not reasons:
             continue
-        # Which purse this wake spends, decided before it is queued so the two
+        # Which purse this wake spends, decided before it is queued so the
         # lanes can be gated independently. Reading the mail must not be
-        # stopped by an exhausted work allowance, and must not consume one.
+        # stopped by an exhausted work allowance, and must not consume one;
+        # answering the chairman must not be stopped by either.
         kind = run_kind_for_reasons(reasons)
-        if kind == RunKind.INBOX_RUN:
+        talk = _talk_reasons(agent, reasons, boardroom_ids)
+        if talk and len(talk) == len(reasons):
+            kind = RunKind.BOARDROOM_RUN
+        elif kind == RunKind.INBOX_RUN:
             # Counted as we go: one tick may enqueue several agents, and a
             # broadcast makes every agent unread in the same instant — exactly
             # the case the hourly ceiling exists for.
@@ -428,11 +462,13 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
                 continue
             inbox_hour += 1
             inbox_today += 1
-        else:
-            if work_blocked:
+        elif work_blocked or (governance_only and not _is_governance(reasons)):
+            if not talk:
                 continue
-            if governance_only and not _is_governance(reasons):
-                continue
+            # The work this wake found waits for its own purse; his answer does
+            # not. The run carries the boardroom and nothing behind it, so a
+            # spent day cannot be worked through the chairman's message.
+            reasons, kind = talk, RunKind.BOARDROOM_RUN
         task_id = _primary_task(reasons)
         session.add(
             RunQueue(
@@ -965,7 +1001,8 @@ def _activity_brief(state: dict) -> dict:
             "serious", "capped",
             f"out of runs for today ({d['used']} of {wall}), resumes {_midnight(state)}",
             f"Out of runs for today — {d['used']} of {wall} used.",
-            f"Nothing starts until the count resets at {_midnight(state)}.{queue} Runs that "
+            f"No work starts until the count resets at {_midnight(state)}; your messages "
+            f"in the boardroom are still answered.{queue} Runs that "
             f"died still spent the allowance.{over} Raise 'Runs per day, whole "
             "project' in Settings if this is tighter than you meant it to be.",
             sig="daily_runs", clears_at=d["resets_at"])
@@ -1582,12 +1619,13 @@ def _pacing_frees_at(session: Session, project: Project, cons: ConstitutionDoc, 
     stamps = [
         row for (row,) in session.execute(
             select(Run.created_at).where(Run.project_id == project.id,
-                                         Run.kind != RunKind.CHAT_SESSION,
+                                         Run.kind.not_in(TALK_RUN_KINDS),
                                          Run.created_at >= hour_ago)
         )
     ] + [
         row for (row,) in session.execute(
             select(RunQueue.created_at).where(RunQueue.project_id == project.id,
+                                              RunQueue.kind.not_in(TALK_RUN_KINDS),
                                               RunQueue.created_at >= hour_ago)
         )
     ]
@@ -1620,29 +1658,49 @@ def chat_session_live(session: Session, project: Project) -> bool:
     ).scalar_one())
 
 
-def _wake_reasons(
+def _chat_lane_channels(session: Session, project: Project, agent: Agent) -> set[str]:
+    """The boardroom, while a resident chat session holds it for this CEO.
+
+    The chat lane answers the chairman in seconds; a queued run for the same
+    message would produce a second, minutes-late reply. Boardroom messages
+    stop being a wake reason for the CEO while its chat session is live."""
+    if agent.kind != AgentKind.CEO or not chat_session_live(session, project):
+        return set()
+    return {
+        c.id for c in session.execute(
+            select(Channel).where(Channel.project_id == project.id,
+                                  Channel.kind == ChannelKind.BOARDROOM)
+        ).scalars()
+    }
+
+
+def _talk_reasons(agent: Agent, reasons: list[dict], boardroom_ids: set[str]) -> list[dict]:
+    """The part of a wake that is the chairman waiting on an answer: urgent
+    unread in his room, for the one seat that sits there.
+
+    Urgent, not merely unread: his note on a decision is a boardroom line that
+    deliberately rides the ordinary clock (`_wakes_at_once`), and the talk lane
+    must not turn it into a message he is waiting on."""
+    if agent.kind != AgentKind.CEO:
+        return []
+    return [r for r in reasons
+            if r.get("kind") == "messages" and r.get("urgent")
+            and r.get("channel_id") in boardroom_ids]
+
+
+def _message_reasons(
     session: Session, project: Project, cons: ConstitutionDoc, agent: Agent,
-    *, delivered: bool = False
+    *, skip_channels: set[str], delivered: bool, now,
 ) -> list[dict]:
-    reasons: list[dict] = []
-    now = utcnow()
+    """Unread messages as wake reasons — with the pair circuit-breaker standing
+    between a ping-pong thread and yet another wake, and ordinary
+    agent-to-agent chatter coalescing like notices (see MESSAGE_COALESCE_*
+    above). The breaker still trips on every tick, before the coalescing gate.
 
-    # The chat lane answers the chairman in seconds; a work run for the same
-    # message would produce a second, minutes-late reply. Boardroom messages
-    # stop being a wake reason for the CEO while its chat session is live.
-    skip_channels: set[str] = set()
-    if agent.kind == AgentKind.CEO and chat_session_live(session, project):
-        skip_channels = {
-            c.id for c in session.execute(
-                select(Channel).where(Channel.project_id == project.id,
-                                      Channel.kind == ChannelKind.BOARDROOM)
-            ).scalars()
-        }
-
-    # 1. Unread messages — with the pair circuit-breaker standing between a
-    #    ping-pong thread and yet another wake, and ordinary agent-to-agent
-    #    chatter coalescing like notices (see MESSAGE_COALESCE_* above). The
-    #    breaker still trips on every tick, before the coalescing gate.
+    Its own function so a spent project can ask the CEO about the boardroom
+    without asking about everything else: the rest of `_wake_reasons` advances
+    the planning heartbeat and the daily wakes as it reads them, and this
+    advances no clock."""
     channel_kinds = {
         c.id: c.kind
         for c in session.execute(
@@ -1692,9 +1750,10 @@ def _wake_reasons(
                 oldest_at = message.created_at
         if actionable:
             # `urgent` rides on the reason because the lane is decided from it:
-            # the chairman speaking, or anything in the boardroom, is work and
-            # spends the work allowance. Ordinary agent-to-agent traffic is
-            # reading, and spends the inbox ceiling instead.
+            # the chairman speaking, or anything in the boardroom, is never
+            # reading — in his room it is the talk lane, anywhere else it is
+            # work. Ordinary agent-to-agent traffic is reading, and spends the
+            # inbox ceiling instead.
             message_reasons.append(
                 {"kind": "messages", "channel_id": channel_id,
                  "count": actionable, "urgent": channel_urgent})
@@ -1711,7 +1770,20 @@ def _wake_reasons(
     if message_reasons:
         ripe = oldest_at <= now - timedelta(minutes=MESSAGE_COALESCE_MINUTES)
         if urgent or ripe or total >= MESSAGE_COALESCE_COUNT:
-            reasons.extend(message_reasons)
+            return message_reasons
+    return []
+
+
+def _wake_reasons(
+    session: Session, project: Project, cons: ConstitutionDoc, agent: Agent,
+    *, delivered: bool = False
+) -> list[dict]:
+    now = utcnow()
+    skip_channels = _chat_lane_channels(session, project, agent)
+
+    # 1. Unread messages (see `_message_reasons`).
+    reasons = _message_reasons(session, project, cons, agent, skip_channels=skip_channels,
+                               delivered=delivered, now=now)
 
     # 1b. The chairman said something back on the open review and the CEO has
     #     not answered. The boardroom wake above already carries the message;

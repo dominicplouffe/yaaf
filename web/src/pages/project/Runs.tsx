@@ -36,7 +36,7 @@ function runBadge(status: string) {
     from all the others. */
 function kindText(kind: string): string {
   if (kind === "success_check") return "check";
-  if (kind === "chat_session") return "chat";
+  if (kind === "chat_session" || kind === "boardroom_run") return "chat";
   return "agent";
 }
 

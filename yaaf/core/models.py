@@ -410,6 +410,17 @@ class RunKind(enum.StrEnum):
     # ready tasks got nothing. Reading is not free, but charging it to the same
     # purse as the work means the reading crowds the work out.
     INBOX_RUN = "inbox_run"
+    # The talk lane where there is no resident session to hold it. Subprocess
+    # and host mode end a sandbox with its run, so the chairman's boardroom is
+    # answered by a queued CEO run instead of a chat_session — the same lane in
+    # another vehicle. It spends none of the project's run allowance, because
+    # chat is not work; it still meets every per-agent brake, because a seat
+    # whose every run dies is a wake loop whoever it is answering.
+    #
+    # The vehicle used to be an agent_run. On a few-times-a-day tempo the
+    # day's twelve runs were gone by 04:00, and the chairman's "hello" waited
+    # until midnight UTC for an allowance that had never been his to spend.
+    BOARDROOM_RUN = "boardroom_run"
 
 
 class ApprovalKind(enum.StrEnum):

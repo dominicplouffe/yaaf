@@ -416,8 +416,9 @@ export default function Boardroom({ projectId, dash, org }: {
     return out;
   }, [loaded, runs]);
 
-  // The CEO is the agent with no team, and these are the two kinds of run that
-  // mean it is working on something a reply could come out of.
+  // The CEO is the agent with no team, and these are the kinds of run that
+  // mean it is working on something a reply could come out of — boardroom_run
+  // most of all: on an install with no resident session, it IS the reply.
   //
   // Named rather than excluded. The old test was "any running run of the CEO's
   // that is not a success_check", and a live chat session is exactly that: a
@@ -429,7 +430,7 @@ export default function Boardroom({ projectId, dash, org }: {
   // not.
   const ceoRun = (runs ?? []).find(
     (r) => r.status === "running" && !r.team_name
-      && (r.kind === "agent_run" || r.kind === "inbox_run"),
+      && (r.kind === "agent_run" || r.kind === "inbox_run" || r.kind === "boardroom_run"),
   );
   // The wall the live session last hit. A refused task_create looks exactly
   // like a CEO that decided not to bother, and the difference only existed in

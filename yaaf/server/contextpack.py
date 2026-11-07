@@ -1518,11 +1518,19 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
     one that marks them done.
     """
     cons = effective(session, project.id)
+    from yaaf.server.dispatcher import TALK_RUN_KINDS
+
     observing = run.kind == RunKind.CHAT_SESSION
     now = utcnow()
 
-    # Notices: consumed on delivery, exactly once — by a lane that acts.
-    if observing:
+    # Notices: consumed on delivery, exactly once — by a lane that acts. The
+    # talk lane observes them in both vehicles. The queued one shares only this
+    # half: it must advance its mail, or the chairman's message is still unread
+    # on the next tick and answered twice. But the dispatcher sends it on a
+    # spent day precisely because the work behind his message has to wait, and
+    # a reply that consumed the notices would do that work unbilled, or
+    # swallow it so the planner never saw it.
+    if observing or run.kind in TALK_RUN_KINDS:
         notices = _observed_notices(session, agent)
     else:
         notices = list(

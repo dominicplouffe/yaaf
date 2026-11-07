@@ -28,7 +28,6 @@ from yaaf.core.models import (
     LedgerKind,
     Project,
     Run,
-    RunKind,
     RunStatus,
     Task,
     TaskStatus,
@@ -38,7 +37,7 @@ from yaaf.runtimes import catalog
 from yaaf.runtimes.providers import PROVIDERS
 from yaaf.runtimes.seats import seat_for
 from yaaf.server.contextpack import role_version_for
-from yaaf.server.dispatcher import heartbeat_only
+from yaaf.server.dispatcher import TALK_RUN_KINDS, heartbeat_only
 
 TOKENS_CAVEAT = "input tokens exclude cache tokens for runs recorded before the metering fix"
 NO_DOLLARS = "(subscription — no dollar figure)"
@@ -357,11 +356,11 @@ def _report(session: Session, project: Project, since: datetime, window: str) ->
         typer.echo("  no done tasks with run spend in this window")
 
     # 7. Chat lane vs work lane.
-    chat = _sum_runs([run for run in runs if run.kind == RunKind.CHAT_SESSION])
-    work = _sum_runs([run for run in runs if run.kind != RunKind.CHAT_SESSION])
+    chat = _sum_runs([run for run in runs if run.kind in TALK_RUN_KINDS])
+    work = _sum_runs([run for run in runs if run.kind not in TALK_RUN_KINDS])
     _heading("Chat lane vs work lane")
     typer.echo(_table(["lane", "runs", "tokens in", "tokens out", "usd"],
-                      [_row(["chat (chat_session)"], chat),
+                      [_row(["chat (chat_session + boardroom_run)"], chat),
                        _row(["work (agent_run + success_check)"], work)]))
 
     # 8. External spend + reconciliation against the ledger.

@@ -71,7 +71,9 @@ may do what once more people are on the box.
 
 4. is the one you do not have to do: the chat lane is a container, so in
 subprocess mode the supervisor stands down with one log line and the boardroom
-answers through ordinary queued runs instead.
+answers through queued runs instead. They are the same talk lane in another
+vehicle (`boardroom_run`): like the chat session they spend none of the run
+allowance, so the chairman is answered on a day the work has used all of it.
 
 > **This is not a free mode.** The agents are real Claude agents, paid for with
 > the API key you attach to the project. `runtime: mock` swaps them for scripted
@@ -265,7 +267,8 @@ is refused and logged, not bound.
   bridge cannot reach your `localhost` and a jail can — a local database, a dev
   server, an Ollama. See [SECURITY.md](../SECURITY.md).
 - **No resident boardroom session.** The CEO answers the boardroom through
-  ordinary queued runs, as in subprocess mode.
+  queued runs, as in subprocess mode: a few minutes rather than seconds, and
+  still outside the daily and hourly run allowance.
 - **No browser lane by default.** Chromium is in the image, not on your machine.
   Set `PLAYWRIGHT_BROWSERS_PATH` to a Playwright browser install and the jail
   mounts it.

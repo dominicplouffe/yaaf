@@ -3126,10 +3126,15 @@ def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> Non
     if brief["clears_at"]:
         return
 
+    from yaaf.server.dispatcher import TALK_RUN_KINDS
+
     since = utcnow() - timedelta(hours=float(cons.stall_hours))
+    # Talk in either vehicle is not work happening: a project whose only runs
+    # were the CEO answering the chairman has stalled exactly as much as one
+    # whose only activity was the resident chat session.
     started = session.execute(
         select(func.count(Run.id)).where(Run.project_id == project.id,
-                                         Run.kind != RunKind.CHAT_SESSION,
+                                         Run.kind.not_in(TALK_RUN_KINDS),
                                          Run.created_at >= since)
     ).scalar_one()
     if started:
