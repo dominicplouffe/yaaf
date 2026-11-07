@@ -37,6 +37,21 @@ require_repo_root() {
   REPO="$PWD"
 }
 
+# Bounded where the system can bound it: GNU timeout on Linux, or Homebrew
+# coreutils' gtimeout on macOS, which ships neither. Without either the command
+# runs unbounded, which is how these scripts behaved before the bound existed.
+# --foreground so Ctrl-C reaches the docker client (see on_interrupt).
+with_timeout() {
+  local seconds="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --foreground "$seconds" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    gtimeout --foreground "$seconds" "$@"
+  else
+    "$@"
+  fi
+}
+
 # Prefer unprivileged docker, fall back to sudo rather than dying: a box where
 # the usermod has not taken effect yet is the common case, not an error.
 resolve_docker() {
@@ -183,7 +198,7 @@ wait_for_api() {
 schema_at_head() {
   local out
   out="$(cd "$REPO/deploy" && COMPOSE_IGNORE_ORPHANS=1 \
-         timeout --foreground "${1:-60}" $DOCKER compose exec -T api \
+         with_timeout "${1:-60}" $DOCKER compose exec -T api \
          alembic current 2>/dev/null)" || return 1
   printf '%s' "$out" | grep -q '(head)'
 }
@@ -195,7 +210,7 @@ schema_at_head() {
 # see, so it is bounded and it prints.
 apply_migrations() {
   ( cd "$REPO/deploy" && COMPOSE_IGNORE_ORPHANS=1 \
-    timeout --foreground "${1:-300}" $DOCKER compose exec -T api \
+    with_timeout "${1:-300}" $DOCKER compose exec -T api \
     alembic upgrade head )
 }
 

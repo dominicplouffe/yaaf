@@ -5,6 +5,7 @@ Three ways to run yaaf. Pick the one that fits.
 | | Docker | Native | From source |
 |---|---|---|---|
 | **For** | A server, or any machine you want to run it on for real | Your own Linux desktop or laptop | Working on yaaf itself |
+| **Runs on** | Linux, macOS, Windows (WSL2) | Linux only | Linux, macOS |
 | **Agents run in** | A fresh container per run | A bubblewrap jail per run | A plain process (no isolation) |
 | **Database** | Postgres | SQLite | SQLite |
 | **Time** | A few minutes (about 10 if it builds the images) | ~5 minutes | ~5 minutes |
@@ -25,8 +26,9 @@ python3 -m venv .venv && .venv/bin/pip install -e .     # Python 3.12+
 
 ## Option 1: Docker
 
-**You need:** Linux with Docker and the compose plugin, `git`, `openssl` and
-`curl`. No Python or Node; the images carry everything.
+**You need:** Docker with the compose plugin, `git`, `openssl` and `curl`. No
+Python or Node; the images carry everything. Linux is the tested path; for a Mac
+or Windows, see [macOS and Windows](#macos-and-windows) first.
 
 **1. Install Docker** (skip if you have it):
 
@@ -73,6 +75,28 @@ Open the setup link, choose a password, and you are in.
 | `--build` | Build the images from source instead of pulling them |
 
 To run it on a public server, read [DEPLOYMENT.md](DEPLOYMENT.md).
+
+### macOS and Windows
+
+Docker works on both through Docker Desktop. These are less tested than Linux;
+tell us what breaks.
+
+**macOS.** Install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+Before the first deploy, keep yaaf's data in your home folder, which Docker
+Desktop shares with containers (`/var/lib` is not shared):
+
+```bash
+mkdir -p ~/yaaf-data
+echo "YAAF_STATE_ROOT=$HOME/yaaf-data" >> deploy/.env
+deploy/deploy_single_server.sh --admin-email you@example.com
+```
+
+**Windows.** Install [WSL2](https://learn.microsoft.com/windows/wsl/install)
+with Ubuntu, and Docker Desktop with WSL integration turned on for it. Then run
+every command in this guide inside the Ubuntu terminal, as on Linux.
+
+Native mode needs bubblewrap, which only exists on Linux, so it does not run on
+either.
 
 ---
 
@@ -176,6 +200,8 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) before you open a pull request.
 ## After you install
 
 1. **Add a model key.** Settings → Providers. Agents cannot run without one.
+   [PROVIDERS.md](PROVIDERS.md) covers every provider, subscriptions and local
+   models.
 2. **Check the install.**
 
    ```bash

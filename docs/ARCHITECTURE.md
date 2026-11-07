@@ -159,4 +159,6 @@ Vite, Docker, bubblewrap.
 - [INSTALL.md](INSTALL.md): get it running.
 - [CONFIGURATION.md](CONFIGURATION.md): every environment variable.
 - [DEPLOYMENT.md](DEPLOYMENT.md): run it on a server.
+- [PROVIDERS.md](PROVIDERS.md): models, keys, harnesses and prices.
+- [CLI.md](CLI.md): every `yaaf` command.
 - [SECURITY.md](../SECURITY.md): what contains an agent and what does not.

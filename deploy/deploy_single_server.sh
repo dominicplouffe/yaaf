@@ -64,7 +64,9 @@ for d in "$YAAF_STATE_ROOT/workspaces" "$YAAF_STATE_ROOT/artifacts"; do
   if [ -d "$d" ]; then
     ok "$d exists"
   else
-    sudo mkdir -p "$d" && ok "created $d"
+    # Only as root where it has to be: /var/lib needs it, a folder in your home
+    # (YAAF_STATE_ROOT, as on a Mac) does not.
+    { mkdir -p "$d" 2>/dev/null || sudo mkdir -p "$d"; } && ok "created $d"
   fi
 done
 
@@ -75,12 +77,27 @@ done
 # with an account, and the first one is made in step 8.
 say "Secrets (deploy/.env)"
 if [ -f deploy/.env ]; then
-  ok "deploy/.env already exists — leaving it alone"
-  # Changing YAAF_MASTER_KEY strands every secret already encrypted with it,
-  # so a half-populated file is worth stopping for rather than "fixing".
-  grep -qE "^YAAF_MASTER_KEY=.+" deploy/.env \
-    || die "deploy/.env has no value for YAAF_MASTER_KEY. Fill it in (see deploy/.env.example) and re-run."
-  ok "the master key is set"
+  ok "deploy/.env already exists — keeping what it says"
+  if grep -qE "^YAAF_MASTER_KEY=.+" deploy/.env; then
+    ok "the master key is set"
+  elif ! $DOCKER volume inspect "${YAAF_STACK}_pgdata" >/dev/null 2>&1; then
+    # A first install whose .env was started by hand (YAAF_STATE_ROOT on a
+    # Mac, or a copy of .env.example): no database exists, so no secret was
+    # ever encrypted, and a new key strands nothing. Any empty
+    # YAAF_MASTER_KEY= line is replaced rather than left to shadow it.
+    tmp="$(mktemp deploy/.env.XXXXXX)"
+    grep -vE "^YAAF_MASTER_KEY=" deploy/.env > "$tmp" || true
+    echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)" >> "$tmp"
+    chmod 600 "$tmp"; mv "$tmp" deploy/.env
+    ok "added a master key to deploy/.env (no database yet, so nothing was encrypted before)"
+    warn "back up YAAF_MASTER_KEY somewhere off this box — losing it makes every"
+    warn "stored secret unreadable, and there is no recovery path."
+  else
+    # A database exists, so its secrets were encrypted under SOME key. Making
+    # a new one would strand every one of them: stop, rather than "fix" it.
+    die "deploy/.env has no value for YAAF_MASTER_KEY, but this box already has a database.
+    Put back the key it was encrypted with (from your backup of deploy/.env) and re-run."
+  fi
 else
   echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)" > deploy/.env
   chmod 600 deploy/.env

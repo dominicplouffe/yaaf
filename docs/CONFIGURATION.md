@@ -12,7 +12,7 @@ Two kinds of settings, kept apart on purpose:
 
 **Model API keys are not environment variables.** Add them in the dashboard
 under Settings → Providers, or with `yaaf create-llm-credential`. They are
-stored encrypted.
+stored encrypted. See [PROVIDERS.md](PROVIDERS.md).
 
 ## What you must set
 

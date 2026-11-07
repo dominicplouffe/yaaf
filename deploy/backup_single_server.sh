@@ -51,14 +51,14 @@ say "Archive"
 cp -p deploy/.env "$work/env"
 parts=(artifacts)
 [ "$WORKSPACES" = "yes" ] && parts+=(workspaces)
-present=()
+present=(); included=""
 for p in "${parts[@]}"; do
-  [ -d "$YAAF_STATE_ROOT/$p" ] && present+=("$p")
+  if [ -d "$YAAF_STATE_ROOT/$p" ]; then present+=("$p"); included="$included, $p"; fi
 done
 # The state folders were made with sudo and are written by the containers, so
 # reading them may need it too. The archive is handed back to you either way.
 tar_cmd=(tar)
-for p in "${present[@]}"; do
+for p in ${present[@]+"${present[@]}"}; do
   [ -r "$YAAF_STATE_ROOT/$p" ] && [ -x "$YAAF_STATE_ROOT/$p" ] || tar_cmd=(sudo tar)
 done
 ( umask 077
@@ -66,7 +66,7 @@ done
     ${present[@]+-C "$YAAF_STATE_ROOT" "${present[@]}"} )
 [ "${tar_cmd[0]}" = "sudo" ] && sudo chown "$(id -u):$(id -g)" "$OUT"
 chmod 600 "$OUT"
-ok "$OUT ($(( $(wc -c < "$OUT") / 1024 )) KB): database, deploy/.env${present[*]:+, ${present[*]}}"
+ok "$OUT ($(( $(wc -c < "$OUT") / 1024 )) KB): database, deploy/.env${included}"
 
 say "Done"
 cat <<EOF

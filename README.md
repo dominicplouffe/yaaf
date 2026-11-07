@@ -26,7 +26,7 @@ hosted service, no telemetry. Website: [yaaf.dplouffe.ca](https://yaaf.dplouffe.
   work freezes until you cut scope or reset the date.
 - **Any model, per seat.** Anthropic, OpenAI, Google, Mistral, DeepSeek, a
   local Ollama, and many more. Agents run in Claude Code, Codex, Gemini CLI,
-  OpenCode, or yaaf's own loop.
+  OpenCode, or yaaf's own loop. See [PROVIDERS.md](docs/PROVIDERS.md).
 - **A full record.** Every message, run, dollar and decision is kept.
 - **Works from Claude.** yaaf is an MCP server, so you can run it from Claude
   Code, Claude Desktop or claude.ai.
@@ -100,6 +100,8 @@ the server's API, with short-lived tokens. More in
 | [Configuration](docs/CONFIGURATION.md) | Every environment variable |
 | [Deployment](docs/DEPLOYMENT.md) | Running it on a server: updates, backups, going public |
 | [Architecture](docs/ARCHITECTURE.md) | How the pieces fit |
+| [Models and providers](docs/PROVIDERS.md) | Which models it runs on, keys, prices, local models |
+| [The `yaaf` command](docs/CLI.md) | Every command, by task |
 
 ## Good to know
 
