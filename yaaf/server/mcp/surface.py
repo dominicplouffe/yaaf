@@ -245,6 +245,9 @@ WITHHELD = {
     "POST /admin/founder/threads/{thread_id}/say":
         "a model driving a conversation with another model is worse than a model "
         "drafting a bundle and being graded on it — which is what `create` offers.",
+    "POST /admin/founder/threads/{thread_id}/stop":
+        "stopping a turn nothing here can start; the page that started it holds the "
+        "button.",
     "GET /admin/founder/threads/{thread_id}/progress":
         "progress on a turn nothing here can start is nothing to report.",
     "POST /admin/founder/threads/{thread_id}/attach":

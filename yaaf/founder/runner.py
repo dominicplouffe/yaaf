@@ -46,6 +46,9 @@ def _work(thread_id: str) -> None:
         # rule as the failure path below: record, then signal.
         progress.end(thread_id)
         return
+    except progress.Stopped:
+        _stopped(thread_id)
+        return
     except (FounderModelError, platform.NoPlatformCredential) as exc:
         kind = getattr(exc, "kind", "auth")
         detail = str(exc)
@@ -72,6 +75,26 @@ def _work(thread_id: str) -> None:
     except Exception:  # pragma: no cover - the log is the last resort
         log.exception("could not record the failure of founding turn %s", thread_id)
     progress.end(thread_id, ok=False, error=detail, kind=kind)
+
+
+def _stopped(thread_id: str) -> None:
+    """The chairman stopped the turn: take his message back, then say so.
+
+    The same order as a failure, for the same reason — the page waits on "not
+    running" and then reads what it was given back, so it is written first.
+    Nothing goes on `last_error`: stopping is something he did, not something
+    that went wrong.
+    """
+    withdrawn = None
+    try:
+        with db_session() as session:
+            thread = session.get(FoundingThread, thread_id)
+            if thread is not None:
+                withdrawn = agent.withdraw(thread)
+    except Exception:  # pragma: no cover - the log is the last resort
+        log.exception("could not withdraw the stopped turn on %s", thread_id)
+    log.info("founding turn %s stopped by the chairman", thread_id)
+    progress.end(thread_id, ok=False, stopped=True, withdrawn=withdrawn)
 
 
 def submit(thread_id: str) -> None:
