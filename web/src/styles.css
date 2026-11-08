@@ -3502,7 +3502,7 @@ button.danger-text:where(:not(:disabled)):hover { background: rgba(var(--critica
 
 /* ⋯ */
 .rowmenu { position: relative; display: flex; justify-content: flex-end; }
-.rowmenu-pop { position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; min-width: 200px; padding: 4px;
+.rowmenu-pop { position: fixed; z-index: 70; width: min-content; min-width: 200px; padding: 4px;
   background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--e2); }
 .rowmenu-pop button { width: 100%; justify-content: flex-start; gap: 9px; min-height: 0; padding: 7px 10px;
   border: 0; font-weight: 500; font-size: var(--t-small); background: none; }

@@ -5,7 +5,8 @@
 
 import type React from "react";
 import { Icon, type IconName } from "./ui/Icon";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Activity, Dashboard, get, RunRow, SpendBucket } from "./api";
 import { announceOffer, SpendOffer } from "./precedent";
 import { holdDecision } from "./undo";
@@ -1274,10 +1275,45 @@ export interface MenuItem {
 export function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  // Where the menu sits, in viewport pixels. The menu is portalled to <body>
+  // and fixed-positioned because its rows live in lists that clip
+  // (.vlist is overflow: hidden for its rounded corners); an absolutely
+  // positioned menu on the last row was cut off at the list's edge.
+  const [at, setAt] = useState<React.CSSProperties | null>(null);
+  useLayoutEffect(() => {
+    if (!open) { setAt(null); return; }
+    const place = () => {
+      const button = trigger.current?.getBoundingClientRect();
+      if (!button) return;
+      const height = pop.current?.offsetHeight ?? 0;
+      const gap = 4, margin = 8;
+      const fitsBelow = button.bottom + gap + height <= window.innerHeight - margin;
+      const fitsAbove = button.top - gap - height >= margin;
+      const right = Math.max(margin, window.innerWidth - button.right);
+      setAt(!fitsBelow && fitsAbove
+        ? { bottom: window.innerHeight - button.top + gap, right }
+        : { top: button.bottom + gap, right });
+    };
+    place();
+    // The menu is pinned to the viewport, so it would drift off its row on
+    // scroll. Close it, as native menus do; re-place it on resize.
+    const onScroll = (e: Event) => {
+      if (!pop.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {
-      if (!box.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (!box.current?.contains(target) && !pop.current?.contains(target)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -1291,12 +1327,13 @@ export function RowMenu({ label, items }: { label: string; items: MenuItem[] }) 
   }, [open]);
   return (
     <div className="rowmenu" ref={box} onClick={(e) => e.stopPropagation()}>
-      <button className="icon small" aria-label={label} title={label} aria-expanded={open}
+      <button ref={trigger} className="icon small" aria-label={label} title={label} aria-expanded={open}
               aria-haspopup="menu" onClick={() => setOpen(!open)}>
         <Icon name="more" size={16} />
       </button>
-      {open && (
-        <div className="rowmenu-pop" role="menu">
+      {open && createPortal(
+        <div className="rowmenu-pop" role="menu" ref={pop}
+             style={at ?? { top: 0, right: 0, visibility: "hidden" }}>
           {items.map((item) => (
             <button key={item.label} role="menuitem" disabled={item.disabled}
                     className={[item.danger ? "del" : "", item.note ? "has-note" : ""].filter(Boolean).join(" ")}
@@ -1307,7 +1344,8 @@ export function RowMenu({ label, items }: { label: string; items: MenuItem[] }) 
               {item.note && <span className="mi-note">{item.note}</span>}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
