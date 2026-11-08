@@ -83,12 +83,21 @@ def test_the_bar_plugin_passes_omarchys_own_validator(box, tmp_path):
     assert checked.returncode == 0, checked.stderr
 
 
-def test_the_bar_runs_yaaf_signal_and_clicks_open_the_desk(box):
-    manifest = json.loads(next(t for p, t in omarchy.plugin_files(YAAF).items()
-                               if p.name == "manifest.json"))
-    defaults = manifest["barWidget"]["defaults"]
-    assert defaults["exec"] == f"{YAAF} signal --format waybar"
-    assert defaults["onClick"] == f"{YAAF} desktop launch desk"
+def test_the_bar_runs_yaaf_signal_itself_and_a_click_opens_its_panel(box):
+    """Omarchy hands a third-party widget only its shell.json entry's settings,
+    never the manifest's defaults — so the old widget, which read its command
+    from them, never ran at all. The command is written into the widget."""
+    files = {p.name: t for p, t in omarchy.plugin_files(YAAF).items()}
+    widget = files["Widget.qml"]
+    assert f'setting("yaaf", {json.dumps(YAAF)})' in widget
+    assert 'command: [root.yaaf, "signal", "--format", "panel"]' in widget
+    assert "__YAAF__" not in widget
+    assert "\nPanel {\n" in widget and "root.toggle()" in widget, "a click opens the panel"
+    # Every action goes straight to yaaf, never through a shell.
+    assert '"bash"' not in widget and "execDetached([root.yaaf" not in widget
+    assert 'run([root.yaaf, "desktop", "open", String(url)])' in widget
+    manifest = json.loads(files["manifest.json"])
+    assert manifest["entryPoints"]["barWidget"] == "Widget.qml"
     assert manifest["id"] == omarchy.PLUGIN_ID and not manifest["id"].startswith("omarchy.")
 
 

@@ -57,6 +57,9 @@ host = [
     # The browser lane: the image's Chromium-through-Playwright, which the
     # installer completes with `playwright install chromium`.
     "playwright",
+    # The tray icon on GNOME (Ubuntu), KDE, Xfce and every desktop that hosts
+    # StatusNotifierItem (yaaf/cli/indicator.py): pure Python, no GTK.
+    "dbus-fast>=2.21",
 ]
 # S3-compatible artifact store backend (MinIO, R2, AWS). The base install
 # stays boto3-free: yaaf.core.artifacts imports it lazily, only when
