@@ -87,14 +87,18 @@ async def run(prompt: str, *, env: dict[str, str], model: str, system: str,
     contract `session.run` keeps for the SDK. `tools` are `(name, description,
     schema, handler)`, the handler taking the arguments and returning the MCP
     content the SDK's tools return."""
-    from yaaf.founder import progress
+    import time
 
+    from yaaf.founder import progress, timing
+
+    clock = timing.current()
     where, name = endpoint(env, model)
     offered = {t[0]: t for t in tools or ()}
     specs = [wire.ToolSpec(n, d, s) for n, d, s, _ in offered.values()]
     transcript: list[wire.Turn] = [wire.Turn("user", text=prompt)]
     said: list[str] = []
     for _ in range(MAX_TURNS):
+        began = time.monotonic()
         try:
             replies = [reply async for reply in wire.call(
                 where, name, system, transcript, specs, MAX_OUTPUT_TOKENS,
@@ -112,6 +116,10 @@ async def run(prompt: str, *, env: dict[str, str], model: str, system: str,
             raise _refused(exc) from exc
         if reply is None:
             raise FounderModelError("unknown", "the model's reply was empty")
+        if clock is not None:
+            clock.reply(time.monotonic() - began, reply.usage,
+                        tools=[c.name for c in reply.turn.calls],
+                        text_chars=len(reply.turn.text or ""))
         if reply.stop == "refusal":
             raise FounderModelError("unknown", f"the model refused: {reply.detail or '-'}")
         text = reply.turn.text.strip()

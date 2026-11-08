@@ -869,6 +869,8 @@ def create_project(
         help="Skip the conversation: create it from a JSON spec or a setup file, "
              "like the ones in examples/"),
     start_now: bool = typer.Option(False, "--start", help="Start the project once it's created"),
+    show_timing: bool = typer.Option(
+        False, "--timing", help="After each Founder turn, say where its time went"),
 ) -> None:
     """Create a project: describe it in words and the Founder drafts it — the
     dashboard's "Describe it". `--from-file` creates one from a spec instead.
@@ -931,6 +933,10 @@ def create_project(
                 typer.echo(f"The Founder's turn failed: {thread['last_error']}", err=True)
             elif last.get("role") == "founder" and last.get("text"):
                 typer.echo(f"\n{last['text'].strip()}")
+            if show_timing and last.get("timing"):
+                from yaaf.founder.timing import line_of
+
+                typer.echo(f"\n[{line_of(last['timing'])}]")
             if failed and held:
                 typer.echo("Your answers to its questions were not sent.", err=True)
             draft = thread.get("draft_bundle")

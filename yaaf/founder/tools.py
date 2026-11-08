@@ -556,8 +556,8 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         finally:
             progress.finish_step(thread_id)
 
-    built = [_search_roles, _search_crews, _read_source,
-             _grade_goal, _list_credentials, _propose_bundle, _rehearse, _ask]
+    built = [_timed(fn) for fn in (_search_roles, _search_crews, _read_source, _grade_goal,
+                                   _list_credentials, _propose_bundle, _rehearse, _ask)]
     from yaaf.founder.loop import schema
 
     return FounderTools(
@@ -566,6 +566,22 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         specs=[(fn.name, fn.description, schema(fn.input_schema), fn.handler)
                for fn in built],
     )
+
+
+def _timed(fn):
+    """The same tool, its every run timed on the turn's clock — the one place
+    all eight pass through, whichever loop calls them."""
+    import dataclasses
+
+    from yaaf.founder import timing
+
+    handler = fn.handler
+
+    async def timed(args):
+        with timing.tool(fn.name):
+            return await handler(args)
+
+    return dataclasses.replace(fn, handler=timed)
 
 
 def as_bundle(project: dict) -> dict:

@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from yaaf.core import platform
 from yaaf.core.models import FoundingThread, utcnow
-from yaaf.founder import progress, tools
+from yaaf.founder import progress, timing, tools
 from yaaf.founder import session as founder_session
 from yaaf.founder.prompt import system_prompt
 
@@ -198,30 +198,38 @@ def run_turn(session: Session, thread: FoundingThread) -> dict:
 
     # This thread owns its event loop for the length of the turn. The turn
     # narrates itself into `progress` while it runs, which the page polls.
+    # `asyncio.run` copies the context it starts in, so the clock set here is
+    # the one every model call and tool inside the turn reports to.
+    clock = timing.Turn()
     try:
-        if founder_session.on_sdk(model):
-            opts = founder_session.options(
-                system=system_prompt(),
-                env=env,
-                model=model,
-                mcp_servers={tools.SERVER: founder_tools.server},
-                allowed_tools=tools.ALLOWED_TOOLS,
-            )
-            reply = asyncio.run(
-                founder_session.run(_prompt(thread), opts, thread_id=thread.id))
-        else:
-            from yaaf.founder import loop
+        with timing.turn(clock):
+            if founder_session.on_sdk(model):
+                opts = founder_session.options(
+                    system=system_prompt(),
+                    env=env,
+                    model=model,
+                    mcp_servers={tools.SERVER: founder_tools.server},
+                    allowed_tools=tools.ALLOWED_TOOLS,
+                )
+                reply = asyncio.run(
+                    founder_session.run(_prompt(thread), opts, thread_id=thread.id))
+            else:
+                from yaaf.founder import loop
 
-            reply = asyncio.run(loop.run(
-                _prompt(thread), env=env, model=model, system=system_prompt(),
-                tools=founder_tools.specs, thread_id=thread.id))
+                reply = asyncio.run(loop.run(
+                    _prompt(thread), env=env, model=model, system=system_prompt(),
+                    tools=founder_tools.specs, thread_id=thread.id))
     except founder_session.FounderModelError as exc:
         raise _with_refusal(exc, state) from exc
+    finally:
+        # Every turn, failed ones included: a turn that died after four
+        # minutes is the one somebody most wants explained.
+        log.info("%s [thread %s, %s]", clock.line(), thread.id, model)
 
     turns = list(thread.transcript or [])
     asked = state.get("round")
     if reply or asked:
-        turn: dict = {"role": "founder", "text": reply}
+        turn: dict = {"role": "founder", "text": reply, "timing": clock.as_dict()}
         if asked:
             turn["round"] = {**asked, "number": rounds_asked(thread) + 1}
         moved = changed_sections(before, state.get("draft"))
