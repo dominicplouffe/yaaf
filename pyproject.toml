@@ -44,6 +44,9 @@ dev = [
     # server's: the anthropic_api harness runs inside the container. Here so
     # the contract suite drives that harness against the SDK's own types.
     "anthropic>=1.13",
+    # The tray icon's D-Bus library (the [host] extra's): the suite drives a
+    # real tray round trip on a private session bus.
+    "dbus-fast>=2.21",
 ]
 # Host mode (YAAF_SANDBOX_MODE=host) runs agents on the runner's own Python
 # instead of the sandbox image's, so the image's libraries have to be here:
@@ -57,6 +60,9 @@ host = [
     # The browser lane: the image's Chromium-through-Playwright, which the
     # installer completes with `playwright install chromium`.
     "playwright",
+    # The tray icon on GNOME (Ubuntu), KDE, Xfce and every desktop that hosts
+    # StatusNotifierItem (yaaf/cli/indicator.py): pure Python, no GTK.
+    "dbus-fast>=2.21",
 ]
 # S3-compatible artifact store backend (MinIO, R2, AWS). The base install
 # stays boto3-free: yaaf.core.artifacts imports it lazily, only when

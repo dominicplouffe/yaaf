@@ -180,6 +180,34 @@ def launch(
     _detach(argv)
 
 
+@desktop_app.command("indicator")
+def indicator_command() -> None:
+    """yaaf's icon in the top bar of this desktop, with its menu: what needs
+    you, each project, the dashboard, the desk, start and stop. Runs until the
+    session ends; `yaaf desktop install` starts it at login (everywhere but
+    Omarchy, whose bar has yaaf's panel)."""
+    from yaaf.cli import indicator
+
+    problem = indicator.available()
+    if problem:
+        typer.echo(f"No tray icon here: {problem}.", err=True)
+        raise typer.Exit(1)
+    indicator.run(_yaaf_bin(), str(data_home() / "icons"))
+
+
+@desktop_app.command("open")
+def open_url(url: str = typer.Argument(..., help="A dashboard address, e.g. what the "
+                                               "panel's rows carry")) -> None:
+    """Open one dashboard screen — an Inbox row, a project, its chat — the way
+    this desktop opens the dashboard. What the bar panel and the tray menu run.
+    Only yaaf's own address: a click in the bar never opens anything else."""
+    base = _api_base().rstrip("/")
+    if not (url == base or url.startswith(base + "/")):
+        typer.echo(f"not a yaaf address: {url} (yaaf is at {base})", err=True)
+        raise typer.Exit(2)
+    _detach(browser_command(url))
+
+
 # ── the morning letter ──────────────────────────────────────────────────────────
 
 
@@ -271,6 +299,46 @@ class Nudge:
     title: str
     body: str
     keys: list[str]
+    #: The button, and what it runs (default: the desk).
+    action_label: str = "Open the desk"
+    action: list[str] | None = None
+
+
+#: At least this long between two message notifications, however many arrive.
+LETTER_GAP_S = 10 * 60
+
+
+def plan_letters(desk_payload: dict, state: dict, now: datetime) -> tuple[Nudge | None, dict]:
+    """A notification when a CEO has written to you since the last one —
+    never at night, at most one every ten minutes, and only for messages that
+    are new: each project's unread count is remembered, so reading them (or
+    leaving them) never brings the same ones back. Returns the notification,
+    if any, and the counts to remember."""
+    from yaaf.cli import main as cli
+    from yaaf.cli.desk import unread_messages
+
+    unread = {u["project"]["id"]: u for u in unread_messages(desk_payload)}
+    counts = {pid: u["count"] for pid, u in unread.items()}
+    seen = state.get("seen") or {}
+    new = [u for pid, u in unread.items() if u["count"] > int(seen.get(pid, 0))]
+    local = now.astimezone()
+    quiet = not DAY_STARTS <= local.hour < DAY_ENDS
+    recent = now.timestamp() - float(state.get("sent_at") or 0) < LETTER_GAP_S
+    if not new or quiet or recent:
+        # Held, not dropped: what was not said stays new until it can be.
+        keep = {pid: min(c, int(seen.get(pid, 0))) for pid, c in counts.items()}
+        return None, {**state, "seen": keep}
+    lines = [f"{u['project']['name']}: {u['count'] - int(seen.get(u['project']['id'], 0))} new "
+             f"(of {u['count']} unread)" for u in new[:4]]
+    first = new[0]["project"]
+    title = (f"yaaf: the CEO of {first['name']} wrote to you" if len(new) == 1
+             else f"yaaf: {len(new)} of your CEOs wrote to you")
+    from yaaf.cli.desk import screen_url
+
+    chat = screen_url(cli._api_base(), f"projects/{first['id']}/chat")
+    nudge = Nudge(title=title, body="\n".join(lines), keys=[], action_label="Open the chat",
+                  action=[_yaaf_bin(), "desktop", "open", chat])
+    return nudge, {**state, "seen": counts, "sent_at": now.timestamp()}
 
 
 def plan_nudge(desk_payload: dict, state: dict, now: datetime) -> Nudge | None:
@@ -320,13 +388,13 @@ def notify_command(nudge: Nudge) -> list[str] | None:
     is installed (with an "Open the desk" button where it can wait for one),
     and straight over D-Bus where only gdbus is. Normal urgency, always: Do
     Not Disturb is the person's, and a nudge is not an emergency."""
+    action = nudge.action or [_yaaf_bin(), "desktop", "launch", "desk"]
     if shutil.which("omarchy-notification-send"):
         # Omarchy's own sender keeps the button across shell restarts with no
         # process waiting on it. Named yaaf: its default name, omarchy-action,
         # is one Do Not Disturb lets through, and a nudge must not be.
         return ["omarchy-notification-send", "--app-name", "yaaf", "-u", "normal",
-                nudge.title, nudge.body,
-                "--action", "Open the desk", _yaaf_bin(), "desktop", "launch", "desk"]
+                nudge.title, nudge.body, "--action", nudge.action_label, *action]
     if shutil.which("notify-send"):
         base = ["notify-send", "--app-name=yaaf", "--icon=yaaf", "--urgency=normal",
                 nudge.title, nudge.body]
@@ -335,8 +403,8 @@ def notify_command(nudge: Nudge) -> list[str] | None:
         # notify-send prints the action's name when it is clicked; the shell
         # around it opens the desk then. It waits for the click, so it runs
         # detached, and only as long as the notification lives.
-        waiting = shlex.join([*base, "--action=desk=Open the desk", "--wait"])
-        opener = shlex.join([_yaaf_bin(), "desktop", "launch", "desk"])
+        waiting = shlex.join([*base, f"--action=desk={nudge.action_label}", "--wait"])
+        opener = shlex.join(action)
         return ["sh", "-c", f'[ "$({waiting})" = desk ] && exec {opener}']
     if shutil.which("gdbus"):
         return ["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
@@ -359,11 +427,22 @@ def nudge(dry_run: bool = typer.Option(False, "--dry-run",
             payload = fetch_desk(client)
     except (httpx.HTTPError, typer.Exit):
         return  # down or signed out: the bar says so; a nudge says nothing
-    state = _read_state("nudge.json")
     now = datetime.now().astimezone()
+    letters_state = _read_state("letters.json")
+    letter, remembered = plan_letters(payload, letters_state, now)
+    if dry_run and letter is not None:
+        typer.echo(f"{letter.title}\n{letter.body}")
+    elif letter is not None:
+        argv = notify_command(letter)
+        if argv is not None:
+            _detach(argv)
+    if not dry_run:
+        _write_state("letters.json", remembered)
+
+    state = _read_state("nudge.json")
     planned = plan_nudge(payload, state, now)
     if planned is None:
-        if dry_run:
+        if dry_run and letter is None:
             typer.echo("Nothing to nudge about.")
         return
     if dry_run:
@@ -463,16 +542,30 @@ def planned_files() -> dict[Path, str]:
             "KillMode=process\n"),
         config_home() / "systemd" / "user" / f"{NUDGE_UNIT}.timer": (
             f"# {MARK}\n[Unit]\nDescription=yaaf: look for something worth a nudge\n\n"
-            "[Timer]\nOnStartupSec=5min\nOnUnitActiveSec=30min\nRandomizedDelaySec=2min\n\n"
+            # Every five minutes: a CEO's reply should reach you while you
+            # still remember asking. The decision reminder inside it is still
+            # once a day at most (plan_nudge).
+            "[Timer]\nOnStartupSec=2min\nOnUnitActiveSec=5min\nRandomizedDelaySec=30s\n\n"
             "[Install]\nWantedBy=timers.target\n"),
     }
-    if icon.exists():
-        files[data_home() / "icons" / "hicolor" / "scalable" / "apps" / "yaaf.svg"] = \
-            icon.read_text()
-    from yaaf.cli import omarchy
+    from yaaf.cli import indicator, omarchy
 
+    # The app icon and the tray's three faces (normal, a decision about to
+    # decide itself, yaaf down), in the user's own icon theme.
+    apps_icons = data_home() / "icons" / "hicolor" / "scalable" / "apps"
+    for name, svg in indicator.ICONS.items():
+        files[apps_icons / f"{name}.svg"] = svg
+    if icon.exists():
+        files[apps_icons / "yaaf.svg"] = icon.read_text()
     if omarchy.present():
         files.update(omarchy.plugin_files(_yaaf_bin()))
+    else:
+        # Everywhere else, the tray icon: yaaf always in the top bar.
+        files[config_home() / "autostart" / "yaaf-indicator.desktop"] = _entry(
+            "yaaf in the top bar", "What needs you, always in sight",
+            _exec("desktop", "indicator"),
+            extra="NoDisplay=true\nX-GNOME-Autostart-enabled=true\n"
+                  "X-GNOME-Autostart-Delay=5\nX-KDE-autostart-after=panel\n")
     return files
 
 
@@ -538,7 +631,10 @@ def apply(key: str | None = None) -> list[str]:
     piece (✓ done, ! not done and why) — for `install` and for `yaaf setup`."""
     from yaaf.cli import omarchy
 
+    widget = str(omarchy.plugin_dir() / "Widget.qml")
+    had = _manifest().get("files", {}).get(widget)
     written, kept = install_files()
+    widget_changed = _manifest().get("files", {}).get(widget) != had
     _refresh_menus()
     timer = _systemctl("daemon-reload") and _systemctl("enable", "--now", f"{NUDGE_UNIT}.timer")
     terminal = terminal_command(["yaaf", "desk"])
@@ -551,7 +647,7 @@ def apply(key: str | None = None) -> list[str]:
                           "session here) — `yaaf nudge` from any scheduler does the same"]
     said += [f"! left {path} alone: it is not the file install wrote" for path in kept]
     if omarchy.present():
-        said += omarchy.install(_yaaf_bin(), key or omarchy.KEY)
+        said += omarchy.install(_yaaf_bin(), key or omarchy.KEY, widget_changed=widget_changed)
         manifest = _manifest()
         manifest["omarchy"] = True
         _write_state("desktop.json", manifest)

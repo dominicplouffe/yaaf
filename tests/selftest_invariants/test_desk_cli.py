@@ -161,16 +161,19 @@ def test_only_a_decision_deciding_itself_within_a_day_lights_the_bar(chair):
     with db_session() as session:
         session.get(Approval, approval_id).expires_at = utcnow() + timedelta(days=5)
     calm = cli_desk.signal_view(_desk(chair))
-    assert calm["class"] == "waiting" and calm["text"] == "◆ 1"
+    assert calm["class"] == "waiting" and calm["text"] == "Y 1"
 
     with db_session() as session:
         session.get(Approval, approval_id).expires_at = utcnow() + timedelta(hours=3)
     assert cli_desk.signal_view(_desk(chair))["class"] == "active"
 
 
-def test_nothing_waiting_is_an_empty_bar():
+def test_nothing_waiting_is_the_mark_alone_never_an_empty_bar():
+    """It used to be empty, which looked exactly like yaaf not running. The
+    chairman asked for yaaf always in sight: the mark stays, quiet."""
     view = cli_desk.signal_view({"projects": [], "snoozed": []})
-    assert view["text"] == "" and view["class"] == "clear" and view["count"] == 0
+    assert view["text"] == "Y" and view["class"] == "clear" and view["count"] == 0
+    assert "running" in view["tooltip"]
 
 
 # ── the safeguards are the Inbox's ──────────────────────────────────────────────
@@ -294,5 +297,6 @@ def test_a_bar_gets_one_line_of_json_even_when_yaaf_is_down(monkeypatch):
     shown = runner.invoke(cli.app, ["signal", "--format", "waybar"])
     assert shown.exit_code == 0
     view = json.loads(shown.output.strip().splitlines()[-1])
-    assert view["class"] == "offline" and view["text"] == ""
+    assert view["class"] == "offline" and view["text"] == cli_desk.OFFLINE_MARK, \
+        "down is drawn — hollow — not hidden: hidden looked like all clear"
     assert runner.invoke(cli.app, ["signal", "--format", "count"]).exit_code == 1

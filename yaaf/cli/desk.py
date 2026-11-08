@@ -178,32 +178,94 @@ def at_the_wall(desk: dict) -> list[dict]:
 # ── yaaf signal ─────────────────────────────────────────────────────────────────
 
 
-def signal_view(desk: dict, now: float | None = None, prefix: str = "◆") -> dict:
+#: yaaf in the bar: its initial. The chairman asked for a Y.
+MARK = "Y"
+#: What the bar draws when yaaf cannot be reached — still there, and plainly down.
+OFFLINE_MARK = "Y ✕"
+
+
+def unread_messages(desk: dict) -> list[dict]:
+    """Boardroom messages the chairman has not read, per running project — the
+    CEO talking to him. Not decisions, so not on the badge; but a person who
+    wrote to his CEO and was answered must see that he was."""
+    return [{"project": p, "count": int(p.get("boardroom_unread") or 0)}
+            for p in desk.get("projects") or []
+            if p.get("status") == "running" and int(p.get("boardroom_unread") or 0) > 0]
+
+
+def signal_view(desk: dict, now: float | None = None, prefix: str = MARK) -> dict:
     """The status bar's whole answer, in the shape Waybar reads and Omarchy's
-    command module reads: `text`, `tooltip`, `class`. Quiet unless asked:
-    nothing waiting is an empty text; only a decision deciding itself within a
-    day, or a project at its wall, is `active` — the one class every bar draws
-    as a highlight."""
+    command module reads: `text`, `tooltip`, `class`.
+
+    Always there while yaaf runs: the mark alone when nothing waits, the mark
+    and a number when something does — decisions and unread messages from a
+    CEO together, since both are waiting on the chairman. `count` stays the
+    decisions alone, the dashboard badge's number. Only a decision deciding
+    itself within a day, or a project at its wall, is `active` — the one class
+    every bar draws as a highlight. It used to be empty while nothing needed
+    him, which was indistinguishable from yaaf not running at all."""
     now = now if now is not None else time.time()
     found = items(desk)
     walls = at_the_wall(desk)
+    unread = unread_messages(desk)
+    letters = sum(u["count"] for u in unread)
     soon = [it for it in found if it.clocked and it.at - now <= SOON.total_seconds()]
-    text = f"{prefix} {len(found)}" if found else ""
+    waiting = len(found) + letters
+    text = f"{prefix} {waiting}" if waiting else prefix
     if walls:
-        text = (text + " " if text else "") + f"⏸ {len(walls)}"
+        text += f" ⏸ {len(walls)}"
     lines = [f"{it.project['name']}: {it.title}" for it in found[:12]]
     if len(found) > 12:
         lines.append(f"… and {len(found) - 12} more")
+    lines += [f"{u['project']['name']}: {_plural(u['count'], 'unread message')} from the CEO"
+              for u in unread]
     lines += [f"{p['name']}: paused at its spending limit" for p in walls]
-    tooltip = "\n".join(lines) if lines else "Nothing needs you."
-    state = "active" if soon or walls else ("waiting" if found else "clear")
+    tooltip = "\n".join(lines) if lines else "yaaf is running. Nothing needs you."
+    state = "active" if soon or walls else ("waiting" if waiting else "clear")
     return {"text": text, "tooltip": tooltip, "class": state, "alt": state,
-            "count": len(found), "soon": len(soon), "paused": len(walls)}
+            "count": len(found), "unread": letters, "soon": len(soon), "paused": len(walls)}
 
 
 def offline_view(why: str, state: str = "offline") -> dict:
-    return {"text": "", "tooltip": why, "class": state, "alt": state,
-            "count": None, "soon": 0, "paused": 0}
+    return {"text": OFFLINE_MARK, "tooltip": why, "class": state, "alt": state,
+            "count": None, "unread": None, "soon": 0, "paused": 0}
+
+
+def panel_view(desk: dict, base: str, now: float | None = None) -> dict:
+    """Everything the click-open panel and the tray menu show: the bar's
+    answer, then what is behind it — each decision, each project's unread
+    messages, each project's one-line status — every row with the dashboard
+    address that opens it. One shape for every desktop's front end."""
+
+    now = now if now is not None else time.time()
+    view = signal_view(desk, now)
+    app = f"{base.rstrip('/')}/app"
+    view["state"] = view["class"]
+    view["dashboard"] = f"{app}/"
+    view["decisions"] = [
+        {"project": it.project["name"], "title": it.title, "kind": it.kind,
+         "when": when(it.at, now) if it.clocked else "",
+         "soon": bool(it.clocked and it.at - now <= SOON.total_seconds()),
+         "url": inbox_url(base, it)}
+        for it in items(desk)[:12]]
+    view["messages"] = [
+        {"project": u["project"]["name"], "count": u["count"],
+         "url": screen_url(base, f"projects/{u['project']['id']}/chat")}
+        for u in unread_messages(desk)]
+    view["projects"] = [
+        {"name": p["name"], "status": p.get("status"),
+         "verdict": (p.get("status_line") or {}).get("verdict", ""),
+         "headline": (p.get("status_line") or {}).get("headline", ""),
+         "url": screen_url(base, f"projects/{p['id']}")}
+        for p in desk.get("projects") or [] if p.get("status") in ("running", "paused")]
+    return view
+
+
+def offline_panel(why: str, base: str, state: str = "offline") -> dict:
+    view = offline_view(why, state)
+    view.update(state=state, dashboard=f"{base.rstrip('/')}/app/",
+                decisions=[], messages=[], projects=[])
+    return view
 
 
 def fetch_desk(client: httpx.Client) -> dict:
@@ -215,33 +277,40 @@ def fetch_desk(client: httpx.Client) -> dict:
 def signal(
     fmt: str = typer.Option("text", "--format",
                             help="text (a line for any bar), waybar or json (Waybar's and "
-                                 "Omarchy's custom-module JSON), or count (just the number)"),
-    prefix: str = typer.Option("◆", "--prefix", help="What the number is drawn after"),
+                                 "Omarchy's custom-module JSON), count (just the number), or "
+                                 "panel (everything the click-open panel shows, as JSON)"),
+    prefix: str = typer.Option(MARK, "--prefix", help="What the number is drawn after"),
 ) -> None:
-    """What needs you, as one line for a status bar: the dashboard badge's
-    number, quiet when it is zero. Run it on an interval; it exits at once."""
+    """What needs you, as one line for a status bar: the mark, and a number
+    when something waits. Run it on an interval; it exits at once."""
     from yaaf.cli import main as cli
 
-    if fmt not in ("text", "waybar", "json", "count"):
-        typer.echo("--format is one of: text, waybar, json, count", err=True)
+    if fmt not in ("text", "waybar", "json", "count", "panel"):
+        typer.echo("--format is one of: text, waybar, json, count, panel", err=True)
         raise typer.Exit(2)
+    base = cli._api_base()
     try:
-        with httpx.Client(base_url=cli._api_base(), timeout=8,
+        with httpx.Client(base_url=base, timeout=8,
                           headers={"Authorization": f"Bearer {cli._token()}"}) as client:
-            view = signal_view(fetch_desk(client), prefix=prefix)
+            desk = fetch_desk(client)
+        view = (panel_view(desk, base) if fmt == "panel"
+                else signal_view(desk, prefix=prefix))
     except httpx.HTTPStatusError as exc:
         signed_out = exc.response.status_code == 401
-        view = offline_view("yaaf: not signed in — run `yaaf login`" if signed_out
-                            else f"yaaf answered {exc.response.status_code}",
-                            "signed-out" if signed_out else "offline")
+        why, state = (("Not signed in. Run `yaaf login` in a terminal.", "signed-out")
+                      if signed_out else (f"yaaf answered {exc.response.status_code}",
+                                          "offline"))
+        view = (offline_panel(why, base, state) if fmt == "panel"
+                else offline_view(why, state))
     except httpx.HTTPError:
-        view = offline_view(f"yaaf is not answering at {cli._api_base()}")
+        why = "yaaf is not running."
+        view = offline_panel(why, base) if fmt == "panel" else offline_view(why)
     if fmt == "count":
         if view["count"] is None:
             typer.echo(view["tooltip"], err=True)
             raise typer.Exit(1)
         typer.echo(view["count"])
-    elif fmt in ("waybar", "json"):
+    elif fmt in ("waybar", "json", "panel"):
         # One line: a bar module reads the last line of what a command prints.
         typer.echo(json.dumps(view, ensure_ascii=False))
     else:
@@ -350,10 +419,17 @@ def snooze(client: httpx.Client, item: Item, until: datetime) -> dict:
         "until": until.isoformat()}))
 
 
+def screen_url(base: str, route: str) -> str:
+    """A dashboard screen by its route. The dashboard routes in the fragment
+    (HashRouter, web/src/main.tsx): the server serves /app/ alone, so
+    /app/projects/… is a 404 and only /app/#/projects/… opens the screen."""
+    return f"{base.rstrip('/')}/app/#/{route.lstrip('/')}"
+
+
 def inbox_url(base: str, item: Item) -> str:
     """The row in the dashboard: the link the mail carries, from this machine's
     own address. Opening it decides nothing."""
-    return f"{base}/app/#/inbox?item={quote(item.key, safe='')}"
+    return screen_url(base, f"inbox?item={quote(item.key, safe='')}")
 
 
 # ── the screen ──────────────────────────────────────────────────────────────────

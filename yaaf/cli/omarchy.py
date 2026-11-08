@@ -74,68 +74,424 @@ def _sh(words: list[str]) -> str:
 
 WIDGET_QML = """\
 // Managed by `yaaf desktop install`; `yaaf desktop remove` takes it out.
-// The number `yaaf signal` prints, drawn the way Omarchy's own command module
-// draws one (CustomCommandModule in shell/plugins/bar/Bar.qml): hidden while
-// nothing needs you, highlighted only when something is about to decide
-// itself or a project stopped at its spending limit. Click opens the desk,
-// right-click the dashboard.
+// yaaf in the bar, always: its Y alone while nothing waits, the Y and a
+// number when decisions or a CEO's messages wait on you, "Y ✕" when yaaf is
+// not running. Highlighted only when a decision is about to decide itself or a
+// project stopped at its spending limit. Click opens the panel — what waits,
+// each project's state, and the way into each — right-click the dashboard.
 import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-WidgetButton {
+Panel {
   id: root
+  moduleName: "yaaf.signal"
+  ipcTarget: "yaaf"
 
-  property string moduleName: "yaaf.signal"
-  property var settings
-  property string outputText: ""
-  property string outputTooltip: ""
-  property bool outputActive: false
+  property var view: ({ text: "Y", state: "loading", decisions: [], messages: [], projects: [] })
+  property bool loaded: false
+  property int cursorIndex: 0
+  property bool cursorActive: false
 
-  function setting(name, fallback) {
-    var value = settings ? settings[name] : undefined
-    return value === undefined || value === null ? fallback : value
+  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color urgent: bar ? bar.urgent : Color.urgent
+  readonly property color accent: Color.accent
+  readonly property color dim: Qt.darker(foreground, 1.55)
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  readonly property bool offline: view.state === "offline" || view.state === "signed-out"
+  readonly property var rows: (view.decisions || []).concat(view.messages || [], view.projects || [])
+
+  // Written in at install: Omarchy hands a third-party widget only the
+  // settings in its shell.json entry, never its manifest's defaults, so a
+  // command read from settings was never there — the old widget never ran.
+  readonly property string yaaf: String(setting("yaaf", "__YAAF__"))
+
+  function refresh() { if (!signalProc.running) signalProc.running = true }
+  function run(argv) { Quickshell.execDetached(argv) }
+  // Straight to the yaaf command, never through a shell: a row's address is
+  // data, and `yaaf desktop open` refuses any address that is not yaaf's own.
+  function openUrl(url) {
+    if (!url) return
+    run([root.yaaf, "desktop", "open", String(url)])
+    close()
+  }
+  function openDesk() { run([root.yaaf, "desktop", "launch", "desk"]); close() }
+  function openDashboard() { run([root.yaaf, "desktop", "launch", "dashboard"]); close() }
+  function startStop() {
+    run(["systemctl", "--user", root.offline ? "start" : "stop", "yaaf"])
+    statusLine = root.offline ? "Starting yaaf…" : "Stopping yaaf…"
+    soonRefresh.restart()
+  }
+  function moveCursor(delta) {
+    cursorActive = true
+    if (rows.length === 0) return
+    cursorIndex = Math.max(0, Math.min(rows.length - 1, cursorIndex + delta))
+  }
+  function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s") }
+  function heroMeta() {
+    if (!loaded) return "Looking…"
+    if (view.state === "offline") return "Not running"
+    if (view.state === "signed-out") return "Not signed in"
+    var parts = []
+    if ((view.count || 0) > 0) parts.push(plural(view.count, "decision"))
+    if ((view.unread || 0) > 0) parts.push(plural(view.unread, "unread message"))
+    return parts.length ? parts.join(" · ") : "Nothing needs you"
   }
 
-  function update(raw) {
-    var data = Util.parseModuleJson(raw)
-    var klass = data.class || data.alt || ""
-    outputText = data.text || ""
-    outputTooltip = data.tooltip || ""
-    outputActive = klass === "active"
-  }
-
-  visible: outputText !== ""
-  text: outputText
-  tooltipText: outputTooltip
-  active: outputActive
-
-  onPressed: function(button) {
-    if (!root.bar) return
-    var command = button === Qt.RightButton ? setting("onRightClick", "") : setting("onClick", "")
-    if (command) root.bar.run(String(command))
-  }
+  property string statusLine: ""
 
   Process {
     id: signalProc
-    command: ["bash", "-lc", String(root.setting("exec", ""))]
+    command: [root.yaaf, "signal", "--format", "panel"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.update(text)
+      onStreamFinished: {
+        var lines = text.trim().split("\\n")
+        try { root.view = JSON.parse(lines[lines.length - 1]) } catch (e) { return }
+        root.loaded = true
+        root.statusLine = ""
+        if (root.cursorIndex >= root.rows.length) root.cursorIndex = Math.max(0, root.rows.length - 1)
+      }
     }
   }
 
   Timer {
-    interval: Math.max(5, Number(root.setting("interval", 30))) * 1000
-    running: String(root.setting("exec", "")) !== ""
+    interval: root.opened ? 5000 : Math.max(5, Number(root.setting("interval", 30))) * 1000
+    running: true
     repeat: true
     triggeredOnStart: true
-    onTriggered: if (!signalProc.running) signalProc.running = true
+    onTriggered: root.refresh()
+  }
+  Timer { id: soonRefresh; interval: 3000; onTriggered: root.refresh() }
+
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+
+  onOpenedChanged: if (opened) {
+    cursorActive = false
+    cursorIndex = 0
+    refresh()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  WidgetButton {
+    id: button
+    anchors.fill: parent
+    bar: root.bar
+    // The text keeps the button drawn and its tooltip and highlight working;
+    // its own label is off because it has one weight, and yaaf's Y is heavy.
+    text: root.view.text || "Y"
+    labelVisible: false
+    fixedWidth: mark.implicitWidth + button.scaledHorizontalMargin * 2
+    tooltipText: root.view.tooltip || "yaaf"
+    useActiveColor: true
+    active: root.view.state === "active"
+    opacity: root.offline ? 0.55 : (root.view.state === "clear" ? 0.8 : 1.0)
+    horizontalMargin: 8.5
+    onPressed: function(code) {
+      if (code === Qt.RightButton) root.openDashboard()
+      else root.toggle()
+    }
+
+    readonly property string shown: root.view.text || "Y"
+    readonly property color ink: button.active && button.useActiveColor
+      ? button.activeColor : button.foreground
+
+    FontMetrics { id: markMetrics; font: markY.font }
+
+    Row {
+      id: mark
+      anchors.centerIn: parent
+      // The figures on the bar's middle, as Omarchy's own label sets them.
+      anchors.verticalCenterOffset: (markMetrics.descent - markMetrics.ascent
+        + markMetrics.tightBoundingRect("0").height) / 2
+      scale: button.pressScale
+      Text {
+        id: markY
+        textFormat: Text.PlainText
+        text: "Y"
+        color: button.ink
+        font.family: button.fontFamily
+        // Bold, a size up: the bar's font (JetBrainsMono Nerd Font) has
+        // Regular and Bold only, and a heavier weight falls back to Regular.
+        font.pixelSize: button.fontSize + 1
+        font.bold: true
+        // An outline in its own colour thickens every stroke: bolder than
+        // the font's Bold alone, which reads as regular at bar size.
+        style: Text.Outline
+        styleColor: button.ink
+        renderType: Text.NativeRendering
+      }
+      Text {
+        textFormat: Text.PlainText
+        text: button.shown.charAt(0) === "Y" ? button.shown.slice(1) : " " + button.shown
+        visible: text !== ""
+        color: button.ink
+        font.family: button.fontFamily
+        font.pixelSize: button.fontSize
+        renderType: Text.NativeRendering
+      }
+    }
+  }
+
+  KeyboardPanel {
+    id: panel
+    bar: root.bar
+    anchorItem: button
+    owner: root
+    open: root.opened
+    focusTarget: keyCatcher
+    contentWidth: panel.fittedContentWidth(Style.space(440))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(620))
+
+    PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+      onMoveRequested: function(dx, dy) {
+        if (dy === 0) return
+        if (!root.cursorActive) { root.cursorActive = true; return }
+        root.moveCursor(dy)
+      }
+      onActivateRequested: if (root.cursorActive && root.rows[root.cursorIndex]) root.openUrl(root.rows[root.cursorIndex].url)
+      onCloseRequested: root.close()
+      onTabRequested: function(direction) { root.switchPanel(direction) }
+      onTextKey: function(t) {
+        if (t === "d") root.openDesk()
+        else if (t === "o") root.openDashboard()
+        else if (t === "r") root.refresh()
+      }
+
+      Flickable {
+        id: flick
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: column.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: contentHeight > height
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+        Column {
+          id: column
+          width: flick.width
+          spacing: Style.space(8)
+
+          PanelHero {
+            width: parent.width
+            title: "yaaf"
+            meta: root.heroMeta()
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            iconComponent: Component {
+              Text {
+                textFormat: Text.PlainText
+                text: "Y"
+                color: root.view.state === "active" ? root.urgent : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.display
+                font.bold: true
+              }
+            }
+            trailingControl: Component {
+              PanelActionButton {
+                iconText: "󰑐"
+                tooltipText: "Refresh (r)"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.refresh()
+              }
+            }
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            visible: root.offline || root.statusLine !== ""
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: root.statusLine !== "" ? root.statusLine
+              : (root.view.state === "signed-out" ? "Run `yaaf login` in a terminal, once."
+                 : "yaaf is not running, so nothing is being worked on or watched.")
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
+          PanelSectionHeader {
+            visible: (root.view.decisions || []).length > 0
+            text: "NEEDS YOU"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+          Repeater {
+            model: root.view.decisions || []
+            Row_ {
+              required property var modelData
+              required property int index
+              width: column.width
+              rowIndex: index
+              title: modelData.title
+              meta: modelData.project + (modelData.when ? " · decides " + modelData.when : "") + " · " + modelData.kind
+              hot: modelData.soon === true
+              url: modelData.url
+            }
+          }
+
+          PanelSectionHeader {
+            visible: (root.view.messages || []).length > 0
+            text: "MESSAGES"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+          Repeater {
+            model: root.view.messages || []
+            Row_ {
+              required property var modelData
+              required property int index
+              width: column.width
+              rowIndex: (root.view.decisions || []).length + index
+              title: root.plural(modelData.count, "unread message") + " from the CEO"
+              meta: modelData.project
+              url: modelData.url
+            }
+          }
+
+          PanelSectionHeader {
+            visible: (root.view.projects || []).length > 0
+            text: "PROJECTS"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+          Repeater {
+            model: root.view.projects || []
+            Row_ {
+              required property var modelData
+              required property int index
+              width: column.width
+              rowIndex: (root.view.decisions || []).length + (root.view.messages || []).length + index
+              title: modelData.name
+              meta: modelData.headline || modelData.status
+              hot: ["blocked", "failing", "late", "capped"].indexOf(modelData.verdict) >= 0
+              url: modelData.url
+            }
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            visible: root.loaded && !root.offline && root.rows.length === 0
+            width: parent.width
+            text: "No projects yet. Open the dashboard to start one."
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
+          PanelSeparator { foreground: root.foreground }
+
+          RowLayout {
+            width: parent.width
+            spacing: Style.space(8)
+            Button {
+              text: "Dashboard"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              enabled: !root.offline
+              onClicked: root.openDashboard()
+            }
+            Button {
+              text: "The desk"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              enabled: !root.offline
+              onClicked: root.openDesk()
+            }
+            Item { Layout.fillWidth: true }
+            Button {
+              text: root.offline ? "Start yaaf" : "Stop yaaf"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              visible: root.view.state !== "signed-out"
+              onClicked: root.startStop()
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // One row: what it is, where it is from, and the screen a click opens.
+  component Row_: CursorSurface {
+    id: row
+    property int rowIndex: 0
+    property string title: ""
+    property string meta: ""
+    property string url: ""
+    property bool hot: false
+
+    hasCursor: root.cursorActive && root.cursorIndex === rowIndex
+    foreground: root.foreground
+    accent: root.accent
+    implicitHeight: body.implicitHeight + Style.space(12)
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onEntered: { root.cursorActive = true; root.cursorIndex = row.rowIndex }
+      onClicked: root.openUrl(row.url)
+    }
+
+    RowLayout {
+      id: body
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.leftMargin: Style.space(8)
+      anchors.rightMargin: Style.space(8)
+      spacing: Style.space(10)
+
+      Rectangle {
+        Layout.preferredWidth: Style.space(3)
+        Layout.preferredHeight: body.implicitHeight
+        radius: width
+        color: row.hot ? root.urgent : root.accent
+        opacity: row.hot ? 0.9 : 0.45
+      }
+      ColumnLayout {
+        Layout.fillWidth: true
+        spacing: 0
+        Text {
+          Layout.fillWidth: true
+          textFormat: Text.PlainText
+          text: row.title
+          elide: Text.ElideRight
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+        }
+        Text {
+          Layout.fillWidth: true
+          textFormat: Text.PlainText
+          text: row.meta
+          elide: Text.ElideRight
+          color: row.hot ? root.urgent : root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+      }
+    }
   }
 }
 """
+
+
+def widget_qml(yaaf: str) -> str:
+    """The widget, with the path of the yaaf it runs written in (as a QML
+    string literal: JSON's escaping is a subset QML reads)."""
+    return WIDGET_QML.replace('"__YAAF__"', json.dumps(yaaf))
 
 
 def plugin_files(yaaf: str) -> dict[Path, str]:
@@ -145,29 +501,31 @@ def plugin_files(yaaf: str) -> dict[Path, str]:
         "name": "yaaf",
         "version": "1.0.0",
         "author": "yaaf",
-        "description": "What needs you in yaaf — the number on the dashboard's badge",
+        "description": "yaaf in the bar: what waits on you, and a panel with the way into it",
         "kinds": ["bar-widget"],
         "entryPoints": {"barWidget": "Widget.qml"},
         "barWidget": {
             "displayName": "yaaf",
-            "description": "Decisions waiting on you; highlighted when one is about to "
-                           "decide itself",
+            "description": "Always there: decisions and unread messages waiting on you, "
+                           "highlighted when one is about to decide itself; click for the "
+                           "panel",
             "category": "Status",
             "allowMultiple": False,
             # Beside the clock, where Omarchy puts a widget that names none.
             "defaultSection": "centerEnd",
             "defaults": {
-                "exec": _sh([yaaf, "signal", "--format", "waybar"]),
+                "exec": _sh([yaaf, "signal", "--format", "panel"]),
                 "interval": 30,
-                "onClick": _sh([yaaf, "desktop", "launch", "desk"]),
-                "onRightClick": _sh([yaaf, "desktop", "launch", "dashboard"]),
+                # The command the panel's rows and buttons run, by path:
+                # never a shell, so a row's address is never parsed as one.
+                "yaaf": yaaf,
             },
             "schema": [{"key": "interval", "type": "integer",
                         "label": "Look again every (seconds)"}],
         },
     }
     return {plugin_dir() / "manifest.json": json.dumps(manifest, indent=2) + "\n",
-            plugin_dir() / "Widget.qml": WIDGET_QML,
+            plugin_dir() / "Widget.qml": widget_qml(yaaf),
             theme_hook(): theme_hook_script(yaaf)}
 
 
@@ -354,7 +712,16 @@ def edit_shared(path: Path, change, check=None) -> str:
     return "ok"
 
 
-def install(yaaf: str, key: str = KEY) -> list[str]:
+def restart_shell() -> bool:
+    """Omarchy's own restart of its shell: the bar and its widgets, a second's
+    flicker, no window touched. Needed when the widget's code changes — a
+    running shell keeps the compile it started with (Qt caches the type and
+    the folder listing it was loaded from), so a changed file is not seen and
+    a new one is refused as a "file name case mismatch"."""
+    return _run("omarchy", "restart", "shell")[0]
+
+
+def install(yaaf: str, key: str = KEY, widget_changed: bool = False) -> list[str]:
     """Every Omarchy piece but the plugin files (which ride the desktop
     manifest like any file yaaf owns). Returns one line per piece."""
     said = []
@@ -386,8 +753,14 @@ def install(yaaf: str, key: str = KEY) -> list[str]:
                 if sync_quietly() else "! the dashboard will follow your Omarchy theme from "
                 "the next theme switch (yaaf did not answer just now)")
     enabled, why = enable_plugin()
-    said.append("✓ Omarchy bar: the yaaf number beside the clock, hidden when nothing "
-                "needs you" if enabled else f"! Omarchy bar: plugin written, not enabled ({why})")
+    if not enabled:
+        said.append(f"! Omarchy bar: plugin written, not enabled ({why})")
+        return said
+    said.append("✓ Omarchy bar: a Y beside the clock, always — a number when decisions or "
+                "messages wait, Y ✕ when yaaf is down; click it for the panel")
+    if widget_changed:
+        said.append("✓ Omarchy's shell restarted to load it" if restart_shell() else
+                    "! restart Omarchy's shell to load the new bar: omarchy restart shell")
     return said
 
 

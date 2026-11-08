@@ -117,7 +117,8 @@ The installer sets up yaaf, then runs `yaaf setup`, which asks for:
    plain background process.
 3. **Your model provider and key.** The key is checked before it is saved.
    Most providers also need a web search key, because most roles browse.
-4. **Desktop extras** (optional). App menu entries and notifications.
+4. **Desktop extras** (optional). yaaf in your top bar, app menu entries and
+   notifications. See [yaaf on your desktop](#yaaf-on-your-desktop).
 
 Then open **http://localhost:24247/app**.
 
@@ -149,6 +150,29 @@ sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns
 ```
 
 Arch, Fedora and Debian need nothing extra.
+
+### yaaf on your desktop
+
+`yaaf setup` offers these, and `yaaf desktop install` adds them any time
+(`yaaf desktop remove` takes them out):
+
+- **A Y in your top bar, always.** Alone when nothing waits; with a number when
+  decisions or messages from your CEOs wait on you; highlighted when a decision
+  is about to decide itself or a project stopped at its spending limit; `Y ✕`
+  when yaaf is not running. **Click it** for what waits, each project's state,
+  and the dashboard, the desk, and Start/Stop yaaf; every row opens its own
+  screen.
+  - **Omarchy:** a panel in the bar, beside the clock.
+  - **Ubuntu, KDE, Xfce, Cinnamon, Budgie, Waybar:** an icon in the system tray,
+    with a menu. Ubuntu shows tray icons out of the box. Plain GNOME (Fedora,
+    Debian's default) needs the AppIndicator extension:
+    `gnome-extensions install appindicatorsupport@rgcjonas.gmail.com`, or install
+    "AppIndicator and KStatusNotifierItem Support" from extensions.gnome.org.
+- **Notifications** when a CEO writes to you (during the day, at most one every
+  ten minutes) and when a decision is about to decide itself (at most once a
+  day). Do Not Disturb silences them like anything else.
+- **App menu entries** for the dashboard, the desk and the morning letter, and
+  the morning letter at login when something happened.
 
 **Day to day:**
 

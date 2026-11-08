@@ -37,7 +37,9 @@ docker compose -f deploy/docker-compose.yml exec api yaaf users list
 | `yaaf backup` | Database, master key and artifacts in one file. `--workspaces` adds working folders. |
 | `yaaf restore FILE` | Put a backup back. Stop yaaf first. |
 | `yaaf rotate-master-key` | Re-encrypt every stored secret under a new key. Stop yaaf first. |
-| `yaaf desktop install` | App menu entries, notifications and the morning letter. `remove` undoes it. |
+| `yaaf desktop install` | yaaf in the top bar (Omarchy: a bar panel; elsewhere: a tray icon with a menu), notifications, app menu entries and the morning letter. `remove` undoes it. On Omarchy it restarts the shell when the bar widget changed. |
+| `yaaf desktop indicator` | The tray icon and its menu, for desktops that host a system tray (Ubuntu, KDE, Xfce, …). Started at login by `desktop install`. |
+| `yaaf desktop open URL` | Open one dashboard screen the way this desktop opens the dashboard. Only yaaf's own address. |
 | `yaaf theme sync` | Match the dashboard to your desktop theme. |
 
 ## Sign in
@@ -154,7 +156,7 @@ the checklist go to stderr.
 | Command | What it does |
 |---|---|
 | `yaaf desk` | Decide what's waiting, one item at a time, in the terminal |
-| `yaaf signal` | One line for a status bar: how many things wait on you |
+| `yaaf signal` | One line for a status bar: `Y`, `Y 3` when decisions or unread CEO messages wait, `Y ✕` when yaaf is down. `--format waybar` for Waybar's JSON, `--format panel` for everything the click-open panel shows. |
 | `yaaf letter` | The morning letter across all your projects |
 | `yaaf approvals P` | Approvals waiting, and what happens if you do nothing |
 | `yaaf decide ID` | Approve or deny one, with a note to the CEO |
