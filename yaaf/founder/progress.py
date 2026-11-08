@@ -22,8 +22,10 @@ being told what his project's designer is doing, not read a call log.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 #: How long a finished turn's steps stay readable. Long enough that the last
@@ -77,6 +79,19 @@ class Turn:
     # The round of questions, the moment `ask` is called rather than when the
     # turn commits: the draft takes minutes more, and that is reading time.
     round: dict | None = None
+    # The chairman asked for this turn to stop. Set first, acted on by whoever
+    # holds `cancel` — the turn's own event loop, on another thread.
+    stopping: bool = False
+    cancel: Callable[[], None] | None = None
+    # A stopped turn hands back what the chairman said, so the page can put it
+    # back in the box to be corrected rather than typed out a second time.
+    stopped: bool = False
+    withdrawn: dict | None = None
+
+
+class Stopped(Exception):
+    """The chairman stopped the turn. Not a failure: nothing went wrong, and
+    nothing is recorded as having gone wrong."""
 
 
 _lock = threading.Lock()
@@ -152,12 +167,14 @@ def touch(thread_id: str) -> None:
 
 
 def end(thread_id: str, *, ok: bool = True, error: str | None = None,
-        kind: str | None = None) -> None:
+        kind: str | None = None, stopped: bool = False,
+        withdrawn: dict | None = None) -> None:
     with _lock:
         turn = _turns.get(thread_id)
         if turn is None:
             return
         turn.error, turn.kind = error, kind
+        turn.stopped, turn.withdrawn, turn.cancel = stopped, withdrawn, None
         now = time.time()
         for step in turn.steps:
             if step.state == "running":
@@ -165,6 +182,68 @@ def end(thread_id: str, *, ok: bool = True, error: str | None = None,
                 step.finished_at = now
         turn.running = False
         turn.ended_at = now
+
+
+def stop(thread_id: str) -> bool:
+    """Ask a running turn to stop. False when there is nothing to stop.
+
+    A drafting turn takes minutes, and a chairman who spots a mistake in his
+    brief ten seconds in should not have to sit through the rest of it to say
+    so. The cancel lands on the turn's own event loop; a tool already running
+    off the loop (the fire drill) finishes first, because it is holding the
+    turn's database session and abandoning it mid-query is worse than waiting.
+    """
+    with _lock:
+        turn = _turns.get(thread_id)
+        if turn is None or not turn.running:
+            return False
+        turn.stopping = True
+        turn.last_activity = time.time()
+        cancel = turn.cancel
+    if cancel is not None:
+        cancel()
+    return True
+
+
+async def stoppable(thread_id: str, work):
+    """Await `work` as a turn `stop` can interrupt. Raises :class:`Stopped`.
+
+    Registered from inside the loop because the cancel has to be delivered to
+    this task, on this loop, from the request thread that asked for it.
+    """
+    task = asyncio.current_task()
+    loop = asyncio.get_running_loop()
+
+    def cancel() -> None:
+        loop.call_soon_threadsafe(task.cancel)
+
+    with _lock:
+        turn = _turns.get(thread_id)
+        already = turn is not None and turn.stopping
+        if turn is not None and not already:
+            turn.cancel = cancel
+    if already:
+        # Stopped before the model was ever called: the cheapest stop there is.
+        if asyncio.iscoroutine(work):
+            work.close()
+        raise Stopped()
+    try:
+        return await work
+    except asyncio.CancelledError:
+        if stopping(thread_id):
+            raise Stopped() from None
+        raise
+    finally:
+        with _lock:
+            turn = _turns.get(thread_id)
+            if turn is not None:
+                turn.cancel = None
+
+
+def stopping(thread_id: str) -> bool:
+    with _lock:
+        turn = _turns.get(thread_id)
+        return turn is not None and turn.stopping
 
 
 def is_running(thread_id: str) -> bool:
@@ -201,9 +280,13 @@ def read(thread_id: str) -> dict:
         turn = _turns.get(thread_id)
         if turn is None:
             return {"running": False, "steps": [], "seconds": 0.0,
-                    "error": None, "kind": None, "round": None}
+                    "error": None, "kind": None, "round": None,
+                    "stopping": False, "stopped": False, "withdrawn": None}
         return {
             "running": turn.running,
+            "stopping": turn.stopping and turn.running,
+            "stopped": turn.stopped,
+            "withdrawn": turn.withdrawn,
             "seconds": round((turn.ended_at or time.time()) - turn.started_at, 1),
             "steps": [step.as_dict() for step in turn.steps],
             "error": turn.error,

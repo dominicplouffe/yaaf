@@ -178,6 +178,36 @@ def start_turn(session: Session, thread: FoundingThread, message: str,
     progress.begin(thread.id)
 
 
+def withdraw(thread: FoundingThread) -> dict | None:
+    """Take back the chairman's last word, unanswered, and say what it was.
+
+    What stopping a turn means. He stops because what he sent was wrong — a
+    typo in the brief, a fact he forgot, an answer he clicked too fast — and
+    the fix is to change it, not to send a correction after it and have the
+    Founder read both. So the turn comes off the thread and goes back to the
+    page as text, and the thread is left exactly as it was before he sent it:
+    a round he was answering is open again.
+
+    Only ever a chairman turn: a turn that finished before the stop landed has
+    the Founder's reply last, and that reply is kept.
+    """
+    turns = list(thread.transcript or [])
+    if not turns or turns[-1].get("role") != "chairman":
+        thread.turn_started_at = None
+        return None
+    taken = turns.pop()
+    thread.transcript = turns
+    thread.turn_started_at = None
+    thread.last_error = None
+    if not turns:
+        # Named after the first thing he said, which he has just taken back.
+        thread.title = ""
+    thread.updated_at = utcnow()
+    if taken.get("answers") is not None:
+        return {"message": taken.get("note") or "", "answers": taken["answers"]}
+    return {"message": taken.get("text") or "", "answers": None}
+
+
 def run_turn(session: Session, thread: FoundingThread) -> dict:
     """Run the model turn whose message is already the last thing said.
 
@@ -211,14 +241,15 @@ def run_turn(session: Session, thread: FoundingThread) -> dict:
                     mcp_servers={tools.SERVER: founder_tools.server},
                     allowed_tools=tools.ALLOWED_TOOLS,
                 )
-                reply = asyncio.run(
-                    founder_session.run(_prompt(thread), opts, thread_id=thread.id))
+                reply = asyncio.run(progress.stoppable(
+                    thread.id, founder_session.run(_prompt(thread), opts,
+                                                   thread_id=thread.id)))
             else:
                 from yaaf.founder import loop
 
-                reply = asyncio.run(loop.run(
+                reply = asyncio.run(progress.stoppable(thread.id, loop.run(
                     _prompt(thread), env=env, model=model, system=system_prompt(),
-                    tools=founder_tools.specs, thread_id=thread.id))
+                    tools=founder_tools.specs, thread_id=thread.id)))
     except founder_session.FounderModelError as exc:
         raise _with_refusal(exc, state) from exc
     finally:

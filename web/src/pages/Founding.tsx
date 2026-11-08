@@ -80,7 +80,21 @@ interface Progress {
   steps: Step[];
   /** The round, as soon as the Founder asked it — before the draft is done. */
   round?: Round | null;
+  /** The chairman asked it to stop, and it has not finished stopping. */
+  stopping?: boolean;
+  /** It ended because he stopped it, and this is what he had said. */
+  stopped?: boolean;
+  withdrawn?: Withdrawn | null;
 }
+
+/** What a stop hands back: the chairman's last message, off the thread, to
+ *  be put back where he typed it. */
+interface Withdrawn {
+  message: string;
+  answers: Answer[] | null;
+}
+
+type Stopped = Thread & { stopping: boolean; withdrawn: Withdrawn | null };
 
 interface FounderStatus {
   credential_configured: boolean;
@@ -100,7 +114,11 @@ const PLACEHOLDER =
  *  grades that goal against the grammar, and runs the fire drill on what it
  *  came up with. A spinner over five minutes of that is indistinguishable from
  *  a hang, which is exactly how it was first reported. */
-function Steps({ progress }: { progress: Progress | null }) {
+function Steps({ progress, onStop, stopping }: {
+  progress: Progress | null;
+  onStop: () => void;
+  stopping: boolean;
+}) {
   const steps = progress?.steps ?? [];
   return (
     <div className="turn turn-founder">
@@ -125,6 +143,19 @@ function Steps({ progress }: { progress: Progress | null }) {
           {Math.round(progress?.seconds ?? 0)}s so far. It takes minutes — it is
           doing the work you would otherwise do on the form.
         </p>
+        {/* Minutes of work built on a brief with a mistake in it is minutes
+            wasted, and the box is shut while it runs. This is the way out:
+            what you sent comes back to be fixed, not typed again. */}
+        <div className="steps-stop">
+          <span className="muted">
+            {stopping
+              ? "Stopping — it finishes the step it is on first."
+              : "Got something wrong, or forgot to say something?"}
+          </span>
+          <button onClick={onStop} disabled={stopping}>
+            {stopping ? "Stopping…" : "Stop and edit"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -362,6 +393,12 @@ export default function Founding() {
   // composer under it would be a second answer competing with the first.
   // "Something's off" is what opens it.
   const [reopening, setReopening] = useState(false);
+  // A stop was asked for and the turn has not wound down yet. A ref as well,
+  // because the polling loop that notices the end was set up before it.
+  const [stopping, setStopping] = useState(false);
+  const stoppingRef = useRef(false);
+  // What a stop did, said once where he will be looking.
+  const [notice, setNotice] = useState<string | null>(null);
   const composer = useRef<HTMLTextAreaElement | null>(null);
 
   // Labels for the draft panel: rule names and role names as words.
@@ -429,6 +466,16 @@ export default function Founding() {
         if (!live) return;
         setProgress(state);
         if (!next.running) {
+          if (stoppingRef.current) {
+            // The two reads race the turn's end, so the progress beside a
+            // finished thread can be from a moment before. Read it again.
+            const ended = state.running
+              ? await get<Progress>(`/admin/founder/threads/${thread.id}/progress`)
+              : state;
+            if (!live) return;
+            settleStop(next, ended.withdrawn ?? null);
+            return;
+          }
           setThread(next);
           setBusy(false);
           // The turn's own failure, which outlived the request that started it.
@@ -498,6 +545,7 @@ export default function Founding() {
     if (!thread) return;
     setBusy(true);
     setError(null);
+    setNotice(null);
     setProgress(null);
     try {
       setThread(await post<Thread>(`/admin/founder/threads/${thread.id}/say`, payload));
@@ -523,6 +571,7 @@ export default function Founding() {
     following.current = true;
     setBusy(true);
     setError(null);
+    setNotice(null);
     setProgress(null);
     // Cleared up front so the turn the chairman just took is visible while the
     // Founder works, rather than sitting in the box looking unsent.
@@ -555,6 +604,64 @@ export default function Founding() {
     void post_(payload).catch(() => {});
   }
 
+  /** Stop the turn under way and take back what started it.
+   *
+   *  Also how a turn lost to a restart gets its stranded message back: the
+   *  server takes it off the thread either way. */
+  async function stop() {
+    if (!thread || stoppingRef.current) return;
+    stoppingRef.current = true;
+    setStopping(true);
+    // Answers queued for after this turn were answers to a round this turn
+    // asked; stopped, that round is never saved, so there is nothing to send.
+    setQueued(null);
+    try {
+      const res = await post<Stopped>(`/admin/founder/threads/${thread.id}/stop`, {});
+      // Still winding down (a fire drill finishes its step first): the polling
+      // loop sees the end and settles it.
+      if (!res.running) settleStop(res, res.withdrawn);
+    } catch (err) {
+      stoppingRef.current = false;
+      setStopping(false);
+      setError((err as Error).message);
+    }
+  }
+
+  /** The turn is over because he stopped it: put his words back. */
+  function settleStop(next: Thread, withdrawn: Withdrawn | null) {
+    stoppingRef.current = false;
+    setStopping(false);
+    setThread(next);
+    setBusy(false);
+    setProgress(null);
+    setError(null);
+    following.current = true;
+    if (!withdrawn) {
+      // It finished before the stop landed. Its reply is on the page; saying
+      // nothing would leave him wondering whether the stop did anything.
+      setNotice("It had already finished — nothing was taken back.");
+      return;
+    }
+    if (withdrawn.answers) {
+      // The round is open again; put back exactly what he clicked.
+      const saved = next.turns[next.turns.length - 1]?.round;
+      if (saved) {
+        const back: Picks = { ...initialPicks(saved) };
+        for (const a of withdrawn.answers) {
+          back[a.id] = { choice: a.choice, other: !!a.text, text: a.text ?? "" };
+        }
+        setPicks({ key: roundKey(saved), picks: back });
+      }
+      setRoundNote(withdrawn.message);
+      setNotice("Stopped. Your answers are open again — change what you need and send.");
+      return;
+    }
+    setMessage(withdrawn.message);
+    setReopening(true);
+    setNotice("Stopped. What you sent is back in the box — fix it and send again.");
+    setTimeout(() => composer.current?.focus(), 0);
+  }
+
   function pick(id: string, value: Pick) {
     setPicks((cur) => ({ ...cur, picks: { ...cur.picks, [id]: value } }));
   }
@@ -578,6 +685,7 @@ export default function Founding() {
     setThread(null);
     setMessage("");
     setError(null);
+    setNotice(null);
     setQueued(null);
     setReopening(false);
   }
@@ -700,9 +808,20 @@ export default function Founding() {
             />
           )}
 
-          {busy && <Steps progress={progress} />}
+          {busy && <Steps progress={progress} onStop={() => void stop()}
+            stopping={stopping || !!progress?.stopping} />}
 
           {error && <p className="error">{error}</p>}
+          {/* A turn lost to a restart left his message on the thread with no
+              reply. Sending it again would put it there twice. */}
+          {!busy && thread?.interrupted && (
+            <div className="actions" style={{ justifyContent: "flex-start" }}>
+              <button onClick={() => void stop()} disabled={stopping}>
+                Take my message back to edit
+              </button>
+            </div>
+          )}
+          {notice && <p className="muted">{notice}</p>}
 
           {/* One place to type at a time: while a round is open, its own note
               box is that place, and a second composer would be a second way
@@ -714,7 +833,9 @@ export default function Founding() {
                 rows={turns.length ? 3 : 8}
                 value={message}
                 placeholder={
-                  turns.length
+                  busy
+                    ? "The Founder is working. To change what you sent, use Stop and edit above."
+                    : turns.length
                     ? aligned
                       ? "What's off? Name it and the Founder reopens whatever it touches…"
                       : "Push back, or tell it something it should know…"

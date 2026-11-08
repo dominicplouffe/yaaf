@@ -328,22 +328,30 @@ async def _watched(stream, thread_id: str):
         return
 
     iterator = stream.__aiter__()
-    while True:
-        try:
-            with anyio.fail_after(progress.STALL_SECONDS):
-                message = await iterator.__anext__()
-        except StopAsyncIteration:
-            return
-        except TimeoutError as exc:
-            doing = progress.current_label(thread_id)
-            raise FounderModelError(
-                "stalled",
-                f"nothing has happened for {int(progress.STALL_SECONDS)}s while "
-                f"{doing.lower()}. That is a hang rather than slow work — the "
-                "conversation is saved, so try again.",
-            ) from exc
-        progress.touch(thread_id)
-        yield message
+    try:
+        while True:
+            try:
+                with anyio.fail_after(progress.STALL_SECONDS):
+                    message = await iterator.__anext__()
+            except StopAsyncIteration:
+                return
+            except TimeoutError as exc:
+                doing = progress.current_label(thread_id)
+                raise FounderModelError(
+                    "stalled",
+                    f"nothing has happened for {int(progress.STALL_SECONDS)}s while "
+                    f"{doing.lower()}. That is a hang rather than slow work — the "
+                    "conversation is saved, so try again.",
+                ) from exc
+            progress.touch(thread_id)
+            yield message
+    finally:
+        # Closed here rather than left to the loop's shutdown: a turn the
+        # chairman stopped (`progress.stop`) or that stalled should end the CLI
+        # subprocess now, not whenever the generator happens to be collected.
+        close = getattr(iterator, "aclose", None)
+        if close is not None:
+            await close()
 
 
 async def run_once(*, prompt: str, system: str, env: dict[str, str], model: str) -> str:

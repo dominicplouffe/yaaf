@@ -12,6 +12,8 @@ the chairman has created one and hands the CEO the conversation it came from.
 
 from __future__ import annotations
 
+import time
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -349,6 +351,49 @@ def say(thread_id: str, body: SayIn, session: Session = Depends(db),
         raise HTTPException(status_code=422, detail="say something, or answer the questions")
     _say(session, thread, body.message.strip(), answers)
     return _accepted(_render(thread))
+
+
+#: How long `/stop` holds its request for the turn to wind down. Long enough
+#: that a model call in flight is usually gone by the answer; short enough that
+#: a fire drill mid-run (which finishes before it stops) does not hold a request
+#: slot for minutes. Past it, the page keeps polling as it does for any turn.
+STOP_WAIT_SECONDS = 5.0
+
+
+@router.post("/threads/{thread_id}/stop", dependencies=[authority.IN_HANDLER])
+def stop(thread_id: str, session: Session = Depends(db),
+         person: Person = Depends(person_auth)) -> dict:
+    """Stop the turn under way and hand back what the chairman said.
+
+    The way out of a brief he got wrong. Without it, a typo in the first
+    message cost him the whole five-minute draft built on it before he could
+    say so — the composer is shut while the Founder works, because the server
+    takes one turn at a time.
+
+    His last message comes off the thread and back in the response as
+    `withdrawn`, for the page to put back in the box. A thread whose turn was
+    lost to a restart (`interrupted`) is stopped the same way, which is how
+    its stranded message gets corrected rather than sent again beside itself.
+    A turn that finished before the stop landed keeps its reply; `withdrawn`
+    is then null, which is the honest answer.
+    """
+    thread = _thread(session, thread_id, person)
+    if progress.stop(thread_id):
+        waited = 0.0
+        while progress.is_running(thread_id) and waited < STOP_WAIT_SECONDS:
+            time.sleep(0.05)
+            waited += 0.05
+        running = progress.is_running(thread_id)
+        # The worker wrote the withdrawal in a session of its own; this one
+        # loaded the row before that landed.
+        session.refresh(thread)
+        state = progress.read(thread_id)
+        return {**_render(thread, running), "stopping": running,
+                "withdrawn": None if running else state.get("withdrawn")}
+    if thread.turn_started_at:
+        withdrawn = founder_agent.withdraw(thread)
+        return {**_render(thread, False), "stopping": False, "withdrawn": withdrawn}
+    raise HTTPException(status_code=409, detail="the Founder is not working on anything")
 
 
 @router.get("/threads/{thread_id}/progress", dependencies=[authority.IN_HANDLER])

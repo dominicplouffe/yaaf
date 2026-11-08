@@ -1857,6 +1857,10 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .step-running .step-mark { color: var(--accent); animation: step-pulse 1.2s ease-in-out infinite; }
 .step-running .step-label { color: var(--ink); }
 @keyframes step-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+/* The way out of a turn built on a mistake, under the work it would throw away. */
+.steps-stop { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid var(--border); }
 @media (prefers-reduced-motion: reduce) {
   .step-running .step-mark { animation: none; }
 }

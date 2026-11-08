@@ -80,7 +80,8 @@ def founder(client, monkeypatch):
                 # Held open so a test can look at a turn while it is in flight —
                 # which is the state the whole change exists to make legible.
                 import anyio
-                await anyio.to_thread.run_sync(blocks_on.wait)
+                # Abandoned on cancel, so a stopped turn stops here.
+                await anyio.to_thread.run_sync(blocks_on.wait, abandon_on_cancel=True)
             if raises is not None:
                 raise raises
             # The tools the model would have called, called the way the CLI
@@ -1260,3 +1261,149 @@ def test_what_was_settled_reaches_the_ceo(client, founder):
         text = briefing(session.get(FoundingThread, thread["id"]))
     assert "Q1 Who reads this" in text
     assert "WHAT WAS SETTLED:\n- Reader: The seller" in text
+
+
+# ── stopping a turn: the way out of a brief you got wrong ──────────────────────
+
+
+def test_a_running_turn_stops_and_hands_the_brief_back(client, founder):
+    """A typo in the brief used to cost the whole five-minute draft built on it
+    before the chairman could say so. Stopping takes his message back off the
+    thread and returns it, so the fix is an edit, not a second message the
+    Founder has to reconcile with the first."""
+    release = threading.Event()
+    founder(reply="Never said.", blocks_on=release)
+    try:
+        thread = client.post("/admin/founder/threads",
+                             json={"message": "Audit my PCP account."}, headers=ADMIN).json()
+        assert thread["running"] is True
+
+        stopped = client.post(f"/admin/founder/threads/{thread['id']}/stop", headers=ADMIN)
+        assert stopped.status_code == 200, stopped.text
+        body = stopped.json()
+        assert body["running"] is False and body["stopping"] is False
+        assert body["withdrawn"] == {"message": "Audit my PCP account.", "answers": None}
+        # Back to before he sent it: nothing said, nothing failed, nothing lost.
+        assert body["turns"] == []
+        assert body["title"] == ""
+        assert body["last_error"] is None
+        assert body["interrupted"] is False
+        live = client.get(f"/admin/founder/threads/{thread['id']}/progress",
+                          headers=ADMIN).json()
+        assert live["stopped"] is True
+        assert live["withdrawn"]["message"] == "Audit my PCP account."
+    finally:
+        release.set()
+
+    # And the corrected brief goes on the same thread, with the wrong one gone.
+    calls = founder(reply="Drafted.")
+    again = start(client, "Audit my PPC account.", thread["id"])
+    assert [t["text"] for t in again["turns"]] == ["Audit my PPC account.", "Drafted."]
+    assert "PCP" not in calls[-1]["prompt"]
+
+
+def test_stopping_answers_reopens_the_round(client, founder):
+    """Answers clicked too fast are the other thing worth stopping for. The
+    round goes back on the table with what he wrote beside it, so he changes
+    one click rather than answering the whole round again."""
+    founder(tool_calls=[("ask", ROUND), ("propose_bundle", {"project": PROJECT})])
+    thread = start(client, "Audit my PPC account.")
+
+    release = threading.Event()
+    founder(reply="Never said.", blocks_on=release)
+    try:
+        answers = [{"id": "shape", "choice": 1, "text": None}]
+        sent = client.post(f"/admin/founder/threads/{thread['id']}/say",
+                           json={"answers": answers, "message": "Keep it cheap."},
+                           headers=ADMIN)
+        assert sent.status_code == 202, sent.text
+        body = client.post(f"/admin/founder/threads/{thread['id']}/stop",
+                           headers=ADMIN).json()
+    finally:
+        release.set()
+    assert body["withdrawn"] == {"message": "Keep it cheap.", "answers": answers}
+    assert body["turns"][-1]["role"] == "founder"
+    assert body["turns"][-1]["round"]["questions"][0]["id"] == "reader"
+
+    # Open again: answering it is accepted, not refused as a stale round.
+    founder(reply="Deliver it is.")
+    again = client.post(f"/admin/founder/threads/{thread['id']}/say",
+                        json={"answers": [{"id": "shape", "choice": 0}]}, headers=ADMIN)
+    assert again.status_code == 202, again.text
+
+
+def test_a_finished_turn_has_nothing_to_stop(client, founder):
+    """Stop never takes back a reply. A turn that is over is over — and the
+    Founder's last word is never what `withdraw` removes."""
+    from yaaf.founder.agent import withdraw
+
+    founder(reply="Done.")
+    thread = start(client, "design me a project")
+    refused = client.post(f"/admin/founder/threads/{thread['id']}/stop", headers=ADMIN)
+    assert refused.status_code == 409
+
+    finished = types.SimpleNamespace(
+        transcript=[{"role": "chairman", "text": "a"}, {"role": "founder", "text": "b"}],
+        turn_started_at=None, title="a", last_error=None, updated_at=None)
+    assert withdraw(finished) is None
+    assert len(finished.transcript) == 2
+
+
+def test_a_turn_lost_to_a_restart_can_be_taken_back(client, founder):
+    """An interrupted thread used to leave its message stranded: sending it
+    again put the same brief on the thread twice. Stop takes it back to edit."""
+    from yaaf.core.db import db_session
+    from yaaf.core.models import FoundingThread, utcnow
+
+    founder(reply="Done.")
+    thread = start(client, "design me a project")
+    with db_session() as session:
+        row = session.get(FoundingThread, thread["id"])
+        row.transcript = [*row.transcript, {"role": "chairman", "text": "and make it cheap"}]
+        row.turn_started_at = utcnow()
+    progress.clear()
+
+    body = client.post(f"/admin/founder/threads/{thread['id']}/stop", headers=ADMIN).json()
+    assert body["withdrawn"] == {"message": "and make it cheap", "answers": None}
+    assert body["interrupted"] is False
+    assert [t["role"] for t in body["turns"]] == ["chairman", "founder"]
+    reloaded = client.get(f"/admin/founder/threads/{thread['id']}", headers=ADMIN).json()
+    assert reloaded["interrupted"] is False
+    assert len(reloaded["turns"]) == 2
+
+
+def test_a_stop_cancels_the_model_call_rather_than_waiting_it_out():
+    """The cancel lands on the turn's own event loop, from another thread —
+    which is where the request that asks for it runs. A stop that only took
+    effect when the model next spoke would be a stop that waits minutes."""
+    import asyncio
+
+    progress.clear()
+    progress.begin("thr_stop")
+    began = threading.Event()
+
+    async def forever():
+        began.set()
+        await asyncio.sleep(3600)
+
+    outcome: dict = {}
+
+    def turn():
+        try:
+            asyncio.run(progress.stoppable("thr_stop", forever()))
+        except progress.Stopped:
+            outcome["stopped"] = True
+
+    worker = threading.Thread(target=turn)
+    worker.start()
+    assert began.wait(2)
+    assert progress.stop("thr_stop") is True
+    worker.join(2)
+    assert not worker.is_alive() and outcome == {"stopped": True}
+
+    # Asked before the model was ever called: never called at all.
+    progress.begin("thr_early")
+    progress.stop("thr_early")
+    with pytest.raises(progress.Stopped):
+        asyncio.run(progress.stoppable("thr_early", forever()))
+    assert progress.stop("thr_nothing") is False
