@@ -54,6 +54,7 @@ docker compose -f deploy/docker-compose.yml exec api yaaf users list
 |---|---|
 | `yaaf rehearse SPEC` | Run a project spec with scripted agents, for $0. Shows where it would stall and what it would cost. |
 | `yaaf create-project SPEC` | Create a project from a spec, like the ones in `examples/` |
+| `yaaf describe "BRIEF"` | Describe it in words and the Founder drafts it, as on the dashboard: answer its questions at the prompt, then create it. No brief picks up the conversation you left. |
 | `yaaf projects` | Every project: status, spend, and what waits on you |
 | `yaaf status` | Is everything OK, in plain sentences |
 | `yaaf start P` / `pause P` / `stop P` | Start or resume, pause, or end a project for good |
