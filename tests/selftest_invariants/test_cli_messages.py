@@ -6,7 +6,7 @@ crash or a wall of JSON:
 1. A server that is not running answered with a 224-line traceback.
 2. A refused request printed the raw body; a validation error was a
    175-line dump for one missing field, and only six commands gave a hint.
-3. `create-project` on one of the shipped examples — the obvious first try —
+3. `create-project --from-file` on one of the shipped examples — the obvious first try —
    failed, because examples are setup files and it wanted a bare spec.
 4. `rehearse` on a path that does not exist printed a traceback.
 5. Eighteen commands had no help text, and `--help` listed sixty commands in
@@ -85,7 +85,7 @@ def test_a_shipped_example_creates_the_project_it_describes(client, monkeypatch)
     seed_role(client, "ceo", is_ceo=True)
     seed_role(client, "writer")
 
-    result = runner.invoke(cli.app, ["create-project",
+    result = runner.invoke(cli.app, ["create-project", "--from-file",
                                      str(EXAMPLES / "01-your-first-hour.json")])
     assert result.exit_code == 0, result.output
     # Its credential is named, not carried: said once, and the project is still made.
@@ -111,7 +111,7 @@ def test_a_setup_file_brings_the_roles_the_library_lacks(client, monkeypatch, tm
     spec = tmp_path / "carried.json"
     spec.write_text(json.dumps(bundle))
 
-    result = runner.invoke(cli.app, ["create-project", str(spec)])
+    result = runner.invoke(cli.app, ["create-project", "--from-file", str(spec)])
     assert result.exit_code == 0, result.output
     assert "added role scribe from the setup file" in result.output
 
@@ -217,7 +217,7 @@ def test_a_setup_file_names_its_other_providers_credentials_by_name(client, monk
         "goal": "Write one carried note, sourced.", "chairman_email": "chair@example.com",
         "ceo_role_slug": "ceo", "credential_names": {"deepseek": "DeepSeek key"}}}))
 
-    result = runner.invoke(cli.app, ["create-project", str(spec)])
+    result = runner.invoke(cli.app, ["create-project", "--from-file", str(spec)])
     assert result.exit_code == 0, result.output
     project = next(p for p in client.get("/observe/projects", headers=ADMIN).json()
                    if p["slug"] == "two-providers")

@@ -52,9 +52,9 @@ docker compose -f deploy/docker-compose.yml exec api yaaf users list
 
 | Command | What it does |
 |---|---|
+| `yaaf create-project "BRIEF"` | Describe a project in words and the Founder drafts it. See below. |
+| `yaaf create-project --from-file SPEC` | Create a project from a spec, like the ones in `examples/` |
 | `yaaf rehearse SPEC` | Run a project spec with scripted agents, for $0. Shows where it would stall and what it would cost. |
-| `yaaf create-project SPEC` | Create a project from a spec, like the ones in `examples/` |
-| `yaaf describe "BRIEF"` | Describe it in words and the Founder drafts it, as on the dashboard: answer its questions at the prompt, then create it. No brief picks up the conversation you left. |
 | `yaaf projects` | Every project: status, spend, and what waits on you |
 | `yaaf status` | Is everything OK, in plain sentences |
 | `yaaf start P` / `pause P` / `stop P` | Start or resume, pause, or end a project for good |
@@ -62,6 +62,44 @@ docker compose -f deploy/docker-compose.yml exec api yaaf users list
 | `yaaf amend P` | Change one of the project's rules |
 
 `P` is a project's slug or id.
+
+### Creating a project
+
+`create-project` holds the same conversation as **New Project → Describe it** in
+the dashboard. Say what you want, the way you'd brief someone you just hired:
+
+```bash
+yaaf create-project "A weekly digest of what changed in our competitors' pricing"
+```
+
+The Founder drafts the whole project: goal, mode, team and rules. It takes a few
+minutes and prints each step as it goes. It also asks about anything it had to
+guess. The questions show up as soon as it asks them, while it is still
+drafting, and each one comes with its own answer already picked:
+
+- **Enter** keeps the recommended answer.
+- **A letter** picks another option.
+- **Anything else you type** is sent as your own words.
+- **Who pays** never has an answer picked for you; Enter leaves it open.
+
+Your answers are sent when the draft is done. Then the Founder asks another round
+or calls the draft settled. At that point you choose:
+
+- **create it.** The project is created, its CEO gets the conversation as a
+  briefing in the boardroom, and you're asked whether to start it. Pass
+  `--start` to start it without asking.
+- **say something.** Change anything, in words.
+- **write the draft to a file.** The file works with `yaaf rehearse` and
+  `yaaf create-project --from-file`.
+- **quit.** The conversation is kept.
+
+The conversation lives on the server. `yaaf create-project` with no brief picks
+up the one you left open, including one you started in the browser. Ctrl-C stops
+the waiting but not the Founder.
+
+The Founder needs a key of its own, or one of your LLM credentials, to draft
+with. An admin sets it with `yaaf set-platform-key`. `--from-file` does not
+need the Founder.
 
 ## What needs you
 

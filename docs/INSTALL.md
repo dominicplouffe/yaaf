@@ -210,8 +210,16 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) before you open a pull request.
    ```
 
    `doctor` lists anything that is wrong and how to fix it.
-3. **Create a project.** In the dashboard, click New Project, or import one of
-   the ready-made specs in `examples/`.
+3. **Create a project.** In the dashboard, click New Project. From a terminal,
+   describe it and the Founder drafts it:
+
+   ```bash
+   yaaf create-project "What you want to exist, in your own words"
+   ```
+
+   Or start from one of the ready-made specs in `examples/`, in the dashboard or
+   with `yaaf create-project --from-file examples/01-your-first-hour.json`.
+   See [CLI.md](CLI.md#creating-a-project).
 4. **Connect Claude** (optional):
 
    ```bash
