@@ -231,12 +231,17 @@ async def run(prompt: str, opts, stderr_sink: list[str] | None = None,
 
     from claude_agent_sdk import AssistantMessage, ResultMessage, query
 
-    from yaaf.founder import progress
+    from yaaf.founder import progress, timing
 
     said: list[str] = []
+    clock = timing.current()
     try:
         async for message in _watched(query(prompt=prompt, options=opts), thread_id):
+            if clock is not None:
+                clock.seen()
             if isinstance(message, AssistantMessage):
+                if clock is not None:
+                    _time_message(clock, message)
                 text = assistant_text(message)
                 if text:
                     said.append(text)
@@ -247,6 +252,8 @@ async def run(prompt: str, opts, stderr_sink: list[str] | None = None,
                 elif thread_id:
                     progress.touch(thread_id)
             elif isinstance(message, ResultMessage):
+                if clock is not None:
+                    clock.result(getattr(message, "duration_api_ms", None))
                 if getattr(message, "is_error", False):
                     raise _ended_badly(message)
             elif thread_id:
@@ -258,6 +265,20 @@ async def run(prompt: str, opts, stderr_sink: list[str] | None = None,
         log.error("founder model turn failed: %s\nstderr: %s", exc, tail)
         raise _classify(exc, tail) from exc
     return "\n\n".join(said).strip()
+
+
+def _time_message(clock, message) -> None:
+    """One assistant message onto the turn's clock: its tokens, the tools it
+    asked for, and how much it thought and said."""
+    blocks = getattr(message, "content", None) or []
+    clock.model_message(
+        getattr(message, "message_id", None),
+        getattr(message, "usage", None),
+        tools=[b.name for b in blocks if type(b).__name__ == "ToolUseBlock"],
+        thinking_chars=sum(len(getattr(b, "thinking", "") or "") for b in blocks
+                           if type(b).__name__ == "ThinkingBlock"),
+        text_chars=sum(len(getattr(b, "text", "") or "") for b in blocks
+                       if type(b).__name__ == "TextBlock"))
 
 
 def _ended_badly(message) -> FounderModelError:

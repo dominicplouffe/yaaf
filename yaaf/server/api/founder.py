@@ -90,7 +90,7 @@ def _render(thread: FoundingThread, running: bool | None = None) -> dict:
         # can arrive with no prose around it, and it is still the turn.
         "turns": [
             {"role": turn.get("role", "founder"), "text": turn.get("text", ""),
-             **{key: turn[key] for key in ("round", "answers", "note", "changed")
+             **{key: turn[key] for key in ("round", "answers", "note", "changed", "timing")
                 if turn.get(key) is not None}}
             for turn in (thread.transcript or []) if turn.get("text") or turn.get("round")
         ],

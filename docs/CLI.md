@@ -97,6 +97,19 @@ The conversation lives on the server. `yaaf create-project` with no brief picks
 up the one you left open, including one you started in the browser. Ctrl-C stops
 the waiting but not the Founder.
 
+**Where the time goes.** A Founder turn takes minutes. Pass `--timing` to see,
+after each turn, how long it took to start, each model call with its tokens and
+the tool it asked for, and each tool's own run, including the goal grade's
+model calls:
+
+```
+[founder turn 312s: cli start 6s · model 268s (11 calls, 41.0k in [32.0k cached] / 18.2k out, ~9.1k thinking) · grade_goal 27s · rehearse 7s · propose_bundle 1s | slowest calls: 74s/6.1k out→propose_bundle, ...]
+```
+
+The server logs the same line for every turn, including failed ones (logger
+`yaaf.founder`). The thread API keeps the full breakdown on each Founder turn
+as `timing`.
+
 The Founder needs a key of its own, or one of your LLM credentials, to draft
 with. An admin sets it with `yaaf set-platform-key`. `--from-file` does not
 need the Founder.
