@@ -236,7 +236,6 @@ def panel_view(desk: dict, base: str, now: float | None = None) -> dict:
     answer, then what is behind it — each decision, each project's unread
     messages, each project's one-line status — every row with the dashboard
     address that opens it. One shape for every desktop's front end."""
-    from urllib.parse import quote
 
     now = now if now is not None else time.time()
     view = signal_view(desk, now)
@@ -247,17 +246,17 @@ def panel_view(desk: dict, base: str, now: float | None = None) -> dict:
         {"project": it.project["name"], "title": it.title, "kind": it.kind,
          "when": when(it.at, now) if it.clocked else "",
          "soon": bool(it.clocked and it.at - now <= SOON.total_seconds()),
-         "url": f"{app}/inbox?item={quote(it.key, safe='')}"}
+         "url": inbox_url(base, it)}
         for it in items(desk)[:12]]
     view["messages"] = [
         {"project": u["project"]["name"], "count": u["count"],
-         "url": f"{app}/projects/{u['project']['id']}/chat"}
+         "url": screen_url(base, f"projects/{u['project']['id']}/chat")}
         for u in unread_messages(desk)]
     view["projects"] = [
         {"name": p["name"], "status": p.get("status"),
          "verdict": (p.get("status_line") or {}).get("verdict", ""),
          "headline": (p.get("status_line") or {}).get("headline", ""),
-         "url": f"{app}/projects/{p['id']}"}
+         "url": screen_url(base, f"projects/{p['id']}")}
         for p in desk.get("projects") or [] if p.get("status") in ("running", "paused")]
     return view
 
@@ -420,10 +419,17 @@ def snooze(client: httpx.Client, item: Item, until: datetime) -> dict:
         "until": until.isoformat()}))
 
 
+def screen_url(base: str, route: str) -> str:
+    """A dashboard screen by its route. The dashboard routes in the fragment
+    (HashRouter, web/src/main.tsx): the server serves /app/ alone, so
+    /app/projects/… is a 404 and only /app/#/projects/… opens the screen."""
+    return f"{base.rstrip('/')}/app/#/{route.lstrip('/')}"
+
+
 def inbox_url(base: str, item: Item) -> str:
     """The row in the dashboard: the link the mail carries, from this machine's
     own address. Opening it decides nothing."""
-    return f"{base}/app/#/inbox?item={quote(item.key, safe='')}"
+    return screen_url(base, f"inbox?item={quote(item.key, safe='')}")
 
 
 # ── the screen ──────────────────────────────────────────────────────────────────

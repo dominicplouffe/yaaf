@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import time
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -65,11 +66,38 @@ def test_the_panel_rows_each_open_their_own_screen():
     view = desk.panel_view(payload, BASE)
     assert view["dashboard"] == f"{BASE}/app/"
     (decision,) = view["decisions"]
-    assert decision["url"] == f"{BASE}/app/inbox?item=appr_1" and decision["soon"]
+    assert decision["url"] == f"{BASE}/app/#/inbox?item=appr_1" and decision["soon"]
     assert view["messages"] == [{"project": "Daily", "count": 9,
-                                 "url": f"{BASE}/app/projects/p1/chat"}]
-    assert view["projects"][0]["url"] == f"{BASE}/app/projects/p1"
+                                 "url": f"{BASE}/app/#/projects/p1/chat"}]
+    assert view["projects"][0]["url"] == f"{BASE}/app/#/projects/p1"
     assert view["state"] == "active", "a decision deciding itself within a day lights it"
+
+
+def test_every_row_opens_a_screen_the_dashboard_has():
+    """The dashboard routes in the fragment (HashRouter): the server serves
+    /app/ and nothing under it. The first panel linked /app/projects/…/chat,
+    and a click on "1 unread message from the CEO" opened {"detail":"Not
+    Found"}. Every row's address is /app/ plus a route the dashboard declares."""
+    import re
+    from urllib.parse import urlparse
+
+    repo = Path(__file__).resolve().parents[2]
+    assert "<HashRouter>" in (repo / "web" / "src" / "main.tsx").read_text()
+    routes = (repo / "web" / "src" / "App.tsx").read_text() + \
+        (repo / "web" / "src" / "pages" / "Project.tsx").read_text()
+    payload = {"projects": [_project("p1", "Daily", unread=9,
+                                     approvals=[_approval("appr_1", 3)])]}
+    view = desk.panel_view(payload, BASE)
+    urls = [r["url"] for key in ("decisions", "messages", "projects") for r in view[key]]
+    assert urls
+    for url in urls:
+        parsed = urlparse(url)
+        assert parsed.path == "/app/", f"the server only serves /app/: {url}"
+        route = parsed.fragment.split("?")[0]
+        first = route.strip("/").split("/")[0]
+        assert re.search(rf'path="/{first}[/"]', routes), f"no such screen: {url}"
+        if route.endswith("/chat"):
+            assert 'path="chat"' in routes
 
 
 def test_down_is_a_panel_too_with_a_way_to_start_it():
@@ -88,8 +116,8 @@ def test_a_click_opens_only_yaafs_own_screens(monkeypatch):
     monkeypatch.setattr(desktop, "browser_command", lambda url: ["open", url])
     monkeypatch.setenv("YAAF_API", BASE)
     runner = CliRunner()
-    assert runner.invoke(app, ["desktop", "open", f"{BASE}/app/inbox?item=x"]).exit_code == 0
-    assert opened == [["open", f"{BASE}/app/inbox?item=x"]]
+    assert runner.invoke(app, ["desktop", "open", f"{BASE}/app/#/inbox?item=x"]).exit_code == 0
+    assert opened == [["open", f"{BASE}/app/#/inbox?item=x"]]
     refused = runner.invoke(app, ["desktop", "open", "https://example.com/phish"])
     assert refused.exit_code == 2 and len(opened) == 1
 
@@ -99,10 +127,10 @@ def test_a_click_opens_only_yaafs_own_screens(monkeypatch):
 
 VIEW = {"state": "waiting", "count": 1, "unread": 12, "tooltip": "t",
         "decisions": [{"title": "Confirm the brief", "project": "Watch", "when": "in 6 days",
-                       "url": f"{BASE}/app/inbox?item=x"}],
-        "messages": [{"project": "Daily", "count": 9, "url": f"{BASE}/app/projects/p1/chat"}],
+                       "url": f"{BASE}/app/#/inbox?item=x"}],
+        "messages": [{"project": "Daily", "count": 9, "url": f"{BASE}/app/#/projects/p1/chat"}],
         "projects": [{"name": "Daily", "headline": "Working.",
-                      "url": f"{BASE}/app/projects/p1"}]}
+                      "url": f"{BASE}/app/#/projects/p1"}]}
 
 
 def test_the_tray_face_says_how_many_and_greys_out_when_down():
@@ -118,7 +146,7 @@ def test_the_tray_menu_opens_each_thing_and_ends_with_the_ways_in():
     rows = indicator.menu_for(VIEW, "/usr/bin/yaaf")
     actions = {r.label: r.action for r in rows if r.action}
     assert actions["Confirm the brief — Watch · decides in 6 days"] == (
-        "/usr/bin/yaaf", "desktop", "open", f"{BASE}/app/inbox?item=x")
+        "/usr/bin/yaaf", "desktop", "open", f"{BASE}/app/#/inbox?item=x")
     assert actions["Daily: 9 unread messages from the CEO"][-1].endswith("/chat")
     assert actions["Open the desk"] == ("/usr/bin/yaaf", "desktop", "launch", "desk")
     assert actions["Stop yaaf"] == ("systemctl", "--user", "stop", "yaaf")

@@ -333,7 +333,9 @@ def plan_letters(desk_payload: dict, state: dict, now: datetime) -> tuple[Nudge 
     first = new[0]["project"]
     title = (f"yaaf: the CEO of {first['name']} wrote to you" if len(new) == 1
              else f"yaaf: {len(new)} of your CEOs wrote to you")
-    chat = f"{cli._api_base()}/app/projects/{first['id']}/chat"
+    from yaaf.cli.desk import screen_url
+
+    chat = screen_url(cli._api_base(), f"projects/{first['id']}/chat")
     nudge = Nudge(title=title, body="\n".join(lines), keys=[], action_label="Open the chat",
                   action=[_yaaf_bin(), "desktop", "open", chat])
     return nudge, {**state, "seen": counts, "sent_at": now.timestamp()}
