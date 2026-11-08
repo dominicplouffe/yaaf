@@ -19,6 +19,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+import click
 import httpx
 import typer
 
@@ -524,54 +525,252 @@ def create_project(spec_file: Path) -> None:
         typer.echo(f"{spec_file} is not valid JSON: {exc}", err=True)
         raise typer.Exit(2) from None
     with _client() as client:
-        if isinstance(spec, dict) and "yaaf_bundle" in spec:
-            # A setup file wraps the project with the roles it hires and the
-            # credential names it expects. Sent bare, the server read it as a
-            # project with no slug and answered with a page of validation.
-            project = dict(spec.get("project") or {})
-            known = {r["slug"] for r in _json_or_die(client.get("/admin/roles"))}
-            for role in spec.get("roles") or []:
-                if role.get("slug") and role["slug"] not in known:
-                    _json_or_die(client.post("/admin/roles", json=role))
-                    typer.echo(f"added role {role['slug']} from the setup file")
-            wanted = project.pop("billing_secret_name", None)
-            others = project.pop("credential_names", None) or {}
-            backup = project.pop("fallback_credential_name", None)
-            listed = (_json_or_die(client.get("/admin/settings/llm-credentials"))
-                      if wanted or others or backup else [])
+        _show(client.post("/admin/projects", json=_project_from(client, spec)))
 
-            def named(name: str) -> dict | None:
-                return next((c for c in listed
-                             if c["name"].lower() == str(name).lower()), None)
 
-            if wanted and not project.get("billing_secret_id"):
-                match = named(wanted)
-                if match:
-                    project["billing_secret_id"] = match["id"]
-                else:
-                    typer.echo(f"no LLM credential called {wanted!r} — the project is "
-                               "created unable to start; assign one in its Settings → Money",
-                               err=True)
-            # The other providers' credentials travel by name too, resolved the
-            # way the web form and the Founder resolve them.
-            for provider, name in others.items():
-                match = named(name)
-                if match and (match.get("provider") or "anthropic") == provider:
-                    project.setdefault("credentials", {})[provider] = match["id"]
-                else:
-                    typer.echo(f"no {provider} credential called {name!r} on this install "
-                               "— seats on that provider cannot run until one is assigned",
-                               err=True)
-            if backup:
-                match = named(backup)
-                if match:
-                    project["fallback_secret_id"] = match["id"]
-                else:
-                    typer.echo(f"no LLM credential called {backup!r} — the project is "
-                               "created with no fallback; name one in its Settings → Money",
-                               err=True)
-            spec = project
-        _show(client.post("/admin/projects", json=spec))
+def _project_from(client: httpx.Client, spec) -> dict:
+    """What `POST /admin/projects` takes, from a bare spec or a setup file.
+
+    A setup file — an example, an export, or a draft the Founder wrote — wraps
+    the project with the roles it hires and the credential names it expects.
+    Its missing roles are added to the library here and its credentials are
+    matched by name, so `create-project` and `describe` found the same project
+    from the same bundle."""
+    if isinstance(spec, dict) and "yaaf_bundle" in spec:
+        # Sent bare, the server read a setup file as a project with no slug
+        # and answered with a page of validation.
+        project = dict(spec.get("project") or {})
+        known = {r["slug"] for r in _json_or_die(client.get("/admin/roles"))}
+        for role in spec.get("roles") or []:
+            if role.get("slug") and role["slug"] not in known:
+                _json_or_die(client.post("/admin/roles", json=role))
+                typer.echo(f"added role {role['slug']} from the setup file")
+        wanted = project.pop("billing_secret_name", None)
+        others = project.pop("credential_names", None) or {}
+        backup = project.pop("fallback_credential_name", None)
+        listed = (_json_or_die(client.get("/admin/settings/llm-credentials"))
+                  if wanted or others or backup else [])
+
+        def named(name: str) -> dict | None:
+            return next((c for c in listed
+                         if c["name"].lower() == str(name).lower()), None)
+
+        if wanted and not project.get("billing_secret_id"):
+            match = named(wanted)
+            if match:
+                project["billing_secret_id"] = match["id"]
+            else:
+                typer.echo(f"no LLM credential called {wanted!r} — the project is "
+                           "created unable to start; assign one in its Settings → Money",
+                           err=True)
+        # The other providers' credentials travel by name too, resolved the
+        # way the web form and the Founder resolve them.
+        for provider, name in others.items():
+            match = named(name)
+            if match and (match.get("provider") or "anthropic") == provider:
+                project.setdefault("credentials", {})[provider] = match["id"]
+            else:
+                typer.echo(f"no {provider} credential called {name!r} on this install "
+                           "— seats on that provider cannot run until one is assigned",
+                           err=True)
+        if backup:
+            match = named(backup)
+            if match:
+                project["fallback_secret_id"] = match["id"]
+            else:
+                typer.echo(f"no LLM credential called {backup!r} — the project is "
+                           "created with no fallback; name one in its Settings → Money",
+                           err=True)
+        spec = project
+    return spec
+
+
+#: How often `describe` asks whether the Founder's turn has finished — the
+#: page's own cadence. Tests shorten it.
+_FOUNDER_POLL_SECONDS = 2.0
+
+
+def _await_turn(client: httpx.Client, thread: dict) -> dict:
+    """Wait out the Founder's turn, narrating its steps as they land.
+
+    The turn runs on the server, not on the request that started it, so this
+    polls the way the page does — and Ctrl-C leaves it running there, to be
+    picked up by the next `yaaf describe`."""
+    import time
+
+    base = f"/admin/founder/threads/{thread['id']}"
+    shown = 0
+    try:
+        while thread.get("running"):
+            state = _json_or_die(client.get(f"{base}/progress"))
+            for step in state.get("steps", [])[shown:]:
+                typer.echo(f"  · {step['label']}")
+            shown = len(state.get("steps", []))
+            thread = _json_or_die(client.get(base))
+            if thread.get("running"):
+                time.sleep(_FOUNDER_POLL_SECONDS)
+    except KeyboardInterrupt:
+        typer.echo("\nThe Founder keeps working on the server; run `yaaf describe` "
+                   "to pick the conversation back up.", err=True)
+        raise typer.Exit(130) from None
+    return thread
+
+
+def _draft_lines(bundle: dict) -> list[str]:
+    """The draft at a glance — enough to decide whether to found it."""
+    p = bundle.get("project") or {}
+    lines = [f"Draft: {p.get('name')} ({p.get('slug')}) — {p.get('mode', 'explore')}",
+             f"  Goal: {p.get('goal')}",
+             f"  CEO: {p.get('ceo_name', 'CEO')} ({p.get('ceo_role_slug', 'ceo')})"]
+    for team in p.get("teams") or []:
+        people = ", ".join(team.get("employees") or []) or "nobody yet"
+        lines.append(f"  Team {team.get('name')}: {team.get('role_slug')} — {people}")
+    if p.get("deadline"):
+        lines.append(f"  Deadline: {p['deadline']}")
+    lines.append(f"  Pays: {p.get('billing_secret_name') or 'nobody yet'}")
+    return lines
+
+
+def _answer_round(asked: dict) -> dict:
+    """One round of the Founder's questions, in the terminal.
+
+    Every question arrives with the Founder's answer already picked, so Enter
+    agrees; a letter picks another option; anything else is your own words.
+    A question with no recommendation (who pays — it spends somebody's money)
+    is left open by Enter, as the page leaves it."""
+    questions = asked.get("questions") or []
+    typer.echo(f"\n{len(questions)} question(s). Enter takes the recommendation; "
+               "a letter picks another; anything else is your own words.")
+    answers = []
+    for n, q in enumerate(questions, 1):
+        options = q.get("options") or []
+        recommended = q.get("recommended")
+        typer.echo(f"\n{n}. {q.get('title')}: {q.get('question')}")
+        for k, option in enumerate(options):
+            detail = f" — {option['detail']}" if option.get("detail") else ""
+            mark = "  (recommended)" if k == recommended else ""
+            typer.echo(f"   {chr(97 + k)}) {option.get('label')}{detail}{mark}")
+        if recommended is None:
+            typer.echo("   (no recommendation — Enter leaves it open)")
+        default = chr(97 + recommended) if recommended is not None else ""
+        raw = typer.prompt("  ", default=default, show_default=bool(default),
+                           prompt_suffix="> ").strip()
+        letters = [chr(97 + k) for k in range(len(options))]
+        if raw.lower() in letters:
+            answers.append({"id": q["id"], "choice": letters.index(raw.lower()), "text": None})
+        elif raw:
+            answers.append({"id": q["id"], "choice": None, "text": raw})
+        else:
+            answers.append({"id": q["id"], "choice": None, "text": None})
+    note = typer.prompt("\nAnything to add? (Enter for nothing)", default="",
+                        show_default=False).strip()
+    return {"answers": answers, "message": note}
+
+
+def _found(client: httpx.Client, thread: dict, start_now: bool) -> None:
+    """Create the drafted project, and hand its CEO the conversation."""
+    project = _project_from(client, thread["draft_bundle"])
+    created = _json_or_die(client.post("/admin/projects", json=project))
+    slug = project.get("slug") or created["id"]
+    typer.echo(f"Created {slug} ({created['id']}).")
+    # The chairman already said all of this once; the CEO reads it in the
+    # boardroom rather than asking for it again — what the page does too.
+    attached = client.post(f"/admin/founder/threads/{thread['id']}/attach",
+                           json={"project_id": created["id"]})
+    if attached.status_code >= 400:
+        typer.echo(f"The CEO was not briefed with the conversation: {_detail(attached)}",
+                   err=True)
+    elif attached.json().get("briefed"):
+        typer.echo("Its CEO has this conversation as a briefing in the boardroom.")
+    if start_now or typer.confirm("Start it now?", default=False):
+        _json_or_die(client.post(f"/admin/projects/{created['id']}/start"))
+        typer.echo(f"Started. Follow it with `yaaf dashboard {slug}`.")
+    else:
+        typer.echo(f"Not started. When you're ready: `yaaf start {slug}`.")
+
+
+@app.command()
+def describe(
+    brief: str = typer.Argument(
+        None, help="What you want to exist, in your own words. Omit to pick up the "
+                   "conversation you left open"),
+    start_now: bool = typer.Option(False, "--start", help="Start the project once it's created"),
+) -> None:
+    """Describe a project in words and let the Founder draft it — the same
+    conversation as the dashboard's "Describe it".
+
+    The Founder drafts the whole project, then asks about whatever it had to
+    guess, with its own answer already picked. When you agree with the draft,
+    `describe` creates it and briefs its CEO with the conversation. The
+    conversation lives on the server: leave at any point and `yaaf describe`
+    with no brief picks it up, here or in the browser."""
+    with _client() as client:
+        thread = None
+        if brief is None:
+            listed = _json_or_die(client.get("/admin/founder/threads"))["threads"]
+            open_one = next((t for t in listed if not t.get("created_project_id")), None)
+            if open_one:
+                thread = _json_or_die(client.get(f"/admin/founder/threads/{open_one['id']}"))
+                typer.echo(f"Picking up \"{thread.get('title') or 'your draft'}\" where you "
+                           "left it. (Pass a brief to start a new one.)")
+        if thread is None:
+            status = _json_or_die(client.get("/admin/founder/status"))
+            if not status.get("credential_configured"):
+                typer.echo("The Founder has no key to draft with. An instance admin sets one "
+                           "with `yaaf set-platform-key` (or in Settings → Founder).", err=True)
+                raise typer.Exit(1)
+            if brief is None:
+                brief = typer.prompt("What do you want to exist that doesn't yet?")
+            thread = _json_or_die(client.post("/admin/founder/threads",
+                                              json={"message": brief}))
+        base = f"/admin/founder/threads/{thread['id']}"
+        shown = None
+        while True:
+            if thread.get("running"):
+                typer.echo("The Founder is drafting — this takes a few minutes.")
+            thread = _await_turn(client, thread)
+            turns = thread.get("turns") or []
+            last = turns[-1] if turns else {}
+            if thread.get("interrupted"):
+                typer.echo("That turn was interrupted before it finished — say it again.",
+                           err=True)
+            elif thread.get("last_error"):
+                typer.echo(f"The Founder's turn failed: {thread['last_error']}", err=True)
+            elif last.get("role") == "founder" and last.get("text"):
+                typer.echo(f"\n{last['text'].strip()}")
+            draft = thread.get("draft_bundle")
+            # Again only when a turn moved it: the same draft under every
+            # answer buried the answer.
+            if draft and draft != shown:
+                typer.echo("\n" + "\n".join(_draft_lines(draft)))
+                shown = draft
+            asked = last.get("round") if last.get("role") == "founder" else None
+            if asked and asked.get("questions") and not thread.get("last_error"):
+                payload = _answer_round(asked)
+                thread = _json_or_die(client.post(f"{base}/say", json=payload))
+                continue
+            if asked and asked.get("done"):
+                typer.echo("\nNothing left to ask — the draft is settled.")
+            choices = ("c", "s", "w", "q") if draft else ("s", "q")
+            menu = ("[c]reate it, [s]ay something, [w]rite the draft to a file, or [q]uit"
+                    if draft else "[s]ay something, or [q]uit")
+            pick = typer.prompt(f"\n{menu}", default=choices[0],
+                                type=click.Choice(choices, case_sensitive=False))
+            if pick == "q":
+                typer.echo("The conversation is kept; `yaaf describe` picks it back up.")
+                return
+            if pick == "w":
+                slug = (draft.get("project") or {}).get("slug") or "draft"
+                path = Path(typer.prompt("Write it to", default=f"{slug}.json"))
+                path.write_text(json.dumps(draft, indent=2) + "\n")
+                typer.echo(f"Wrote {path}. `yaaf create-project {path}` creates it as written; "
+                           "`yaaf rehearse` tries it first, for $0.")
+                return
+            if pick == "c":
+                _found(client, thread, start_now)
+                return
+            message = typer.prompt("Say")
+            thread = _json_or_die(client.post(f"{base}/say", json={"message": message}))
 
 
 @app.command()
@@ -1801,7 +2000,7 @@ _register_up()
 #: for them. The help used to be sixty commands in the order they were written.
 PANELS = {
     "Get started": ("setup", "up", "update", "login", "logout", "whoami", "doctor", "rehearse",
-                    "create_project", "projects", "status"),
+                    "create_project", "describe", "projects", "status"),
     "Run a project": ("start", "pause", "stop", "configure", "amend"),
     "Decide": ("desk", "signal", "say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",
                "audit_evidence"),
