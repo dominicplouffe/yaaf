@@ -44,6 +44,9 @@ dev = [
     # server's: the anthropic_api harness runs inside the container. Here so
     # the contract suite drives that harness against the SDK's own types.
     "anthropic>=1.13",
+    # The tray icon's D-Bus library (the [host] extra's): the suite drives a
+    # real tray round trip on a private session bus.
+    "dbus-fast>=2.21",
 ]
 # Host mode (YAAF_SANDBOX_MODE=host) runs agents on the runner's own Python
 # instead of the sandbox image's, so the image's libraries have to be here:
