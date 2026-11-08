@@ -93,6 +93,8 @@ def test_the_bar_runs_yaaf_signal_itself_and_a_click_opens_its_panel(box):
     assert 'command: [root.yaaf, "signal", "--format", "panel"]' in widget
     assert "__YAAF__" not in widget
     assert "\nPanel {\n" in widget and "root.toggle()" in widget, "a click opens the panel"
+    # The Y is yaaf's own label, bold: the button's has one weight.
+    assert "labelVisible: false" in widget and "font.bold: true" in widget
     # Every action goes straight to yaaf, never through a shell.
     assert '"bash"' not in widget and "execDetached([root.yaaf" not in widget
     assert 'run([root.yaaf, "desktop", "open", String(url)])' in widget

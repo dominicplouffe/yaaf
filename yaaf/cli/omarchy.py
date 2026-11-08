@@ -182,7 +182,11 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
+    // The text keeps the button drawn and its tooltip and highlight working;
+    // its own label is off because it has one weight, and yaaf's Y is heavy.
     text: root.view.text || "Y"
+    labelVisible: false
+    fixedWidth: mark.implicitWidth + button.scaledHorizontalMargin * 2
     tooltipText: root.view.tooltip || "yaaf"
     useActiveColor: true
     active: root.view.state === "active"
@@ -191,6 +195,46 @@ Panel {
     onPressed: function(code) {
       if (code === Qt.RightButton) root.openDashboard()
       else root.toggle()
+    }
+
+    readonly property string shown: root.view.text || "Y"
+    readonly property color ink: button.active && button.useActiveColor
+      ? button.activeColor : button.foreground
+
+    FontMetrics { id: markMetrics; font: markY.font }
+
+    Row {
+      id: mark
+      anchors.centerIn: parent
+      // The figures on the bar's middle, as Omarchy's own label sets them.
+      anchors.verticalCenterOffset: (markMetrics.descent - markMetrics.ascent
+        + markMetrics.tightBoundingRect("0").height) / 2
+      scale: button.pressScale
+      Text {
+        id: markY
+        textFormat: Text.PlainText
+        text: "Y"
+        color: button.ink
+        font.family: button.fontFamily
+        // Bold, a size up: the bar's font (JetBrainsMono Nerd Font) has
+        // Regular and Bold only, and a heavier weight falls back to Regular.
+        font.pixelSize: button.fontSize + 1
+        font.bold: true
+        // An outline in its own colour thickens every stroke: bolder than
+        // the font's Bold alone, which reads as regular at bar size.
+        style: Text.Outline
+        styleColor: button.ink
+        renderType: Text.NativeRendering
+      }
+      Text {
+        textFormat: Text.PlainText
+        text: button.shown.charAt(0) === "Y" ? button.shown.slice(1) : " " + button.shown
+        visible: text !== ""
+        color: button.ink
+        font.family: button.fontFamily
+        font.pixelSize: button.fontSize
+        renderType: Text.NativeRendering
+      }
     }
   }
 
@@ -249,6 +293,7 @@ Panel {
                 color: root.view.state === "active" ? root.urgent : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.display
+                font.bold: true
               }
             }
             trailingControl: Component {
