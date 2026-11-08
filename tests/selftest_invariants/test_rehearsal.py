@@ -608,7 +608,7 @@ def test_a_bad_spec_file_is_a_message_not_a_traceback(tmp_path):
 
 
 def test_a_bare_project_spec_works_as_well_as_a_setup_file():
-    """`yaaf create-project` takes the project object alone; a setup file wraps
+    """`yaaf create-project --from-file` takes the project object alone; a setup file wraps
     it. The drill takes either, because a chairman has whichever he has."""
     report = rehearsal.rehearse({**MINIMAL, "slug": "bare", "roles": ROLES})
     assert report["ok"], report["verdict"]

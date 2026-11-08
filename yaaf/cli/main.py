@@ -511,8 +511,7 @@ def create_user(email: str, name: str,
                           json={"email": email, "display_name": name, "is_admin": admin}))
 
 
-@app.command()
-def create_project(spec_file: Path) -> None:
+def _create_from_file(spec_file: Path) -> None:
     """Create a project from a JSON spec, or from a setup file such as the ones
     in examples/ — its missing roles are added to the library first, and its
     billing credential is matched by name."""
@@ -534,8 +533,8 @@ def _project_from(client: httpx.Client, spec) -> dict:
     A setup file — an example, an export, or a draft the Founder wrote — wraps
     the project with the roles it hires and the credential names it expects.
     Its missing roles are added to the library here and its credentials are
-    matched by name, so `create-project` and `describe` found the same project
-    from the same bundle."""
+    matched by name, so a file and a Founder draft found the same project from
+    the same bundle."""
     if isinstance(spec, dict) and "yaaf_bundle" in spec:
         # Sent bare, the server read a setup file as a project with no slug
         # and answered with a page of validation.
@@ -585,17 +584,30 @@ def _project_from(client: httpx.Client, spec) -> dict:
     return spec
 
 
-#: How often `describe` asks whether the Founder's turn has finished — the
+#: How often `create-project` asks whether the Founder's turn has finished — the
 #: page's own cadence. Tests shorten it.
 _FOUNDER_POLL_SECONDS = 2.0
 
 
-def _await_turn(client: httpx.Client, thread: dict) -> dict:
+def _round_key(asked: dict) -> str:
+    """A round's identity, so answers given mid-turn are matched to the round
+    the turn saves — the page's `roundKey`."""
+    return "|".join(f"{q.get('id')}:{q.get('title')}" for q in asked.get("questions") or [])
+
+
+def _await_turn(client: httpx.Client, thread: dict,
+                held: tuple[str, dict] | None) -> tuple[dict, tuple[str, dict] | None]:
     """Wait out the Founder's turn, narrating its steps as they land.
 
-    The turn runs on the server, not on the request that started it, so this
-    polls the way the page does — and Ctrl-C leaves it running there, to be
-    picked up by the next `yaaf describe`."""
+    The draft takes minutes; the questions are reading time. The Founder asks
+    its round partway through, and the page shows it then — so this does too,
+    and holds the answers until the turn ends, because the server takes no
+    new message while one is running. Returns the finished thread and the
+    held answers, keyed to the round they answer.
+
+    The turn runs on the server, not on the request that started it, so
+    Ctrl-C leaves it running there, to be picked up by the next
+    `yaaf create-project`."""
     import time
 
     base = f"/admin/founder/threads/{thread['id']}"
@@ -606,14 +618,20 @@ def _await_turn(client: httpx.Client, thread: dict) -> dict:
             for step in state.get("steps", [])[shown:]:
                 typer.echo(f"  · {step['label']}")
             shown = len(state.get("steps", []))
+            asked = state.get("round")
+            if (held is None and state.get("running") and asked
+                    and asked.get("questions") and not asked.get("done")):
+                typer.echo("\nThe Founder has questions while it finishes the draft.")
+                held = (_round_key(asked), _answer_round(asked))
+                typer.echo("Got it — your answers go in as soon as the draft is done.")
             thread = _json_or_die(client.get(base))
             if thread.get("running"):
                 time.sleep(_FOUNDER_POLL_SECONDS)
     except KeyboardInterrupt:
-        typer.echo("\nThe Founder keeps working on the server; run `yaaf describe` "
+        typer.echo("\nThe Founder keeps working on the server; run `yaaf create-project` "
                    "to pick the conversation back up.", err=True)
         raise typer.Exit(130) from None
-    return thread
+    return thread, held
 
 
 def _draft_lines(bundle: dict) -> list[str]:
@@ -690,20 +708,37 @@ def _found(client: httpx.Client, thread: dict, start_now: bool) -> None:
 
 
 @app.command()
-def describe(
+def create_project(
     brief: str = typer.Argument(
         None, help="What you want to exist, in your own words. Omit to pick up the "
-                   "conversation you left open"),
+                   "conversation you left open, or to be asked"),
+    from_file: Path = typer.Option(
+        None, "--from-file", dir_okay=False,
+        help="Skip the conversation: create it from a JSON spec or a setup file, "
+             "like the ones in examples/"),
     start_now: bool = typer.Option(False, "--start", help="Start the project once it's created"),
 ) -> None:
-    """Describe a project in words and let the Founder draft it — the same
-    conversation as the dashboard's "Describe it".
+    """Create a project: describe it in words and the Founder drafts it — the
+    dashboard's "Describe it". `--from-file` creates one from a spec instead.
 
-    The Founder drafts the whole project, then asks about whatever it had to
-    guess, with its own answer already picked. When you agree with the draft,
-    `describe` creates it and briefs its CEO with the conversation. The
-    conversation lives on the server: leave at any point and `yaaf describe`
-    with no brief picks it up, here or in the browser."""
+    The Founder drafts the whole project and asks about whatever it had to
+    guess, with its own answer already picked: Enter agrees. When you agree
+    with the draft, it is created and its CEO is briefed with the
+    conversation. The conversation lives on the server: leave at any point and
+    `yaaf create-project` with no brief picks it up, here or in the browser."""
+    if from_file is not None:
+        if brief is not None:
+            typer.echo("Give a brief or --from-file, not both.", err=True)
+            raise typer.Exit(2)
+        _create_from_file(from_file)
+        return
+    if brief is not None and (brief.lower().endswith(".json") or Path(brief).is_file()):
+        # This command took a file until the conversation became its default.
+        # A path sent to the Founder as a brief would be a paid turn spent
+        # drafting a project about a filename.
+        typer.echo(f"{brief} looks like a file. To create a project from it: "
+                   f"`yaaf create-project --from-file {brief}`", err=True)
+        raise typer.Exit(2)
     with _client() as client:
         thread = None
         if brief is None:
@@ -717,7 +752,8 @@ def describe(
             status = _json_or_die(client.get("/admin/founder/status"))
             if not status.get("credential_configured"):
                 typer.echo("The Founder has no key to draft with. An instance admin sets one "
-                           "with `yaaf set-platform-key` (or in Settings → Founder).", err=True)
+                           "with `yaaf set-platform-key` (or in Settings → Founder). "
+                           "`yaaf create-project --from-file SPEC` needs no Founder.", err=True)
                 raise typer.Exit(1)
             if brief is None:
                 brief = typer.prompt("What do you want to exist that doesn't yet?")
@@ -725,12 +761,14 @@ def describe(
                                               json={"message": brief}))
         base = f"/admin/founder/threads/{thread['id']}"
         shown = None
+        held = None
         while True:
             if thread.get("running"):
-                typer.echo("The Founder is drafting — this takes a few minutes.")
-            thread = _await_turn(client, thread)
+                typer.echo("\nThe Founder is working on it — a turn takes a few minutes.")
+            thread, held = _await_turn(client, thread, held)
             turns = thread.get("turns") or []
             last = turns[-1] if turns else {}
+            failed = thread.get("interrupted") or thread.get("last_error")
             if thread.get("interrupted"):
                 typer.echo("That turn was interrupted before it finished — say it again.",
                            err=True)
@@ -738,6 +776,8 @@ def describe(
                 typer.echo(f"The Founder's turn failed: {thread['last_error']}", err=True)
             elif last.get("role") == "founder" and last.get("text"):
                 typer.echo(f"\n{last['text'].strip()}")
+            if failed and held:
+                typer.echo("Your answers to its questions were not sent.", err=True)
             draft = thread.get("draft_bundle")
             # Again only when a turn moved it: the same draft under every
             # answer buried the answer.
@@ -745,10 +785,18 @@ def describe(
                 typer.echo("\n" + "\n".join(_draft_lines(draft)))
                 shown = draft
             asked = last.get("round") if last.get("role") == "founder" else None
-            if asked and asked.get("questions") and not thread.get("last_error"):
-                payload = _answer_round(asked)
+            if asked and asked.get("questions") and not failed:
+                if held and held[0] == _round_key(asked):
+                    typer.echo("\nSending the answers you gave while it worked.")
+                    payload = held[1]
+                else:
+                    if held:
+                        typer.echo("\nThe Founder changed its questions as it finished.")
+                    payload = _answer_round(asked)
+                held = None
                 thread = _json_or_die(client.post(f"{base}/say", json=payload))
                 continue
+            held = None
             if asked and asked.get("done"):
                 typer.echo("\nNothing left to ask — the draft is settled.")
             choices = ("c", "s", "w", "q") if draft else ("s", "q")
@@ -757,14 +805,14 @@ def describe(
             pick = typer.prompt(f"\n{menu}", default=choices[0],
                                 type=click.Choice(choices, case_sensitive=False))
             if pick == "q":
-                typer.echo("The conversation is kept; `yaaf describe` picks it back up.")
+                typer.echo("The conversation is kept; `yaaf create-project` picks it back up.")
                 return
             if pick == "w":
                 slug = (draft.get("project") or {}).get("slug") or "draft"
                 path = Path(typer.prompt("Write it to", default=f"{slug}.json"))
                 path.write_text(json.dumps(draft, indent=2) + "\n")
-                typer.echo(f"Wrote {path}. `yaaf create-project {path}` creates it as written; "
-                           "`yaaf rehearse` tries it first, for $0.")
+                typer.echo(f"Wrote {path}. `yaaf create-project --from-file {path}` creates it "
+                           "as written; `yaaf rehearse` tries it first, for $0.")
                 return
             if pick == "c":
                 _found(client, thread, start_now)
@@ -2000,7 +2048,7 @@ _register_up()
 #: for them. The help used to be sixty commands in the order they were written.
 PANELS = {
     "Get started": ("setup", "up", "update", "login", "logout", "whoami", "doctor", "rehearse",
-                    "create_project", "describe", "projects", "status"),
+                    "create_project", "projects", "status"),
     "Run a project": ("start", "pause", "stop", "configure", "amend"),
     "Decide": ("desk", "signal", "say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",
                "audit_evidence"),
