@@ -85,9 +85,9 @@ drafting, and each one comes with its own answer already picked:
 Your answers are sent when the draft is done. Then the Founder asks another round
 or calls the draft settled. At that point you choose:
 
-- **create it.** The project is created, its CEO gets the conversation as a
-  briefing in the boardroom, and you're asked whether to start it. Pass
-  `--start` to start it without asking.
+- **create it.** The project is created and its CEO gets the conversation as a
+  briefing in the boardroom. Then `create-project` finishes setting it up (see
+  [After it's created](#after-its-created)).
 - **say something.** Change anything, in words.
 - **write the draft to a file.** The file works with `yaaf rehearse` and
   `yaaf create-project --from-file`.
@@ -100,6 +100,41 @@ the waiting but not the Founder.
 The Founder needs a key of its own, or one of your LLM credentials, to draft
 with. An admin sets it with `yaaf set-platform-key`. `--from-file` does not
 need the Founder.
+
+### After it's created
+
+Both ways of creating a project, the conversation and `--from-file`, end the
+same way.
+
+**The keys your agents need are asked for here.** A setup file lists the
+credentials it was exported with, by name only. Each role also declares the
+keys it needs, such as a GitHub token. For each key the project doesn't already
+hold, you're asked to paste it. Nothing you paste is shown, and the key is
+stored for exactly the roles that need it, as `yaaf set-secret` would. Press
+Enter to skip one. Skipped keys are listed at the end with the
+`yaaf set-secret` command and the dashboard link that finish them. A file
+credential, such as a service-account JSON, isn't pasted; you get the
+`yaaf set-secret --from-file` command for it instead.
+
+**The rest is listed with links to the dashboard.** This is the project's
+setup checklist, the same list as **Finish setting up** on its Inbox: model
+key, brief, data sources, secrets, integrations and people. Each unfinished
+step comes with a link to the Settings section that does it. Data sources are
+always finished in the dashboard. Adding one checks its address, and some need
+a sign-in with their provider, which takes a browser.
+
+Links open on `YAAF_PUBLIC_BASE_URL` when it's set on your machine, and on
+`YAAF_API` otherwise. Through an SSH tunnel, that's an address that works from
+your laptop.
+
+**Starting it.** A project with no model key can't run, so you aren't offered a
+start. `create-project` tells you how to assign a key: in the dashboard, or with
+`yaaf configure P --billing-secret-id ID`. Otherwise you're asked whether to
+start it, or `--start` starts it without asking.
+
+**From a script.** With `--from-file` and no terminal, nothing is asked. The
+created project's JSON is the only thing on stdout. The keys still needed and
+the checklist go to stderr.
 
 ## What needs you
 

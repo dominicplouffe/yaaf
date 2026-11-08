@@ -511,10 +511,14 @@ def create_user(email: str, name: str,
                           json={"email": email, "display_name": name, "is_admin": admin}))
 
 
-def _create_from_file(spec_file: Path) -> None:
+def _create_from_file(spec_file: Path, start_now: bool = False) -> None:
     """Create a project from a JSON spec, or from a setup file such as the ones
     in examples/ — its missing roles are added to the library first, and its
-    billing credential is matched by name."""
+    billing credential is matched by name.
+
+    What is left to set up goes to stderr, ahead of the JSON on stdout, so a
+    script that reads the result still reads only the result — and a script
+    is never prompted: the keys are asked for only at a terminal."""
     try:
         spec = json.loads(spec_file.read_text())
     except OSError as exc:
@@ -524,7 +528,13 @@ def _create_from_file(spec_file: Path) -> None:
         typer.echo(f"{spec_file} is not valid JSON: {exc}", err=True)
         raise typer.Exit(2) from None
     with _client() as client:
-        _show(client.post("/admin/projects", json=_project_from(client, spec)))
+        project = _project_from(client, spec)
+        response = client.post("/admin/projects", json=project)
+        if response.status_code < 400:
+            _after_creating(client, response.json()["id"], project,
+                            spec if isinstance(spec, dict) else {},
+                            ask=_interactive(), start_now=start_now, err=True)
+        _show(response)
 
 
 def _project_from(client: httpx.Client, spec) -> dict:
@@ -687,7 +697,8 @@ def _answer_round(asked: dict) -> dict:
 
 def _found(client: httpx.Client, thread: dict, start_now: bool) -> None:
     """Create the drafted project, and hand its CEO the conversation."""
-    project = _project_from(client, thread["draft_bundle"])
+    bundle = thread["draft_bundle"]
+    project = _project_from(client, bundle)
     created = _json_or_die(client.post("/admin/projects", json=project))
     slug = project.get("slug") or created["id"]
     typer.echo(f"Created {slug} ({created['id']}).")
@@ -700,11 +711,152 @@ def _found(client: httpx.Client, thread: dict, start_now: bool) -> None:
                    err=True)
     elif attached.json().get("briefed"):
         typer.echo("Its CEO has this conversation as a briefing in the boardroom.")
-    if start_now or typer.confirm("Start it now?", default=False):
-        _json_or_die(client.post(f"/admin/projects/{created['id']}/start"))
-        typer.echo(f"Started. Follow it with `yaaf dashboard {slug}`.")
+    _after_creating(client, created["id"], project, bundle, ask=True, start_now=start_now)
+
+
+def _interactive() -> bool:
+    """Whether somebody is at a terminal to answer. Tests say yes."""
+    import sys
+
+    return sys.stdin.isatty()
+
+
+def _web_base() -> str:
+    """Where the dashboard opens. The public address when this machine knows
+    it; otherwise the API's own — which, through an SSH tunnel, is the
+    address that works from here."""
+    return (os.environ.get("YAAF_PUBLIC_BASE_URL") or _api_base()).rstrip("/")
+
+
+def _settings_link(project_id: str, section: str) -> str:
+    return f"{_web_base()}/app/projects/{project_id}/settings?s={section}"
+
+
+def _needed_keys(client: httpx.Client, project: dict, bundle: dict) -> list[dict]:
+    """The keys this project's agents cannot work without, each with the hired
+    roles that need it.
+
+    Two places say so, and the New Project form reads both: a setup file names
+    the credentials it was exported with (never their values), and every role
+    declares the keys it needs (`secret_scopes`). Grants are kept to the roles
+    this project hired — the server refuses any other."""
+    hired = {project.get("ceo_role_slug") or "ceo",
+             *(t.get("role_slug") for t in project.get("teams") or [])}
+    needs: dict[str, dict] = {}
+
+    def need(name: str, roles, file: bool = False) -> None:
+        row = needs.setdefault(name, {"name": name, "roles": [], "file": False})
+        row["roles"] += [r for r in roles if r in hired and r not in row["roles"]]
+        row["file"] = row["file"] or file
+
+    for secret in bundle.get("secrets") or []:
+        if secret.get("name") and secret.get("kind", "service") == "service":
+            need(secret["name"], secret.get("role_scopes") or [],
+                 file=secret.get("filename") is not None)
+    for role in _json_or_die(client.get("/admin/roles")):
+        if role.get("slug") in hired:
+            for scope in role.get("secret_scopes") or []:
+                need(scope, [role["slug"]])
+    return list(needs.values())
+
+
+def _supply_keys(client: httpx.Client, project_id: str, needs: list[dict],
+                 ask: bool, err: bool) -> None:
+    """Ask for each key the agents need and store it on the project, the way
+    `set-secret` does — hidden, never echoed. Enter skips one. A key the
+    project already holds is only granted to the roles that lack it; one the
+    install holds for those roles already is left alone."""
+    held = {s["name"]: s for s in _json_or_die(
+        client.get("/admin/secrets", params={"project_id": project_id}))}
+    # The install's own are the instance admin's to list; anybody else simply
+    # does not count them.
+    platform = client.get("/admin/secrets")
+    install = ({s["name"]: s for s in platform.json() if s.get("project_id") is None}
+               if platform.status_code < 400 else {})
+    skipped = []
+    for key in needs:
+        name, roles = key["name"], key["roles"]
+        if not roles:
+            continue
+        mine = held.get(name)
+        if mine is not None:
+            lacking = [r for r in roles if r not in (mine.get("role_scopes") or [])]
+            if lacking:
+                granted = client.post("/admin/secrets", json={
+                    "project_id": project_id, "name": name,
+                    "role_scopes": sorted({*(mine.get("role_scopes") or []), *lacking})})
+                if granted.status_code < 400:
+                    typer.echo(f"Granted {name} to {', '.join(lacking)}.", err=err)
+                else:
+                    typer.echo(f"Could not grant {name}: {_detail(granted)}", err=True)
+            continue
+        if set(roles) <= set((install.get(name) or {}).get("role_scopes") or []):
+            continue
+        if key["file"]:
+            typer.echo(f"{name} is a file credential for {', '.join(roles)}: "
+                       f"`yaaf set-secret {name} --project {project_id} "
+                       f"--scopes {','.join(roles)} --from-file PATH`", err=err)
+            continue
+        if not ask:
+            skipped.append(key)
+            continue
+        value = typer.prompt(f"{', '.join(roles)} needs {name} — paste it (Enter to skip)",
+                             default="", show_default=False, hide_input=True,
+                             err=err).strip()
+        if not value:
+            skipped.append(key)
+            continue
+        stored = client.post("/admin/secrets", json={
+            "project_id": project_id, "name": name, "kind": "service",
+            "value": value, "role_scopes": roles})
+        if stored.status_code < 400:
+            typer.echo(f"Stored {name} for {', '.join(roles)}.", err=err)
+        else:
+            typer.echo(f"{name} was not stored: {_detail(stored)}", err=True)
+            skipped.append(key)
+    if skipped:
+        typer.echo("\nStill needed by your agents:", err=err)
+        for key in skipped:
+            typer.echo(f"  · {key['name']} for {', '.join(key['roles'])}: "
+                       f"`yaaf set-secret {key['name']} --project {project_id} "
+                       f"--scopes {','.join(key['roles'])}`", err=err)
+        typer.echo(f"    or in the dashboard: {_settings_link(project_id, 'secrets')}",
+                   err=err)
+
+
+def _after_creating(client: httpx.Client, project_id: str, project: dict, bundle: dict,
+                    *, ask: bool, start_now: bool, err: bool = False) -> None:
+    """What a new project still needs, said where its creator is looking.
+
+    The keys its agents need are asked for here, because this terminal can
+    store them. The rest is the project's own setup checklist — the list on
+    its Inbox in the dashboard, read from the same endpoint so the two cannot
+    disagree — each step with a link to the Settings section that does it.
+    Data sources are among those on purpose: adding one checks its address,
+    and some need their provider's sign-in, which only a browser can do."""
+    slug = project.get("slug") or project_id
+    _supply_keys(client, project_id, _needed_keys(client, project, bundle), ask, err)
+    setup = _json_or_die(client.get(f"/observe/projects/{project_id}/setup"))
+    todo = [s for s in setup.get("steps") or [] if s.get("state") == "todo"]
+    if todo:
+        typer.echo("\nStill to set up, in the dashboard:", err=err)
+        for step in todo:
+            typer.echo(f"  · {step['label']}: {step['detail']}", err=err)
+            typer.echo(f"    {_settings_link(project_id, step['section'])}", err=err)
+    blocked = next((s for s in todo if s.get("required")), None)
+    if blocked:
+        # Not offered: a start without a model key succeeds and then every
+        # run fails, which is the thing the checklist marks required.
+        typer.echo(f"\nIt cannot start until that is done ({blocked['label'].lower()}); "
+                   f"then `yaaf start {slug}`.", err=err)
+        if blocked["key"] == "key":
+            typer.echo(f"From here: `yaaf configure {slug} --billing-secret-id ID`, with an id "
+                       "from `yaaf llm-credentials`.", err=err)
+    elif start_now or (ask and typer.confirm("\nStart it now?", default=False, err=err)):
+        _json_or_die(client.post(f"/admin/projects/{project_id}/start"))
+        typer.echo(f"Started. Follow it with `yaaf dashboard {slug}`.", err=err)
     else:
-        typer.echo(f"Not started. When you're ready: `yaaf start {slug}`.")
+        typer.echo(f"Not started. When you're ready: `yaaf start {slug}`.", err=err)
 
 
 @app.command()
@@ -725,12 +877,15 @@ def create_project(
     guess, with its own answer already picked: Enter agrees. When you agree
     with the draft, it is created and its CEO is briefed with the
     conversation. The conversation lives on the server: leave at any point and
-    `yaaf create-project` with no brief picks it up, here or in the browser."""
+    `yaaf create-project` with no brief picks it up, here or in the browser.
+
+    Either way, it then asks for the keys the agents need and lists what is
+    left to set up, each step linked to the dashboard section that does it."""
     if from_file is not None:
         if brief is not None:
             typer.echo("Give a brief or --from-file, not both.", err=True)
             raise typer.Exit(2)
-        _create_from_file(from_file)
+        _create_from_file(from_file, start_now)
         return
     if brief is not None and (brief.lower().endswith(".json") or Path(brief).is_file()):
         # This command took a file until the conversation became its default.
