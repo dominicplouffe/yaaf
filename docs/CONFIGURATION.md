@@ -114,7 +114,18 @@ Optional. Without them, alerts only go to the logs and the dashboard.
 | `YAAF_SMTP_FROM` | the username | Sender address. Must be one your provider lets you send as. |
 | `YAAF_CHAIRMAN_WEBHOOK_URL` | *(none)* | Any URL that accepts a JSON POST with a `text` field, like a Slack incoming webhook |
 
-You get alerts for budget pauses, approvals waiting on you, and runs that die.
+Which notices become email is each project's own choice, in Settings → Rules
+in force → Rhythm & reporting:
+
+- **Email me when** — by default, only when your CEO is waiting on you (a
+  decision, a question, a need, a heads-up). Widen it to add alarms (the
+  project paused, a promise broken, a credential dead), or everything,
+  including the platform's own reminders. Or turn email off.
+- **Minutes to answer in the app before you are emailed** — default 60. A
+  request you answer or snooze in the app before then is never emailed.
+- **A daily briefing at this time** — the one daily email, set on its own.
+
+The webhook always receives every notice at once, whatever these say.
 
 ## Artifact storage (S3)
 

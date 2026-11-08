@@ -83,6 +83,19 @@ def _rule(
                  json_schema_extra=extra, **constraints)
 
 
+#: `mail_when`'s answers, each to the notice classes it lets into the inbox
+#: (`yaaf.server.notify.Attention` values — spelled as strings here because
+#: notify imports this module, not the other way round). The daily brief is
+#: in none of them: it has its own switch, `brief_daily_at`, and a chairman
+#: who set a time for it has already said yes to that one email.
+MAIL_WHEN: dict[str, frozenset[str]] = {
+    "your_ceo_is_waiting": frozenset({"ask"}),
+    "your_ceo_is_waiting_or_the_project_stops": frozenset({"ask", "alarm"}),
+    "anything_needs_you": frozenset({"ask", "action", "alarm"}),
+    "never": frozenset(),
+}
+
+
 # Fourteen groups is a taxonomy, not navigation: rendered flat it is a wall of
 # thirty-nine boxes, and "Wake-loop brakes" alone is nine of them. Themes are
 # what a chairman actually reaches for; the groups survive as the subheads
@@ -530,6 +543,30 @@ class ConstitutionDoc(BaseModel):
              "the project paused, a promise broken, a credential dead — are never held. "
              "0 means no limit.")
 
+    # Which of his attention the platform may spend at all — the ration above
+    # only says how much. Defaults to the one thing he asked to be interrupted
+    # for: his CEO waiting on him and not answered in the app. Everything
+    # else is still on his desk, in the boardroom and in the briefing; the
+    # inbox is just not where it lands unless he widens this.
+    mail_when: str = _rule(
+        "your_ceo_is_waiting", group="Reporting to you", label="Email me when",
+        choices=list(MAIL_WHEN),
+        help="'your_ceo_is_waiting': a decision, question, need or heads-up from your "
+             "CEO that you have not answered in the app. "
+             "'your_ceo_is_waiting_or_the_project_stops': that, plus alarms — the "
+             "project paused, a promise broken, a credential dead. "
+             "'anything_needs_you': every wait and every alarm, including the "
+             "platform's own reminders (status meetings, verdicts, ready to complete). "
+             "'never': no email. The daily briefing has its own switch above and is "
+             "not affected. Nothing is lost either way — every one of these is still "
+             "in your Inbox, the boardroom and the briefing.")
+    mail_grace_minutes: int = _rule(
+        60, ge=0, le=10080, group="Reporting to you",
+        label="Minutes to answer in the app before you are emailed",
+        help="Something your CEO is waiting on is emailed only if it is still open this "
+             "long after it was filed. Answer it, or snooze it, in the app first and no "
+             "email is sent. 0 emails it at once.")
+
     # One timezone, read by the reporting window, the daily CEO wake and every
     # recurring rhythm. It used to be set twice — once here and once in project
     # config for the daily wake — which is one place too many to get it wrong.
@@ -617,6 +654,13 @@ class ConstitutionDoc(BaseModel):
             ZoneInfo(raw)
         except Exception as exc:
             raise ValueError(f"{raw!r} is not an IANA timezone (e.g. 'America/New_York')") from exc
+        return raw
+
+    @field_validator("mail_when")
+    @classmethod
+    def _mail_when_is_known(cls, raw: str) -> str:
+        if raw not in MAIL_WHEN:
+            raise ValueError(f"{raw!r} is not a choice here: " + ", ".join(MAIL_WHEN))
         return raw
 
     @field_validator("cycle_frequency")

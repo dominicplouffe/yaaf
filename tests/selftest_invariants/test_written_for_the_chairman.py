@@ -43,7 +43,7 @@ class _Sent:
         self.mail: list[dict] = []
 
     def __call__(self, session, project, subject, body, *, attention,
-                 kind=None, data=None):  # noqa: ARG002
+                 kind=None, data=None, waits_on=None):  # noqa: ARG002
         self.mail.append({"subject": subject, "body": body})
 
 

@@ -93,6 +93,7 @@ from yaaf.server.notify import (
     inbox_url,
     project_link,
     scope_item,
+    send_mail_after_grace,
     signoff_item,
     verdict_item,
 )
@@ -165,6 +166,9 @@ def _janitor_project(session: Session, project: Project) -> None:
     # could not be afforded.
     send_daily_brief(session, project)
     if project.status != ProjectStatus.RUNNING:
+        # A paused project's CEO can still be waiting on him — an approval
+        # filed just before the wall is exactly the one he needs to hear about.
+        send_mail_after_grace(session, project)
         return
     try:
         cons = effective(session, project.id)
@@ -185,6 +189,9 @@ def _janitor_project(session: Session, project: Project) -> None:
     answer_asks(session, project)
     nag_asks(session, project, cons)
     expire_asks(session, project)
+    # After `answer_asks`, so a question he answered in the boardroom this tick
+    # is settled as answered rather than mailed.
+    send_mail_after_grace(session, project)
     enforce_budget(session, project, cons)
     release_dead_claims(session, project, cons)
     release_unreadable_reviews(session, project)
@@ -2186,7 +2193,7 @@ def nag_approvals(session: Session, project: Project, cons: ConstitutionDoc) -> 
             f"the answer is {silence} — that is what this project's rules say.\n"
             + inbox_line(approval.id),
             kind="approval_expiring", data={"approval": approval_row(approval)},
-            attention=Attention.ACTION,
+            attention=Attention.ASK, waits_on=("approval", approval.id),
         )
         approval.nag_sent_at = utcnow()
         nagged += 1
@@ -2286,7 +2293,7 @@ def nag_asks(session: Session, project: Project, cons: ConstitutionDoc) -> int:
             f"{chairman_time(ask.answer_by, cons.timezone)}. "
             f"If you say nothing, your CEO will: {ask.default_action}"
             + inbox_link(ask.id, "Answer it"),
-            attention=Attention.ACTION,
+            attention=Attention.ASK, waits_on=("ask", ask.id),
         )
         ask.nag_sent_at = now
         nagged += 1
@@ -3061,7 +3068,9 @@ def nag_awaiting_chairman(
                   "start. Open the Roadmap to accept, reword, or decline."
                 + ("" if not ever else "\n\nThis is a repeat — they are still waiting.")
                 + inbox_link(scope_item(project.id), "Open it"),
-                attention=Attention.ACTION,
+                # His CEO's proposal, waiting on him — and already past its
+                # settle time, so there is no grace left to hold it for.
+                attention=Attention.ASK,
             )
             log.info("nagged chairman on %d proposed requirement(s) (%s)",
                      len(proposed), project.slug)
@@ -3090,7 +3099,7 @@ def nag_awaiting_chairman(
                 "sign it, or set your own."
                 + ("" if not ever else "\n\nThis is a repeat — it is still unsigned.")
                 + inbox_link(commitment_item(project.id), "Open it"),
-                attention=Attention.ACTION,
+                attention=Attention.ASK,
             )
             log.info("nagged chairman on an unsigned commitment (%s)", project.slug)
 

@@ -791,7 +791,7 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
             No status meeting is open. The platform opens one on the schedule you set
             (Settings → Rules in force → “Days between status meetings”; on an Operate
             rhythm of a week or more, at the cycle roll) — with zero tokens, whatever
-            the board or the budget looks like — and emails you when it does.
+            the board or the budget looks like — and tells you when it does.
           </p>
         </div>
       ) : (

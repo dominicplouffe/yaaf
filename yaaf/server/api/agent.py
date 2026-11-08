@@ -2649,7 +2649,8 @@ def approval_request(
         + (f"\nCan you undo a yes? {undo}" if (undo := approval_undo(row.kind)) else "")
         + f"\n{inbox_line(row.id)}",
         kind="approval_requested", data={"approval": approval_row(row)},
-        attention=Attention.ACTION,
+        attention=Attention.ASK,
+        waits_on=("approval", row.id),
     )
     return {
         "id": row.id,
@@ -2787,7 +2788,8 @@ def ask_chairman(
         f"If you have not answered by {chairman_time(answer_by, cons.timezone)}: "
         f"{row.default_action}\n{inbox_line(row.id)}",
         kind="ask_opened", data={"ask_id": row.id, "answer_by": answer_by.isoformat()},
-        attention=Attention.ACTION,
+        attention=Attention.ASK,
+        waits_on=("ask", row.id),
     )
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {
@@ -3011,7 +3013,8 @@ def data_write_request(
         f"Approve a change to your {body.source} account?",
         f"{row.title}\n\n{row.body}\n\n{inbox_line(row.id)}",
         kind="approval_requested", data={"approval": approval_row(row)},
-        attention=Attention.ACTION,
+        attention=Attention.ASK,
+        waits_on=("approval", row.id),
     )
     return {
         "id": row.id,
@@ -3322,7 +3325,8 @@ def assist_request(
         "takes from you: the platform hands over security challenges, it never "
         "defeats them." + _inbox_link(approval.id),
         kind="approval_requested", data={"approval": approval_row(approval)},
-        attention=Attention.ACTION,
+        attention=Attention.ASK,
+        waits_on=("approval", approval.id),
     )
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {
@@ -3471,7 +3475,8 @@ def capacity_request(
         "\n".join(detail) + "\n\n" + inbox_line(approval.id),
         kind="approval_requested",
         data={"approval": approval_row(approval)},
-        attention=Attention.ACTION,
+        attention=Attention.ASK,
+        waits_on=("approval", approval.id),
     )
     return {
         "approval_id": approval.id,
@@ -3568,7 +3573,8 @@ def brief_propose(
     chairman_notify(
         session, ctx.project, "Your CEO asks you to confirm the brief",
         "\n".join([*lines, "", inbox_line(approval.id)]), kind="approval_requested",
-        data={"approval": approval_row(approval)}, attention=Attention.ACTION,
+        data={"approval": approval_row(approval)}, attention=Attention.ASK,
+        waits_on=("approval", approval.id),
     )
     return {
         "approval_id": approval.id,
@@ -3619,7 +3625,8 @@ def heads_up_send(
         session, ctx.project, f"Heads-up: {row.title}",
         f"{row.body}\n\nYou asked for this: {row.standing_order}"
         + (f"\n\nMark it noted: {url}" if (url := inbox_url(f"hu-{row.id}", tab="ack")) else ""),
-        kind="heads_up", data={"heads_up": heads.row(row)}, attention=Attention.ACTION,
+        kind="heads_up", data={"heads_up": heads.row(row)}, attention=Attention.ASK,
+        waits_on=("heads_up", row.id),
     )
     return {
         "heads_up_id": row.id,
@@ -3716,7 +3723,8 @@ def need_request(
         "— you paste the key or login once and the right people get it."
         + _inbox_link(approval.id),
         kind="approval_requested", data={"approval": approval_row(approval)},
-        attention=Attention.ACTION,
+        attention=Attention.ASK,
+        waits_on=("approval", approval.id),
     )
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {

@@ -8,8 +8,9 @@ A veto he never got to cast is not a decision of his.
 
 The rules under attack here:
 
-1. Every kind an agent can file on `/agent/approvals` sends an ACTION notice
-   at filing, saying what silence decides and when.
+1. Every kind an agent can file on `/agent/approvals` sends a notice at
+   filing, saying what silence decides and when — to the webhook at once, and
+   to his inbox once his grace period runs out with it still open.
 2. The notice says where to decide it — the Inbox — and links to that one row
    when the install knows its browser-facing origin, and never to the API's
    own origin, which only the containers can resolve.
@@ -20,11 +21,14 @@ from __future__ import annotations
 
 import ast
 import pathlib
+from datetime import timedelta
 
 import pytest
 
 from tests.conftest import ADMIN, bearer, live_token, make_project
-from yaaf.server import notify
+from yaaf.core.db import db_session
+from yaaf.core.models import Approval, utcnow
+from yaaf.server import janitor, notify
 
 
 class Wire:
@@ -87,7 +91,14 @@ def test_every_undelegable_kind_is_sent_the_moment_it_is_filed(client, wire, kin
     (url, slug, subject, body), kw = sent[0]
     assert "Buy the $199 projections feed" in subject
     assert kw["data"]["approval"]["id"] == filed["id"]
-    # An ACTION, so it is mailed too — under the ration, never instead of it.
+    # The webhook hears it at once. The email waits out his grace period —
+    # he may be in the app answering it — and goes the moment it runs out with
+    # the approval still open: an hour in, not five days.
+    assert not any("Buy the $199 projections feed" in e[1] for e in wire.emails)
+    with db_session() as session:
+        session.get(Approval, filed["id"]).created_at = utcnow() - timedelta(minutes=61)
+    with db_session() as session:
+        janitor.janitor_once(session)
     assert any("Buy the $199 projections feed" in e[1] for e in wire.emails)
 
 

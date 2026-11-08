@@ -79,7 +79,11 @@ def _inline_thread(monkeypatch):
 
 
 def _project(client, **cons) -> str:
-    return make_project(client, constitution=cons or None)["id"]
+    """A project mailing every class, because what this file measures is the
+    ration and the classes, not which ones `mail_when` lets through — that is
+    `test_mail_grace.py`'s."""
+    return make_project(client, constitution={"mail_when": "anything_needs_you",
+                                              **cons})["id"]
 
 
 def _notify(project_id: str, subject: str, attention: Attention, **kw) -> None:
@@ -187,7 +191,8 @@ def test_the_limit_binds_from_the_next_notice_when_he_turns_it_on(
     under a rule that did not. Turning a limit ON should not read as punishment
     for the period before it.
     """
-    project = make_project(client, constitution={"mail_max_per_day": 0})
+    project = make_project(client, constitution={"mail_max_per_day": 0,
+                                                 "mail_when": "anything_needs_you"})
     pid = project["id"]
     _notify(pid, "R-00 is waiting on your verdict", Attention.ACTION)  # unmetered
     amend(client, pid, mail_max_per_day=1)
@@ -288,7 +293,13 @@ def test_every_chairman_notify_call_names_its_class():
 def test_the_classes_are_exactly_the_ones_the_inbox_rule_knows_about():
     """A fifth class added without deciding whether it mails would default to
     silent, which is the failure mode this whole change exists to fix."""
-    assert set(Attention) == {Attention.ALARM, Attention.ACTION,
+    from yaaf.core.constitution import MAIL_WHEN
+
+    assert set(Attention) == {Attention.ALARM, Attention.ASK, Attention.ACTION,
                               Attention.BRIEF, Attention.FYI}
     assert notify.MAILED | {Attention.FYI} == set(Attention)
     assert notify.BUDGETED <= notify.MAILED
+    # And `mail_when` can reach every class it gates: a class no answer names
+    # could never be turned on. The brief is the one with its own switch.
+    reachable = set().union(*MAIL_WHEN.values())
+    assert reachable == {str(a) for a in notify.MAILED - {Attention.BRIEF}}
