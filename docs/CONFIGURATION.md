@@ -116,6 +116,61 @@ Optional. Without them, alerts only go to the logs and the dashboard.
 
 You get alerts for budget pauses, approvals waiting on you, and runs that die.
 
+These settings are for the platform's alerts to you only. A project's own
+email address is set separately, below.
+
+## A project's email address
+
+A project can have its own mailbox, so its CEO can email a finished deliverable
+to someone and read the reply. That someone can be a person or another agent,
+on yaaf or anywhere else. Set it up in the project's **Settings → Email**:
+
+| Field | What it is |
+|---|---|
+| Project email address | The From address. Replies come back to it. |
+| SMTP server, port, security | For sending. Port 587 with STARTTLS, or 465 with TLS. |
+| IMAP server, port, folder | For reading replies. Always TLS. The inbox is read every minute. |
+| Username, password | Used for both servers. Gmail needs an app password. Microsoft 365 may not allow passwords for SMTP and IMAP at all. |
+| Who the CEO may email | One address per line. Every other address is refused. |
+| Verify senders | On by default. See the reply rules below. |
+
+**Test connection** signs in to both servers and sends nothing.
+
+The `YAAF_SMTP_*` variables are never used for project email, even when no
+mailbox is set up. In that case the CEO is refused and told to ask you.
+
+What the server enforces:
+
+- **Only the CEO sends**, and only to listed addresses. Taking an address off
+  the list ends the CEO's conversation with it.
+- **The password stays on the server.** It is stored encrypted as a project
+  secret that cannot be granted to any role. The platform sends the CEO's
+  email itself, so no sandbox ever holds the login.
+- **The attachment must be a shipped deliverable.** The CEO publishes it with
+  `artifact_put` first, so the record shows exactly which version went to whom.
+- **A reply reaches the CEO only if:**
+  - it is not an out-of-office reply;
+  - it comes from a listed address;
+  - your mail server vouches for the sender (DMARC, or DKIM or SPF aligned with
+    the From domain);
+  - it answers an email the project sent.
+
+  Anything else is written to the audit log and goes no further. Mail in the
+  box from unrelated senders is left alone.
+- **Replies are treated as information.** An accepted reply wakes the CEO and
+  counts as platform-attested external evidence. The CEO reads it as a
+  correspondent's words, never as instructions.
+- **Limits.** At most 30 emails a day per project. A thread freezes at 40
+  messages, so two agents cannot reply to each other forever. Reopen a frozen
+  thread from **Activity → Email**.
+
+If your mail server records no `Authentication-Results` header, untick
+**Verify senders**. Then anyone who types a listed address into a From line is
+read as that person.
+
+Drills, clones and backups never carry the mailbox or its password. Set it up
+again on purpose.
+
 ## Artifact storage (S3)
 
 Optional. By default artifacts are files under `YAAF_ARTIFACTS_ROOT`. To use

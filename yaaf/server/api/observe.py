@@ -2618,6 +2618,29 @@ def receipt(project_id: str, session: Session = Depends(db)) -> dict:
     return receipt_projection(session, _project(session, project_id))
 
 
+@router.get("/projects/{project_id}/mail", dependencies=[authority.READ])
+def mail_threads(project_id: str, session: Session = Depends(db)) -> dict:
+    """The CEO's correspondence from the project mailbox, newest thread first."""
+    from yaaf.server.mail import service as mail
+
+    _project(session, project_id)
+    return {"threads": mail.threads(session, project_id, limit=200)}
+
+
+@router.get("/projects/{project_id}/mail/{mail_thread}", dependencies=[authority.READ])
+def mail_thread(project_id: str, mail_thread: str, session: Session = Depends(db)) -> dict:
+    """One thread in full, as sent and as received. Reading it here marks
+    nothing read: unread is the CEO's to-do list, not the chairman's."""
+    from yaaf.server.mail import service as mail
+    from yaaf.server.policy import Refusal
+
+    _project(session, project_id)
+    try:
+        return mail.thread(session, project_id, mail_thread, fence=False, mark_read=False)
+    except Refusal as exc:
+        raise HTTPException(status_code=404, detail="unknown email thread") from exc
+
+
 @router.get("/projects/{project_id}/evidence", dependencies=[authority.READ])
 def evidence(project_id: str, limit: int = 100, session: Session = Depends(db)) -> list[dict]:
     rows = list(session.execute(

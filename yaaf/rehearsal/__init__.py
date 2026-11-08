@@ -664,9 +664,12 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
     # The runtime is the whole point: scripted agents against the real API.
     integrations = dict(body.get("integrations") or {})
     integrations["runtime"] = "mock"
-    # Slack and data sources reach the outside world. A drill does neither.
+    # Slack, data sources and the mailbox reach the outside world. A drill
+    # does none of them — a drilled CEO emailing a real client is the one
+    # rehearsal side effect nobody could take back.
     integrations.pop("slack", None)
     integrations.pop("mcp_servers", None)
+    integrations.pop("mail", None)
     body["integrations"] = integrations
 
     created = client.post("/admin/projects", json=body)

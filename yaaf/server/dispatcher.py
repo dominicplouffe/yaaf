@@ -87,6 +87,9 @@ MESSAGE_COALESCE_COUNT = 3
 URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
                        NoticeKind.APPROVAL_DECIDED, NoticeKind.AUDIT_FAILED,
                        NoticeKind.MEMORY_FULL, NoticeKind.EXTERNAL_EVENT,
+                       # Somebody outside answered the CEO's email and is
+                       # waiting on the reply — the same knock as above.
+                       NoticeKind.MAIL_RECEIVED,
                        # A stall notice that waited out a batching window would
                        # be extending the exact silence it exists to report.
                        NoticeKind.STALLED,

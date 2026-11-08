@@ -29,6 +29,7 @@ from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
 from yaaf.core.models import (
     Agent,
+    AgentKind,
     LedgerEntry,
     LedgerKind,
     Notice,
@@ -327,6 +328,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
         context=model_policy.context(session, project)))
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     job.agent_kind = agent.kind
+    _offer_mail(project, agent, job)
     source_specs = _merge_project_data_sources(session, project, role_version, job)
     role_secrets = _role_secret_env(session, project, role_version)
     job.billing_env = {**_billing_env(session, project, job.provider), **role_secrets,
@@ -476,6 +478,16 @@ def _data_source_prompt(specs: list[dict], harness: str | None = None) -> str:
         "cheaply — doing them by reading rows costs tokens and gets answers wrong."
     )
     return "".join(lines)
+
+
+def _offer_mail(project: Project, agent, job: RunJob) -> None:
+    """The CEO of a project with a mailbox is sent the mail tools. A flag, not a
+    credential: the password stays server-side, and sending is the platform's
+    act on the CEO's request — the sandbox only learns that it may ask."""
+    from yaaf.server.mail.settings import enabled
+
+    if agent.kind == AgentKind.CEO and enabled(project):
+        job.tool_permissions = {**job.tool_permissions, "mail": True}
 
 
 def _merge_project_data_sources(session: Session, project: Project, role_version,
@@ -630,10 +642,11 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
     ).scalars()
     env: dict = {}
     for secret in candidates:
-        if secret.kind == "billing":
+        if secret.kind in ("billing", "mailbox"):
             continue  # belt and suspenders: the API refuses grants on billing
             # secrets, but even a hand-edited DB row must not leak the model
-            # credential into a role's env.
+            # credential into a role's env. The mailbox login likewise: the
+            # platform sends the CEO's email, so no sandbox ever needs it.
         if not secret.role_scopes or role.slug not in secret.role_scopes:
             continue
         var = _env_var_name(secret.name)

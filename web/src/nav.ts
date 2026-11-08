@@ -50,6 +50,7 @@ export const SETTINGS_NAV = [
   { key: "sources", label: "Data sources", words: "mcp database api connect" },
   { key: "secrets", label: "Secrets & variables", words: "credentials api key token env" },
   { key: "integrations", label: "Integrations", words: "slack github webhooks" },
+  { key: "mail", label: "Email", words: "mailbox smtp imap correspondence recipients send" },
   { group: "Governance" },
   { key: "people", label: "People", words: "members co-chair observer invite" },
   { key: "rules", label: "Rules in force", words: "constitution autonomy pace brakes" },
@@ -84,6 +85,7 @@ export const ACTIVITY_VIEWS = [
   // not need to stand first to be found.
   ["messages", "Messages", "every channel you can read but not speak in"],
   ["inbox", "Agent inbox", "each agent's unread messages"],
+  ["mail", "Email", "everything the CEO emailed from the project mailbox, and every reply"],
   ["memory", "Memory", "what the project chose to remember"],
 ] as const;
 

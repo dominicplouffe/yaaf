@@ -20,6 +20,7 @@ import {
 import { fmtWhen, usePoll } from "../../hooks";
 import type { FounderStatus, PresetCard } from "../StartProject";
 import DataSources from "./DataSources";
+import { MailboxSettings } from "./Mailbox";
 import Secrets, { pendingNeeds } from "./Secrets";
 import { ProjectCtx, useProject } from "../../projectCtx";
 import { PinButton } from "../../shortcuts";
@@ -1599,6 +1600,13 @@ export default function Settings({
         <WebhookEndpoints projectId={projectId} />
       </div>
 
+      </Section>
+
+      <Section on={section === "mail"}>
+      <h2>Email</h2>
+      <div className="card">
+        <MailboxSettings projectId={projectId} act={act} busy={busy} />
+      </div>
       </Section>
 
       <Section on={section === "duplicate"}>

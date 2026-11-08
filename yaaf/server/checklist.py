@@ -89,7 +89,9 @@ def _done(session: Session, project: Project, step: Step) -> tuple[bool, str]:
         ).scalar_one()
         held = session.execute(
             select(func.count()).select_from(Secret).where(
-                Secret.project_id == project.id, Secret.llm_mode.is_(None))
+                Secret.project_id == project.id, Secret.llm_mode.is_(None),
+                # The mailbox's password is the platform's to use, not the agents'.
+                Secret.kind != "mailbox")
         ).scalar_one()
         if asked:
             return False, (f"Your agents asked for {asked} credential{'s' if asked != 1 else ''} "
@@ -99,8 +101,9 @@ def _done(session: Session, project: Project, step: Step) -> tuple[bool, str]:
         return False, "API keys and values your agents use, such as a data vendor's token."
     if step.key == "integrations":
         slack = integrations.get("slack") or {}
-        if slack or project.github_repo:
-            return True, "Slack" if slack else "GitHub"
+        if slack or project.github_repo or integrations.get("mail"):
+            return True, ("Slack" if slack else "GitHub" if project.github_repo
+                          else "Email")
         return False, "Mirror the project into Slack, or connect a GitHub repository."
     if step.key == "people":
         others = session.execute(

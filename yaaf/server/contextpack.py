@@ -1611,6 +1611,13 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         said = _you_said_lately(session, agent, now)
         if said:
             pack["you_said_lately"] = said
+        # Only when the chairman gave the project a mailbox: a CEO without one
+        # reads exactly what it always read.
+        from yaaf.server.mail.service import for_context as mail_context
+
+        mailbox = mail_context(session, project)
+        if mailbox:
+            pack["mail"] = mailbox
         pack["situation"] = _situation(session, project, cons)
         open_tasks = policy.open_top_level_tasks(session, project.id)
         pack["board"] = {

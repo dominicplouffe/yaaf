@@ -288,20 +288,40 @@ def test_an_employee_is_not_sent_the_tools_it_cannot_use(monkeypatch, sandbox_en
 
 
 def test_the_ceo_is_sent_everything(monkeypatch, sandbox_entry):
+    """Everything, on a project that has everything: the mail tools ride the
+    mailbox the way data_fetch rides a data source, so the runner's `mail` flag
+    stands for "this project has one"."""
     monkeypatch.setattr(sandbox_entry, "AGENT_KIND", "ceo")
     monkeypatch.setattr(sandbox_entry, "_data_source_specs", lambda: {})
+    monkeypatch.setattr(sandbox_entry, "PERMS", {"mail": True})
     names = {t.name for t in sandbox_entry.run_tools()}
     assert names >= sandbox_entry.CEO_ONLY_TOOLS
-    assert names == {t.name for t in sandbox_entry.ALL_TOOLS}
+    assert names == {t.name for t in sandbox_entry.ALL_TOOLS + sandbox_entry.MAIL_TOOLS}
 
 
 def test_an_unset_kind_sends_everything(sandbox_entry):
     """The failure that costs real money is withholding a tool an agent needed.
     A caller that forgets the env var must degrade toward the old behaviour,
     never toward a silently crippled agent — so the fixture deliberately leaves
-    YAAF_AGENT_KIND unset and this asserts what that means."""
+    YAAF_AGENT_KIND unset and this asserts what that means. The one exception
+    is a tool that needs a mailbox, which nothing here says the project has."""
     assert sandbox_entry.AGENT_KIND == "ceo"
-    assert {t.name for t in sandbox_entry.ALL_TOOLS} >= sandbox_entry.CEO_ONLY_TOOLS
+    mail = {t.name for t in sandbox_entry.MAIL_TOOLS}
+    assert {t.name for t in sandbox_entry.ALL_TOOLS} >= sandbox_entry.CEO_ONLY_TOOLS - mail
+    assert {t.name for t in sandbox_entry.run_tools()} >= sandbox_entry.CEO_ONLY_TOOLS - mail
+
+
+@pytest.mark.parametrize("kind,mailbox,offered", [
+    ("ceo", True, True), ("ceo", False, False),
+    # An employee is never sent them, mailbox or not: the server would refuse.
+    ("employee", True, False),
+])
+def test_the_mail_tools_ride_the_mailbox(monkeypatch, sandbox_entry, kind, mailbox, offered):
+    monkeypatch.setattr(sandbox_entry, "AGENT_KIND", kind)
+    monkeypatch.setattr(sandbox_entry, "_data_source_specs", lambda: {})
+    monkeypatch.setattr(sandbox_entry, "PERMS", {"mail": True} if mailbox else {})
+    names = {t.name for t in sandbox_entry.run_tools()}
+    assert ({"mail_send", "mail_read"} <= names) is offered
 
 
 def test_withholding_a_schema_is_not_the_enforcement(client):
