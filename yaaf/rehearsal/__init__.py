@@ -671,6 +671,10 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
     integrations.pop("mcp_servers", None)
     integrations.pop("mail", None)
     body["integrations"] = integrations
+    # And so it starts without one: a project whose work runs through email is
+    # refused a start without its mailbox, and a drill must never have one. The
+    # report says what that leaves untested (report.build reads the spec).
+    body.pop("needs_mail", None)
 
     created = client.post("/admin/projects", json=body)
     if created.status_code != 200:

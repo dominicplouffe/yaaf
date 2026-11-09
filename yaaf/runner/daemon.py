@@ -547,7 +547,20 @@ def _prepare_workspace(session: Session, project: Project) -> str:
     if project.github_repo and not (workspace / ".git").exists():
         _clone_workspace(session, project.github_repo, workspace)
     workspace.mkdir(parents=True, exist_ok=True)
+    _materialize_mail(session, project, workspace)
     return str(workspace)
+
+
+def _materialize_mail(session: Session, project: Project, workspace: Path) -> None:
+    """Files correspondents emailed, copied in before the run that reads them.
+    Here because the runner owns the workspace; never fatal, for the same
+    reason a failed clone is not — a workspace must not hard-block a run."""
+    try:
+        from yaaf.server.mail.service import materialize
+
+        materialize(session, project, workspace)
+    except Exception:
+        log.warning("could not copy email attachments into %s", workspace, exc_info=True)
 
 
 def _clone_workspace(session: Session, full_name: str, workspace: Path) -> None:

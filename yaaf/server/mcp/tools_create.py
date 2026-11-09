@@ -361,7 +361,7 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
                              body.get("constitution") or {}),
         "billing": llm_credentials.describe(billing) if billing else None,
         "also_paying": {p: llm_credentials.describe(row) for p, row in paying.items()} or None,
-        "start_immediately": bool(arguments.get("start")),
+        "start_immediately": bool(arguments.get("start")) and not body.get("needs_mail"),
         "warning": (
             "Creating a project is the point where this stops being free: its "
             "agents wake on a schedule and bill the credential named above. "
@@ -380,18 +380,30 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
             "No LLM credentials exist on this install yet. The project can be "
             "created, but cannot start until an administrator adds one in Settings "
             "and assigns it.")
+    if body.get("needs_mail"):
+        # Said before the click, not discovered after it: the mailbox's
+        # password and recipient list are set on the settings screen by a
+        # person, so no tool here can finish this project's setup.
+        about["mail_note"] = (
+            "This project's work runs through email. It can be created now, but it "
+            "cannot start until a person gives it a mailbox in Settings → Email — "
+            "an address, its servers and who it may write to."
+            + (" It will be created and NOT started." if arguments.get("start") else ""))
     preview = confirm.gate(session, principal, "create_project", arguments, about)
     if preview:
         return preview
 
     created = _call(principal, admin.create_project,
                     body=admin.ProjectCreate.model_validate(body), session=session)
-    if arguments.get("start"):
+    started = bool(arguments.get("start")) and not body.get("needs_mail")
+    if started:
         _call(principal, admin.start_project, project_id=created["id"], session=session)
     return _record(session, principal, created["id"], "create_project",
                    {k: v for k, v in arguments.items() if k != "spec"},
                    {"id": created["id"], "slug": body.get("slug"),
-                    "started": bool(arguments.get("start")),
+                    "started": started,
+                    **({"waiting_on": "its mailbox, in Settings → Email"}
+                       if body.get("needs_mail") else {}),
                     "authority": preset_name(created["constitution"]) or "mixed",
                     "tempo": tempo_name(created["constitution"]) or "hand-tuned",
                     "bar": bar_name(created["constitution"]) or "hand-tuned",

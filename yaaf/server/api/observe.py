@@ -102,6 +102,8 @@ from yaaf.server.dispatcher import (
 )
 from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.mail.service import frozen as mail_frozen
+from yaaf.server.mail.settings import enabled as mail_enabled
+from yaaf.server.mail.settings import start_refusal as mail_start_refusal
 from yaaf.server.receipt import receipt as receipt_projection
 from yaaf.server.rows import approval_row, approval_undo, chairman_time, requirement_name
 from yaaf.server.status_line import (
@@ -395,6 +397,9 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             # run had already died on the missing key.
             "unpaid": (project.billing_secret_id is None
                        and (project.integrations or {}).get("runtime") != "mock"),
+            # Its work runs through email and it has no mailbox on: it cannot
+            # start, and a running one cannot do its job.
+            "mail_missing": bool(project.needs_mail) and not mail_enabled(project),
             "budget": {
                 "unit": "usd" if usd_mode else "tokens",
                 # Token mode must match enforcement (janitor.month_to_date):
@@ -472,7 +477,7 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
         row = projects_out[-1]
         row["status_line"] = status_line(
             status=project.status, status_reason=project.status_reason,
-            unpaid=row["unpaid"], commitment=commitment,
+            unpaid=row["unpaid"], mail_missing=row["mail_missing"], commitment=commitment,
             waiting=row["needs_you"]["total"], signoff=signoff, timezone=cons.timezone,
             open_tasks=row["open_tasks"], runs_running=int(running), last_run_at=last_run_at,
             stall_hours=float(cons.stall_hours), unit=row["budget"]["unit"],
@@ -910,6 +915,10 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "cycle": _current_cycle_view(session, project),
         "integrations": project.integrations or {},
         "github_repo": project.github_repo,
+        "needs_mail": bool(project.needs_mail),
+        # Why it cannot start, in the words the start would refuse with — so
+        # the page can say it on the button rather than after the press.
+        "mail_start_refusal": mail_start_refusal(project),
         "billing_secret_id": project.billing_secret_id,
         "billing_secret_name": _secret_name(session, project.billing_secret_id),
         # Every credential the project pays with, by provider — the billing
@@ -986,8 +995,14 @@ def _mailbox_checks(session: Session, project: Project) -> list[tuple[str, str]]
     from yaaf.server.mail import settings as mail_settings
 
     config = mail_settings.project_config(project) or {}
+    needed = bool(project.needs_mail)
+    if not config:
+        return [("fail", "its work runs through email and it has no mailbox — it cannot "
+                         "start until one is set up")]
     if config.get("enabled", True) is False:
-        return [("ok", "email is switched off — the CEO cannot send, and no inbox is read")]
+        return [("fail" if needed else "ok",
+                 "email is switched off — the CEO cannot send, and no inbox is read"
+                 + (", and this project's work runs through email" if needed else ""))]
     gaps = mail_settings.missing(project)
     if gaps:
         return [("fail", f"email is half set up: it still needs {', '.join(gaps)}")]
@@ -1242,7 +1257,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     # The project mailbox: whether the CEO can send, and whether it would hear
     # a reply. A mailbox nobody can read fails quietly in the worst direction —
     # the client answers, and the project goes on waiting for them.
-    if integrations.get("mail"):
+    if integrations.get("mail") or project.needs_mail:
         for check in _mailbox_checks(session, project):
             add("mail", *check, "mail")
 
@@ -2703,6 +2718,39 @@ def mail_thread(project_id: str, mail_thread: str, session: Session = Depends(db
         return mail.thread(session, project_id, mail_thread, fence=False, mark_read=False)
     except Refusal as exc:
         raise HTTPException(status_code=404, detail="unknown email thread") from exc
+
+
+@router.get("/projects/{project_id}/mail/{mail_thread}/files/{mail_message}/{index}",
+            dependencies=[authority.READ])
+def mail_attachment(project_id: str, mail_thread: str, mail_message: str, index: int,
+                    session: Session = Depends(db)):
+    """One file a correspondent attached, as a download. Never shown inline: it
+    came from outside, and a page that rendered it would hand a stranger's HTML
+    the dashboard's origin."""
+    from urllib.parse import quote
+
+    from fastapi.responses import Response
+
+    from yaaf.core.artifacts import store
+    from yaaf.core.models import MailMessage
+
+    message = session.get(MailMessage, mail_message)
+    if (message is None or message.project_id != project_id
+            or message.thread_id != mail_thread):
+        raise HTTPException(status_code=404, detail="unknown email attachment")
+    files = message.attachments or []
+    entry = files[index] if 0 <= index < len(files) else None
+    if not entry or not entry.get("saved") or not entry.get("key"):
+        raise HTTPException(status_code=404, detail="that attachment was not kept")
+    try:
+        data = store().get_bytes(entry["key"])
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="that attachment is gone from the store") from exc
+    name = entry.get("name") or "attachment"
+    return Response(content=data, media_type="application/octet-stream", headers={
+        "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
+        "X-Content-Type-Options": "nosniff",
+    })
 
 
 @router.get("/projects/{project_id}/evidence", dependencies=[authority.READ])

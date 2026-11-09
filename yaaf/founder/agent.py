@@ -46,6 +46,7 @@ SECTIONS = {
     "team": ("ceo_role_slug", "ceo_name", "ceo_model_override", "teams"),
     "rules": ("constitution", "controlled_domains"),
     "pays": ("billing_secret_id", "billing_secret_name", "credentials"),
+    "mail": ("needs_mail",),
 }
 
 

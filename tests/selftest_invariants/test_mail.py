@@ -71,12 +71,18 @@ class Wire:
         return wire.Fetched(uidvalidity="1", last_uid=len(self.inbox), messages=fresh)
 
 
-@pytest.fixture
-def mail(monkeypatch) -> Wire:
+def fake_wire(monkeypatch) -> Wire:
+    """The network replaced, for this test: other mail test modules call this
+    from a fixture of their own."""
     fake = Wire()
     monkeypatch.setattr(wire, "smtp_send", fake.smtp_send)
     monkeypatch.setattr(wire, "imap_fetch", fake.imap_fetch)
     return fake
+
+
+@pytest.fixture
+def mail(monkeypatch) -> Wire:
+    return fake_wire(monkeypatch)
 
 
 def _mailbox(client, project: dict, recipients=(EDITOR,), **over) -> dict:

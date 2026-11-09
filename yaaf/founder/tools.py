@@ -479,7 +479,10 @@ def build_server(session: Session, state: dict, env: dict[str, str],
           "lever and the median project here finishes inside a day. `tempo` names "
           "which pace card this project is — `live`, `working_hours` or "
           "`few_times_daily` — and this tool writes that card's rules into the "
-          "constitution for you. Name the card. Never write pace rules by hand.",
+          "constitution for you. Name the card. Never write pace rules by hand. "
+          "`needs_mail: true` when the project's work runs through email — it "
+          "waits for mail, answers it, or sends its work out by it; such a project "
+          "is created now and starts once the chairman sets up its mailbox.",
           {"project": dict, "notes": str, "tempo": str})
     async def _propose_bundle(args):
         progress.start_step(thread_id, progress.LABELS["propose_bundle"])
@@ -1007,6 +1010,8 @@ def summarise(bundle: dict) -> dict:
         "headcount": sum(len(t.get("employees") or []) for t in teams),
         "constitution_keys": sorted((project.get("constitution") or {}).keys()),
         "pays_with": project.get("billing_secret_name") or None,
+        # Whether it cannot start until somebody gives it a mailbox.
+        "needs_mail": bool(project.get("needs_mail")),
     }
 
 

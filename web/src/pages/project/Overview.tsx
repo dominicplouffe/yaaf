@@ -925,6 +925,13 @@ export default function Overview({
                   title="Agents cannot run without a billing credential">
                   <Icon name="play" size={15} />Add a key to start
                 </Link>
+              ) : dash.mail_start_refusal ? (
+                // The server would refuse the start in these words; say them on
+                // the button that leads to the fix, not after a press.
+                <Link to={`${base}/settings?s=mail`} className="btnlink primary"
+                  title={dash.mail_start_refusal}>
+                  <Icon name="mail" size={15} />Set up email to start
+                </Link>
               ) : (
                 <button className="primary" disabled={starting} onClick={start}>
                   <Icon name="play" size={15} />Start
@@ -948,7 +955,7 @@ export default function Overview({
           {!ctx.plan?.commitment?.deliver_by && dash.deadline && <span>Window closes {fmtDate(dash.deadline)}</span>}
           <span className="term-plain"><Term means={auto.means}>{auto.word}</Term></span>
           {dash.my_role && <span>You are {dash.my_role === "chairman" ? "the chairman" : dash.my_role === "co_chair" ? "a co-chair" : "an observer"}</span>}
-          {setupLeft > 0 && !unpaid && (
+          {setupLeft > 0 && !unpaid && !dash.mail_start_refusal && (
             <button className="linkish ov-setup-chip" onClick={() => setShowSetup(!showSetup)} aria-expanded={showSetup}>
               Setup · {setupLeft} to go
             </button>
@@ -974,7 +981,8 @@ export default function Overview({
           is a chip in the line above: on a running — or finished — project, a
           six-step checklist above the decisions was configuration outranking
           state. */}
-      {(unpaid || showSetup) && <ProjectSetup ctx={ctx} />}
+      {(unpaid || !!dash.mail_start_refusal && dash.status !== "running" || showSetup)
+        && <ProjectSetup ctx={ctx} />}
 
       {/* The project's home is what it needs from you first: this project's
           decisions, whole, from the one list the Inbox decides from. */}

@@ -477,6 +477,10 @@ export interface Dashboard {
   } | null;
   integrations: Record<string, unknown>;
   github_repo: string | null;
+  /** Its work runs through email (the project's design, not its wiring). */
+  needs_mail?: boolean;
+  /** Why it cannot start for want of a mailbox, in the server's words — null when nothing about email holds it back. */
+  mail_start_refusal?: string | null;
   billing_secret_id: string | null;
   billing_secret_name: string | null;
   /** What pays each provider, the billing credential first. Never a value. */
@@ -1110,6 +1114,8 @@ export interface DeskProject {
     last_countable_at: string | null;
   };
   frozen_threads: number;
+  /** Its work runs through email and no mailbox is on. */
+  mail_missing?: boolean;
   /** Email threads the loop breaker stopped — each one the chairman's to reopen. */
   frozen_mail?: { id: string; counterpart: string; subject: string; frozen_at: string | null }[];
   runs_running: number;
@@ -1538,6 +1544,8 @@ export interface ProjectBundle {
     controlled_domains: string[];
     /** The repo evidence webhooks attest against. */
     github_repo?: string | null;
+    /** Its work runs through email: created now, started once its mailbox is on. */
+    needs_mail?: boolean;
     /** Explore's window, ISO-dated; may already be in the past. */
     deadline?: string | null;
     constitution: Record<string, unknown>;

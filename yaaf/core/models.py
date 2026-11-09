@@ -28,6 +28,7 @@ from sqlalchemy import (
     Text,
     TypeDecorator,
     UniqueConstraint,
+    false,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -730,6 +731,12 @@ class Project(Base):
     # Domains/accounts the project controls; evidence from these can never be external.
     controlled_domains: Mapped[list] = mapped_column(JSONVariant, default=list)
     github_repo: Mapped[str | None] = mapped_column(String(255))
+    # The project's job runs through email: it waits for mail, answers it, sends
+    # its work out by it. Design, not wiring — it travels with a setup file and
+    # a clone, while the mailbox itself (address, servers, password) never does.
+    # A project that needs email cannot start, or resume, without its mailbox
+    # set up and on (yaaf.server.mail.settings.start_refusal).
+    needs_mail: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # Wiring, not rules. Runtime backend, MCP servers, Slack mapping, webhook
     # secrets — things that say *how to reach the outside*, never how much an
     # agent may spend or how often it may wake. Every limit that used to live
@@ -1459,6 +1466,9 @@ class MailThread(Base):
     counterpart: Mapped[str] = mapped_column(String(320))
     subject: Mapped[str] = mapped_column(String(300))
     task_id: Mapped[str | None] = mapped_column(String(40))
+    # Who wrote first: "ceo", or "them" — a listed sender opening a conversation
+    # on a project that lets them (`accept_new` in the mailbox settings).
+    opened_by: Mapped[str] = mapped_column(String(8), default="ceo", server_default="ceo")
     # The loop breaker: set when the thread reaches its exchange limit. Two
     # agents on two platforms thanking each other would otherwise do it forever,
     # each turn a paid run. Frozen refuses the CEO's sends and holds replies.

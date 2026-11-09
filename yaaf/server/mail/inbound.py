@@ -53,6 +53,9 @@ class Parsed:
     auth_results: str | None
     body: str
     attachments: list[dict] = field(default_factory=list)
+    #: The attachments' bytes, beside their descriptions, in the same order.
+    #: Not stored on any row: the service decides what is kept and where.
+    files: list[bytes] = field(default_factory=list, repr=False)
 
 
 def parse(raw: bytes) -> Parsed:
@@ -76,7 +79,7 @@ def parse(raw: bytes) -> Parsed:
         auto_replied=auto.startswith("auto-replied"),
         auth_results=str(results[0]) if results else None,
         body=_body(message),
-        attachments=_attachments(message),
+        **_attachments(message),
     )
 
 
@@ -102,16 +105,27 @@ def _body(message: EmailMessage) -> str:
     return text
 
 
-def _attachments(message: EmailMessage) -> list[dict]:
-    out = []
+def _attachments(message: EmailMessage) -> dict:
+    """Each attachment's name, type and size, and its bytes. At most twenty: an
+    email carrying more is not a document someone sent for a look."""
+    described: list[dict] = []
+    files: list[bytes] = []
     for part in message.iter_attachments():
         try:
-            size = len(part.get_content() or b"")
-        except Exception:  # noqa: BLE001
-            size = None
-        out.append({"name": str(part.get_filename() or "unnamed")[:200],
-                    "type": part.get_content_type(), "size": size})
-    return out[:20]
+            data = part.get_content()
+        except Exception:  # noqa: BLE001 - an undecodable part is an empty one
+            data = b""
+        if isinstance(data, str):
+            data = data.encode()
+        elif not isinstance(data, bytes):
+            # A message/rfc822 part decodes to a message; keep it as the mail it is.
+            data = bytes(data) if hasattr(data, "__bytes__") else b""
+        described.append({"name": str(part.get_filename() or "unnamed")[:200],
+                          "type": part.get_content_type(), "size": len(data)})
+        files.append(data)
+        if len(described) == 20:
+            break
+    return {"attachments": described, "files": files}
 
 
 # ── the sender check ─────────────────────────────────────────────────────────────
