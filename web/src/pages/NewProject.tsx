@@ -431,6 +431,10 @@ export default function NewProject() {
   // Only for the cost line under the run presets: what a run has cost here.
   const [status, setStatus] = useState<FounderStatus | null>(null);
   const [solo, setSolo] = useState(false);
+  // Whether its work runs through email. From the Founder's draft or a setup
+  // file, or ticked here; the mailbox itself is set up after creation, in
+  // Settings → Email, because its password and recipients are not a draft's.
+  const [needsMail, setNeedsMail] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
   const [webhooks, setWebhooks] = useState<{
@@ -774,6 +778,7 @@ export default function NewProject() {
       if (!billingCredentialId.trim() && runtime !== "mock") {
         return "Without a billing key the project is created but cannot start";
       }
+      if (needsMail) return "Its email is set up after creating — it starts once that is done";
       return null;
     }
     return null;
@@ -790,7 +795,10 @@ export default function NewProject() {
   // Start needs a model to bill: a real key here, or the mock runtime. A
   // project can always be created without one and connected in Settings —
   // it just cannot START, because its first run would die hunting for a key.
-  const canStartNow = runtime === "mock" || !!billingCredentialId.trim();
+  const paid = runtime === "mock" || !!billingCredentialId.trim();
+  // And a project whose work runs through email starts once its mailbox is
+  // on, which can only happen after it exists: the server refuses the start.
+  const canStartNow = paid && !needsMail;
 
   /** Fill the whole form from a setup bundle.
    *
@@ -823,6 +831,7 @@ export default function NewProject() {
       setRuntime(String(p.integrations["runtime"] ?? "agent_sdk"));
       setControlledDomains((p.controlled_domains ?? []).join(", "));
       setSolo(Boolean(p.solo));
+      setNeedsMail(Boolean(p.needs_mail));
       // An Explore window that is still open carries; a spent one would be
       // refused at create (a project the janitor closes at birth), so it is
       // left blank rather than prefilled into a guaranteed error.
@@ -1146,6 +1155,7 @@ export default function NewProject() {
           ...(bundle?.project.ceo_harness_override
             ? { ceo_harness_override: bundle.project.ceo_harness_override } : {}),
           solo,
+          needs_mail: needsMail,
           teams: effectiveTeams
             .map((t) => {
               const employees = t.employees.split(",").map((s) => s.trim()).filter(Boolean);
@@ -1350,6 +1360,8 @@ export default function NewProject() {
         setStarted(true);
       }
       if (created.webhooks) setDone(created.id);
+      // Straight to the one thing standing between it and its first run.
+      else if (needsMail && paid) navigate(`/projects/${created.id}/settings?s=mail`);
       else navigate(`/projects/${created.id}`);
     } catch (err) {
       setError((err as Error).message);
@@ -1373,7 +1385,9 @@ export default function NewProject() {
           <p style={{ marginTop: 0 }}>
             <b>{started ? "It is running."
               : canStartNow ? "It is created, and not started."
-              : "It is created, and cannot start yet: nothing is set to pay for it."}</b>
+              : !paid ? "It is created, and cannot start yet: nothing is set to pay for it."
+              : "It is created, and starts once it has its email: an address, its servers, "
+                + "and who it may write to."}</b>
           </p>
           <p className="help">
             {!plans
@@ -1388,11 +1402,15 @@ export default function NewProject() {
             <button className="primary" onClick={() => navigate(`/projects/${done}`)}>
               Open the project
             </button>
-            {!canStartNow && (
+            {!paid ? (
               <button onClick={() => navigate(`/projects/${done}/settings?s=money`)}>
                 Add a key to start
               </button>
-            )}
+            ) : needsMail ? (
+              <button onClick={() => navigate(`/projects/${done}/settings?s=mail`)}>
+                Set up email to start
+              </button>
+            ) : null}
           </div>
         </div>
         {slack && (
@@ -2287,6 +2305,27 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 : <span className="badge warn">add it on the previous step, or in Settings</span>}
             </span>
           </div>
+          <div className="needline">
+            <span>
+              <label className="check-line strong" style={{ margin: 0 }}>
+                <input type="checkbox" checked={needsMail}
+                  onChange={(e) => setNeedsMail(e.target.checked)} />
+                Its work runs through email
+              </label>
+              <div className="help">
+                {needsMail
+                  ? "It waits for mail, answers it, or sends its work out by it. Give it an "
+                    + "address after creating — its servers, password and who it may write to — "
+                    + "in Settings → Email. It starts once that is on."
+                  : "Tick if it should watch an inbox, reply to people, or email its work out."}
+              </div>
+            </span>
+            <span>
+              {needsMail
+                ? <span className="badge warn">set up after creating</span>
+                : <span className="badge">not needed</span>}
+            </span>
+          </div>
           {requiredScopes.length === 0 ? (
             <div className="needline">
               <span className="help">
@@ -2480,9 +2519,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               onChange={(e) => setStartNow(e.target.checked)}
             />
             Start immediately
-            {!canStartNow && (
+            {!paid ? (
               <span className="help">— needs the billing key above (agents cannot run keyless)</span>
-            )}
+            ) : needsMail ? (
+              <span className="help">— it starts once its email is set up, after creating</span>
+            ) : null}
           </label>
           <div className="spacer" />
           {missing.length > 0 && (

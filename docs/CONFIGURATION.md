@@ -132,48 +132,95 @@ email address is set separately, below.
 
 ## A project's email address
 
-A project can have its own mailbox, so its CEO can email a finished deliverable
-to someone and read the reply. That someone can be a person or another agent,
-on yaaf or anywhere else. Set it up in the project's **Settings → Email**:
+A project can have its own mailbox. The CEO can email a finished deliverable to
+someone and read the reply, and people on the list can write to the project
+first. That someone can be a person or another agent, on yaaf or anywhere else.
+
+### Projects whose work runs through email
+
+Some projects have no job until mail arrives. "Watch the inbox; when an email
+comes in, check its attachment and reply with the results" is one. Mark such a
+project **its work runs through email**. You can do that in three places:
+
+- the Founder sets it when the brief describes email, and says so in the ledger;
+- the new-project form has a checkbox under **Before it can start**;
+- a setup file can carry `"needs_mail": true`.
+
+You can create such a project straight away. It **cannot start** until its
+mailbox is set up and on. Resuming it from a pause, or reopening it after it
+finishes, is refused the same way. Each of these says so:
+
+- the setup checklist, as a required **Email** step that cannot be skipped;
+- the project's Start button, which reads **Set up email to start**;
+- the health card and the status line;
+- `yaaf create-project` and `yaaf start`, which link to the dashboard page.
+
+The mailbox is set up in the dashboard, because its password should be typed
+where it is masked and the servers tested where the result can be shown.
+
+If the mailbox is turned off or removed while the project runs, the CEO is told
+plainly that no mail can arrive. The health card fails until it is back.
+
+The need is part of the project's design: it travels in exports and to clones.
+The mailbox itself never does. A clone waits for an address of its own, and a
+drill runs without one and says so in its report.
+
+### Setting up the mailbox
+
+Set it up in the project's **Settings → Email**:
 
 | Field | What it is |
 |---|---|
 | Project email address | The From address. Replies come back to it. |
 | SMTP server, port, security | For sending. Port 587 with STARTTLS, or 465 with TLS. |
-| IMAP server, port, folder | For reading replies. Always TLS. The inbox is read every minute. |
+| IMAP server, port, folder | For reading. Always TLS. The inbox is read every minute, and nothing is marked read. |
 | Username, password | Used for both servers. Gmail needs an app password. Microsoft 365 may not allow passwords for SMTP and IMAP at all. |
-| Who the CEO may email | One address per line. Every other address is refused. |
-| Verify senders | On by default. See the reply rules below. |
+| Who the CEO may email | The addresses the CEO may write to. Every other address is refused. |
+| Listed addresses may write first | On by default for a project whose work runs through email. See below. |
+| Verify senders | On by default. See below. |
 
 **Test connection** signs in to both servers and sends nothing.
 
 The `YAAF_SMTP_*` variables are never used for project email, even when no
 mailbox is set up. In that case the CEO is refused and told to ask you.
 
-What the server enforces:
+### What the server enforces
 
 - **Only the CEO sends**, and only to listed addresses. Taking an address off
   the list ends the CEO's conversation with it.
 - **The password stays on the server.** It is stored encrypted as a project
   secret that cannot be granted to any role. The platform sends the CEO's
   email itself, so no sandbox ever holds the login.
-- **The attachment must be a shipped deliverable.** The CEO publishes it with
-  `artifact_put` first, so the record shows exactly which version went to whom.
-- **A reply reaches the CEO only if:**
+- **What the CEO attaches must be a shipped deliverable.** The CEO publishes it
+  with `artifact_put` first, so the record shows exactly which version went to
+  whom.
+- **An email reaches the CEO only if:**
   - it is not an out-of-office reply;
   - it comes from a listed address;
   - your mail server vouches for the sender (DMARC, or DKIM or SPF aligned with
     the From domain);
-  - it answers an email the project sent.
+  - it answers an email the project sent, or **Listed addresses may write
+    first** is on.
 
   Anything else is written to the audit log and goes no further. Mail in the
   box from unrelated senders is left alone.
-- **Replies are treated as information.** An accepted reply wakes the CEO and
-  counts as platform-attested external evidence. The CEO reads it as a
-  correspondent's words, never as instructions.
+- **A listed address writing first opens a new conversation.** It wakes the
+  CEO, who answers on that thread. At most 20 conversations a day can be
+  opened this way.
+- **What arrives is treated as material, never instructions.** An accepted
+  email wakes the CEO and counts as platform-attested external evidence. The
+  CEO reads it as a correspondent's words.
+- **Attachments are kept for the agents.** Files up to 10 MB each, and 25 MB
+  per email, are stored and copied into the project workspace under
+  `mail-inbox/<thread>/<message>/`, where any agent can open them. File names
+  are made safe, and anything over the limits is listed with the reason. They
+  never appear on the Deliverables shelf. In a workspace that is a git clone,
+  `mail-inbox/` is added to the local git excludes, so an agent can't commit a
+  client's document. In **Activity → Email** you can download each file. It
+  always arrives as a download and is never opened in the browser.
 - **Limits.** At most 30 emails a day per project. A thread freezes at 40
   messages, so two agents cannot reply to each other forever. Reopen a frozen
-  thread from **Activity → Email**.
+  thread from your Inbox or from **Activity → Email**.
 
 If your mail server records no `Authentication-Results` header, untick
 **Verify senders**. Then anyone who types a listed address into a From line is

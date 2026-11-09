@@ -104,6 +104,21 @@ is settled — none of them may be skipped:
   `model_overrides` keyed by name. `propose_bundle` refuses a seat nothing
   pays, and one whose class has no model on its provider.
 
+- **Email, when the work runs through it** — a brief that says to watch an
+  inbox, answer what comes in, send the work to someone or hear back from them
+  ("monitor your inbox", "email the report to the client", "reply with the
+  results") describes a project whose work runs through email. Set
+  `needs_mail: true` in the draft, and write the loop into the goal: who
+  writes, what arrives (attachments land in the workspace under
+  `mail-inbox/`), what is done with it, what goes back and to whom. Settle it
+  in the ledger with what it means: the project can be created now and cannot
+  start until the chairman gives it a mailbox in Settings → Email — an
+  address, its sending and reading servers, and the addresses the CEO may
+  write to, which may also write first. Never put an address, a server or a
+  password in the draft; those are his to enter there. If the brief only
+  might involve email, ask — it is the difference between a project that
+  starts today and one that waits for setup.
+
 When the frontier is empty, call `ask` with `done: true`, no questions and
 the whole ledger, then `propose_bundle` with the final draft. The page shows
 him the ledger to confirm and takes him to review; your note says in one

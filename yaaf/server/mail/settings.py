@@ -11,7 +11,8 @@ Stored as ``project.integrations["mail"]``::
       "username": "ceo@acme.example",
       "password_secret": "mail-password",   # a project Secret, never the value
       "recipients": ["editor@client.example"],
-      "verify_sender": true
+      "verify_sender": true,
+      "accept_new": true                # a listed sender may write first
     }
 
 The password is an ordinary envelope-encrypted project Secret with no role
@@ -89,6 +90,9 @@ class MailSettings:
     display_name: str = ""
     recipients: tuple[str, ...] = ()
     verify_sender: bool = True
+    # Whether a listed sender may write first. Off, mail is accepted only as a
+    # reply to something the project sent.
+    accept_new: bool = False
 
     @property
     def domain(self) -> str:
@@ -151,4 +155,33 @@ def resolve(session: Session, project: Project, *,
         recipients=tuple(r for r in (normalise(x) for x in config.get("recipients") or [])
                          if r),
         verify_sender=bool(config.get("verify_sender", True)),
+        accept_new=bool(config.get("accept_new", False)),
     )
+
+
+def start_state(project: Project) -> str | None:
+    """What a project that needs email lacks, as a clause — "it has no email
+    address yet" — or None when nothing about email holds it back."""
+    if not project.needs_mail or enabled(project):
+        return None
+    config = project_config(project)
+    if config is None:
+        return "it has no email address yet"
+    if config.get("enabled", True) is False:
+        return "its email is switched off"
+    return f"its email still needs {', '.join(missing(project))}"
+
+
+def start_refusal(project: Project) -> str | None:
+    """Why a project that needs email cannot start, or resume — or None.
+
+    The one door every start goes through (`POST .../start`, the resume of a
+    paused project, the reopen of a finished one) asks this, so the web, the
+    CLI and MCP refuse in the same words. A project that does not need email
+    is never held back by its mailbox, whatever state the mailbox is in.
+    """
+    state = start_state(project)
+    if state is None:
+        return None
+    return (f"This project's work runs through email, and {state}. Set it up in "
+            "Settings → Email, then start it.")

@@ -894,6 +894,9 @@ class ProjectCreate(BaseModel):
     # The repo evidence webhooks attest against. Part of the design, so a
     # setup file carries it and a restore does not come back half-wired.
     github_repo: str | None = None
+    # The project's work runs through email. It can be created without a
+    # mailbox and cannot start until one is set up (Settings → Email).
+    needs_mail: bool = False
     # Overrides onto the field defaults — except the Autonomy group, which a
     # spec that names none of its five rules gets filled in with the default
     # preset (`constitution.DEFAULT_AUTONOMY`) rather than left supervised.
@@ -940,6 +943,18 @@ def _latest_role_version(session: Session, slug: str) -> RoleVersion:
         .order_by(RoleVersion.version.desc())
         .limit(1)
     ).scalar_one()
+
+
+def _refuse_without_mailbox(project: Project) -> None:
+    """A project whose work runs through email does not run without it: a
+    start that succeeded would leave a CEO told to wait for mail on a project
+    that can neither receive nor send any. 409, because the project is fine
+    and its setup is not finished."""
+    from yaaf.server.mail.settings import start_refusal
+
+    refusal = start_refusal(project)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
 
 
 def _project_agents(session: Session, project_id: str) -> list[Agent]:
@@ -1571,6 +1586,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         mode=body.mode,
         controlled_domains=body.controlled_domains,
         github_repo=body.github_repo,
+        needs_mail=body.needs_mail,
         integrations=_without_mail(body.integrations),
         deadline=deadline,
         deadline_source=deadline_source,
@@ -1881,6 +1897,7 @@ def export_project(project_id: str, include_values: bool = False,
             "mode": project.mode,
             "controlled_domains": project.controlled_domains,
             "github_repo": project.github_repo,
+            "needs_mail": project.needs_mail,
             "deadline": project.deadline.isoformat() if project.deadline else None,
             "chairman_email": chairman.email if chairman else None,
             "constitution": effective(session, project.id).model_dump(),
@@ -2018,6 +2035,9 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         billing_mode=source.billing_mode,
         controlled_domains=list(source.controlled_domains or []),
         github_repo=source.github_repo,
+        # The need travels; the mailbox does not (see _NON_CLONABLE_INTEGRATION_KEYS):
+        # the twin starts once somebody gives it an address of its own.
+        needs_mail=source.needs_mail,
         integrations=integrations,
     )
     session.add(project)
@@ -3051,6 +3071,10 @@ class ProjectPatch(BaseModel):
     # deletion, and how a leaked one stops paying for anything.
     billing_secret_id: str | None = None
     controlled_domains: list[str] | None = None
+    # Whether its work runs through email. Turning it on for a running project
+    # stops nothing — the health card says what is missing — but no start or
+    # resume goes through until the mailbox is on.
+    needs_mail: bool | None = None
     # Merged into the existing integrations (outward wiring only — every
     # limit lives in the constitution and changes only through amendments).
     integrations: dict | None = None
@@ -3224,6 +3248,9 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
     if body.controlled_domains is not None:
         project.controlled_domains = body.controlled_domains
         changed["controlled_domains"] = body.controlled_domains
+    if body.needs_mail is not None and body.needs_mail != project.needs_mail:
+        project.needs_mail = body.needs_mail
+        changed["needs_mail"] = body.needs_mail
     if body.integrations is not None:
         # A limit written here would be stored and never read — the silent
         # failure that made `ceo_heartbeat_hours` invisible to the settings UI,
@@ -3439,6 +3466,7 @@ def start_project(project_id: str, session: Session = Depends(db)) -> dict:
     # A project with a seat nothing can run does not start (R5 among them):
     # the alternative is a start that succeeds and a first run that does not.
     refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+    _refuse_without_mailbox(project)
     project.status = ProjectStatus.RUNNING
     project.status_reason = None
     # A Deliver or Operate project starts owing a plan. The chairman's words
@@ -3600,6 +3628,8 @@ def reopen_project(project_id: str, session: Session = Depends(db)) -> dict:
                 status_code=409,
                 detail=f"completed more than {REOPEN_DAYS} days ago; duplicate it to "
                        "carry on from where it stopped")
+    # Reopening is a start like any other: the mailbox may have gone since.
+    _refuse_without_mailbox(project)
     project.status = ProjectStatus.RUNNING
     project.status_reason = None
     from yaaf.core.models import Decision
@@ -6626,6 +6656,10 @@ class MailboxIn(BaseModel):
     password: str | None = Field(default=None, min_length=1, max_length=1000)
     recipients: list[str] = Field(default_factory=list, max_length=100)
     verify_sender: bool = True
+    # Whether a listed sender may write first. Omitted, it keeps what was
+    # saved, and a new mailbox takes it from the project: on when the
+    # project's work runs through email, off otherwise.
+    accept_new: bool | None = None
 
 
 _HOST = re.compile(r"^[A-Za-z0-9.-]+$")
@@ -6645,6 +6679,12 @@ def _mailbox_view(session: Session, project: Project) -> dict:
         "password_set": bool(secret and _project_secret(session, project.id, secret)),
         "status": mail.status(session, project),
         "recipients": mail.recipients(session, project),
+        # The project's side of it: whether its work runs through email, and so
+        # whether this screen is what stands between it and a start.
+        "needs_mail": bool(project.needs_mail),
+        "start_refusal": mail_settings.start_refusal(project),
+        "start_state": mail_settings.start_state(project),
+        "status_now": project.status,
     }
 
 
@@ -6718,6 +6758,9 @@ def put_project_mailbox(project_id: str, body: MailboxIn,
                             detail="a new mailbox needs its password")
 
     was = mail_settings.recipients_of(project)
+    previous = mail_settings.project_config(project) or {}
+    accept_new = (body.accept_new if body.accept_new is not None
+                  else bool(previous.get("accept_new", project.needs_mail)))
     config = {
         "enabled": body.enabled,
         "address": address,
@@ -6732,6 +6775,7 @@ def put_project_mailbox(project_id: str, body: MailboxIn,
         "password_secret": name,
         "recipients": recipients,
         "verify_sender": body.verify_sender,
+        "accept_new": accept_new,
     }
     if config != {**(mail_settings.project_config(project) or {}), "enabled": body.enabled} \
             or body.password is not None:
@@ -6746,6 +6790,7 @@ def put_project_mailbox(project_id: str, body: MailboxIn,
             "recipients_added": [r for r in recipients if r not in was],
             "recipients_removed": [r for r in was if r not in recipients],
             "verify_sender": body.verify_sender,
+            "accept_new": accept_new,
             "password_changed": body.password is not None})
     session.flush()
     return _mailbox_view(session, project)

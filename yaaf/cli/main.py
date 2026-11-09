@@ -656,6 +656,11 @@ def _draft_lines(bundle: dict) -> list[str]:
     if p.get("deadline"):
         lines.append(f"  Deadline: {p['deadline']}")
     lines.append(f"  Pays: {p.get('billing_secret_name') or 'nobody yet'}")
+    if p.get("needs_mail"):
+        # Said before [c]reate, not after: a project like this is created now
+        # and waits for its mailbox, which is set up in the dashboard.
+        lines.append("  Email: its work runs through email — it starts once you give it a "
+                     "mailbox in the dashboard (Settings → Email)")
     return lines
 
 
@@ -843,15 +848,25 @@ def _after_creating(client: httpx.Client, project_id: str, project: dict, bundle
         for step in todo:
             typer.echo(f"  · {step['label']}: {step['detail']}", err=err)
             typer.echo(f"    {_settings_link(project_id, step['section'])}", err=err)
-    blocked = next((s for s in todo if s.get("required")), None)
-    if blocked:
+    blockers = [s for s in todo if s.get("required")]
+    if blockers:
         # Not offered: a start without a model key succeeds and then every
-        # run fails, which is the thing the checklist marks required.
-        typer.echo(f"\nIt cannot start until that is done ({blocked['label'].lower()}); "
+        # run fails, and one without its mailbox is refused — the two things
+        # the checklist marks required. Every one named, not just the first.
+        what = " and ".join(s["label"].lower() for s in blockers)
+        those = "that is" if len(blockers) == 1 else "those are"
+        typer.echo(f"\nIt cannot start until {those} done ({what}); "
                    f"then `yaaf start {slug}`.", err=err)
-        if blocked["key"] == "key":
+        keys = {s["key"] for s in blockers}
+        if "key" in keys:
             typer.echo(f"From here: `yaaf configure {slug} --billing-secret-id ID`, with an id "
                        "from `yaaf llm-credentials`.", err=err)
+        if "email" in keys:
+            # Not a terminal job: the password is typed where it is masked and
+            # the servers are tested where the answer can be shown.
+            typer.echo("The mailbox is set up in the dashboard, at the link above: its address, "
+                       "servers, password and who the CEO may write to. Test the connection "
+                       "there, turn it on, and start it.", err=err)
     elif start_now or (ask and typer.confirm("\nStart it now?", default=False, err=err)):
         _json_or_die(client.post(f"/admin/projects/{project_id}/start"))
         typer.echo(f"Started. Follow it with `yaaf dashboard {slug}`.", err=err)
@@ -1543,7 +1558,14 @@ def amend(
 def start(project: str) -> None:
     """Start a project, or resume a paused one."""
     with _client() as client:
-        _show(client.post(f"/admin/projects/{_resolve_project(client, project)}/start"))
+        project_id = _resolve_project(client, project)
+        response = client.post(f"/admin/projects/{project_id}/start")
+        if response.status_code == 409 and "Settings → Email" in _detail(response):
+            # The refusal names the screen; the terminal can hand over the link.
+            typer.echo(_detail(response), err=True)
+            typer.echo(f"Set it up here: {_settings_link(project_id, 'mail')}", err=True)
+            raise typer.Exit(1)
+        _show(response)
 
 
 @app.command()

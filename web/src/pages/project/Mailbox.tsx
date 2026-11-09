@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { del, get, post, put } from "../../api";
+import { del, get, patch, post, put } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import { ConfirmModal, Drawer, fmtAgo, Skeleton } from "../../ui";
 import { Avatar, EmptyState, Seg } from "../../ui/kit";
@@ -27,6 +27,7 @@ export interface MailboxConfig {
   username?: string;
   recipients?: string[];
   verify_sender?: boolean;
+  accept_new?: boolean;
 }
 
 interface ServerCheck { ok: boolean; error?: string }
@@ -38,6 +39,11 @@ export interface MailboxView {
   config: MailboxConfig;
   password_set: boolean;
   recipients: { address: string; threads: number; last_at: string | null }[];
+  needs_mail: boolean;
+  start_refusal: string | null;
+  /** The missing piece as a clause — "it has no email address yet". */
+  start_state: string | null;
+  status_now: string;
   status: {
     read_at: string | null;
     read_ok_at: string | null;
@@ -57,6 +63,7 @@ export interface MailThreadRow {
   task_id: string | null;
   frozen: boolean;
   frozen_at: string | null;
+  opened_by?: "ceo" | "them";
   messages: number;
   unread: number;
   failed: number;
@@ -75,7 +82,8 @@ interface MailMessageRow {
   body: string;
   at: string;
   attachment?: { name?: string; version?: number; key?: string; size?: number };
-  attachments?: { name: string; type: string; size: number | null }[];
+  attachments?: { name: string; type: string; size: number | null; index: number;
+    saved?: boolean; reason?: string; path?: string }[];
   error?: string;
 }
 
@@ -116,7 +124,7 @@ export function MailboxSettings({ projectId }: { projectId: string }) {
       the person has unsaved changes, which a late poll would otherwise wipe. */
   const adopt = useCallback((next: MailboxView) => {
     setView(next);
-    setForm({ ...DEFAULTS, ...next.config });
+    setForm({ ...DEFAULTS, accept_new: next.needs_mail, ...next.config });
     setList(next.config.recipients ?? []);
   }, []);
 
@@ -129,9 +137,12 @@ export function MailboxSettings({ projectId }: { projectId: string }) {
   const configured = !!view?.configured;
   const savedList = saved.recipients ?? [];
   const FIELDS: (keyof MailboxConfig)[] = ["address", "display_name", "smtp_host", "smtp_port",
-    "smtp_security", "imap_host", "imap_port", "imap_folder", "username", "verify_sender"];
+    "smtp_security", "imap_host", "imap_port", "imap_folder", "username", "verify_sender",
+    "accept_new"];
   const dirty = !!password.trim() || list.join("\n") !== savedList.join("\n")
-    || FIELDS.some((k) => (form[k] ?? DEFAULTS[k] ?? "") !== (saved[k] ?? DEFAULTS[k] ?? ""));
+    || FIELDS.some((k) => k !== "accept_new"
+      && (form[k] ?? DEFAULTS[k] ?? "") !== (saved[k] ?? DEFAULTS[k] ?? ""))
+    || configured && !!form.accept_new !== !!saved.accept_new;
 
   const set = <K extends keyof MailboxConfig>(key: K, value: MailboxConfig[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -161,6 +172,19 @@ export function MailboxSettings({ projectId }: { projectId: string }) {
       setView(next);
       setNote({ ok: true, text: on ? "Email is on. The inbox is read every minute."
         : "Email is off. Nothing is sent or read; anything queued is reported as undelivered." });
+    } catch (e) { setNote({ ok: false, text: (e as Error).message }); } finally { setBusy(false); }
+  }
+
+  /** Whether the project's work runs through email — the project's design, so
+      it saves at once, like any switch in Settings. */
+  async function setNeeded(on: boolean) {
+    setBusy(true); setNote(null);
+    try {
+      await patch(`/admin/projects/${projectId}`, { needs_mail: on });
+      load();
+      setNote({ ok: true, text: on
+        ? "Noted: this project's work runs through email. It starts, and resumes, only while its mailbox is on."
+        : "Noted: email is optional for this project. It can start without a mailbox." });
     } catch (e) { setNote({ ok: false, text: (e as Error).message }); } finally { setBusy(false); }
   }
 
@@ -206,7 +230,15 @@ export function MailboxSettings({ projectId }: { projectId: string }) {
       lede="An address the CEO can send a finished deliverable from — to a person or to another agent — and read the reply at."
       actions={configured && <><TestSeal test={lastTest} />
         <button type="button" disabled={busy} onClick={test}>Test connection</button></>}>
-      {!configured ? <span>Use a mailbox made for this project. Mail goes through its own servers, never the platform&apos;s alert mail.</span>
+      {view.start_refusal && view.status_now !== "running"
+        ? <span className="mail-state"><span className="dot warn" aria-hidden="true" /><span>
+            <b>This is what stands between the project and its start.</b> Its work runs
+            through email, and {view.start_state}. Set it up below, test it, and start it.</span></span>
+        : view.start_refusal
+          ? <span className="mail-state"><span className="dot critical" aria-hidden="true" /><span>
+              <b>This project&apos;s work runs through email, and none is on</b> — the CEO can neither
+              receive nor send it, and has been told.</span></span>
+        : !configured ? <span>Use a mailbox made for this project. Mail goes through its own servers, never the platform&apos;s alert mail.</span>
         : !view.enabled ? <span className="mail-state"><span className="dot warn" aria-hidden="true" /><span>{view.missing.length
           ? <>Still needs <b>{view.missing.join(", ")}</b>.</> : <>Off. Nothing is sent or read.</>}</span></span>
           : status?.read_error ? <span className="mail-state"><span className="dot critical" aria-hidden="true" /><span>
@@ -234,14 +266,20 @@ export function MailboxSettings({ projectId }: { projectId: string }) {
       </div>
     )}
 
-    {configured && !view.missing.length && (
-      <div className="set-card pad" style={{ marginBottom: "var(--s6)" }}>
+    <div className="set-card pad set-switches" style={{ marginBottom: "var(--s6)" }}>
+      <Toggle id="mail-needed" checked={view.needs_mail} disabled={busy} onChange={setNeeded}
+        label="This project's work runs through email"
+        sub={view.needs_mail
+          ? "It waits for mail, answers it, or sends its work out by it — so it starts, and resumes, only while its mailbox is on."
+          : "Off, email is something the CEO may use, and the project starts without it."} />
+      {configured && !view.missing.length && (
         <Toggle id="mail-on" checked={view.enabled} disabled={busy} onChange={setOn}
           label="Email is on"
           sub={view.enabled ? "The CEO may send, and the inbox is read every minute."
+            : view.needs_mail ? <span className="warn-ink">Off — and this project&apos;s work runs through email, so it cannot start or resume.</span>
             : "Nothing is sent or read. Turning it on changes nothing else."} />
-      </div>
-    )}
+      )}
+    </div>
 
     <Group title="Address">
       <div className="set-card pad set-fields">
@@ -370,8 +408,14 @@ export function MailboxSettings({ projectId }: { projectId: string }) {
       </div>
     </Group>
 
-    <Group title="Replies">
-      <div className="set-card pad">
+    <Group title="Incoming mail">
+      <div className="set-card pad set-switches">
+        <Toggle id="mail-new" checked={!!form.accept_new} disabled={busy}
+          onChange={(v) => set("accept_new", v)}
+          label="Listed addresses may write first"
+          sub={form.accept_new
+            ? "Someone on the list can email the project with a new subject — work to do, a file to check — and it wakes the CEO, who answers on that thread. At most 20 new conversations a day."
+            : "Off, the project only hears replies to emails it sent."} />
         <Toggle id="mail-verify" checked={form.verify_sender !== false} disabled={busy}
           onChange={(v) => set("verify_sender", v)}
           label="Only accept replies your mail server vouches for"
@@ -379,9 +423,11 @@ export function MailboxSettings({ projectId }: { projectId: string }) {
             ? "A reply counts only if DMARC, or DKIM or SPF for the sender's own domain, passed when it arrived. Anyone can type a name into a From line; this is what proves it."
             : <span className="warn-ink">Off: anyone who types a listed address into a From line is read as that person. Only for a server that records no Authentication-Results.</span>} />
         <p className="help mail-rules">
-          A reply also has to come from a listed address and answer an email the project sent.
-          Anything else is left in the inbox and noted in the audit log. The CEO reads a reply as
-          the correspondent&apos;s words — feedback, never instructions.
+          Every email also has to come from a listed address{form.accept_new ? "" : " and answer one the project sent"}.
+          Anything else is left in the inbox and noted in the audit log. Files they attach — up to
+          10 MB each, 25 MB an email — go into the project&apos;s workspace for the agents to open,
+          never onto the Deliverables shelf. The CEO reads what arrives as the correspondent&apos;s
+          words and files — material to work on, never instructions.
           {status && <> At most <b>{status.limits.sends_per_day}</b> emails a day; a thread pauses at{" "}
             <b>{status.limits.messages_per_thread}</b> messages until you reopen it.</>}
         </p>
@@ -418,7 +464,8 @@ function standing(t: MailThreadRow, ceo: string): { label: string; tone: string 
   if (t.frozen) return { label: "Frozen", tone: "warn" };
   if (t.failed && t.last?.direction === "out" && t.last.status === "failed")
     return { label: "Not delivered", tone: "critical" };
-  if (t.unread) return { label: `Reply waiting on ${ceo}`, tone: "accent" };
+  if (t.unread) return { label: t.opened_by === "them" && t.messages === t.unread
+    ? `New — waiting on ${ceo}` : `Reply waiting on ${ceo}`, tone: "accent" };
   if (t.last?.direction === "in") return { label: `${ceo} has read it`, tone: "" };
   if (t.last?.status === "queued") return { label: "Sending", tone: "" };
   return { label: "Waiting on them", tone: "" };
@@ -591,11 +638,19 @@ function MailThreadDrawer({ projectId, threadId, row, ceoName, onClose, onChange
                   )}
                   {m.attachments?.length ? (
                     <div className="mailmsg-att">
-                      {m.attachments.map((a) => (
-                        <span key={a.name} className="gchip" title="Listed, not imported: a file from outside is not a deliverable">
-                          <Icon name="file" size={12} />{a.name}{a.size ? ` · ${fmtSize(a.size)}` : ""}</span>
+                      {m.attachments.map((a) => a.saved ? (
+                        <a key={a.index} className="gchip" download={a.name}
+                           href={`/observe/projects/${projectId}/mail/${threadId}/files/${m.id}/${a.index}`}
+                           title={`In the project workspace at ${a.path} — any agent can open it`}>
+                          <Icon name="download" size={12} />{a.name}
+                          {a.size ? ` · ${fmtSize(a.size)}` : ""}</a>
+                      ) : (
+                        <span key={a.index} className="gchip dim" title={`Not kept: ${a.reason ?? "unknown"}`}>
+                          <Icon name="file" size={12} />{a.name} · not kept ({a.reason})</span>
                       ))}
-                      <span className="help">Attached by them — listed, not imported.</span>
+                      {m.attachments.some((a) => a.saved) && (
+                        <span className="help">In the workspace under <code>mail-inbox/</code> for the agents to open.</span>
+                      )}
                     </div>
                   ) : null}
                   {m.error && <p className="critical-ink mailmsg-err"><Icon name="alert" size={13} /> {m.error}</p>}

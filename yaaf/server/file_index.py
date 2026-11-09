@@ -46,7 +46,10 @@ MAX_INDEXED_FILES = 50_000
 MAX_SCANNED_FILES = 200_000
 #: Platform plumbing, not agent work: staging (tokens, prompts, traces) and git
 #: internals never show in the chairman's view, and are never descended into.
-SKIPPED_DIRS = frozenset({".git", ".yaaf"})
+#: `mail-inbox` holds what correspondents emailed (yaaf.server.mail.service.
+#: INBOX_DIR): material, not the project's work, and each file is one click
+#: away on its email thread.
+SKIPPED_DIRS = frozenset({".git", ".yaaf", "mail-inbox"})
 
 #: Younger than this, an index is served as it is.
 FRESH_S = 10.0

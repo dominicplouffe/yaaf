@@ -133,10 +133,13 @@ credential, such as a service-account JSON, isn't pasted; you get the
 
 **The rest is listed with links to the dashboard.** This is the project's
 setup checklist, the same list as **Finish setting up** on its Inbox: model
-key, brief, data sources, secrets, integrations and people. Each unfinished
-step comes with a link to the Settings section that does it. Data sources are
-always finished in the dashboard. Adding one checks its address, and some need
-a sign-in with their provider, which takes a browser.
+key, brief, data sources, secrets, integrations and people, plus **email** for a
+project whose work runs through it. Each unfinished step comes with a link to
+the Settings section that does it. Data sources are always finished in the
+dashboard. Adding one checks its address, and some need a sign-in with their
+provider, which takes a browser. A mailbox is finished there too: its password
+is typed where it is masked, and its servers are tested where the result can
+be shown.
 
 Links open on `YAAF_PUBLIC_BASE_URL` when it's set on your machine, and on
 `YAAF_API` otherwise. Through an SSH tunnel, that's an address that works from
@@ -144,8 +147,11 @@ your laptop.
 
 **Starting it.** A project with no model key can't run, so you aren't offered a
 start. `create-project` tells you how to assign a key: in the dashboard, or with
-`yaaf configure P --billing-secret-id ID`. Otherwise you're asked whether to
-start it, or `--start` starts it without asking.
+`yaaf configure P --billing-secret-id ID`. A project whose work runs through
+email isn't offered a start until its mailbox is on either, and every blocker
+is named. The draft says "Email: …" before you create it, and `yaaf start`
+refuses with the link to **Settings → Email**. Otherwise you're asked whether
+to start it, or `--start` starts it without asking.
 
 **From a script.** With `--from-file` and no terminal, nothing is asked. The
 created project's JSON is the only thing on stdout. The keys still needed and

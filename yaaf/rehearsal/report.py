@@ -554,6 +554,11 @@ def build(client, project_id: str | None, spec: dict, steps: list[dict],
             install_facts.notification_line(install),
             "the workspace — the drill works in a directory it deletes, and a "
             "github_repo in the spec is not cloned into it",
+            *(["email — this project's work runs through email, and a drill sends and "
+               "reads none: it started without the mailbox a real start needs, and no "
+               "correspondent wrote to it"]
+              if (spec.get("project") if isinstance(spec.get("project"), dict)
+                  else spec).get("needs_mail") else []),
         ],
         # The same facts as data, so a screen or the Founder can act on them
         # without parsing the prose above. None when the caller had no live

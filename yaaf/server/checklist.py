@@ -51,7 +51,22 @@ STEPS = (
     Step("integrations", "Integrations", "integrations"),
     Step("people", "People", "people"),
 )
-BY_KEY = {s.key: s for s in STEPS}
+#: A project's own email address. Listed only for a project that needs one or
+#: has one — a checklist step nobody needs is a step somebody skips forever —
+#: and required where the work runs through email: such a project cannot start
+#: without it (yaaf.server.mail.settings.start_refusal).
+EMAIL = Step("email", "Email", "mail")
+BY_KEY = {s.key: s for s in (*STEPS, EMAIL)}
+
+
+def steps_for(project: Project) -> tuple[Step, ...]:
+    """This project's steps, in order. The email step sits right after the key:
+    when it is required, it is the second thing standing between a new project
+    and its first run."""
+    if not (project.needs_mail or (project.integrations or {}).get("mail")):
+        return STEPS
+    email = Step(EMAIL.key, EMAIL.label, EMAIL.section, required=bool(project.needs_mail))
+    return (STEPS[0], email, *STEPS[1:])
 
 
 def _state(project: Project) -> dict:
@@ -101,10 +116,22 @@ def _done(session: Session, project: Project, step: Step) -> tuple[bool, str]:
         return False, "API keys and values your agents use, such as a data vendor's token."
     if step.key == "integrations":
         slack = integrations.get("slack") or {}
-        if slack or project.github_repo or integrations.get("mail"):
-            return True, ("Slack" if slack else "GitHub" if project.github_repo
-                          else "Email")
+        if slack or project.github_repo:
+            return True, "Slack" if slack else "GitHub"
         return False, "Mirror the project into Slack, or connect a GitHub repository."
+    if step.key == "email":
+        from yaaf.server.mail import settings as mail_settings
+
+        config = mail_settings.project_config(project)
+        if mail_settings.enabled(project):
+            return True, f"The CEO sends from {config.get('address')} and reads its replies."
+        if config is None:
+            return False, ("Its work runs through email: give it an address, its servers "
+                           "and who it may write to." if project.needs_mail
+                           else "Give the CEO an email address.")
+        gaps = mail_settings.missing(project)
+        return False, (f"Still needs {', '.join(gaps)}." if gaps
+                       else "Set up, and switched off.")
     if step.key == "people":
         others = session.execute(
             select(func.count()).select_from(ProjectMember).where(
@@ -122,7 +149,7 @@ def view(session: Session, project: Project) -> dict:
     state = _state(project)
     skipped = set(state.get("skipped") or [])
     steps = []
-    for step in STEPS:
+    for step in steps_for(project):
         done, detail = _done(session, project, step)
         steps.append({
             "key": step.key, "label": step.label, "section": step.section,
@@ -155,11 +182,13 @@ def act(session: Session, project: Project, action: str, step: str | None,
         if step not in BY_KEY:
             raise Refused(f"there is no setup step called {step!r}")
         if action == "skip":
-            if BY_KEY[step].required and not _done(session, project, BY_KEY[step])[0]:
+            this = next((s for s in steps_for(project) if s.key == step), BY_KEY[step])
+            if this.required and not _done(session, project, this)[0]:
                 # The one step a project cannot run without. Skipping it would
                 # put the list away over a project whose every run will fail.
-                raise Refused(f"{BY_KEY[step].label} cannot be skipped: agents cannot run "
-                              "without it")
+                raise Refused(f"{this.label} cannot be skipped: "
+                              + ("this project's work runs through email"
+                                 if this.key == "email" else "agents cannot run without it"))
             if step not in skipped:
                 skipped.append(step)
         elif step in skipped:

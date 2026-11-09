@@ -74,7 +74,8 @@ def status_line(*, status: str, status_reason: str | None, unpaid: bool,
                 unit: str, spent: float, cap: float,
                 failed_in_a_row: int = 0, last_error_kind: str | None = None,
                 spinning_runs: int = 0, signoff: dict | None = None,
-                timezone: str | None = None, out_of_runs: dict | None = None) -> dict:
+                timezone: str | None = None, out_of_runs: dict | None = None,
+                mail_missing: bool = False) -> dict:
     """{verdict, headline, sentence} for one project, from the facts the desk
     holds. The headline is the verdict in words; the sentence adds the money,
     for a surface that has no money column of its own."""
@@ -84,7 +85,7 @@ def status_line(*, status: str, status_reason: str | None, unpaid: bool,
         last_run_at=last_run_at, stall_hours=stall_hours,
         failed_in_a_row=failed_in_a_row, last_error_kind=last_error_kind,
         spinning_runs=spinning_runs, signoff=signoff, timezone=timezone,
-        out_of_runs=out_of_runs)
+        out_of_runs=out_of_runs, mail_missing=mail_missing)
     sentence = f"{headline} {_money(unit, spent, cap)}" if with_money else headline
     return {"verdict": verdict, "headline": headline, "sentence": sentence}
 
@@ -92,7 +93,8 @@ def status_line(*, status: str, status_reason: str | None, unpaid: bool,
 def _verdict(*, status, status_reason, unpaid, commitment, waiting, open_tasks,
              runs_running, last_run_at, stall_hours, failed_in_a_row=0,
              last_error_kind=None, spinning_runs=0,
-             signoff=None, timezone=None, out_of_runs=None) -> tuple[str, str, bool]:
+             signoff=None, timezone=None, out_of_runs=None,
+             mail_missing=False) -> tuple[str, str, bool]:
     if status == ProjectStatus.COMPLETED:
         return "done", "Finished.", True
     if status == ProjectStatus.STOPPED:
@@ -100,6 +102,7 @@ def _verdict(*, status, status_reason, unpaid, commitment, waiting, open_tasks,
         return "stopped", f"Stopped{why}.", False
     if status == ProjectStatus.DRAFT:
         return ("not_started", "Not started — nothing is set to pay for it yet." if unpaid
+                else "Not started — it needs its email set up first." if mail_missing
                 else "Not started.", False)
     if signoff is not None:
         # Before the money and the date: a finished delivery runs nothing, so
@@ -123,6 +126,11 @@ def _verdict(*, status, status_reason, unpaid, commitment, waiting, open_tasks,
     if status == ProjectStatus.PAUSED:
         why = f": {status_reason}" if status_reason else "."
         return "paused", f"Paused{why}", True
+    if mail_missing:
+        # Its agents can run; the work cannot. A project told to wait for mail
+        # with no mailbox reads "Working." forever otherwise.
+        return ("blocked", "Cannot do its job: its email is not set up and on. Fix it in "
+                "its Settings → Email.", False)
     if failed_in_a_row >= FAILING_AFTER:
         # Before the date and the decisions: a project whose runs all die
         # will miss any date, and "On track" or "Working." over it is the

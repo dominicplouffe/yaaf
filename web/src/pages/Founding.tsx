@@ -343,6 +343,16 @@ function DraftPanel({ bundle, changed = [], rules = [], roles = [] }: {
           : "Not chosen yet. The Founder asks when there is more than one credential; you can also pick one on the form."}
       </p>
 
+      {p.needs_mail && (
+        <>
+          <h4>Email<Moved on={changed.includes("mail")} /></h4>
+          <p className="muted">
+            Its work runs through email. It is created now and starts once you give it a
+            mailbox — an address, its servers, and who it may write to — in Settings → Email.
+          </p>
+        </>
+      )}
+
       <h4>Who it hires<Moved on={changed.includes("team")} /></h4>
       <ul>
         {(p.teams ?? []).map((t) => (

@@ -177,6 +177,14 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
                          else "chat session ended: chat disabled or billing detached")
         return None, None
 
+    if live_run is not None and (project.integrations or {}).get("mail"):
+        # A resident session reads the project tree, read-only, for as long as
+        # it lives; a file emailed mid-session reaches it here, not at the
+        # next boot. Cheap when nothing is new: one query and a stat per file.
+        from yaaf.runner.daemon import _materialize_mail
+
+        _materialize_mail(session, project, Path(settings().workspaces_root) / project.slug)
+
     ceo = session.execute(
         select(Agent).where(Agent.project_id == project.id,
                             Agent.kind == AgentKind.CEO,
@@ -486,6 +494,9 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     staging.chmod(0o777)
     project_tree = Path(settings().workspaces_root) / project.slug
     project_tree.mkdir(parents=True, exist_ok=True)
+    from yaaf.runner.daemon import _materialize_mail
+
+    _materialize_mail(session, project, project_tree)
     (staging / "system_prompt.txt").write_text(job.system_prompt)
     # A resident session has no context.json — stash the prompt at start so the
     # chairman can see what the session was primed with. Best-effort.

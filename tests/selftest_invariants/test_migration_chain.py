@@ -105,6 +105,8 @@ SHORTCUTS_COLUMNS = (("users", "pins"), ("projects", "setup"))
 STANDING_CHECK_TABLES = ("standing_checks",)
 # 0068: a project mailbox — its correspondence, and how far its inbox was read.
 MAILBOX_TABLES = ("mail_threads", "mail_messages", "mailbox_states")
+# 0069: whether a project's job runs through email.
+NEEDS_MAIL_COLUMNS = (("projects", "needs_mail"), ("mail_threads", "opened_by"))
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
                   + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES + RUNTIMES_TABLES
@@ -112,7 +114,7 @@ REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
                   + MAILBOX_TABLES)
 REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
                    + STAGE_10_COLUMNS + RUNTIMES_COLUMNS + PEOPLE_COLUMNS + PROVIDERS_COLUMNS
-                   + SHORTCUTS_COLUMNS
+                   + SHORTCUTS_COLUMNS + NEEDS_MAIL_COLUMNS
                    + (("secrets", "llm_mode"),))
 
 
