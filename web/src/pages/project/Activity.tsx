@@ -13,6 +13,7 @@ import Channels from "./Channels";
 import Memory from "./Memory";
 import Decisions from "./Decisions";
 import Evidence from "./Evidence";
+import { MailThreads } from "./Mailbox";
 
 type Window = "mark" | "24" | "168";
 
@@ -234,6 +235,7 @@ export default function Activity({ ctx }: { ctx: ProjectCtx }) {
         <Route path="messages" element={<Channels projectId={projectId} />} />
         <Route path="inbox" element={<AgentInbox ctx={ctx} />} />
         <Route path="memory" element={<Memory projectId={projectId} ctx={ctx} />} />
+        <Route path="mail" element={<MailThreads projectId={projectId} ceoName={ctx.ceoName} />} />
         <Route path="*" element={<Navigate to={home} replace />} />
       </Routes>
     </>

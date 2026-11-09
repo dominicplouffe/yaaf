@@ -3637,3 +3637,47 @@ table.accessmap tr:hover td.hot { background: rgba(var(--accent-rgb), 0.06); }
 .pcard-v { display: flex; flex-direction: column; gap: 4px; font-size: var(--t-small); min-width: 0; }
 .pcard-v .warn { color: var(--warning); }
 @media (max-width: 560px) { .pcard-signal { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── Email: the project mailbox (pages/project/Mailbox.tsx) ─────────────── */
+.mrow { grid-template-columns: minmax(0, 2.4fr) minmax(0, 1fr) 72px 88px; }
+.mrow .num { text-align: right; font-variant-numeric: tabular-nums; }
+.mrow-subj { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mrow .vsub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mail-port { display: flex; gap: 8px; align-items: center; }
+.mail-port input { width: 96px; flex: none; }
+.mail-port input:first-child:not([type="number"]) { flex: 1 1 auto; width: auto; }
+.mail-addr { font-family: var(--mono); font-size: 13px; font-weight: 500; overflow-wrap: anywhere; word-break: normal; }
+.set-row.mail-rcpt { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto; }
+.mail-state { display: inline-flex; align-items: flex-start; gap: 8px; }
+.mail-state > .dot { margin-top: 0.5em; }
+.mail-gone .mail-addr { color: var(--muted); }
+.mail-rules { margin: var(--s3) 0 0; line-height: 1.5; }
+.mail-thread { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.mailmsg { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  padding: 12px 14px; box-shadow: inset 3px 0 0 var(--border-strong); }
+.mailmsg.out { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+.mailmsg-head { display: flex; align-items: center; gap: 10px; }
+.mailmsg-who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.mailmsg-who b { font-size: 13.5px; overflow-wrap: anywhere; }
+.mailmsg-subj { margin: 8px 0 0; font-size: var(--t-small); font-weight: 600; color: var(--ink-2); }
+.mailmsg-body { margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px;
+  line-height: 1.55; color: var(--ink); }
+.mailmsg-att { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; }
+.mailmsg-att a.gchip { text-decoration: none; color: var(--ink); }
+.mailmsg-att a.gchip:hover { border-color: var(--accent); }
+.mailmsg-err { display: flex; gap: 6px; align-items: flex-start; margin: 8px 0 0; font-size: var(--t-small); }
+.mail-frozen { display: flex; gap: 10px; align-items: flex-start; margin-bottom: var(--s4); padding: 10px 12px;
+  border-radius: var(--radius); font-size: var(--t-small); line-height: 1.5; color: var(--ink);
+  background: rgba(var(--warning-rgb), 0.1); border: 1px solid rgba(var(--warning-rgb), 0.4); }
+.mail-frozen > svg { color: var(--warning); flex: none; margin-top: 2px; }
+.mail-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mail-foot .help { flex: 1 1 240px; }
+@media (max-width: 700px) {
+  .mrow { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; }
+  .mrow > :nth-child(2) { grid-column: 1; padding-left: 38px; }
+  .mrow > .num { display: none; }
+  .mrow > .vupd { grid-column: 2; grid-row: 1; display: block; }
+  .mrow.vhead { display: none; }
+  .set-row.mail-rcpt { grid-template-columns: minmax(0, 1fr) auto; }
+  .set-row.mail-rcpt > .set-row-val { grid-column: 1; grid-row: 2; }
+}

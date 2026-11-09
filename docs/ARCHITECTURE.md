@@ -64,6 +64,10 @@ It also runs background threads:
   over budget, expires stale approvals, checks the delivery date against real
   pace, verifies outside evidence, and sends the daily brief.
 - **Slack.** Mirrors project channels to Slack when you connect it.
+- **Mail.** For a project with its own mailbox: sends what the CEO queued with
+  `mail_send` through the project's SMTP server, and reads its IMAP inbox for
+  replies. A reply wakes the CEO only after passing the checks in
+  `yaaf/server/mail/inbound.py`.
 
 ### yaaf-runner
 
@@ -133,7 +137,7 @@ are set per project in the dashboard.
 ## Code map
 
 ```
-yaaf/server     API, policy engine, dispatcher, janitor, MCP server, Slack
+yaaf/server     API, policy engine, dispatcher, janitor, MCP server, Slack, mail
 yaaf/runner     run leasing, sandboxes, harness entry points, chat sessions
 yaaf/runtimes   harness, provider and model registries
 yaaf/core       data models, config, encryption, prices, shared logic

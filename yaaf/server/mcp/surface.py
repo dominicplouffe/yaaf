@@ -379,6 +379,19 @@ WITHHELD = {
     "POST /admin/projects/{project_id}/slack/channels":
         "creates channels in a real Slack workspace — an outward side effect, and the "
         "chairman's to trigger.",
+    "GET /admin/projects/{project_id}/mail":
+        "a project mailbox's server settings are wiring the chairman reads in Settings; "
+        "the correspondence itself is on the dashboard (Activity → Email).",
+    "PUT /admin/projects/{project_id}/mail":
+        "a mail password, inbound — and the recipient list, which is the rule deciding "
+        "whom the CEO may write to. Changed by a person, on the screen, never by a model.",
+    "DELETE /admin/projects/{project_id}/mail":
+        "deletes the mailbox's password and stops its correspondence — the chairman's call.",
+    "POST /admin/projects/{project_id}/mail/test":
+        "signs in to the project's real mail servers with its password.",
+    "POST /admin/projects/{project_id}/mail/threads/{mail_thread}/reopen":
+        "a frozen email thread is the loop breaker between two agents; reopening it is "
+        "a deliberate click by somebody who has read the thread, not a model's tidy-up.",
 }
 
 

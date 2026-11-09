@@ -100,6 +100,31 @@ export interface Item {
 
 const NEVER = Number.MAX_SAFE_INTEGER;
 
+/** Reopen a frozen email thread where the row is drawn. Not a typed
+    confirmation: the limit counts afresh from the moment it reopens, so the
+    worst a mistaken press buys is one more round before it stops again. */
+export function ReopenThread({ projectId, threadId, onDone, primary = false }: {
+  projectId: string; threadId: string; onDone: () => void; primary?: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <button className={`small${primary ? " primary" : ""}`} disabled={busy}
+              onClick={async () => {
+                setBusy(true); setError(null);
+                try {
+                  await post(`/admin/projects/${projectId}/mail/threads/${threadId}/reopen`);
+                  onDone();
+                } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+              }}>
+        {busy ? "Reopening…" : "Reopen the thread"}
+      </button>
+      {error && <span className="error" role="alert">{error}</span>}
+    </>
+  );
+}
+
 /** Accept proposed scope where the decision is drawn. Compact, on a row, it
     accepts every proposed requirement in two presses; in the Inbox's detail
     pane it is a checklist, so one can be left out. Rewording and cutting stay
@@ -270,6 +295,26 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
       ),
       consequence: "Those agents stay stuck until you unfreeze the thread.",
       to: `${to}/details/activity/messages`, toLabel: "Review the thread",
+    });
+  }
+  // One row per email thread, not one per project: each is a different
+  // correspondent, outside the project, waiting on a different answer.
+  for (const t of p.frozen_mail ?? []) {
+    items.push({
+      key: `${p.id}-mail-${t.id}`, type: "frozen", tier: 1, at: 0, yours: true, project: p,
+      kind: "Email thread frozen",
+      title: `The email thread with ${t.counterpart} reached its limit`,
+      what: (
+        <>
+          The CEO and <b>{t.counterpart}</b> wrote back and forth on “{clip(t.subject, 120)}”
+          until the loop breaker stopped the thread. Anything they send now is held, unread by
+          the CEO.
+        </>
+      ),
+      consequence: "Nothing more is sent or read on it until you reopen it.",
+      to: `${to}/details/activity/mail?open=${encodeURIComponent(t.id)}`,
+      toLabel: "Read the thread",
+      actions: <ReopenThread projectId={p.id} threadId={t.id} onDone={reload} />,
     });
   }
 

@@ -522,6 +522,13 @@ class NoticeKind(enum.StrEnum):
     # woken — a customer email, an order, a monitoring alert. Urgent-classed,
     # still under every wake-rate brake: the world can knock, never stampede.
     EXTERNAL_EVENT = "external_event"
+    # A correspondent answered the CEO's email from the project mailbox, and
+    # the reply passed the recipient list, the sender check and the thread
+    # match. Urgent for the reason EXTERNAL_EVENT is: somebody outside is
+    # waiting on an answer.
+    MAIL_RECEIVED = "mail_received"
+    # An email the CEO sent could not be delivered and will not be retried.
+    MAIL_UNDELIVERED = "mail_undelivered"
     APPROVAL_DECIDED = "approval_decided"
     APPROVAL_EXPIRED = "approval_expired"
     THREAD_FROZEN = "thread_frozen"
@@ -1415,6 +1422,126 @@ class Artifact(Base):
     # "can you push to me every morning instead of me going to look for a file".
     slack_ts: Mapped[str | None] = mapped_column(String(40))
     published_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class MailDirection(enum.StrEnum):
+    OUT = "out"  # the CEO wrote it; the platform sends it from the project mailbox
+    IN = "in"    # a correspondent replied, and the platform accepted the reply
+
+
+class MailStatus(enum.StrEnum):
+    QUEUED = "queued"      # accepted from the CEO, not yet handed to SMTP
+    SENT = "sent"          # the project's SMTP server took it
+    FAILED = "failed"      # gave up: the CEO is told, and nothing retries it
+    RECEIVED = "received"  # an accepted reply, delivered to the CEO
+    # A reply on a thread the loop breaker froze: kept so the chairman can read
+    # it, but it wakes nobody — the thread is his to reopen.
+    HELD = "held"
+
+
+class MailThread(Base):
+    """One correspondence: the CEO wrote to somebody outside the project, and
+    everything said back and forth on that subject since.
+
+    The project's own mailbox carries it, never the platform's — the chairman
+    gives a project an address, an SMTP server to send from and an IMAP server
+    to read, and replies come back to the address they were sent from.
+    """
+
+    __tablename__ = "mail_threads"
+    __table_args__ = (Index("ix_mail_threads_project", "project_id", "last_at"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    # The address the thread was opened with, lower-cased. Replies are accepted
+    # from any address on the recipient list, but this is who the CEO writes to
+    # when it answers without naming somebody.
+    counterpart: Mapped[str] = mapped_column(String(320))
+    subject: Mapped[str] = mapped_column(String(300))
+    task_id: Mapped[str | None] = mapped_column(String(40))
+    # The loop breaker: set when the thread reaches its exchange limit. Two
+    # agents on two platforms thanking each other would otherwise do it forever,
+    # each turn a paid run. Frozen refuses the CEO's sends and holds replies.
+    frozen_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # When the chairman last reopened it. The exchange limit counts from here,
+    # so reopening buys a fresh allowance instead of re-freezing on the next
+    # message.
+    reopened_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    last_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class MailMessage(Base):
+    """One email, either way. Outbound rows are the outbox: written when the CEO
+    asks, sent by the mail loop, retried until they go or are given up on.
+    Inbound rows exist only for replies that passed every check — mail the
+    platform refused is an audit line, never a row an agent can read."""
+
+    __tablename__ = "mail_messages"
+    __table_args__ = (
+        UniqueConstraint("project_id", "rfc_message_id"),
+        UniqueConstraint("project_id", "idempotency_key"),
+        Index("ix_mail_messages_thread", "thread_id", "created_at"),
+        Index("ix_mail_messages_outbox", "project_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    thread_id: Mapped[str] = mapped_column(ForeignKey("mail_threads.id"))
+    direction: Mapped[str] = mapped_column(String(8))  # MailDirection
+    status: Mapped[str] = mapped_column(String(16))  # MailStatus
+    # The RFC 5322 Message-ID, angle brackets included. Ours are minted at
+    # queue time so a reply's In-Reply-To can name the row it answers.
+    rfc_message_id: Mapped[str] = mapped_column(String(400))
+    in_reply_to: Mapped[str | None] = mapped_column(String(400))
+    from_addr: Mapped[str] = mapped_column(String(320))
+    to_addr: Mapped[str] = mapped_column(String(320))
+    subject: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text)
+    # Outbound: the deliverable attached, by row — so what went to whom is a
+    # versioned, hashed fact rather than a filename.
+    artifact_id: Mapped[str | None] = mapped_column(String(40))
+    # Inbound: what was attached, by name and size. Not imported: a file from
+    # outside is not a deliverable and must not land on the project's shelf.
+    attachments: Mapped[list | None] = mapped_column(JSONVariant)
+    # Outbound dedupe: the same CEO sending the same words to the same person
+    # on a retried run gets the first row back instead of a second email.
+    idempotency_key: Mapped[str | None] = mapped_column(String(80))
+    run_id: Mapped[str | None] = mapped_column(String(40))
+    side_effect_id: Mapped[str | None] = mapped_column(String(40))
+    evidence_id: Mapped[str | None] = mapped_column(String(40))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    # Outbound: not before this. A mail server that is down for an hour is not
+    # helped by being asked every ten seconds.
+    next_attempt_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Inbound: when the CEO read it with mail_read. Unread replies are what the
+    # CEO's context lists as waiting.
+    read_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class MailboxState(Base):
+    """Where the mail loop has read a project's inbox up to, and how the last
+    look went. Kept out of ``project.integrations`` on purpose: that is the
+    chairman's configuration, and a loop that rewrote it every minute would race
+    every save he makes on the settings screen."""
+
+    __tablename__ = "mailbox_states"
+
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    uidvalidity: Mapped[str | None] = mapped_column(String(40))
+    last_uid: Mapped[int] = mapped_column(Integer, default=0)
+    polled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    ok_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    # Mail in the box that was neither from the recipient list nor a reply to
+    # anything sent: somebody else's mail, left alone and only counted.
+    ignored: Mapped[int] = mapped_column(Integer, default=0)
+    # The chairman's last "Test connection": {"at", "ok", "smtp", "imap"}.
+    # Cleared when the settings change — a changed mailbox is an untested one.
+    last_test: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
 class Cycle(Base):

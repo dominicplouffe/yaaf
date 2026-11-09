@@ -80,6 +80,7 @@ from yaaf.core.config import settings
 from yaaf.core.inbox import (  # noqa: F401 — re-exported: the mail links these rows
     commitment_item,
     frozen_item,
+    frozen_mail_item,
     scope_item,
     signoff_item,
     verdict_item,

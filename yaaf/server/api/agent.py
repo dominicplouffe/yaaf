@@ -4258,3 +4258,51 @@ def artifact_get(
         # replacement char at the seam beats base64-ing a readable file.
         out["text"] = chunk.decode(errors="replace")
     return out
+
+
+# ── email: the project mailbox (CEO only) ───────────────────────────────────────
+
+
+class MailSendIn(BaseModel):
+    body: str = Field(min_length=1, max_length=60_000)
+    # An address on the recipient list, for a new thread. Answering a thread
+    # needs only thread_id: the reply goes to whoever the thread is with.
+    to: str | None = Field(default=None, max_length=320)
+    subject: str | None = Field(default=None, max_length=300)
+    # A shipped deliverable to attach: its name, artifact_id or key.
+    artifact: str | None = Field(default=None, max_length=1000)
+    thread_id: str | None = Field(default=None, max_length=40)
+    task_id: str | None = Field(default=None, max_length=40)
+
+
+@router.post("/mail")
+def mail_send(
+    body: MailSendIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Email somebody on the chairman's recipient list from the project's own
+    mailbox. Every rule lives in :mod:`yaaf.server.mail.service`."""
+    from yaaf.server.mail import service as mail
+
+    return mail.send(session, ctx.project, ctx.agent, ctx.run, to=body.to,
+                     subject=body.subject, body=body.body, artifact=body.artifact,
+                     thread_id=body.thread_id, task_id=body.task_id)
+
+
+@router.get("/mail")
+def mail_read(
+    thread_id: str | None = None, ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    """The CEO's correspondence: the threads, or one thread in full. Reading a
+    thread marks its replies read; a correspondent's words come back fenced as
+    untrusted, because they are."""
+    from yaaf.server.mail import service as mail
+
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "The project's email is the CEO's correspondence. If something in it "
+            "matters to your work, the CEO will put it on the board.", status_code=403)
+    if thread_id:
+        return mail.thread(session, ctx.project.id, thread_id, fence=True, mark_read=True)
+    return {"mailbox": mail.for_context(session, ctx.project),
+            "threads": mail.threads(session, ctx.project.id)}

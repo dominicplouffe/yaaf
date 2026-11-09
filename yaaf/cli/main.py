@@ -1672,6 +1672,9 @@ def status(
         if row.get("frozen_threads"):
             waiting.append(f"{slug}: {row['frozen_threads']} frozen thread(s) to release "
                            "(`yaaf unfreeze`)")
+        for thread in row.get("frozen_mail") or []:
+            waiting.append(f"{slug}: the email thread with {thread.get('counterpart', '')} is "
+                           "frozen — read it and reopen it in Activity → Email")
         signoff = row.get("pending_signoff")
         if signoff:
             closes = signoff.get("closes_at")

@@ -1571,7 +1571,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         mode=body.mode,
         controlled_domains=body.controlled_domains,
         github_repo=body.github_repo,
-        integrations=body.integrations,
+        integrations=_without_mail(body.integrations),
         deadline=deadline,
         deadline_source=deadline_source,
         topology=topology,
@@ -1699,7 +1699,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
 # (runtime, data sources…) travels with the bundle. A full backup
 # (include_values=true) keeps all of them.
 _NON_PORTABLE_INTEGRATION_KEYS = frozenset(
-    {"slack", "github_webhook_secret", "webhook_secret"}
+    {"slack", "github_webhook_secret", "webhook_secret", "mail"}
 )
 
 
@@ -1798,6 +1798,10 @@ def export_project(project_id: str, include_values: bool = False,
         from yaaf.core.crypto import decrypt
 
         integrations = dict(project.integrations or {})
+        # Even a full backup leaves the mailbox behind: a restore would bring
+        # the password back as an ordinary, grantable credential, and an email
+        # address is set up on purpose, through the door that checks it.
+        integrations.pop("mail", None)
         if "mcp_servers" in integrations:
             integrations["mcp_servers"] = [
                 {k: v for k, v in entry.items() if k != "last_check"}
@@ -1814,7 +1818,7 @@ def export_project(project_id: str, include_values: bool = False,
              "value": decrypt(s.ciphertext)}
             for s in session.execute(
                 select(Secret)
-                .where(Secret.project_id == project.id)
+                .where(Secret.project_id == project.id, Secret.kind != "mailbox")
                 .order_by(Secret.created_at)
             ).scalars()
         ]
@@ -1905,10 +1909,23 @@ def export_project(project_id: str, include_values: bool = False,
     }
 
 
-# Config a twin must not inherit: this project's own webhook signing keys.
+def _without_mail(integrations: dict | None) -> dict | None:
+    """A new project starts without a mailbox, whatever its spec says. The one
+    way in is PUT /admin/projects/{id}/mail, which checks the recipient list and
+    stores the password where no role can be granted it — a spec or a Founder
+    draft carrying a `mail` block would skip both."""
+    if not integrations or "mail" not in integrations:
+        return integrations
+    return {k: v for k, v in integrations.items() if k != "mail"}
+
+
+# Config a twin must not inherit: this project's own webhook signing keys, and
+# its mailbox — an email address is one correspondent's thread of trust, and two
+# projects reading one inbox would each be answering mail meant for the other.
 # Slack is handled separately below — its tokens travel, its room bindings do
 # not.
-_NON_CLONABLE_INTEGRATION_KEYS = frozenset({"github_webhook_secret", "webhook_secret"})
+_NON_CLONABLE_INTEGRATION_KEYS = frozenset({"github_webhook_secret", "webhook_secret",
+                                            "mail"})
 
 
 class ProjectCloneIn(BaseModel):
@@ -2031,7 +2048,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     for row in session.execute(
         select(Secret).where(Secret.project_id == source.id).order_by(Secret.created_at)
     ).scalars():
-        if row.name in oauth_token_names:
+        if row.name in oauth_token_names or row.kind == "mailbox":
             continue
         copy = Secret(id=ids.new_id(ids.SECRET), project_id=project.id, name=row.name,
                       ciphertext=row.ciphertext, role_scopes=list(row.role_scopes or []),
@@ -3221,6 +3238,13 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
                         "not wiring. Change it with POST "
                         f"/admin/projects/{project.id}/amendments so it is validated, "
                         "audited with your reason, and disclosed to the CEO."),
+            )
+        if "mail" in body.integrations:
+            raise HTTPException(
+                status_code=422,
+                detail=("the project mailbox is configured with PUT "
+                        f"/admin/projects/{project.id}/mail, which checks the recipient "
+                        "list and keeps the password out of the project row."),
             )
         project.integrations = {**(project.integrations or {}), **body.integrations}
         changed["integrations"] = body.integrations
@@ -6265,6 +6289,9 @@ def _secret_owner(session: Session, project_id: str | None, name: str) -> str | 
     if name in {slack.get(k) for k in ("bot_token_secret", "signing_secret",
                                        "app_token_secret") if slack.get(k)}:
         return "the Slack bridge"
+    mail = ((project.integrations or {}).get("mail") or {}) if project else {}
+    if mail.get("password_secret") and name == mail["password_secret"]:
+        return "the project mailbox"
     return None
 
 
@@ -6578,6 +6605,216 @@ def provision_slack_channels(project_id: str, session: Session = Depends(db)) ->
     return result
 
 
+# ── email: the project mailbox ──────────────────────────────────────────────────
+
+
+class MailboxIn(BaseModel):
+    """The whole mailbox, every save. The password alone may be left out, to
+    keep the stored one — re-typing a password to add a recipient is how
+    people end up pasting the wrong one."""
+
+    enabled: bool = True
+    address: str = Field(min_length=3, max_length=320)
+    display_name: str = Field(default="", max_length=120)
+    smtp_host: str = Field(min_length=1, max_length=255)
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_security: Literal["starttls", "ssl"] = "starttls"
+    imap_host: str = Field(min_length=1, max_length=255)
+    imap_port: int = Field(default=993, ge=1, le=65535)
+    imap_folder: str = Field(default="INBOX", min_length=1, max_length=200)
+    username: str = Field(min_length=1, max_length=320)
+    password: str | None = Field(default=None, min_length=1, max_length=1000)
+    recipients: list[str] = Field(default_factory=list, max_length=100)
+    verify_sender: bool = True
+
+
+_HOST = re.compile(r"^[A-Za-z0-9.-]+$")
+
+
+def _mailbox_view(session: Session, project: Project) -> dict:
+    from yaaf.server.mail import service as mail
+    from yaaf.server.mail import settings as mail_settings
+
+    config = dict(mail_settings.project_config(project) or {})
+    secret = config.get("password_secret")
+    return {
+        "configured": bool(config),
+        "enabled": mail_settings.enabled(project),
+        "missing": mail_settings.missing(project) if config else [],
+        "config": {k: v for k, v in config.items() if k != "password_secret"},
+        "password_set": bool(secret and _project_secret(session, project.id, secret)),
+        "status": mail.status(session, project),
+        "recipients": mail.recipients(session, project),
+    }
+
+
+@router.get("/projects/{project_id}/mail", dependencies=[authority.READ])
+def project_mailbox(project_id: str, session: Session = Depends(db)) -> dict:
+    """The project's mailbox: its settings (never the password), how its inbox
+    reads are going, and what is queued or failed."""
+    return _mailbox_view(session, _get_project(session, project_id))
+
+
+@router.put("/projects/{project_id}/mail", dependencies=[authority.STEER])
+def put_project_mailbox(project_id: str, body: MailboxIn,
+                        session: Session = Depends(db)) -> dict:
+    """Give the project an email address the CEO can write from.
+
+    Validated whole, here and nowhere else: the generic project PATCH refuses
+    the `mail` key, because the recipient list is the rule that decides who
+    the project may write to, and a rule written without being checked is a
+    rule nobody can trust.
+    """
+    from yaaf.core.crypto import encrypt
+    from yaaf.server.mail import settings as mail_settings
+
+    project = _get_project(session, project_id)
+    address = mail_settings.normalise(body.address)
+    if address is None:
+        raise HTTPException(status_code=422,
+                            detail=f"{body.address!r} is not an email address")
+    for label, host in (("SMTP", body.smtp_host), ("IMAP", body.imap_host)):
+        if not _HOST.match(host.strip()):
+            raise HTTPException(
+                status_code=422,
+                detail=f"the {label} server should be a host name like mail.example.com "
+                       "— no scheme, port or path")
+    recipients: list[str] = []
+    for raw in body.recipients:
+        normal = mail_settings.normalise(raw)
+        if normal is None:
+            raise HTTPException(status_code=422,
+                                detail=f"{raw!r} on the recipient list is not an email address")
+        if normal == address:
+            raise HTTPException(
+                status_code=422,
+                detail="the project's own address cannot be on its recipient list — the "
+                       "CEO would be answering itself")
+        if normal not in recipients:
+            recipients.append(normal)
+    if body.smtp_security == "starttls" and body.smtp_port == 465:
+        raise HTTPException(
+            status_code=422,
+            detail="port 465 speaks TLS from the first byte: choose security 'ssl' for it, "
+                   "or port 587 for STARTTLS")
+
+    name = mail_settings.PASSWORD_SECRET
+    existing = _project_secret(session, project.id, name)
+    if existing is not None and existing.kind != "mailbox":
+        raise HTTPException(
+            status_code=409,
+            detail=f"this project already has a credential named '{name}' that is not the "
+                   "mailbox's; rename it under Secrets & variables first")
+    if body.password is not None:
+        if existing is None:
+            session.add(Secret(id=ids.new_id(ids.SECRET), project_id=project.id, name=name,
+                               ciphertext=encrypt(body.password), role_scopes=[],
+                               kind="mailbox"))
+        else:
+            existing.ciphertext = encrypt(body.password)
+            existing.role_scopes = []
+    elif existing is None:
+        raise HTTPException(status_code=422,
+                            detail="a new mailbox needs its password")
+
+    was = mail_settings.recipients_of(project)
+    config = {
+        "enabled": body.enabled,
+        "address": address,
+        "display_name": body.display_name.strip(),
+        "smtp_host": body.smtp_host.strip().lower(),
+        "smtp_port": body.smtp_port,
+        "smtp_security": body.smtp_security,
+        "imap_host": body.imap_host.strip().lower(),
+        "imap_port": body.imap_port,
+        "imap_folder": body.imap_folder.strip(),
+        "username": body.username.strip(),
+        "password_secret": name,
+        "recipients": recipients,
+        "verify_sender": body.verify_sender,
+    }
+    if config != {**(mail_settings.project_config(project) or {}), "enabled": body.enabled} \
+            or body.password is not None:
+        from yaaf.core.models import MailboxState
+
+        state = session.get(MailboxState, project.id)
+        if state is not None:
+            state.last_test = None  # a changed mailbox is an untested one
+    project.integrations = {**(project.integrations or {}), mail_settings.KEY: config}
+    _audit(session, project.id, "mail.configure", "project", project.id,
+           {"address": address, "enabled": body.enabled,
+            "recipients_added": [r for r in recipients if r not in was],
+            "recipients_removed": [r for r in was if r not in recipients],
+            "verify_sender": body.verify_sender,
+            "password_changed": body.password is not None})
+    session.flush()
+    return _mailbox_view(session, project)
+
+
+@router.delete("/projects/{project_id}/mail", dependencies=[authority.STEER])
+def delete_project_mailbox(project_id: str, session: Session = Depends(db)) -> dict:
+    """Take the project's mailbox away. Threads and messages stay on the
+    record; what was still queued fails on the loop's next pass, visibly."""
+    from yaaf.server.mail import settings as mail_settings
+
+    project = _get_project(session, project_id)
+    integrations = dict(project.integrations or {})
+    config = integrations.pop(mail_settings.KEY, None)
+    project.integrations = integrations
+    secret = _project_secret(session, project.id, (config or {}).get("password_secret")
+                             or mail_settings.PASSWORD_SECRET)
+    if secret is not None and secret.kind == "mailbox":
+        session.delete(secret)
+    _audit(session, project.id, "mail.remove", "project", project.id,
+           {"address": (config or {}).get("address")})
+    return {"removed": config is not None}
+
+
+@router.post("/projects/{project_id}/mail/test", dependencies=[authority.STEER])
+def test_project_mailbox(project_id: str, session: Session = Depends(db)) -> dict:
+    """Log in to both servers, send nothing. A wrong password belongs on this
+    screen, not in the CEO's first failed delivery. Works on a mailbox that is
+    switched off, so it can be checked before it goes live."""
+    from yaaf.core.models import MailboxState
+    from yaaf.server.mail import settings as mail_settings
+    from yaaf.server.mail import wire
+
+    project = _get_project(session, project_id)
+    if mail_settings.project_config(project) is None:
+        raise HTTPException(status_code=422, detail="this project has no mailbox to test")
+    cfg = mail_settings.resolve(session, project, even_if_off=True)
+    if cfg is None:
+        raise HTTPException(
+            status_code=422,
+            detail="the mailbox is missing " + (", ".join(mail_settings.missing(project))
+                                                or "a password that decrypts"))
+    result = wire.check(cfg)
+    state = session.get(MailboxState, project.id)
+    if state is None:
+        state = MailboxState(project_id=project.id, last_uid=0, ignored=0)
+        session.add(state)
+    state.last_test = {"at": utcnow().isoformat(), **result}
+    _audit(session, project.id, "mail.test", "project", project.id, {"ok": result["ok"]})
+    return result
+
+
+@router.post("/projects/{project_id}/mail/threads/{mail_thread}/reopen",
+             dependencies=[authority.STEER])
+def reopen_mail_thread(project_id: str, mail_thread: str,
+                       session: Session = Depends(db)) -> dict:
+    """Unfreeze a thread the exchange limit stopped. Replies held while it was
+    frozen go to the CEO; the limit counts afresh from now."""
+    from yaaf.server.mail import service as mail
+
+    _get_project(session, project_id)
+    found = mail.reopen(session, project_id, mail_thread)
+    if found is None:
+        raise HTTPException(status_code=404, detail="unknown email thread")
+    _audit(session, project_id, "mail.thread_reopen", "mail_thread", found.id,
+           {"counterpart": found.counterpart})
+    return {"thread_id": found.id, "frozen": False}
+
+
 def _require_secret_steer(session: Session, project_id: str | None) -> None:
     """A project's credentials are its chairs' to change; the platform's own
     — project_id null — are the instance admin's."""
@@ -6701,6 +6938,17 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
             raise HTTPException(
                 status_code=422,
                 detail="a secret's kind is fixed at creation — store a new secret instead",
+            )
+        if existing.kind == "mailbox" and body.role_scopes:
+            # The project mailbox's password. Granting it would put the
+            # project's SMTP login in a sandbox, and an agent holding it could
+            # email anybody — the recipient list exists only because sending is
+            # the platform's act, not the agent's.
+            raise HTTPException(
+                status_code=422,
+                detail="the project mailbox's password cannot be granted to roles: the "
+                       "platform sends the CEO's email itself, to the recipient list "
+                       "only — an agent holding the login could write to anybody",
             )
         if existing.kind == "billing" and body.role_scopes:
             # Reachable only for the Founder's own platform row, which is

@@ -14,19 +14,9 @@ import { useEffect, useState } from "react";
 import { del, post, put } from "../api";
 import { ConfirmModal } from "../ui";
 import { Seg } from "../ui/kit";
-import { Icon } from "../ui/Icon";
 import { Why } from "../settingsCopy";
 import { SlackSettings } from "./data";
-import { Flash, Group, SaveBar, SecretRow, SectionHead, TestSeal, Toggle } from "./kit";
-
-function Step({ done, n, title, children }: { done: boolean; n: number; title: string; children: React.ReactNode }) {
-  return <div className="ladder-step">
-    <span className={`ladder-node ${done ? "ok" : "todo"}`} aria-hidden="true">
-      {done ? <Icon name="check" size={13} strokeWidth={2.6} /> : n}</span>
-    <span className="t">{title}<span className="sr-only">{done ? " — working" : " — not yet"}</span></span>
-    <div className="d">{children}</div>
-  </div>;
-}
+import { Flash, Group, SaveBar, SecretRow, SectionHead, Step, TestSeal, Toggle } from "./kit";
 
 export function SlackSection({ settings, onChanged, slug }: {
   settings: SlackSettings;

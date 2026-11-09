@@ -113,6 +113,12 @@ def project_items(p: dict) -> list[Item]:
         add(key=inbox.frozen_item(pid), type="frozen", tier=1, at=0, kind="Thread frozen",
             title=f"{_plural(n, 'conversation')} frozen — two agents were looping",
             consequence="Those agents stay stuck until you unfreeze the thread.")
+    for thread in p.get("frozen_mail") or []:
+        add(key=inbox.frozen_mail_item(pid, thread["id"]), type="frozen", tier=1, at=0,
+            kind="Email thread frozen",
+            title=f"The email thread with {thread['counterpart']} — “{thread['subject']}” — "
+                  "reached its limit",
+            consequence="Their replies are held and the CEO cannot answer until you reopen it.")
     waiting = p.get("awaiting_you") or {}
     for v in waiting.get("verdicts") or []:
         add(key=inbox.verdict_item(pid, v["key"]), type="verdict", tier=1, at=0,

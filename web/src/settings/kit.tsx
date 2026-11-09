@@ -44,6 +44,19 @@ export function SectionHead({ title, lede, actions, children }: {
   );
 }
 
+/** One rung of a section's ladder: what the saved settings make possible, in
+    order, each one working or not yet — the state before the form. */
+export function Step({ done, n, title, children }: {
+  done: boolean; n: number; title: string; children: React.ReactNode;
+}) {
+  return <div className="ladder-step">
+    <span className={`ladder-node ${done ? "ok" : "todo"}`} aria-hidden="true">
+      {done ? <Icon name="check" size={13} strokeWidth={2.6} /> : n}</span>
+    <span className="t">{title}<span className="sr-only">{done ? " — working" : " — not yet"}</span></span>
+    <div className="d">{children}</div>
+  </div>;
+}
+
 /** A labelled group inside a section. */
 export function Group({ title, count, children, aside, chip }: {
   title: string; count?: ReactNode; children: ReactNode; aside?: ReactNode;

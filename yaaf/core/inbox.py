@@ -36,3 +36,9 @@ def verdict_item(project_id: str, requirement_key: str) -> str:
 
 def frozen_item(project_id: str) -> str:
     return f"{project_id}-frozen"
+
+
+def frozen_mail_item(project_id: str, thread_id: str) -> str:
+    """One row per frozen email thread, not one per project: each is a
+    different correspondent waiting on a different answer."""
+    return f"{project_id}-mail-{thread_id}"

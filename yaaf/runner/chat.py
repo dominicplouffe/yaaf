@@ -62,6 +62,7 @@ from yaaf.runtimes.harnesses import HARNESSES
 from yaaf.runtimes.seats import seat_for
 from yaaf.server import brief, policy
 from yaaf.server.contextpack import build_system_prompt, role_version_for
+from yaaf.server.mail.settings import enabled as mail_enabled
 
 log = logging.getLogger("yaaf.chat")
 
@@ -223,6 +224,14 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
         # alone, so deploying it restarts nobody.
         _end_session(session, project, live_run,
                      "chat session restarted: the secrets granted to the CEO changed")
+        live_run, running_ids = None, set()
+
+    if live_run is not None and (live_run.trigger or {}).get("mail", False) != mail_enabled(project):
+        # The fourth: the tools it was offered. A mailbox set up mid-session
+        # left the CEO the chairman was talking to without mail_send while
+        # every work run had it — "I can't email" from the one seat he asked.
+        _end_session(session, project, live_run,
+                     "chat session restarted: the project mailbox was turned on or off")
         live_run, running_ids = None, set()
 
     if live_run is not None and (live_run.trigger or {}).get("brief") != brief.mark(project):
@@ -415,7 +424,8 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         trigger={"type": "chat_session",
                  "credential": _credential_mark(session, project, seat.provider),
                  "brief": brief.mark(project),
-                 "secrets": _secrets_mark(session, project, role_version)},
+                 "secrets": _secrets_mark(session, project, role_version),
+                 "mail": mail_enabled(project)},
         status=RunStatus.RUNNING,
         worker=settings().worker_name,
         started_at=utcnow(),
@@ -444,6 +454,9 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
 
     chat_entry = getattr(get_backend(seat.harness), "entrypoint", "sandbox_entry.py")
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
+    from yaaf.runner.daemon import _offer_mail
+
+    _offer_mail(project, ceo, job)
     # Same sources, same cost lesson: the chat lane mounts them exactly as a run
     # does, so it gets the same paragraph describing them.
     job.system_prompt += _data_source_prompt(
