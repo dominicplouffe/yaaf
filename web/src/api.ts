@@ -1110,6 +1110,8 @@ export interface DeskProject {
     last_countable_at: string | null;
   };
   frozen_threads: number;
+  /** Email threads the loop breaker stopped — each one the chairman's to reopen. */
+  frozen_mail?: { id: string; counterpart: string; subject: string; frozen_at: string | null }[];
   runs_running: number;
   last_run_at: string | null;
 }

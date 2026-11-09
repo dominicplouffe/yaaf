@@ -146,7 +146,7 @@ def check(cfg: MailSettings) -> dict:
             server.login(cfg.username, cfg.password)
         result["smtp"] = {"ok": True}
     except Exception as exc:  # noqa: BLE001 - every failure is an answer here
-        result["smtp"] = {"ok": False, "error": _plain(exc)}
+        result["smtp"] = {"ok": False, "error": plain(exc, cfg.smtp_host)}
     try:
         client = _imap(cfg)
         try:
@@ -155,17 +155,40 @@ def check(cfg: MailSettings) -> dict:
             client.logout()
         result["imap"] = {"ok": True}
     except Exception as exc:  # noqa: BLE001
-        result["imap"] = {"ok": False, "error": _plain(exc)}
+        result["imap"] = {"ok": False, "error": plain(exc, cfg.imap_host)}
     result["ok"] = result["smtp"]["ok"] and result["imap"]["ok"]
     return result
 
 
-def _plain(exc: Exception) -> str:
-    """An error a chairman can act on. Never the password: smtplib and imaplib
-    do not echo it, and this is the place that would have to change if one did."""
-    text = str(exc) or type(exc).__name__
-    if isinstance(exc, smtplib.SMTPAuthenticationError | imaplib.IMAP4.error) \
-            and "auth" in text.lower():
-        return ("the server refused the username or password. Gmail needs an app "
-                f"password; Microsoft 365 may need OAuth rather than a password. ({text[:200]})")
-    return f"{type(exc).__name__}: {text[:300]}"
+def plain(exc: BaseException, host: str = "") -> str:
+    """An error a chairman can act on, in words — never a class name, and never
+    the password: smtplib and imaplib do not echo it, and this is the place
+    that would have to change if one did."""
+    import socket
+
+    text = (str(exc) or "").strip()
+    where = host or "the mail server"
+    if isinstance(exc, smtplib.SMTPAuthenticationError) or (
+            isinstance(exc, imaplib.IMAP4.error) and "auth" in text.lower()):
+        return ("the server refused the username or password. Gmail needs an app password; "
+                "Microsoft 365 may not allow passwords for SMTP and IMAP at all.")
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        refused = "; ".join(f"{addr}: {code} {msg.decode(errors='replace') if isinstance(msg, bytes) else msg}"
+                            for addr, (code, msg) in exc.recipients.items())
+        return f"the server refused the recipient — {refused[:240]}"
+    if isinstance(exc, smtplib.SMTPResponseException):
+        said = exc.smtp_error.decode(errors="replace") if isinstance(exc.smtp_error, bytes) \
+            else str(exc.smtp_error)
+        return f"the server said no ({exc.smtp_code}): {said[:240]}"
+    if isinstance(exc, socket.gaierror):
+        return f"{where} could not be found — check the server name"
+    if isinstance(exc, ConnectionRefusedError):
+        return f"{where} refused the connection — check the port" + (f" ({text[:160]})" if text else "")
+    if isinstance(exc, TimeoutError | socket.timeout):
+        return f"{where} did not answer in time"
+    if isinstance(exc, ssl.SSLError):
+        return f"the secure connection to {where} failed — check the port and security setting"
+    if isinstance(exc, LookupError | FileNotFoundError):
+        return text or "the attached deliverable is no longer in the store"
+    return text[:300] or type(exc).__name__
+

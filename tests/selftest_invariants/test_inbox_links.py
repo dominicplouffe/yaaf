@@ -78,6 +78,7 @@ def _tick() -> None:
     ("`${p.id}-commitment`", notify.commitment_item("PID")),
     ("`${p.id}-verdict-${v.key}`", notify.verdict_item("PID", "R-01")),
     ("`${p.id}-frozen`", notify.frozen_item("PID")),
+    ("`${p.id}-mail-${t.id}`", notify.frozen_mail_item("PID", "TID")),
 ])
 def test_a_link_names_the_row_the_way_the_inbox_names_it(built_there, built_here):
     """The Inbox selects `?item=` by exact match and falls back to its first
@@ -86,7 +87,7 @@ def test_a_link_names_the_row_the_way_the_inbox_names_it(built_there, built_here
     assert built_there in DESK_TSX.read_text(), (
         f"the Inbox no longer builds {built_there}; change notify's spelling with it")
     assert built_there.strip("`").replace("${p.id}", "PID").replace("${v.key}", "R-01") \
-        == built_here
+        .replace("${t.id}", "TID") == built_here
 
 
 def test_a_link_opens_the_dashboard_and_decides_nothing(origin):

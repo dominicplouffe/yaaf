@@ -90,15 +90,24 @@ TICK_S = 10.0
 # ── views ───────────────────────────────────────────────────────────────────────
 
 
-def _thread_row(session: Session, thread: MailThread) -> dict:
-    count, unread = session.execute(
+def thread_link(project_id: str, thread_id: str) -> str:
+    """Where a thread opens on the dashboard — the address every boardroom line
+    and Inbox row about it uses, so "which email?" is always one click."""
+    return f"#/projects/{project_id}/details/activity/mail?open={thread_id}"
+
+
+def _thread_row(session: Session, thread: MailThread, *, for_people: bool = False) -> dict:
+    count, unread, failed, held = session.execute(
         select(func.count(MailMessage.id),
                func.count(MailMessage.id).filter(
                    MailMessage.direction == MailDirection.IN,
-                   MailMessage.read_at.is_(None)))
+                   MailMessage.status == MailStatus.RECEIVED,
+                   MailMessage.read_at.is_(None)),
+               func.count(MailMessage.id).filter(MailMessage.status == MailStatus.FAILED),
+               func.count(MailMessage.id).filter(MailMessage.status == MailStatus.HELD))
         .where(MailMessage.thread_id == thread.id)
     ).one()
-    return {
+    row = {
         "id": thread.id,
         "counterpart": thread.counterpart,
         "subject": thread.subject,
@@ -108,14 +117,62 @@ def _thread_row(session: Session, thread: MailThread) -> dict:
         "unread": unread,
         "last_at": thread.last_at.isoformat() if thread.last_at else None,
     }
+    if for_people:
+        # What a person scanning the list needs and an agent must not get
+        # unfenced: the last line said, and by whom. The CEO reads replies
+        # through `thread`, where a correspondent's words are fenced.
+        last = session.execute(
+            select(MailMessage).where(MailMessage.thread_id == thread.id)
+            .order_by(MailMessage.created_at.desc())
+        ).scalars().first()
+        row |= {
+            "failed": failed,
+            "held": held,
+            "frozen_at": thread.frozen_at.isoformat() if thread.frozen_at else None,
+            "last": ({"direction": last.direction, "status": last.status,
+                      "from": last.from_addr,
+                      "preview": " ".join(last.body.split())[:160]}
+                     if last is not None else None),
+        }
+    return row
 
 
-def threads(session: Session, project_id: str, limit: int = 50) -> list[dict]:
+def threads(session: Session, project_id: str, limit: int = 50, *,
+            for_people: bool = False) -> list[dict]:
     rows = session.execute(
         select(MailThread).where(MailThread.project_id == project_id)
         .order_by(MailThread.last_at.desc()).limit(limit)
     ).scalars()
-    return [_thread_row(session, t) for t in rows]
+    return [_thread_row(session, t, for_people=for_people) for t in rows]
+
+
+def recipients(session: Session, project: Project) -> list[dict]:
+    """Each address on the list, and what the CEO has done with it — so a
+    chairman pruning the list can see which line ends a live conversation."""
+    from yaaf.server.mail.settings import recipients_of
+
+    out = []
+    for address in recipients_of(project):
+        threads_with, last_at = session.execute(
+            select(func.count(MailThread.id), func.max(MailThread.last_at)).where(
+                MailThread.project_id == project.id, MailThread.counterpart == address)
+        ).one()
+        out.append({"address": address, "threads": threads_with,
+                    "last_at": last_at.isoformat() if last_at else None})
+    return out
+
+
+def frozen(session: Session, project_id: str) -> list[dict]:
+    """Threads the loop breaker stopped: the chairman's to reopen."""
+    return [
+        {"id": t.id, "counterpart": t.counterpart, "subject": t.subject,
+         "frozen_at": t.frozen_at.isoformat() if t.frozen_at else None}
+        for t in session.execute(
+            select(MailThread).where(MailThread.project_id == project_id,
+                                     MailThread.frozen_at.is_not(None))
+            .order_by(MailThread.frozen_at)
+        ).scalars()
+    ]
 
 
 def _untrusted(text: str, sender: str) -> str:
@@ -142,7 +199,8 @@ def _message_row(session: Session, message: MailMessage, *, fence: bool) -> dict
     if message.artifact_id:
         artifact = session.get(Artifact, message.artifact_id)
         row["attachment"] = ({"artifact_id": artifact.id, "name": artifact.name,
-                              "version": artifact.version, "sha256": artifact.sha256}
+                              "version": artifact.version, "sha256": artifact.sha256,
+                              "key": artifact.storage_key, "size": artifact.size_bytes}
                              if artifact else {"artifact_id": message.artifact_id})
     if message.attachments:
         row["attachments"] = message.attachments
@@ -250,14 +308,38 @@ def _freeze(session: Session, project_id: str, found: MailThread) -> None:
     from yaaf.server.notify import boardroom_line
 
     found.frozen_at = utcnow()
+    ceo = policy.ceo_of(session, project_id)
+    who = ceo.name if ceo is not None else "the CEO"
     session.add(AuditLog(id=ids.new_id(ids.AUDIT), project_id=project_id, actor=ACTOR,
                          action="mail.thread_frozen", entity="mail_thread",
                          entity_id=found.id, detail={"limit": MAX_EXCHANGES}))
     boardroom_line(
         session, project_id,
-        f"✉️ The email thread with **{found.counterpart}** — “{found.subject}” — reached "
-        f"{MAX_EXCHANGES} messages and is frozen. Replies are held and the CEO cannot "
-        "send on it until you reopen it (Activity → Email).")
+        f"✉️ The email thread with **{found.counterpart}** — “{_md(found.subject)}” — reached "
+        f"{MAX_EXCHANGES} messages and is frozen, so two correspondents cannot reply to "
+        f"each other forever. Replies are held and {who} cannot answer until you "
+        f"reopen it. [Read it and decide]({thread_link(project_id, found.id)})")
+    from yaaf.server.notify import Attention, chairman_notify, frozen_mail_item, inbox_url
+
+    project = session.get(Project, project_id)
+    if project is not None:
+        # Somebody outside is waiting on an answer that only he can release,
+        # which is what an ACTION is for.
+        link = inbox_url(frozen_mail_item(project_id, found.id))
+        chairman_notify(
+            session, project, f"Email thread frozen: {found.counterpart}",
+            f"The CEO's email thread with {found.counterpart} — “{found.subject}” — reached "
+            f"{MAX_EXCHANGES} messages and is frozen. Their replies are held and the CEO "
+            "cannot answer until you reopen it."
+            + (f"\n\nRead it and decide: {link}" if link else ""),
+            kind="mail_thread_frozen", attention=Attention.ACTION,
+            data={"thread_id": found.id, "counterpart": found.counterpart})
+
+
+def _md(text: str) -> str:
+    """A subject inside a boardroom line's markdown: a `]` or `*` in it must not
+    end the link or start emphasis — the same escape a deliverable's name gets."""
+    return "".join("\\" + c if c in "\\`*_[]" else c for c in text)
 
 
 def _subject_for(found: MailThread | None, subject: str | None) -> str:
@@ -475,8 +557,9 @@ def _give_up(session: Session, project: Project, row: MailMessage, reason: str) 
                          action="mail.failed", entity="mail_message", entity_id=row.id,
                          detail={"to": row.to_addr, "error": row.last_error}))
     boardroom_line(session, project.id,
-                   f"✉️ An email to **{row.to_addr}** — “{row.subject}” — could not be "
-                   f"delivered: {row.last_error[:300]}")
+                   f"✉️ An email to **{row.to_addr}** — "
+                   f"[“{_md(row.subject)}”]({thread_link(project.id, row.thread_id)}) — could "
+                   f"not be delivered: {row.last_error[:300]}")
 
 
 def deliver(session: Session, project: Project, now: datetime | None = None) -> int:
@@ -507,7 +590,7 @@ def deliver(session: Session, project: Project, now: datetime | None = None) -> 
             wire.smtp_send(cfg, _envelope(session, cfg, row))
         except Exception as exc:  # noqa: BLE001 - every failure is retried or reported
             row.attempts += 1
-            row.last_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+            row.last_error = wire.plain(exc, cfg.smtp_host)[:500]
             permanent = isinstance(exc, LookupError | FileNotFoundError)
             if permanent or row.attempts >= MAX_ATTEMPTS:
                 _give_up(session, project, row, row.last_error)
@@ -529,10 +612,17 @@ def deliver(session: Session, project: Project, now: datetime | None = None) -> 
         if row.artifact_id:
             artifact = session.get(Artifact, row.artifact_id)
             if artifact is not None:
-                attachment = f", attaching **{artifact.name}**" + (
+                from urllib.parse import quote
+
+                shelf = (f"#/projects/{project.id}/deliverables?open="
+                         f"{quote(artifact.storage_key, safe='')}")
+                attachment = f", attaching [**{_md(artifact.name)}**]({shelf})" + (
                     f" (v{artifact.version})" if artifact.version > 1 else "")
+        ceo = policy.ceo_of(session, project.id)
         boardroom_line(session, project.id,
-                       f"✉️ The CEO emailed **{row.to_addr}** — “{row.subject}”{attachment}.")
+                       f"✉️ {ceo.name if ceo else 'The CEO'} emailed **{row.to_addr}** — "
+                       f"[“{_md(row.subject)}”]({thread_link(project.id, row.thread_id)})"
+                       f"{attachment}.")
         sent += 1
     return sent
 
@@ -615,8 +705,7 @@ def accept(session: Session, project: Project, cfg: MailSettings, raw: bytes,
         task_id=found.task_id if found.task_id and session.get(Task, found.task_id) else None,
         created_by_agent_id=None, kind=EvidenceKind.EXTERNAL,
         provenance=EvidenceProvenance.PLATFORM_ATTESTED,
-        description=(f"email: {row.from_addr} replied to the project's email "
-                     f"“{found.subject}” (thread {found.id})"),
+        description=f"{row.from_addr} replied by email to “{found.subject}”",
         source_url=None, verification=VerificationStatus.NOT_APPLICABLE, occurred_at=now,
     )
     session.add(evidence)
@@ -638,8 +727,10 @@ def accept(session: Session, project: Project, cfg: MailSettings, raw: bytes,
                          action="mail.received", entity="mail_message", entity_id=row.id,
                          detail={"from": row.from_addr, "thread_id": found.id,
                                  "evidence_id": evidence.id}))
+    possessive = f"{ceo.name}’s" if ceo is not None else "the CEO’s"
     boardroom_line(session, project.id,
-                   f"📨 **{row.from_addr}** replied to the CEO's email “{found.subject}”.")
+                   f"📨 **{row.from_addr}** replied to {possessive} email "
+                   f"[“{_md(found.subject)}”]({thread_link(project.id, found.id)}).")
     session.flush()
     if _exchanges(session, found) >= MAX_EXCHANGES:
         _freeze(session, project.id, found)
@@ -678,7 +769,7 @@ def poll(session: Session, project: Project, now: datetime | None = None,
                                   last_uid=state.last_uid or 0,
                                   since=(first_sent - timedelta(days=1)) if first_sent else None)
     except Exception as exc:  # noqa: BLE001 - shown on the settings screen
-        state.last_error = f"{type(exc).__name__}: {str(exc)[:500]}"
+        state.last_error = wire.plain(exc, cfg.imap_host)[:500]
         log.warning("mailbox read failed for project %s: %s", project.slug, state.last_error)
         return {"polled": False, "error": state.last_error}
     outcomes: list[str] = []

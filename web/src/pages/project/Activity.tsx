@@ -235,7 +235,7 @@ export default function Activity({ ctx }: { ctx: ProjectCtx }) {
         <Route path="messages" element={<Channels projectId={projectId} />} />
         <Route path="inbox" element={<AgentInbox ctx={ctx} />} />
         <Route path="memory" element={<Memory projectId={projectId} ctx={ctx} />} />
-        <Route path="mail" element={<MailThreads projectId={projectId} />} />
+        <Route path="mail" element={<MailThreads projectId={projectId} ceoName={ctx.ceoName} />} />
         <Route path="*" element={<Navigate to={home} replace />} />
       </Routes>
     </>

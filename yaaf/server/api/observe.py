@@ -101,6 +101,7 @@ from yaaf.server.dispatcher import (
     unread_messages_for,
 )
 from yaaf.server.identity import Person, person_auth, signed_in
+from yaaf.server.mail.service import frozen as mail_frozen
 from yaaf.server.receipt import receipt as receipt_projection
 from yaaf.server.rows import approval_row, approval_undo, chairman_time, requirement_name
 from yaaf.server.status_line import (
@@ -462,6 +463,9 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
                 ),
             },
             "frozen_threads": int(frozen_threads),
+            # The email loop breaker's half of the same promise: a thread only
+            # the chairman can reopen, named so the Inbox can link to each one.
+            "frozen_mail": mail_frozen(session, project.id),
             "runs_running": int(running),
             "last_run_at": last_run_at.isoformat() if last_run_at else None,
         })
@@ -976,6 +980,54 @@ def project_setup(project_id: str, session: Session = Depends(db)) -> dict:
     return checklist.view(session, _project(session, project_id))
 
 
+def _mailbox_checks(session: Session, project: Project) -> list[tuple[str, str]]:
+    """(status, detail) for the project mailbox, worst first."""
+    from yaaf.core.models import MailboxState, MailMessage, MailStatus
+    from yaaf.server.mail import settings as mail_settings
+
+    config = mail_settings.project_config(project) or {}
+    if config.get("enabled", True) is False:
+        return [("ok", "email is switched off — the CEO cannot send, and no inbox is read")]
+    gaps = mail_settings.missing(project)
+    if gaps:
+        return [("fail", f"email is half set up: it still needs {', '.join(gaps)}")]
+    if mail_settings.resolve(session, project) is None:
+        return [("fail", "the mailbox password no longer decrypts — enter it again")]
+    out: list[tuple[str, str]] = []
+    state = session.get(MailboxState, project.id)
+    if state is not None and state.last_error:
+        out.append(("fail", f"the inbox cannot be read, so replies are not reaching the CEO "
+                            f"— {state.last_error[:200]}"))
+    failed = session.execute(
+        select(func.count(MailMessage.id)).where(
+            MailMessage.project_id == project.id, MailMessage.status == MailStatus.FAILED,
+            MailMessage.created_at >= utcnow() - timedelta(days=7))
+    ).scalar_one()
+    if failed:
+        out.append(("warn", f"{failed} email{'s' if failed != 1 else ''} could not be "
+                            "delivered this week — the CEO was told each time"))
+    test = state.last_test if state else None
+    if test and not test.get("ok"):
+        out.append(("fail", "the last connection test failed — see Settings → Email"))
+    elif not test and not out:
+        out.append(("warn", "email has never been tested — press Test connection"))
+    if not out:
+        read = state.ok_at if state else None
+        out.append(("ok", f"email from {config.get('address')}"
+                          + (f"; inbox read {_ago(read)}" if read else "; inbox not read yet")))
+    return out
+
+
+def _ago(at: datetime) -> str:
+    at = at if at.tzinfo else at.replace(tzinfo=UTC)
+    minutes = int((utcnow() - at).total_seconds() // 60)
+    if minutes < 1:
+        return "just now"
+    if minutes < 90:
+        return f"{minutes} min ago"
+    return f"{minutes // 60} h ago"
+
+
 @router.get("/projects/{project_id}/health", dependencies=[authority.READ])
 def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     """Every way this project's configuration can be silently wrong, checked
@@ -1186,6 +1238,13 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             add(f"data-source:{name}", "fail",
                 f"data source '{name}': last check failed — {last.get('detail', '')}",
                 "data_sources")
+
+    # The project mailbox: whether the CEO can send, and whether it would hear
+    # a reply. A mailbox nobody can read fails quietly in the worst direction —
+    # the client answers, and the project goes on waiting for them.
+    if integrations.get("mail"):
+        for check in _mailbox_checks(session, project):
+            add("mail", *check, "mail")
 
     # Teams: no role-version drift. (Roles never own data sources — the whole
     # role-source failure class was removed with the concept.)
@@ -2622,9 +2681,14 @@ def receipt(project_id: str, session: Session = Depends(db)) -> dict:
 def mail_threads(project_id: str, session: Session = Depends(db)) -> dict:
     """The CEO's correspondence from the project mailbox, newest thread first."""
     from yaaf.server.mail import service as mail
+    from yaaf.server.mail import settings as mail_settings
 
-    _project(session, project_id)
-    return {"threads": mail.threads(session, project_id, limit=200)}
+    project = _project(session, project_id)
+    return {"threads": mail.threads(session, project_id, limit=200, for_people=True),
+            # Whether there is a mailbox at all, so an empty list can say which
+            # empty it is: nothing sent yet, or nothing to send with.
+            "mailbox": mail_settings.project_config(project) is not None,
+            "enabled": mail_settings.enabled(project)}
 
 
 @router.get("/projects/{project_id}/mail/{mail_thread}", dependencies=[authority.READ])

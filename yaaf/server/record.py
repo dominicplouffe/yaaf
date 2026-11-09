@@ -37,6 +37,7 @@ from yaaf.core.models import (
     AuditLog,
     Channel,
     Evidence,
+    EvidenceProvenance,
     Message,
     Project,
     Run,
@@ -120,6 +121,60 @@ def _woken(trigger: dict | None) -> str:
     return f"woken for {words}"
 
 
+def _mail_lines(session: Session, project: Project, since: datetime, wanted: set[str],
+                agent_id: str | None, ceo: Agent | None, users: dict[str, str]) -> list[Line]:
+    """The project mailbox on the record — only what the boardroom does not
+    already say there. Every send, reply, failure and freeze posts a platform
+    line in Chat, which the record lists as a message; repeating each of them
+    here made one email three lines. What the boardroom cannot say is on whose
+    authority: the CEO wrote because an address is on your list, a thread
+    froze because of a limit, and it reopened because you said so."""
+    from yaaf.core.models import MailDirection, MailMessage, MailStatus, MailThread
+
+    lines: list[Line] = []
+    subjects: dict[str, str] = {}
+
+    def subject(thread_id: str) -> str:
+        if thread_id not in subjects:
+            found = session.get(MailThread, thread_id)
+            subjects[thread_id] = found.subject if found else ""
+        return _clip(subjects[thread_id])
+
+    if "ceo" in wanted and (agent_id is None or (ceo and agent_id == ceo.id)):
+        for m in session.execute(
+            select(MailMessage).where(MailMessage.project_id == project.id,
+                                      MailMessage.created_at >= since,
+                                      MailMessage.direction == MailDirection.OUT,
+                                      MailMessage.status != MailStatus.FAILED)
+        ).scalars():
+            lines.append(Line(m.created_at, "ceo", ceo.id if ceo else None,
+                              ceo.name if ceo else "the CEO",
+                              f"emailed {m.to_addr} — “{_clip(m.subject)}”",
+                              f"your recipient list: {m.to_addr} is on it (Settings → Email)"))
+
+    if wanted & {"rule", "yours"} and agent_id is None:
+        for row in session.execute(
+            select(AuditLog).where(AuditLog.project_id == project.id, AuditLog.at >= since,
+                                   AuditLog.action.in_(("mail.thread_frozen",
+                                                        "mail.thread_reopen")))
+        ).scalars():
+            thread_id = row.entity_id or ""
+            if row.action == "mail.thread_frozen" and "rule" in wanted:
+                limit = (row.detail or {}).get("limit")
+                lines.append(Line(row.at, "rule", None, "the platform",
+                                  f"froze the email thread “{subject(thread_id)}”",
+                                  f"an email thread stops at {limit} messages until you "
+                                  "reopen it, so two correspondents cannot loop"))
+            elif row.action == "mail.thread_reopen" and "yours" in wanted:
+                actor = row.actor.split(":", 1)
+                who = users.get(actor[1], "You") if actor[0] == "user" and len(actor) > 1 \
+                    else "You"
+                lines.append(Line(row.at, "yours", None, who,
+                                  f"reopened the email thread “{subject(thread_id)}”",
+                                  "your decision"))
+    return lines
+
+
 def project_record(session: Session, project: Project, *, kind: str = "all",
                    agent_id: str | None = None, days: int = 7,
                    limit: int = 500) -> dict:
@@ -173,6 +228,8 @@ def project_record(session: Session, project: Project, *, kind: str = "all",
                 m.sender_user_id or "", "You" if m.sender_user_id else "the platform")
             lines.append(Line(m.created_at, "message", m.sender_agent_id, who,
                               f"in {where}: “{_clip(m.body)}”", None))
+
+    lines += _mail_lines(session, project, since, wanted, agent_id, ceo, users)
 
     approvals = list(session.execute(
         select(Approval).where(Approval.project_id == project.id,
@@ -247,10 +304,16 @@ def project_record(session: Session, project: Project, *, kind: str = "all",
                 task = session.get(Task, ev.task_id)
                 titles[ev.task_id] = task.title if task else ""
             about = f" for “{_clip(titles.get(ev.task_id))}”" if ev.task_id else ""
-            checked = {VerificationStatus.VERIFIED: "checked by the platform",
-                       VerificationStatus.FAILED: "the platform's check failed",
-                       VerificationStatus.PENDING: "waiting on the platform's check"}.get(
-                ev.verification, "the agent's own word — nothing outside can check it")
+            # Attested rows skip the verifier because the platform itself wrote
+            # them from a signed or verified source. They are the strongest
+            # proof on the record, and used to read as the weakest.
+            if ev.provenance == EvidenceProvenance.PLATFORM_ATTESTED:
+                checked = "attested by the platform — it came from a source it verified itself"
+            else:
+                checked = {VerificationStatus.VERIFIED: "checked by the platform",
+                           VerificationStatus.FAILED: "the platform's check failed",
+                           VerificationStatus.PENDING: "waiting on the platform's check"}.get(
+                    ev.verification, "the agent's own word — nothing outside can check it")
             who = name(ev.created_by_agent_id) if ev.created_by_agent_id else "a connector"
             lines.append(Line(ev.created_at, "proof", ev.created_by_agent_id, who,
                               f"filed proof{about}: {_clip(ev.description)}", checked))

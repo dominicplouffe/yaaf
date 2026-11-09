@@ -1603,10 +1603,7 @@ export default function Settings({
       </Section>
 
       <Section on={section === "mail"}>
-      <h2>Email</h2>
-      <div className="card">
-        <MailboxSettings projectId={projectId} act={act} busy={busy} />
-      </div>
+        <MailboxSettings projectId={projectId} />
       </Section>
 
       <Section on={section === "duplicate"}>

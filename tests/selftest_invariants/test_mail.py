@@ -710,3 +710,112 @@ def test_imap_reads_after_its_position_and_never_marks_read(monkeypatch):
     assert FakeIMAP.searched[-1] == ["SINCE", "08-Nov-2026"]
     assert [uid for uid, _ in since.messages] == [5, 6, 9]
     assert all(readonly for _, readonly in FakeIMAP.selected)
+
+
+# ── where the chairman meets it ─────────────────────────────────────────────────
+
+
+def _froze(client, mail, monkeypatch) -> tuple[dict, str]:
+    """A project whose thread with the editor has hit the limit."""
+    monkeypatch.setattr(service, "MAX_EXCHANGES", 2)
+    project = make_project(client)
+    _mailbox(client, project)
+    thread_id = _send(client, project).json()["thread_id"]
+    _pass()
+    mail.inbox.append(_reply(to_id=_sent_id(project)))
+    _pass()
+    return project, thread_id
+
+
+def test_a_frozen_thread_is_one_row_in_his_inbox_and_one_email(client, mail, monkeypatch):
+    """The loop breaker stops the conversation; only the chairman starts it
+    again, so it is his Inbox's — one row per thread, keyed the way the Inbox
+    keys it, and an ACTION mail that links to that row."""
+    from yaaf.server import notify
+
+    asked: list[dict] = []
+    monkeypatch.setattr(notify, "chairman_notify",
+                        lambda session, project, subject, body, **kw: asked.append(
+                            {"subject": subject, **kw}))
+    project, thread_id = _froze(client, mail, monkeypatch)
+    row = next(p for p in client.get("/observe/desk", headers=ADMIN).json()["projects"]
+               if p["id"] == project["id"])
+    assert [t["id"] for t in row["frozen_mail"]] == [thread_id]
+    assert notify.frozen_mail_item(project["id"], thread_id) == f"{project['id']}-mail-{thread_id}"
+    [mailed] = [a for a in asked if a.get("kind") == "mail_thread_frozen"]
+    assert mailed["attention"] == notify.Attention.ACTION and EDITOR in mailed["subject"]
+
+    client.post(f"/admin/projects/{project['id']}/mail/threads/{thread_id}/reopen", headers=ADMIN)
+    row = next(p for p in client.get("/observe/desk", headers=ADMIN).json()["projects"]
+               if p["id"] == project["id"])
+    assert row["frozen_mail"] == []
+
+
+def test_every_boardroom_line_about_an_email_links_to_its_thread(client, mail, monkeypatch):
+    from yaaf.core.models import Message
+    from yaaf.server.mail.service import thread_link
+
+    project, thread_id = _froze(client, mail, monkeypatch)
+    with db_session() as session:
+        lines = [m.body for m in session.execute(
+            select(Message).where(Message.project_id == project["id"],
+                                  Message.sender_agent_id.is_(None),
+                                  Message.sender_user_id.is_(None))).scalars()
+                 if "✉️" in m.body or "📨" in m.body]
+    assert len(lines) == 3  # sent, replied, frozen
+    assert all(thread_link(project["id"], thread_id) in line for line in lines)
+    # By name, the way the rest of the product speaks of the CEO.
+    assert any(line.startswith("✉️ CEO emailed") for line in lines)
+
+
+def test_the_health_card_says_when_replies_are_not_arriving(client, mail, monkeypatch):
+    project = make_project(client)
+    _mailbox(client, project)
+
+    def mail_checks():
+        checks = client.get(f"/observe/projects/{project['id']}/health", headers=ADMIN).json()
+        return [c for c in checks["checks"] if c["key"] == "mail"]
+
+    [untested] = mail_checks()
+    assert untested["status"] == "warn" and untested["where"] == "mail"
+
+    def unreachable(cfg, **_):
+        import socket
+
+        raise socket.gaierror(-2, "Name or service not known")
+    monkeypatch.setattr(wire, "imap_fetch", unreachable)
+    _pass()
+    failing = [c for c in mail_checks() if c["status"] == "fail"]
+    assert failing and "imap.acme.example could not be found" in failing[0]["detail"]
+    assert "gaierror" not in failing[0]["detail"]
+
+
+def test_the_record_says_on_whose_authority_and_does_not_repeat_the_room(client, mail,
+                                                                          monkeypatch):
+    project, thread_id = _froze(client, mail, monkeypatch)
+    client.post(f"/admin/projects/{project['id']}/mail/threads/{thread_id}/reopen", headers=ADMIN)
+    lines = client.get(f"/observe/projects/{project['id']}/record", headers=ADMIN).json()["lines"]
+    sent = [line for line in lines if line["kind"] == "ceo" and "emailed" in line["text"]]
+    assert len(sent) == 1 and "recipient list" in sent[0]["authority"]
+    assert any(line["kind"] == "rule" and "froze the email thread" in line["text"]
+               for line in lines)
+    assert any(line["kind"] == "yours" and "reopened the email thread" in line["text"]
+               for line in lines)
+    # A reply is proof the platform attested — never "the agent's own word".
+    [proof] = [line for line in lines if line["kind"] == "proof"]
+    assert proof["authority"].startswith("attested by the platform")
+
+
+def test_a_failure_is_said_in_words(client, mail, monkeypatch):
+    import smtplib
+
+    monkeypatch.setattr(service, "MAX_ATTEMPTS", 1)
+    mail.fail_with = smtplib.SMTPRecipientsRefused(
+        {EDITOR: (550, b"5.1.1 mailbox unavailable")})
+    project = make_project(client)
+    _mailbox(client, project)
+    _send(client, project)
+    _pass()
+    with db_session() as session:
+        error = session.execute(select(MailMessage)).scalars().one().last_error
+    assert error.startswith("the server refused the recipient") and "SMTP" not in error

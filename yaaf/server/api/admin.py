@@ -6644,6 +6644,7 @@ def _mailbox_view(session: Session, project: Project) -> dict:
         "config": {k: v for k, v in config.items() if k != "password_secret"},
         "password_set": bool(secret and _project_secret(session, project.id, secret)),
         "status": mail.status(session, project),
+        "recipients": mail.recipients(session, project),
     }
 
 

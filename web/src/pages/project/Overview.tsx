@@ -711,6 +711,7 @@ const WHERE_TO: Record<string, [string, string, boolean?]> = {
   settings: ["/settings", "fix in Settings"],
   money: ["/settings?s=money", "fix in Settings → Money"],
   data_sources: ["/settings?s=sources", "open Data sources"],
+  mail: ["/settings?s=mail", "open Settings → Email"],
   plan: ["/details/roadmap", "open the Roadmap"],
   boardroom: ["/chat", "open the chat"],
   team: ["/team", "see the team"],

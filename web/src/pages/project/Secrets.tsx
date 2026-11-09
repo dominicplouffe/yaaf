@@ -58,7 +58,31 @@ export function managedOwners(dash: Dashboard): Map<string, string> {
     const name = slack[key];
     if (typeof name === "string" && name) owners.set(name, "Slack");
   }
+  const mail = (dash.integrations["mail"] ?? {}) as Record<string, unknown>;
+  if (typeof mail.password_secret === "string" && mail.password_secret)
+    owners.set(mail.password_secret, MAILBOX);
   return owners;
+}
+
+/** The owner name the project mailbox's password is filed under. It is the
+    one managed value no agent ever receives — the platform signs in itself. */
+const MAILBOX = "Email";
+
+/** Where an owned value is edited, and what its row says it is. */
+function ownerPlace(owner: string): { section: string; sub: string } {
+  if (owner === "Slack") return { section: "integrations", sub: "Slack bridge" };
+  if (owner === MAILBOX) return { section: "mail", sub: "Mailbox password · the platform signs in, no agent gets it" };
+  return { section: "sources", sub: `Belongs to ${owner}` };
+}
+
+/** "your data sources, Slack and Email" — only the owners actually present. */
+function ownerWords(owners: string[]): string {
+  const kinds = [
+    ...(owners.some((o) => o !== "Slack" && o !== MAILBOX) ? ["your data sources"] : []),
+    ...(owners.includes("Slack") ? ["Slack"] : []),
+    ...(owners.includes(MAILBOX) ? ["Email"] : []),
+  ];
+  return kinds.length > 1 ? `${kinds.slice(0, -1).join(", ")} and ${kinds[kinds.length - 1]}` : kinds[0] ?? "";
 }
 
 function fmtDay(iso: string | null): string {
@@ -270,26 +294,31 @@ export default function Secrets({
                       onClick={() => setShowManaged(!showManaged)}>
                 <Icon name={showManaged ? "down" : "right"} size={14} />
                 <Icon name="lock" size={13} />
-                <b>Set up by your data sources and Slack</b>
+                <b>Set up by {ownerWords(managed.map((s) => owners.get(s.name)!))}</b>
                 <span className="dim">· {managed.length}</span>
                 <span className="vgroup-note">Read-only here</span>
               </button>
               {showManaged && managed.filter(matches).map((s) => {
                 const owner = owners.get(s.name)!;
+                const place = ownerPlace(owner);
                 return (
                   <div key={s.id} role="row" className="vrow managed">
                     <span className="vname">
                       <KindIcon kind="secret" locked />
                       <span className="vname-text">
-                        <code className="vnm">{envVarName(s.name)}</code>
-                        <span className="vsub">{owner === "Slack" ? "Slack bridge" : `Belongs to ${owner}`}</span>
+                        {/* The mailbox password is never a variable anybody's
+                            sandbox sees, so it is not named like one. */}
+                        <code className="vnm">{owner === MAILBOX ? s.name : envVarName(s.name)}</code>
+                        <span className="vsub">{place.sub}</span>
                       </span>
                     </span>
                     <span className="vval"><span className="dots">••••••••</span></span>
-                    <span><GrantChips options={options} selected={s.role_scopes} /></span>
+                    <span>{owner === MAILBOX
+                      ? <span className="vsub">The platform only</span>
+                      : <GrantChips options={options} selected={s.role_scopes} />}</span>
                     <span className="vupd">{fmtDay(s.updated_at)}</span>
                     <Link className="btnlink small" title="Edit where it lives"
-                          to={`/projects/${projectId}/settings?s=${owner === "Slack" ? "integrations" : "sources"}`}>
+                          to={`/projects/${projectId}/settings?s=${place.section}`}>
                       <Icon name="arrow" size={14} />
                     </Link>
                   </div>
