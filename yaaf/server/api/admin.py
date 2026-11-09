@@ -20,7 +20,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import credential_files, ids, model_policy, platform, prices, web_search
@@ -55,6 +55,7 @@ from yaaf.core.models import (
     CommitmentStatus,
     Crew,
     Cycle,
+    DataSourceTool,
     Evidence,
     Flag,
     FlagStatus,
@@ -84,6 +85,7 @@ from yaaf.core.models import (
     Task,
     TaskStatus,
     Team,
+    ToolPermission,
     User,
     VerificationStatus,
     utcnow,
@@ -1719,6 +1721,20 @@ _NON_PORTABLE_INTEGRATION_KEYS = frozenset(
 )
 
 
+def _with_decided_tools(session: Session, project_id: str, entry: dict) -> dict:
+    """A source as it leaves this install, carrying the tools it may be called
+    with as its `tools` list. The per-tool rows do not travel; this does, and
+    on the far side it denies every tool not on it — including reads he never
+    looked at — which is the direction a copy should err in."""
+    from yaaf.server import datasource_tools
+
+    rows = datasource_tools.catalog(session, project_id, entry.get("name"))
+    if rows:
+        entry = {**entry, "tools": sorted(r.name for r in rows
+                                          if r.permission == ToolPermission.ALLOW)}
+    return entry
+
+
 @router.get("/projects/{project_id}/export", dependencies=[authority.READ])
 def export_project(project_id: str, include_values: bool = False,
                    session: Session = Depends(db)) -> dict:
@@ -1820,7 +1836,8 @@ def export_project(project_id: str, include_values: bool = False,
         integrations.pop("mail", None)
         if "mcp_servers" in integrations:
             integrations["mcp_servers"] = [
-                {k: v for k, v in entry.items() if k != "last_check"}
+                _with_decided_tools(session, project.id,
+                                    {k: v for k, v in entry.items() if k != "last_check"})
                 for entry in integrations["mcp_servers"]
             ]
         secret_out = [
@@ -1854,9 +1871,10 @@ def export_project(project_id: str, include_values: bool = False,
                 if _source_auth(entry) == "oauth":
                     oauth_bound_secrets.update(_oauth_secret_names(entry))
             integrations["mcp_servers"] = [
-                {k: v for k, v in entry.items()
-                 if k not in ("last_check", "oauth", "bearer_secret")
-                 or (k == "bearer_secret" and _source_auth(entry) != "oauth")}
+                _with_decided_tools(session, project.id, {
+                    k: v for k, v in entry.items()
+                    if k not in ("last_check", "oauth", "bearer_secret")
+                    or (k == "bearer_secret" and _source_auth(entry) != "oauth")})
                 for entry in integrations["mcp_servers"]
             ]
 
@@ -2163,6 +2181,21 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         team_out.append({"id": team.id, "name": team.name,
                          "agents": [{"id": a.id, "name": a.name} for a in agents]})
 
+    # The tool permissions are the chairman's decisions about these servers,
+    # and they come across with them: a twin that started from defaults would
+    # re-allow every read he had denied on the original.
+    for tool in session.execute(select(DataSourceTool).where(
+            DataSourceTool.project_id == source.id)).scalars():
+        session.add(DataSourceTool(
+            id=ids.new_id(ids.DATA_SOURCE_TOOL), project_id=project.id, source=tool.source,
+            name=tool.name, title=tool.title, description=tool.description,
+            input_schema=tool.input_schema, annotations=tool.annotations, kind=tool.kind,
+            kind_reason=tool.kind_reason, permission=tool.permission,
+            decided_by=tool.decided_by, decided_by_user_id=tool.decided_by_user_id,
+            decided_at=tool.decided_at, first_seen_at=tool.first_seen_at,
+            last_seen_at=tool.last_seen_at, gone_at=tool.gone_at))
+    session.flush()
+
     # Prove the twin's data sources here, on its own copied credentials. A
     # source that cannot answer is exactly what a clone exists to rule out —
     # and the source project's stale verdict would be a lie about this one.
@@ -2191,8 +2224,9 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
             check = {"ok": False, "detail": "the data source's URL secret did not come across"}
         else:
             token_cipher = ciphertexts.get(entry.get("bearer_secret") or "")
-            check = _check_data_source(decrypt(url_cipher),
-                                       decrypt(token_cipher) if token_cipher else None)
+            check, listed = _split_listing(_check_data_source(
+                decrypt(url_cipher), decrypt(token_cipher) if token_cipher else None))
+            _record_tools(session, project, entry, listed, check)
         entry["last_check"] = {**check, "at": utcnow().isoformat()}
         checked.append(entry)
     if checked:
@@ -2352,13 +2386,15 @@ class DataSourceIn(BaseModel):
     # expensive path stops existing for it. Default inline: a source that was
     # already connected keeps behaving exactly as it did.
     access: Literal["inline", "bulk"] = "inline"
-    # The tools this source may be called with. None on a NEW source means
-    # unrestricted — every install that predates this keeps behaving exactly as
-    # it did. None on an EDIT keeps whatever allowlist the source already has,
-    # for the same reason `bearer` does: a save that only regrants roles must
-    # never silently disarm enforcement. An empty list is the strict end of the
-    # range, not a way to clear it — no tool may be called without an approval.
-    # To go back to unrestricted, delete the source and add it again.
+    # The tools this source may be called with, decided up front. Each tool's
+    # permission is recorded per tool (`data_source_tools`) and moved one at a
+    # time on the Data sources page; a list here sets them all at once — the
+    # named tools allowed, every other tool denied, including ones the server
+    # adds later. None on a NEW source means "decide by what each tool does":
+    # reads allowed, writes and anything unclear denied. None on an EDIT keeps
+    # whatever the source already has, for the same reason `bearer` does: a
+    # save that only regrants roles must never silently move a permission. An
+    # empty list is the strict end — every tool denied.
     tools: list[str] | None = None
     # None means "infer from bearer" so every existing caller keeps meaning
     # what it always meant; "oauth" switches the source to the browser
@@ -2482,21 +2518,6 @@ def _oauth_secret_names(entry: dict) -> list[str]:
                               oauth.get("client_secret_secret")) if name]
 
 
-def _sse_or_json(response) -> dict | None:
-    """An MCP server answers a POST with either JSON or a one-event SSE
-    stream, depending on what it felt like negotiating. Both carry the same
-    JSON-RPC envelope."""
-    import json as jsonlib
-
-    body = response.text or ""
-    if "text/event-stream" in response.headers.get("content-type", ""):
-        for line in body.splitlines():
-            if line.startswith("data:"):
-                return jsonlib.loads(line[5:].strip())
-        return None
-    return jsonlib.loads(body) if body.strip() else None
-
-
 def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
     """Would an agent actually get tools here? The old answer to that was a GET
     and a shrug: any HTTP status counted as success, so a healthy MCP endpoint
@@ -2506,7 +2527,11 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
     at all all sailed through it identically.
 
     So speak MCP instead: initialize, then tools/list, and say which tools came
-    back. `transport` is a seam for tests; production passes nothing.
+    back. `transport` is a seam for tests; production passes nothing, and gets
+    the gateway's (`datasource_tools.TRANSPORT`), so a test that stands in one
+    fake server for a source gets it from every door. A passing check carries
+    every tool the server listed under `listing`, whole, for the catalog —
+    `_split_listing` takes it off before the check is stored or shown.
 
     Every answer carries a `state`, because a screen that has one red word for
     "wrong port", "token rejected", "proxy refused" and "no tools" teaches the
@@ -2514,77 +2539,25 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
     green. The state picks the label and the one button that fixes it; the
     `detail` stays the sentence.
     """
-    import httpx
+    from yaaf.server import datasource_tools
 
-    headers = {"Content-Type": "application/json",
-               "Accept": "application/json, text/event-stream"}
-    if bearer:
-        headers["Authorization"] = f"Bearer {bearer}"
-
-    def rpc(client, payload: dict, session_id: str | None):
-        sent = {**headers, **({"Mcp-Session-Id": session_id} if session_id else {})}
-        return client.post(url, json=payload, headers=sent)
-
+    # The same client the gateway forwards agents' calls with — one way to
+    # speak MCP to a source, so a server the check passes is one the gateway
+    # can reach, page for page and frame for frame.
     try:
-        with httpx.Client(timeout=10, follow_redirects=True, transport=transport) as client:
-            opened = rpc(client, {
-                "jsonrpc": "2.0", "id": 1, "method": "initialize",
-                "params": {"protocolVersion": "2025-06-18", "capabilities": {},
-                           "clientInfo": {"name": "yaaf", "version": "1.0"}},
-            }, None)
-            if opened.status_code in (401, 403):
-                return {"ok": False, "code": "unauthorized", "state": "unauthorized",
-                        "detail": f"the server refused the credential (HTTP "
-                                  f"{opened.status_code}) — check the bearer token"}
-            if opened.status_code == 404:
-                return {"ok": False, "state": "not_found",
-                        "detail": "no MCP endpoint at that path (HTTP 404) — the "
-                                               "address needs the server's own path, often /mcp"}
-            if opened.status_code >= 400:
-                return {"ok": False, "state": "not_mcp",
-                        "detail": f"something is listening, but it did not accept an "
-                                  f"MCP handshake (HTTP {opened.status_code})"}
+        with datasource_tools.Upstream(url, bearer, transport=transport,
+                                       read_timeout=10, connect_timeout=10) as upstream:
+            info = upstream.server_info
             try:
-                envelope = _sse_or_json(opened) or {}
-            except ValueError:
-                return {"ok": False, "state": "not_mcp",
-                        "detail": "that address answered, but not with MCP — it "
-                                  "looks like an ordinary web page or API"}
-            if "error" in envelope:
-                message = (envelope["error"] or {}).get("message", "unknown error")
-                return {"ok": False, "state": "not_mcp",
-                        "detail": f"the server refused the handshake: {message}"}
-
-            info = (envelope.get("result") or {}).get("serverInfo") or {}
-            named = " ".join(str(p) for p in (info.get("name"), info.get("version")) if p)
-            session_id = opened.headers.get("mcp-session-id")
-            rpc(client, {"jsonrpc": "2.0", "method": "notifications/initialized"}, session_id)
-
-            listed = rpc(client, {"jsonrpc": "2.0", "id": 2, "method": "tools/list",
-                                  "params": {}}, session_id)
-            tools = []
-            if listed.status_code < 400:
-                try:
-                    tools = ((_sse_or_json(listed) or {}).get("result") or {}).get("tools") or []
-                except ValueError:
-                    tools = []
-    except httpx.ProxyError:
-        # Before ConnectError: a proxy refusal is not "nothing is listening",
-        # and telling someone to check a port that is fine sends them the wrong way.
-        return {"ok": False, "state": "blocked",
-                "detail": "a proxy between yaaf and that address refused the connection — "
-                          "the host probably needs allowing on this network"}
-    except httpx.ConnectError:
-        return {"ok": False, "state": "unreachable",
-                "detail": "nothing is listening at that address — check "
-                          "host and port, and that the server is running"}
-    except httpx.TimeoutException:
-        return {"ok": False, "state": "timeout",
-                "detail": "no answer within 10 seconds — the server may be down, or a "
-                          "firewall is dropping the connection"}
-    except httpx.HTTPError as exc:
-        return {"ok": False, "state": "unreachable",
-                "detail": f"could not connect: {exc.__class__.__name__}"}
+                tools = upstream.list_tools()
+            except datasource_tools.UpstreamError:
+                tools = []  # a handshake with nothing to list is "offers no tools"
+    except datasource_tools.UpstreamError as exc:
+        failed = {"ok": False, "state": exc.state, "detail": str(exc)}
+        if exc.state == "unauthorized":
+            failed["code"] = "unauthorized"
+        return failed
+    named = " ".join(str(p) for p in (info.get("name"), info.get("version")) if p)
 
     who = f"MCP server{f' {named}' if named else ''}"
     if not tools:
@@ -2595,8 +2568,14 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
                           "agents would mount it and find nothing to call"}
     shown = ", ".join(t.get("name", "?") for t in tools[:4])
     more = f", +{len(tools) - 4} more" if len(tools) > 4 else ""
-    return {"ok": True, "state": "ok", "tools": len(tools),
+    return {"ok": True, "state": "ok", "tools": len(tools), "listing": tools,
             "detail": f"{who} ready — {len(tools)} tool(s): {shown}{more}"}
+
+
+def _split_listing(check: dict) -> tuple[dict, list[dict]]:
+    """(the check as it is stored and shown, the tools it listed)."""
+    listing = check.get("listing") or []
+    return {k: v for k, v in check.items() if k != "listing"}, listing
 
 
 def _oauth_checked(url: str, token: str, entry: dict, transport=None) -> dict:
@@ -2658,6 +2637,14 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
             _delete_project_secret(session, project.id, stale)
         prior = {k: v for k, v in prior.items() if k not in ("bearer_secret", "oauth")}
 
+    # Read before the address is overwritten below: reading it after returns
+    # the new value, and every edit then looks like "same address".
+    prior_url = (_project_secret_value(session, project.id, prior["url_secret"])
+                 if prior and prior.get("url_secret") else None)
+    # A new address is a new server, whatever the name says. Its tools are
+    # decided afresh — an allow given to `delete_record` on staging is not an
+    # allow on production because the source kept its name.
+    readdressed = prior is not None and (prior_url or "").strip() != body.url.strip()
     url_secret = _upsert_project_secret(
         session, project.id, f"mcp-{body.name}-url", body.url.strip(), body.roles)
     entry = {
@@ -2676,15 +2663,12 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         entry["tools"] = sorted({t.strip() for t in allowlist if t.strip()})
 
     needs_connect = False
+    listed: list[dict] = []
     if auth == "oauth":
         token = None
         carried_oauth = dict((prior or {}).get("oauth") or {}) \
             if prior is not None and _source_auth(prior) == "oauth" else {}
-        # Only decrypted here, in the one branch that compares it — ordinary
-        # bearer/none saves must not pay a secret read they never look at.
-        prior_url = (_project_secret_value(session, project.id, prior["url_secret"])
-                     if prior and prior.get("url_secret") else None)
-        if carried_oauth and (prior_url or "").strip() == body.url.strip():
+        if carried_oauth and not readdressed:
             # Same source, same address: the connection survives the edit. The
             # access token is re-stored so its grants track this save's roles.
             oauth_state = carried_oauth
@@ -2712,7 +2696,7 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         entry["oauth"] = oauth_state
         needs_connect = token is None or oauth_state.get("status") != "connected"
         if token:
-            check = _oauth_checked(body.url.strip(), token, entry)
+            check, listed = _split_listing(_oauth_checked(body.url.strip(), token, entry))
         else:
             check = {"ok": False, "state": "needs_signin",
                      "detail": "OAuth connection required — press Connect"}
@@ -2735,17 +2719,24 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
                 _upsert_project_secret(session, project.id, held, carried, body.roles)
                 entry["bearer_secret"] = held
                 token = carried
-        check = _check_data_source(body.url.strip(), token)
+        check, listed = _split_listing(_check_data_source(body.url.strip(), token))
     entry["last_check"] = {**check, "at": utcnow().isoformat()}
 
     servers = [s for s in servers if s.get("name") != body.name]
     project.integrations = {**(project.integrations or {}), "mcp_servers": [*servers, entry]}
+    if readdressed:
+        session.execute(delete(DataSourceTool).where(DataSourceTool.project_id == project.id,
+                                                     DataSourceTool.source == body.name))
+    _record_tools(session, project, entry, listed, check,
+                  explicit=body.tools if body.tools is not None else None)
     _audit(session, project.id, "mcp_server.save", "project", project.id,
            {"name": body.name, "roles": body.roles, "host": entry["url_host"],
             "access": body.access, "auth": auth, "check_ok": check["ok"],
-            "tools": entry.get("tools")})
+            "tools": entry.get("tools"), "readdressed": readdressed})
     return {"name": body.name, "check": check, "needs_connect": needs_connect,
-            "note": "Effective on each granted role's next run."}
+            "tools": _tool_counts(session, project.id, body.name),
+            "note": "Effective on each granted role's next run. Tool permissions are "
+                    "checked on every call."}
 
 
 @router.delete("/projects/{project_id}/mcp_servers/{name}", dependencies=[authority.STEER])
@@ -2760,6 +2751,10 @@ def delete_data_source(project_id: str, name: str, session: Session = Depends(db
             _delete_project_secret(session, project.id, secret_name)
     project.integrations = {**project.integrations,
                       "mcp_servers": [s for s in servers if s.get("name") != name]}
+    # A source added again under this name is a new decision about a server
+    # that may not be the same one; it starts from what each tool does.
+    session.execute(delete(DataSourceTool).where(DataSourceTool.project_id == project.id,
+                                                 DataSourceTool.source == name))
     _audit(session, project.id, "mcp_server.delete", "project", project.id, {"name": name})
     return {"deleted": name}
 
@@ -2780,6 +2775,7 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
     url = value_of(entry.get("url_secret"))
     if not url:
         raise HTTPException(status_code=422, detail="the data source's URL secret is missing")
+    listed: list[dict] = []
     if _source_auth(entry) == "oauth":
         from yaaf.server.mcp_oauth import ensure_fresh_token
 
@@ -2788,10 +2784,13 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
             check = {"ok": False, "state": "needs_signin",
                      "detail": "OAuth connection required — press Connect"}
         else:
-            check = _oauth_checked(url, token, entry)
+            check, listed = _split_listing(_oauth_checked(url, token, entry))
     else:
-        check = _check_data_source(url, value_of(entry.get("bearer_secret")))
+        check, listed = _split_listing(
+            _check_data_source(url, value_of(entry.get("bearer_secret"))))
     entry["last_check"] = {**check, "at": utcnow().isoformat()}
+    _record_tools(session, project, entry, listed, check)
+    check = {**check, "tool_counts": _tool_counts(session, project.id, name)}
     # Through persist_entry, not a bare reassignment: `entry` was edited in
     # place, so the reassigned value compares equal to the loaded one and a
     # plain assignment is silently skipped at flush.
@@ -2845,6 +2844,113 @@ def regrant_data_source(project_id: str, name: str, body: DataSourceRolesIn,
             "note": "Effective on each granted role's next run."}
 
 
+def _record_tools(session: Session, project: Project, entry: dict, listed: list[dict],
+                  check: dict, explicit: list[str] | None = None) -> None:
+    """Record what a passing check listed. A check that failed lists nothing,
+    and nothing is not "the server dropped every tool": the catalog stays as it
+    was. `explicit` is a `tools` list the chairman just saved — his decision on
+    every tool at once, applied to tools already recorded as well as new ones."""
+    from yaaf.server import datasource_tools
+
+    if check.get("ok") and listed:
+        datasource_tools.record_catalog(session, project.id, entry, listed)
+    if explicit is not None:
+        user_id = acting.user_id()
+        wanted = {t.strip() for t in explicit if t.strip()}
+        for row in datasource_tools.catalog(session, project.id, entry["name"]):
+            permission = ToolPermission.ALLOW if row.name in wanted else ToolPermission.DENY
+            if row.permission != permission or row.decided_by != "allowlist":
+                row.permission, row.decided_by = permission, "allowlist"
+                row.decided_by_user_id, row.decided_at = user_id, utcnow()
+
+
+def _tool_counts(session: Session, project_id: str, source: str) -> dict:
+    from yaaf.server import datasource_tools
+
+    rows = [r for r in datasource_tools.catalog(session, project_id, source) if r.gone_at is None]
+    return {"total": len(rows),
+            "allowed": sum(r.permission == ToolPermission.ALLOW for r in rows),
+            "denied": sum(r.permission == ToolPermission.DENY for r in rows)}
+
+
+@router.get("/projects/{project_id}/data_source_tools", dependencies=[authority.READ])
+def list_data_source_tools(project_id: str, source: str | None = None,
+                           session: Session = Depends(db)) -> list[dict]:
+    """Every tool every data source offers, what it does, and whether agents
+    may call it — the list the Data sources page draws."""
+    from yaaf.server import datasource_tools
+
+    project = _get_project(session, project_id)
+    return [datasource_tools.tool_row(r)
+            for r in datasource_tools.catalog(session, project.id, source)]
+
+
+class ToolPermissionIn(BaseModel):
+    tool: str = Field(min_length=1, max_length=128)
+    permission: Literal["allow", "deny"]
+
+
+@router.post("/projects/{project_id}/mcp_servers/{name}/permissions",
+             dependencies=[authority.STEER])
+def set_data_source_tool_permission(project_id: str, name: str, body: ToolPermissionIn,
+                                    session: Session = Depends(db)) -> dict:
+    """The chairman allows or denies one tool. In force on the next call any
+    agent makes — the gateway reads the permission on every call, not at lease.
+    A person's hand only: a model client is refused here, as it is on the
+    decision of a tool_permission request (`_decide_tool_permission`).
+
+    One of the two doors that move a permission (the other is his decision on
+    the CEO's request), and both are here, behind a person's credential: there
+    is no agent route that writes one, so there is nothing an agent can call,
+    and nothing he can tell one to call, that moves it."""
+    from yaaf.server import datasource_tools
+
+    project = _get_project(session, project_id)
+    if datasource_tools.source_entry(project, name) is None:
+        raise HTTPException(status_code=404, detail="unknown data source")
+    actor = acting.current()
+    if actor is not None and (actor.via or "").startswith("mcp:"):
+        raise HTTPException(status_code=403, detail="A tool's permission is set by a person, "
+                                                    "in the dashboard.")
+    try:
+        moved = datasource_tools.set_permission(
+            session, project, name, body.tool, body.permission, decided_by="chairman",
+            user_id=acting.user_id())
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _audit(session, project.id, "data_source.permission", "data_source", name, moved)
+    if moved["from"] != moved["to"]:
+        _tell_the_ceo_a_tool_moved(session, project, moved)
+    return {**moved, "note": "In force on the next call."}
+
+
+def _tell_the_ceo_a_tool_moved(session: Session, project: Project, moved: dict) -> None:
+    """The CEO learns the new rule from the platform, not from a guess: a
+    tool that was denied yesterday and is allowed today would otherwise be
+    discovered by a run that happened to try it.
+
+    Not urgent, so it wakes nobody (dispatcher.URGENT_NOTICE_KINDS), and folded
+    into the CEO's unread notice of this kind when there is one: the chairman
+    going through a source's tools is many clicks and one piece of news."""
+    ceo = session.execute(select(Agent).where(Agent.project_id == project.id,
+                                              Agent.kind == AgentKind.CEO)).scalars().first()
+    if ceo is None:
+        return
+    line = (f"{moved['source']}.{moved['tool']}: "
+            f"{'ALLOWED' if moved['to'] == ToolPermission.ALLOW else 'DENIED'}")
+    unread = session.execute(select(Notice).where(
+        Notice.agent_id == ceo.id, Notice.kind == NoticeKind.TOOL_PERMISSION_CHANGED,
+        Notice.consumed_at.is_(None))).scalars().first()
+    if unread is not None:
+        unread.body = f"{unread.body}\n- {line}"
+        return
+    session.add(Notice(
+        id=ids.new_id(ids.NOTICE), project_id=project.id, agent_id=ceo.id,
+        kind=NoticeKind.TOOL_PERMISSION_CHANGED,
+        body=("The chairman changed what data source tools may be called, in force now for "
+              f"every agent given the source:\n- {line}")))
+
+
 class DataSourceProbeIn(BaseModel):
     url: str
     bearer: str | None = None
@@ -2873,7 +2979,7 @@ def probe_data_source(project_id: str, body: DataSourceProbeIn,
     import httpx
 
     url = body.url.strip()
-    check = _check_data_source(url, body.bearer or None)
+    check, _ = _split_listing(_check_data_source(url, body.bearer or None))
     auth = "bearer" if body.bearer else "none"
     if check.get("state") == "unauthorized" and not body.bearer:
         from yaaf.server import mcp_oauth
@@ -4099,6 +4205,18 @@ def decide_approval(
         return _decide_brief(session, approval, project, body)
     if approval.kind == ApprovalKind.CAPACITY and approval.capacity:
         return _decide_capacity(session, approval, project, body)
+    if approval.kind == ApprovalKind.TOOL_PERMISSION and approval.tool_permission:
+        return _decide_tool_permission(session, approval, project, body)
+    if body.approve and approval.kind == ApprovalKind.TOOL_REQUEST and approval.grant:
+        # A one-call grant past a denied tool. Retired: a yes would let nothing
+        # through (the gateway reads only the switch), and saying it did would
+        # be the platform telling him and the agent something untrue.
+        grant = approval.grant
+        raise HTTPException(
+            status_code=409,
+            detail=f"One-call approvals are retired: {grant.get('source')}.{grant.get('tool')} "
+                   "is denied, and a denied tool fails every time. To let it be called, allow "
+                   "the tool in Settings → Data sources. Decline this one.")
     _apply_decision(
         session, approval, project, body.approve, body.note,
         notice_body=(f"Approval '{approval.title}' was "
@@ -4194,6 +4312,56 @@ def _decide_capacity(session: Session, approval: Approval, project: Project,
                                   "edited": edited})
     boardroom_line(session, project.id, f"📈 {moved}")
     return {"id": approval.id, "status": approval.status, "rule": rule, "to": to}
+
+
+def _decide_tool_permission(session: Session, approval: Approval, project: Project,
+                            body: ApprovalDecision) -> dict:
+    """Approving the CEO's request IS moving the tool — through the same
+    function his own tick uses, recorded as his decision. Declining moves
+    nothing; the tool stays exactly where it was while the request waited."""
+    from yaaf.server import datasource_tools
+    from yaaf.server.notify import boardroom_line
+
+    ask = approval.tool_permission or {}
+    named = f"{ask.get('source')}.{ask.get('tool')}"
+    actor = acting.current()
+    if body.approve and actor is not None and (actor.via or "").startswith("mcp:"):
+        # The request was written by a model; a yes must not be too. His own
+        # Claude reads the CEO's case as the CEO wrote it, and a permission is
+        # the one thing here a persuasive paragraph must not be able to move.
+        raise HTTPException(
+            status_code=403,
+            detail=f"Allowing or denying {named} is decided by a person, in the "
+                   "dashboard (Inbox, or Settings → Data sources) — not through a model "
+                   "client. Declining it here is fine.")
+    if not body.approve:
+        _apply_decision(session, approval, project, False, body.note,
+                        notice_body=(f"The chairman left {named} "
+                                     f"{str(ask.get('from', '')).upper()}"
+                                     + (f": {body.note}" if body.note else ".")
+                                     + " Plan around it as it is."))
+        return {"id": approval.id, "status": approval.status}
+    try:
+        moved = datasource_tools.set_permission(
+            session, project, ask["source"], ask["tool"], ask["to"], decided_by="approval",
+            user_id=acting.user_id())
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{exc} any more, so there is nothing to allow or deny — decline it.",
+        ) from exc
+    state = "allowed" if ask["to"] == ToolPermission.ALLOW else "denied"
+    _audit(session, project.id, "data_source.permission", "data_source", ask["source"],
+           {**moved, "approval_id": approval.id})
+    _apply_decision(session, approval, project, True, body.note,
+                    notice_body=(f"The chairman approved your request: {named} is now "
+                                 f"{state.upper()} for every agent given {ask['source']}, "
+                                 "in force on the next call."
+                                 + (f" His note: {body.note}" if body.note else "")),
+                    audit_detail={"source": ask["source"], "tool": ask["tool"],
+                                  "from": moved["from"], "to": moved["to"]})
+    boardroom_line(session, project.id, f"🔧 {named} is now {state}.")
+    return {"id": approval.id, "status": approval.status, **moved}
 
 
 @router.get("/projects/{project_id}/accounts", dependencies=[authority.READ])

@@ -347,7 +347,11 @@ def test_the_roles_skills_are_the_only_ones(stage):
     assert calls[0]["toml"]["skills"] == {"include_instructions": False}
 
 
-def test_data_sources_mount_with_their_allowlist_and_sse_says_why_not(stage):
+def test_data_sources_mount_through_the_gateway_with_their_allowlist(stage):
+    """Mounted at the platform's gateway with the run's own token: the source's
+    address and token never reach the sandbox. A spec that still names env vars
+    or SSE is mounted the same way — the gateway speaks streamable HTTP to the
+    harness whatever the source speaks, so nothing is left unmounted for it."""
     perms = {"mcp_servers": [
         {"name": "warehouse", "url_env": "WAREHOUSE_URL", "bearer_env": "WAREHOUSE_TOKEN",
          "tools": ["query"]},
@@ -357,12 +361,13 @@ def test_data_sources_mount_with_their_allowlist_and_sse_says_why_not(stage):
                                 "FEED_URL": "https://feed.example/sse"})
     _, _, calls = _drive(r, [{"fixture": "text_reply.jsonl"}])
     servers = calls[0]["toml"]["mcp_servers"]
-    assert servers["warehouse"] == {"url": "https://wh.example/mcp",
-                                    "http_headers": {"Authorization": "Bearer wh-secret"},
+    assert servers["warehouse"] == {"url": "http://api:8080/agent/mcp/warehouse",
+                                    "http_headers": {"Authorization": "Bearer test-token"},
                                     "enabled_tools": ["query"]}
-    assert "feed" not in servers
+    assert servers["feed"]["url"] == "http://api:8080/agent/mcp/feed"
+    assert "wh-secret" not in repr([servers["warehouse"], servers["feed"]])
     trace = (r.staging / "trace-run_test.jsonl").read_text()
-    assert '"data_source_unmounted"' in trace and "not SSE" in trace
+    assert '"data_source_unmounted"' not in trace
 
 
 def test_the_tool_server_serves_yaafs_file_tools_when_asked(stage):

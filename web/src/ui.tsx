@@ -1029,7 +1029,7 @@ export function NotedButton({ onSubmit, primary = true }: {
 }
 
 /** What a decision's outcomes say, by kind. Each names what the click does —
-    "Raise to 60", "Done", "Allow this call" — because Approve and Deny on a
+    "Raise to 60", "Done", "Allow update_bid" — because Approve and Deny on a
     request whose click changed nothing taught that the click means nothing.
     One map, so every surface that shows a decision says the same. */
 export interface Decidable {
@@ -1038,7 +1038,7 @@ export interface Decidable {
   title?: string;
   amount_usd?: number | null;
   capacity?: { from: number; to: number } | null;
-  grant?: unknown;
+  tool_permission?: { source: string; tool: string; to: "allow" | "deny" } | null;
 }
 
 export function decideLabels(a: Decidable): {
@@ -1057,9 +1057,13 @@ export function decideLabels(a: Decidable): {
         ? withNote(`Raise to ${fmt(a.capacity.to)}`, `Keep at ${fmt(a.capacity.from)}`)
         : withNote("Approve", "Decline");
     case "tool_request":
-      return a.grant ? withNote("Allow this call", "Decline")
-        : { ...withNote("It's set up", "Decline"), yesMore: "It's set up, here's where…",
-            yesHint: "Tell the CEO where to find it", yesPlaceholder: "e.g. it's in the aws-key credential" };
+      return { ...withNote("It's set up", "Decline"), yesMore: "It's set up, here's where…",
+        yesHint: "Tell the CEO where to find it", yesPlaceholder: "e.g. it's in the aws-key credential" };
+    case "tool_permission":
+      return a.tool_permission
+        ? withNote(`${a.tool_permission.to === "allow" ? "Allow" : "Deny"} ${a.tool_permission.tool}`,
+          `Keep it ${a.tool_permission.to === "allow" ? "denied" : "allowed"}`)
+        : withNote("Approve", "Decline");
     case "brief":
       return withNote("Confirm", "Not yet");
     case "assist":

@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import json
 
+from tests import fake_mcp
 from tests.conftest import ADMIN, make_project
 from yaaf.core.db import db_session
 from yaaf.core.models import Project
@@ -217,8 +218,10 @@ class Recorded:
         return [c for c in self.calls if c["kind"] == kind]
 
 
-def test_a_data_write_request_notifies_with_the_approval_row(client, monkeypatch):
-    from tests.conftest import agent_by_name, bearer, live_token
+def test_a_tool_permission_request_notifies_with_the_approval_row(client, monkeypatch):
+    # The source answers, so its write tool is recorded and denied.
+    fake_mcp.install(monkeypatch)
+    from tests.conftest import bearer, live_token
     from yaaf.server.api import agent as agent_api
 
     recorded = Recorded()
@@ -227,19 +230,22 @@ def test_a_data_write_request_notifies_with_the_approval_row(client, monkeypatch
     attach = client.post(
         f"/admin/projects/{project['id']}/mcp_servers",
         json={"name": "ads", "url": "https://vendor.example.com/mcp", "bearer": "t",
-              "roles": ["worker"], "access": "bulk", "tools": ["get_stats"]},
+              "roles": ["worker"], "access": "bulk"},
         headers=ADMIN)
     assert attach.status_code == 200, attach.text
-    _, token = live_token(project["id"], agent_by_name(project, "Lead"))
-    filed = client.post("/agent/data_writes", headers=bearer(token),
-                        json={"source": "ads", "tool": "create_campaigns", "arguments": {"b": 1}})
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    filed = client.post("/agent/data_sources/tool_permission", headers=bearer(token),
+                        json={"source": "ads", "tool": "create_campaigns", "permission": "allow",
+              "why": "Launching the Q4 campaigns needs it; the budgets are set.",
+              "if_declined": "Campaigns are created by hand."})
     assert filed.status_code == 200, filed.text
 
     notice = recorded.of("approval_requested")[0]
     row = notice["data"]["approval"]
-    assert row["id"] == filed.json()["id"]
+    assert row["id"] == filed.json()["approval_id"]
     assert row["status"] == "pending" and row["created_at"] and row["expires_at"]
-    assert row["grant"]["tool"] == "create_campaigns"
+    assert row["tool_permission"]["tool"] == "create_campaigns"
+    assert row["tool_permission"]["to"] == "allow"
 
 
 def test_a_published_deliverable_notifies_with_its_row(client, monkeypatch):

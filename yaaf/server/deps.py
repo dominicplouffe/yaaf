@@ -105,7 +105,7 @@ def _clear_refusal_on_retry(request: Request, run: Run) -> None:
     not same route template — "a task was refused" is not answered by a
     different task succeeding.
     """
-    if request.method in ("GET", "HEAD", "OPTIONS"):
+    if request.method in ("GET", "HEAD", "OPTIONS") or request.url.path.startswith(GATEWAY_PREFIX):
         return
     if run.last_refusal_cleared_at is None and run.last_refusal_route == request.url.path:
         run.last_refusal_cleared_at = utcnow()
@@ -117,6 +117,14 @@ def _clear_refusal_on_retry(request: Request, run: Run) -> None:
 #: counting them as production would make the no-op refund unclaimable by the
 #: very lane — reading the mail — that it exists for.
 UNPRODUCTIVE_AGENT_PATHS = frozenset({"/agent/typing", "/agent/chat_usage"})
+
+#: The data source gateway: one path per source, every MCP message a POST. A
+#: listing or a read changes nothing about the project, and a refused call is
+#: answered inside a 200 rather than rolled back — so neither the production
+#: count nor the "got past its refusal" stamp can be read off the request. The
+#: gateway counts a forwarded write itself, and never stamps a refusal cleared:
+#: a different tool succeeding at the same address is not getting past a denial.
+GATEWAY_PREFIX = "/agent/mcp/"
 
 
 def _count_production(request: Request, run: Run) -> None:
@@ -140,6 +148,7 @@ def _count_production(request: Request, run: Run) -> None:
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return
     path = request.url.path
-    if not path.startswith("/agent/") or path in UNPRODUCTIVE_AGENT_PATHS:
+    if not path.startswith("/agent/") or path in UNPRODUCTIVE_AGENT_PATHS \
+            or path.startswith(GATEWAY_PREFIX):
         return
     run.produced = (run.produced or 0) + 1

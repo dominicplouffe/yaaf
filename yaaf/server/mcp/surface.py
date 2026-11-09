@@ -23,6 +23,7 @@ REACHED = {
     "GET /admin/constitution/schema": "amend (schema)",
     "GET /admin/secrets": "credential (list) — names and scopes; plain values and hints "
                           "are stripped",
+    "GET /admin/projects/{project_id}/data_source_tools": "data_source (tools) — read only",
     "GET /admin/harnesses": "catalog (harnesses)",
     "GET /admin/providers": "catalog (providers)",
     "GET /admin/models": "catalog (models)",
@@ -176,6 +177,10 @@ WITHHELD = {
         "the browser's access map moves one tick without re-sending the address; a "
         "model already changes who receives a source through `data_source` (add), "
         "which re-checks it in the same motion — one door for a model is enough.",
+    "POST /admin/projects/{project_id}/mcp_servers/{name}/permissions":
+        "a data source tool's permission is the wall between an agent and a write on "
+        "the chairman's account, and the CEO argues for moving it in prose a model "
+        "reads. A person moves it, in the dashboard; `data_source` (tools) shows it.",
     "POST /admin/projects/{project_id}/mcp_servers/probe":
         "it is the add form's first step — reach an address and say how it signs in — "
         "and stores nothing. A model adding a source gets the same check, and the "

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { plainStatus } from "../../ui/kit";
 import { Link } from "react-router-dom";
 import {
-  AmendmentRow, ApprovalDisclosure, ApprovalRow, AskRow, BriefDraft, CeoDecisionRow, get,
+  AmendmentRow, ApprovalRow, AskRow, BriefDraft, CeoDecisionRow, get,
   post, splitWithout,
 } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
@@ -23,6 +23,8 @@ function whyYours(kind: string): string {
       return "An agent is asking for a capability it does not have. Only you can grant one.";
     case "capacity":
       return "The project is asking for more room to work — runs, concurrency, queue depth or money. It is the one kind where the CEO argues for itself, so it stays yours at every autonomy setting. Saying yes raises the dial at once. It is not blocking: the project keeps working at the cap it has, and if you say nothing the cap simply stays.";
+    case "tool_permission":
+      return "The CEO is asking to change what agents may call on a connected data source. Every call goes through the platform and is refused before it is sent if the tool is denied; the CEO cannot change that, and nothing said in conversation does. Saying yes moves the tool for every agent given the source, from the next call; saying nothing leaves it where it is.";
     case "brief":
       return "Only you decide what this project is for. Until you confirm, every agent keeps working from the brief in force; once you do, this one replaces it in every agent's instructions, on every run.";
     case "assist":
@@ -30,77 +32,6 @@ function whyYours(kind: string): string {
     default:
       return "The constitution routes this kind of decision to the chairman.";
   }
-}
-
-const SHOWN_CHANGES = 12;
-
-function cell(v: string | number | boolean | null): string {
-  return v === null ? "—" : String(v);
-}
-
-/** What a data change would actually do. The CEO is told to fill this "ALWAYS
-    — it is what he decides on", and it was stored on the row and drawn
-    nowhere, so he decided on the paragraph instead. */
-function DisclosureRows({ d }: { d: ApprovalDisclosure }) {
-  const changes = d.change_set ?? [];
-  const counts = Object.entries(d.scope_counts ?? {});
-  return (
-    <>
-      {(changes.length > 0 || counts.length > 0) && (
-        <>
-          <dt>What changes</dt>
-          <dd>
-            {counts.length > 0 && (
-              <div className="help">{counts.map(([k, n]) => `${n} ${k.replaceAll("_", " ")}`).join(" · ")}</div>
-            )}
-            {changes.length > 0 && (
-              <table style={{ marginTop: 4 }}>
-                <tbody>
-                  {changes.slice(0, SHOWN_CHANGES).map((c, i) => (
-                    <tr key={i}>
-                      <td>{c.entity}</td>
-                      <td>{c.field.replaceAll("_", " ")}</td>
-                      <td>{cell(c.before)} → <b>{cell(c.after)}</b></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            {changes.length > SHOWN_CHANGES && (
-              <div className="help">and {changes.length - SHOWN_CHANGES} more changes like these</div>
-            )}
-          </dd>
-        </>
-      )}
-      {d.estimate && (
-        <>
-          <dt>Expected effect</dt>
-          <dd>
-            {d.estimate.label}: <b>{d.estimate.value}</b>{" "}
-            <span className="help">(an estimate{d.estimate.basis ? ` — ${d.estimate.basis}` : ""})</span>
-          </dd>
-        </>
-      )}
-      {d.spend_affected_usd_month != null && (
-        <>
-          <dt>Spend it touches</dt>
-          <dd>{fmtUsd(d.spend_affected_usd_month)} a month</dd>
-        </>
-      )}
-      {d.reversible != null && (
-        <>
-          <dt>Can it be undone?</dt>
-          <dd>{d.reversible ? "Yes" : <b>No — this cannot be undone</b>}</dd>
-        </>
-      )}
-      {d.counter_case && (
-        <>
-          <dt>The case against</dt>
-          <dd style={{ whiteSpace: "pre-wrap" }}>{d.counter_case}</dd>
-        </>
-      )}
-    </>
-  );
 }
 
 function outcomeBadge(a: ApprovalRow) {
@@ -141,9 +72,7 @@ function DecisionCard({
   const [secretName, setSecretName] = useState("");
   const [secretValue, setSecretValue] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
-  // A data write files as a tool_request too, but what it needs is a yes, not
-  // a key: it carries the call it would make, and a need carries none.
-  const isNeed = approval.kind === "tool_request" && !approval.grant;
+  const isNeed = approval.kind === "tool_request";
 
   // The agent that filed the need is on a team, and that team's role is the
   // answer nine times out of ten. Proposing it makes this a confirmation
@@ -177,11 +106,8 @@ function DecisionCard({
       <dl className="kv">
         <dt>The CEO's case</dt>
         <dd style={{ whiteSpace: "pre-wrap" }}>{theCase}</dd>
-        {approval.disclosure && <DisclosureRows d={approval.disclosure} />}
         <dt>Why it's yours</dt>
-        <dd>{approval.grant
-          ? "It changes your live account. The platform lets the agents read it on their own; a change is always yours."
-          : whyYours(approval.kind)}</dd>
+        <dd>{whyYours(approval.kind)}</dd>
         {usdMode && approval.amount_usd !== null && approval.amount_usd > 0 && (
           <>
             <dt>If you approve</dt>
@@ -255,6 +181,15 @@ function DecisionCard({
             </button>
             <span className="help">Or answer below without a credential.</span>
           </div>
+        </div>
+      )}
+      {approval.tool_permission && (
+        <div className="help" style={{ marginTop: 12 }}>
+          <code>{approval.tool_permission.source}.{approval.tool_permission.tool}</code> is{" "}
+          <b>{approval.tool_permission.from === "allow" ? "allowed" : "denied"}</b> now
+          {approval.tool_permission.kind ? <> — the platform reads it as a {approval.tool_permission.kind === "unknown" ? "tool that may write" : approval.tool_permission.kind}</> : null}.
+          {" "}Yes {approval.tool_permission.to === "allow" ? "allows" : "denies"} it for every agent given{" "}
+          {approval.tool_permission.source}, until you change it in Settings → Data sources.
         </div>
       )}
       {approval.capacity && (

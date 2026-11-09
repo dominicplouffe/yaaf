@@ -2040,6 +2040,18 @@ def commitment_resets(session: Session, commitment: Commitment) -> int:
 # is restricted to prevent.
 UNDELEGABLE_APPROVALS = frozenset({"spend", "legal", "tool_request", "assist", "capacity"})
 
+#: The kinds silence never approves, whatever `approval_timeout_decision` says.
+#: Each one is a data source tool getting past its permission — one call
+#: (`tool_request`) or every call from now on (`tool_permission`) — and a
+#: denied tool is let through by the chairman's decision, never by his being
+#: away. Under "approve on silence" these expire to no like everywhere else.
+NEVER_BY_SILENCE = frozenset({"tool_request", "tool_permission"})
+
+
+def silence_approves(cons: ConstitutionDoc, kind: str) -> bool:
+    """What an unanswered approval of this kind becomes when its clock runs out."""
+    return cons.approval_timeout_decision == "approve" and kind not in NEVER_BY_SILENCE
+
 # Which switches would have to be the CEO's for "a decision that is genuinely
 # the owner's" to be, in fact, the CEO's.
 _DIRECTION_SWITCHES = ("plan_authority", "scope_authority", "commitment_authority")

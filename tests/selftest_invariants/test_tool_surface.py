@@ -293,20 +293,22 @@ def test_the_ceo_is_sent_everything(monkeypatch, sandbox_entry):
     stands for "this project has one"."""
     monkeypatch.setattr(sandbox_entry, "AGENT_KIND", "ceo")
     monkeypatch.setattr(sandbox_entry, "_data_source_specs", lambda: {})
-    monkeypatch.setattr(sandbox_entry, "PERMS", {"mail": True})
+    monkeypatch.setattr(sandbox_entry, "PERMS", {"mail": True, "tool_requests": {"crm": []}})
     names = {t.name for t in sandbox_entry.run_tools()}
     assert names >= sandbox_entry.CEO_ONLY_TOOLS
-    assert names == {t.name for t in sandbox_entry.ALL_TOOLS + sandbox_entry.MAIL_TOOLS}
+    assert names == {t.name for t in sandbox_entry.ALL_TOOLS + sandbox_entry.MAIL_TOOLS
+                     + sandbox_entry.DATA_SOURCE_CEO_TOOLS}
 
 
 def test_an_unset_kind_sends_everything(sandbox_entry):
     """The failure that costs real money is withholding a tool an agent needed.
     A caller that forgets the env var must degrade toward the old behaviour,
     never toward a silently crippled agent — so the fixture deliberately leaves
-    YAAF_AGENT_KIND unset and this asserts what that means. The one exception
-    is a tool that needs a mailbox, which nothing here says the project has."""
+    YAAF_AGENT_KIND unset and this asserts what that means. The exceptions are
+    tools that ride something the project has — a mailbox, a data source —
+    which nothing here says it has."""
     assert sandbox_entry.AGENT_KIND == "ceo"
-    mail = {t.name for t in sandbox_entry.MAIL_TOOLS}
+    mail = {t.name for t in sandbox_entry.MAIL_TOOLS + sandbox_entry.DATA_SOURCE_CEO_TOOLS}
     assert {t.name for t in sandbox_entry.ALL_TOOLS} >= sandbox_entry.CEO_ONLY_TOOLS - mail
     assert {t.name for t in sandbox_entry.run_tools()} >= sandbox_entry.CEO_ONLY_TOOLS - mail
 
@@ -322,6 +324,20 @@ def test_the_mail_tools_ride_the_mailbox(monkeypatch, sandbox_entry, kind, mailb
     monkeypatch.setattr(sandbox_entry, "PERMS", {"mail": True} if mailbox else {})
     names = {t.name for t in sandbox_entry.run_tools()}
     assert ({"mail_send", "mail_read"} <= names) is offered
+
+
+@pytest.mark.parametrize("kind,sources,offered", [
+    ("ceo", {"crm": ["delete_contact"]}, True), ("ceo", None, False),
+    # An employee is never sent it, sources or not: the server would refuse.
+    ("employee", {"crm": ["delete_contact"]}, False),
+])
+def test_the_tool_permission_request_rides_a_data_source(monkeypatch, sandbox_entry, kind,
+                                                         sources, offered):
+    monkeypatch.setattr(sandbox_entry, "AGENT_KIND", kind)
+    monkeypatch.setattr(sandbox_entry, "_data_source_specs", lambda: {})
+    monkeypatch.setattr(sandbox_entry, "PERMS", {"tool_requests": sources} if sources else {})
+    names = {t.name for t in sandbox_entry.run_tools()}
+    assert ("tool_permission_request" in names) is offered
 
 
 def test_withholding_a_schema_is_not_the_enforcement(client):

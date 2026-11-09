@@ -413,11 +413,12 @@ def test_ensure_fresh_token_refreshes_and_honors_rotation(world, client):
     assert "refresh token is not current" in entry["oauth"]["error"]
 
 
-def test_the_lease_injects_a_token_refreshed_for_the_run(world, client):
-    """End to end, the pattern of test_mcp_project: the sandbox spec is
-    byte-identical to a bearer source's — same env vars, same shape — but the
-    value behind MCP_PPC_TOKEN was renewed at lease time, not at connect time."""
+def test_the_token_is_renewed_where_it_is_used_and_never_leased(world, client):
+    """The lease used to renew the access token and inject it as MCP_PPC_TOKEN.
+    Now no token is injected at all — the gateway presents it on the agent's
+    behalf — so it is renewed where it is used: by the platform, at call time."""
     from yaaf.runner import daemon
+    from yaaf.server import datasource_tools
 
     project = _connected_project(world, client)
     stale = world.access_token
@@ -430,11 +431,15 @@ def test_the_lease_injects_a_token_refreshed_for_the_run(world, client):
                              trigger={"reasons": []}, attempt=1))
     job = daemon.lease_and_prepare(limit=1)[0]
     specs = job.tool_permissions["mcp_servers"]
-    assert {"name": "ppc", "url_env": "MCP_PPC_URL", "access": "inline",
-            "bearer_env": "MCP_PPC_TOKEN"} in specs
-    assert job.billing_env["MCP_PPC_TOKEN"] == world.access_token != stale
-    # The refresh secret exists for the control plane alone.
-    assert "MCP_PPC_OAUTH_REFRESH" not in job.billing_env
+    assert [s["name"] for s in specs] == ["ppc"]
+    assert not {"url_env", "bearer_env"} & set(specs[0])
+    assert not [k for k in job.billing_env if k.startswith("MCP_PPC")]
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        entry = next(s for s in row.integrations["mcp_servers"] if s["name"] == "ppc")
+        _, token = datasource_tools.credentials(session, row, entry)
+    assert token == world.access_token != stale
 
 
 def test_the_check_endpoint_renews_before_it_probes(world, client):
@@ -532,3 +537,28 @@ def test_delete_cleans_up_the_whole_oauth_estate(world, client):
     assert deleted.status_code == 200
     with db_session() as session:
         assert session.query(Secret).filter(Secret.name.like("mcp-ppc%")).count() == 0
+
+
+def test_a_renewal_on_an_agents_call_never_undoes_the_chairmans_save(world, client):
+    """The gateway renews tokens on agents' calls, which rewrites the source's
+    entry in `integrations`. Done on the copy the call loaded, it would write
+    back a list from before the chairman's save and silently undo it."""
+    from yaaf.server import datasource_tools
+
+    project = _connected_project(world, client)
+    _age_token(project["id"], 60)
+    with db_session() as session:
+        stale = session.get(Project, project["id"])
+        entry = dict(next(s for s in stale.integrations["mcp_servers"] if s["name"] == "ppc"))
+        # The chairman saves something while this call is in flight.
+        with db_session() as his:
+            row = his.get(Project, project["id"])
+            row.integrations = {**row.integrations, "mcp_servers": [
+                *row.integrations["mcp_servers"],
+                {"name": "crm", "url_secret": "mcp-crm-url", "roles": ["worker"]}]}
+        _, token = datasource_tools.credentials(session, stale, entry)
+    assert token == world.access_token
+    with db_session() as session:
+        names = {s["name"] for s in
+                 session.get(Project, project["id"]).integrations["mcp_servers"]}
+    assert names == {"ppc", "crm"}

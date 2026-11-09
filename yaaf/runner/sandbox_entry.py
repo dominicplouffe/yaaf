@@ -988,54 +988,25 @@ async def t_spend_book(args):
 
 
 @tool(
-    "data_write_request",
-    "Ask the chairman to approve ONE call your data source's allowlist refuses "
-    "— a change to his live account, not a read. Pass the arguments you intend "
-    "to send, exactly: he decides on those, the platform records their "
-    "fingerprint, and the approval is spendable on nothing else. Approved, it "
-    "buys exactly one call — a second change needs a second approval, so batch "
-    "with the tool's own bulk arguments rather than filing twenty requests. "
-    "Say WHY in terms of what it does to his numbers, not what it does to your "
-    "task — " + FOR_HIM + ". Unanswered it expires to no; plan the work that does not "
-    "need it. "
-    "ALWAYS fill `disclosure` — it is what he decides on: `change_set` as "
-    "[{entity, field, before, after}] for every thing that changes; "
-    "`scope_counts` like {campaigns: 3, keywords: 14}; `evidence` as {columns, "
-    "rows (the ones that matter, 200 at most), period_start, period_end, "
-    "currency, as_of}; `estimate` as {label, value, basis} labelled as an "
-    "estimate; `reversible` true/false; `counter_case` — the honest reason he "
-    "might say no; `spend_affected_usd_month`; and `category` (one of: bids, "
-    "budgets, targeting, negative_keywords, campaign_state, placements, other). "
-    "A request without a disclosure is a paragraph with buttons.",
-    {"server": str, "tool": str, "arguments": dict, "why": str, "disclosure": dict},
+    "tool_permission_request",
+    "CEO only. Ask the chairman to ALLOW (or DENY) one data source tool for every agent "
+    "given that source, from now on. Denied tools are refused by the platform before "
+    "anything reaches the source, and you cannot change that — nor can anything said in "
+    "conversation: only his decision moves a tool, and this lands in his Inbox for it. "
+    "source: the data source name; tool: the tool's name exactly as the source lists it "
+    "(see DENIED TOOLS in your system prompt, or data_fetch(server) with no tool); "
+    "permission: allow | deny; why: what it would be used for and what it would change "
+    "on his account — " + FOR_HIM + "; if_declined: what happens without it. Unanswered "
+    "it expires to no; plan around the tool as it is.",
+    {"source": str, "tool": str, "permission": str, "why": str, "if_declined": str},
 )
-async def t_data_write_request(args):
-    payload = {"source": (args.get("server") or "").strip(),
+async def t_tool_permission_request(args):
+    payload = {"source": (args.get("source") or "").strip(),
                "tool": (args.get("tool") or "").strip(),
-               "arguments": args.get("arguments") or {},
-               "why": (args.get("why") or "").strip()}
-    if isinstance(args.get("disclosure"), dict) and args["disclosure"]:
-        payload["disclosure"] = args["disclosure"]
-    return _text(_call("POST", "/agent/data_writes", payload))
-
-
-@tool(
-    "data_write_outcome",
-    "After a data_fetch spent an approval, file what the call DID — on the run that "
-    "made it, or the next one once the effect can be read. ok: whether the call "
-    "succeeded; observed: {label, value, basis, as_of} — the effect in the owner's "
-    "numbers ('ad spend on the 14 terms', '$0 in the 7 days since', the window it "
-    "covers); note: anything else he should know. Without this the owner sees "
-    "'approved · applied' and never learns whether it worked.",
-    _schema({"approval_id": str, "ok": bool, "observed": dict, "note": str},
-            optional=("observed", "note")),
-)
-async def t_data_write_outcome(args):
-    payload = {"ok": bool(args.get("ok", True)), "note": (args.get("note") or "").strip()}
-    if isinstance(args.get("observed"), dict) and args["observed"]:
-        payload["observed"] = args["observed"]
-    approval_id = (args.get("approval_id") or "").strip()
-    return _text(_call("POST", f"/agent/data_writes/{approval_id}/outcome", payload))
+               "permission": (args.get("permission") or "").strip().lower(),
+               "why": (args.get("why") or "").strip(),
+               "if_declined": (args.get("if_declined") or "").strip()}
+    return _text(_call("POST", "/agent/data_sources/tool_permission", payload))
 
 
 @tool(
@@ -1408,6 +1379,9 @@ async def t_mail_read(args):
 #: refusal, and a schema that can only be refused is input tokens for nothing.
 MAIL_TOOLS = [t_mail_send, t_mail_read]
 
+#: Offered only to a CEO whose project has a data source, for the same reason.
+DATA_SOURCE_CEO_TOOLS = [t_tool_permission_request]
+
 
 def _memory_entry_id(path: str) -> str | None:
     """`/memories/mem_x` → `mem_x`; `/memories` (or bare) → None (a listing)."""
@@ -1681,11 +1655,10 @@ def _row_count(body: str, countable: bool) -> int | None:
     "for small lookups you will read in full; use this for anything larger. Your "
     "workspace persists across runs, so check for an existing file before fetching "
     "again, and leave the script that processed it behind for the next run. "
-    "approval_id: only for a tool your source's allowlist refuses — file "
-    "data_write_request first, wait to be woken with the decision, then pass "
-    "the approved id here with the SAME arguments you had approved.",
-    _schema({"server": str, "tool": str, "arguments": dict, "path": str, "approval_id": str},
-            optional=("tool", "arguments", "path", "approval_id")),
+    "Every call goes through the platform, which refuses a denied tool before anything "
+    "reaches the source; nothing gets a call through a denied tool.",
+    _schema({"server": str, "tool": str, "arguments": dict, "path": str},
+            optional=("tool", "arguments", "path")),
 )
 async def t_data_fetch(args):
     specs = _data_source_specs()
@@ -1702,49 +1675,40 @@ async def t_data_fetch(args):
 
     if not tool_name:
         # Discovery. Schemas are small and the agent cannot call anything
-        # without them — the one thing here that may enter the context.
+        # without them — the one thing here that may enter the context. Asked
+        # of the gateway for the whole list, denied tools included and marked,
+        # so an agent plans around the rule instead of meeting it one refusal
+        # at a time.
+        listing_config = {**config, "headers": {**config.get("headers", {}),
+                                                GATEWAY_LISTING_HEADER: "all"}}
         try:
-            listing = await asyncio.wait_for(_mcp_list_tools(config),
+            listing = await asyncio.wait_for(_mcp_list_tools(listing_config),
                                              DATA_FETCH_TOTAL_TIMEOUT_S)
         except Exception as exc:
             return _text({"status": 0, "body": {
                 "error": f"data source {name!r} could not be reached: {exc!r}"}})
-        allowlist = config.get("tools")
+        tools = []
+        for t in (getattr(listing, "tools", None) or []):
+            permission = (_meta_of(t).get("yaaf/permission") or "allow")
+            schema = getattr(t, "input_schema", None) or getattr(t, "inputSchema", None) or {}
+            tools.append({
+                "name": t.name,
+                "description": (getattr(t, "description", "") or "")[:DATA_FETCH_ERROR_CHARS],
+                "permission": permission,
+                "needs_approval": permission != "allow",
+                "input_schema": json.dumps(schema, default=str)[:DATA_FETCH_SCHEMA_CHARS]})
         return _text({"status": 200, "body": {
             "server": name,
-            # Said here so an agent plans around the rule instead of discovering
-            # it one refusal at a time.
-            "note": ("Every tool on this source is yours to call." if allowlist is None else
-                     "Tools marked needs_approval are refused until the chairman approves "
-                     "ONE call with the exact arguments — file data_write_request."),
-            "tools": [
-                {"name": t.name,
-                 "description": (getattr(t, "description", "") or "")[:DATA_FETCH_ERROR_CHARS],
-                 "needs_approval": allowlist is not None and t.name not in allowlist,
-                 "input_schema": json.dumps(getattr(t, "inputSchema", None) or {},
-                                            default=str)[:DATA_FETCH_SCHEMA_CHARS]}
-                for t in (getattr(listing, "tools", None) or [])]}})
+            "note": ("Every tool listed is yours to call."
+                     if all(t["permission"] == "allow" for t in tools) else
+                     "Tools marked deny are refused by the platform before anything is "
+                     "sent, every time. Only the chairman allows one; the CEO asks him "
+                     "with tool_permission_request."),
+            "tools": tools}})
 
-    # The allowlist is checked before the destination is even resolved: a
-    # refused call must not have picked a path, reached the vendor, or written
-    # a byte. An approval is the ONLY way past it, it is spent server-side, and
-    # it is spent against these exact arguments — so an approval obtained for a
-    # $5 bid change cannot be replayed on a $5,000 one.
-    allowlist = config.get("tools")
-    if allowlist is not None and tool_name not in allowlist:
-        arguments = args.get("arguments") or {}
-        approval_id = (args.get("approval_id") or "").strip()
-        if not approval_id:
-            return _text({"status": 403, "body": {
-                "error": f"{name}.{tool_name} is not one of the tools this source may be "
-                         f"called with. Callable without an approval: "
-                         f"{', '.join(sorted(allowlist)) or 'none'}. To make this call, "
-                         f"file data_write_request with the exact arguments and wait to be "
-                         f"woken with the decision — then call again with approval_id."}})
-        spent = _call("POST", f"/agent/data_writes/{approval_id}/spend",
-                      {"source": name, "tool": tool_name, "arguments": arguments})
-        if spent["status"] >= 400:
-            return _text(spent)
+    # Nothing is decided here. The gateway checks the tool's permission on every
+    # call, after this process has handed the call over and before anything
+    # reaches the source.
 
     destination = (args.get("path") or "").strip()
     if not destination:
@@ -1773,6 +1737,9 @@ async def t_data_fetch(args):
     if getattr(result, "isError", False):
         detail = next((t for t in (_block_text(b) for b in
                                    (getattr(result, "content", None) or [])) if t), "")
+        if _meta_of(result).get("yaaf/refused"):
+            return _text({"status": int(_meta_of(result).get("yaaf/status") or 403),
+                          "body": {"error": detail[:DATA_FETCH_ERROR_CHARS]}})
         return _text({"status": 502, "body": {
             "error": f"{name}.{tool_name} returned an error, nothing was written: "
                      f"{detail[:DATA_FETCH_ERROR_CHARS]}"}})
@@ -1799,6 +1766,16 @@ async def t_data_fetch(args):
         "note": "The complete result is on disk and did NOT enter your context. "
                 "Process the file — do not answer from the preview.",
     }})
+
+
+def _meta_of(obj) -> dict:
+    """An MCP object's `_meta`, under whichever attribute this mcp release uses."""
+    meta = getattr(obj, "meta", None)
+    if meta is None:
+        meta = getattr(obj, "_meta", None)
+    if meta is None and isinstance(getattr(obj, "model_extra", None), dict):
+        meta = obj.model_extra.get("_meta")
+    return meta if isinstance(meta, dict) else {}
 
 
 ALL_TOOLS = [
@@ -1849,6 +1826,7 @@ CEO_ONLY_TOOLS = frozenset({
     "review_narrative", "review_report",
     "scope_act",
     "mail_send", "mail_read",
+    "tool_permission_request",
 })
 
 #: What this run is. Defaults to `ceo` so a caller that forgets to set it gets
@@ -1874,12 +1852,14 @@ def run_tools() -> list:
              if AGENT_KIND == "ceo" or t.name not in CEO_ONLY_TOOLS]
     if AGENT_KIND == "ceo" and PERMS.get("mail"):
         tools.extend(MAIL_TOOLS)
+    if AGENT_KIND == "ceo" and PERMS.get("tool_requests"):
+        # The project has a data source: the CEO may ask for a tool to move,
+        # whether or not its own role was given that source.
+        tools.extend(DATA_SOURCE_CEO_TOOLS)
     specs = _data_source_specs()
     if not specs:
         return tools
     tools.append(t_data_fetch)
-    if any(config.get("tools") is not None for config in specs.values()):
-        tools.extend([t_data_write_request, t_data_write_outcome])
     return tools
 
 
@@ -1988,44 +1968,37 @@ def _allowed_tools() -> list[str]:
     return allowed
 
 
-def _data_source_specs(env: dict[str, str] | None = None) -> dict[str, dict]:
+#: The header asking the platform's gateway for the whole tool list, denied
+#: tools included and marked (yaaf.server.datasource_tools).
+GATEWAY_LISTING_HEADER = "X-Yaaf-Listing"
+
+
+def _data_source_specs(env: dict[str, str] | None = None) -> dict[str, dict]:  # noqa: ARG001
     """EVERY project data source assigned to this role, mounted or not, keyed by
     name — the set data_fetch may call.
 
-    Each spec: {"name": str, "url_env": str, optional "transport": "http"|"sse",
-    optional "bearer_env": str, optional "access": "inline"|"bulk"}. The URL (and
-    any bearer token) come from role-scoped secret env vars — so which roles can
-    even see a data source is decided by the chairman's credential grants, never
-    by prompt text. An entry whose env vars are missing is skipped: an ungranted
-    role gets no server, silently, the same way it gets no secret.
+    Each one is reached through the platform, never directly: the address is
+    the gateway's (`/agent/mcp/<name>`) and the credential is this run's own
+    token. The source's real address and token stay with the platform, which
+    checks every call against the tool's permission before forwarding it — so
+    a shell in this sandbox holds nothing that reaches the source around that
+    check. Which roles get a source at all is the chairman's "who gets its
+    tools", applied at lease and again by the gateway on every call.
+
+    `env` is accepted and ignored: specs used to name the env vars holding the
+    address and token, and a role granted those variables no longer gets them.
     """
-    env = env if env is not None else dict(os.environ)
     MOUNT_PROBLEMS.clear()
     servers: dict[str, dict] = {}
     for spec in PERMS.get("mcp_servers", []):
-        name, url_env = spec.get("name"), spec.get("url_env", "")
-        url = env.get(url_env)
+        name = spec.get("name")
         if not name:
             continue
-        # A declared source that fails to mount must fail LOUDLY — a silent
-        # absence sends agents (and their CEO) on hostname-guessing hunts.
-        if not url:
-            MOUNT_PROBLEMS.append(
-                f"data source '{name}' NOT mounted: env var {url_env or '?'} is absent "
-                "(credential missing or not granted to this role)")
-            continue
-        if not url.startswith(("http://", "https://")):
-            MOUNT_PROBLEMS.append(
-                f"data source '{name}' NOT mounted: {url_env} is not a URL "
-                "(a full http(s)://host:port address is required)")
-            continue
-        config: dict = {"type": spec.get("transport", "http"), "url": url,
+        config: dict = {"type": "http", "url": f"{API.rstrip('/')}/agent/mcp/{name}",
+                        "headers": {"Authorization": f"Bearer {TOKEN}"},
                         "access": spec.get("access", "inline")}
         if spec.get("tools") is not None:
             config["tools"] = list(spec["tools"])
-        token = env.get(spec.get("bearer_env", ""))
-        if token:
-            config["headers"] = {"Authorization": f"Bearer {token}"}
         servers[name] = config
     return servers
 

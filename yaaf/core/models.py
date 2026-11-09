@@ -456,6 +456,19 @@ class ApprovalKind(enum.StrEnum):
     # deleted cut an order five weeks later, "from the original project
     # settings". The approval's `brief` carries the text; approving applies it.
     BRIEF = "brief"
+    # The CEO asking the chairman to move one data source tool between allow
+    # and deny. The CEO can never move it itself: the permission is written by
+    # exactly two doors, his tick on the Data sources page and his yes here.
+    # The approval's `tool_permission` carries {"source", "tool", "from", "to"};
+    # approving it is what moves the tool.
+    TOOL_PERMISSION = "tool_permission"
+
+
+class ToolPermission(enum.StrEnum):
+    """Whether an agent's call to one data source tool is forwarded at all."""
+
+    ALLOW = "allow"
+    DENY = "deny"
 
 
 class ApprovalStatus(enum.StrEnum):
@@ -534,6 +547,11 @@ class NoticeKind(enum.StrEnum):
     APPROVAL_EXPIRED = "approval_expired"
     THREAD_FROZEN = "thread_frozen"
     CONSTITUTION_AMENDED = "constitution_amended"
+    # The chairman moved a data source tool's permission himself. A rule
+    # change like an amendment, and like one it does not wake anybody: the CEO
+    # reads it on its next run. Several moves made in one sitting arrive as one
+    # notice, because reviewing a source's tools is a dozen clicks, not news.
+    TOOL_PERMISSION_CHANGED = "tool_permission_changed"
     GOAL_CHANGED = "goal_changed"
     TASK_CHECK_FAILED = "task_check_failed"
     TASK_BLOCKED = "task_blocked"
@@ -2274,6 +2292,59 @@ class Approval(Base):
     # reads first. The case argues it; this states it. Null on rows filed
     # before it existed and on kinds filed by other doors (assist, brief).
     recommendation: Mapped[str | None] = mapped_column(Text)
+    # A TOOL_PERMISSION approval's move: {"source", "tool", "from", "to"}.
+    # Approving it is what moves the tool; declining leaves it where it was.
+    tool_permission: Mapped[dict | None] = mapped_column(JSONVariant)
+
+
+class DataSourceTool(Base):
+    """One tool a project's data source offers, and whether agents may call it.
+
+    A data source used to be an address handed to the sandbox, and "which tools
+    may be called" was a list the sandbox checked against itself — beside the
+    very URL and token that let a shell call anything it liked. The tools are
+    now recorded here, every agent call is forwarded by the server and checked
+    against `permission` immediately before it leaves, and the sandbox never
+    holds the address or the token at all.
+
+    `permission` is written by exactly two doors: the chairman's tick on the
+    Data sources page, and his yes on a CEO's `tool_permission` request. A tool
+    first seen gets its default from `kind` — a read is allowed, anything that
+    writes or that the platform cannot tell is denied — or from the source's
+    saved allowlist where the chairman gave one.
+    """
+
+    __tablename__ = "data_source_tools"
+    __table_args__ = (
+        Index("ix_data_source_tools_key", "project_id", "source", "name", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    #: The data source's name (`integrations.mcp_servers[].name`).
+    source: Mapped[str] = mapped_column(String(32))
+    #: The tool's name as the server lists it.
+    name: Mapped[str] = mapped_column(String(128))
+    title: Mapped[str | None] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text)
+    input_schema: Mapped[dict | None] = mapped_column(JSONVariant)
+    #: The server's own hints (readOnlyHint, destructiveHint, ...). Read when
+    #: classifying, shown to the chairman, never trusted to allow on their own.
+    annotations: Mapped[dict | None] = mapped_column(JSONVariant)
+    #: "read" | "write", and the sentence saying why.
+    kind: Mapped[str] = mapped_column(String(8))
+    kind_reason: Mapped[str] = mapped_column(String(300))
+    permission: Mapped[str] = mapped_column(String(8))  # ToolPermission
+    #: "default" (the kind decided it), "allowlist" (the source's saved list),
+    #: "chairman" (his tick) or "approval" (his yes to the CEO's request).
+    decided_by: Mapped[str] = mapped_column(String(16))
+    decided_by_user_id: Mapped[str | None] = mapped_column(String(40))
+    decided_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    first_seen_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    #: Set when the server stopped listing it. The row stays — its permission
+    #: and history come back with it if the tool does.
+    gone_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class Snooze(Base):

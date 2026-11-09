@@ -77,6 +77,7 @@ const ICON: Record<ItemType, IconName> = {
 function whyYours(kind: string): string {
   if (kind.includes("spend")) return "Above your approval threshold, so it is never an agent's call.";
   if (kind.includes("legal")) return "Anything with legal weight is yours by rule, at any autonomy setting.";
+  if (kind.includes("tool_permission")) return "What a data source tool may do to your account. The CEO can ask; only you can move it — saying nothing keeps it as it is.";
   if (kind.includes("tool")) return "A capability the project does not have — you hold the values.";
   if (kind.includes("assist") || kind.includes("to do")) return "A step only a human can take. Press Done when it is done. The platform hands these over, never defeats them.";
   if (kind.includes("capacity")) return "More room for the project to work. Saying yes raises the dial at once; saying nothing keeps it.";

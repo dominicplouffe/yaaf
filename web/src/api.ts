@@ -899,17 +899,12 @@ export interface ApprovalRow {
   decided_at: string | null;
   /** The chairman's note — the agent reads it, so history shows it. */
   decision_note: string | null;
-  /** What a data change would do, filed with it: every before → after, how
-      much it touches, an estimate, whether it can be undone, the case against.
-      Null on every kind but a data write, and on one filed without it. */
-  disclosure?: ApprovalDisclosure | null;
   /** A brief only: the direction the CEO wrote back for you to confirm.
       Confirming it replaces the goal and the standing orders. */
   brief?: BriefDraft | null;
-  /** Set on a data write: the one call approving it buys. A need for a
-      credential is also a tool_request, and carries none. */
-  grant?: { source: string; tool: string; arguments_sha256: string } | null;
   capacity?: CapacityAsk | null;
+  /** A tool permission request: the one move approving it makes. */
+  tool_permission?: ToolPermissionAsk | null;
   /** Your note, and the CEO's answer to it once given. */
   held_note?: HeldNote | null;
 }
@@ -933,23 +928,6 @@ export interface BriefDraft {
   what_changed?: string;
 }
 
-type Cell = string | number | boolean | null;
-
-export interface ApprovalDisclosure {
-  category?: string | null;
-  change_set?: { entity: string; field: string; before: Cell; after: Cell }[];
-  scope_counts?: Record<string, number>;
-  evidence?: {
-    columns: string[]; rows: Cell[][];
-    period_start?: string | null; period_end?: string | null;
-    currency?: string | null; as_of?: string | null;
-  } | null;
-  estimate?: { label: string; value: string; basis?: string } | null;
-  reversible?: boolean | null;
-  counter_case?: string;
-  spend_affected_usd_month?: number | null;
-}
-
 // ── the Desk: cross-project attention, one request ─────────────────────────────
 
 export interface DeskApproval {
@@ -959,6 +937,7 @@ export interface DeskApproval {
   amount_usd: number | null;
   expires_at: string;
   capacity?: CapacityAsk | null;
+  tool_permission?: ToolPermissionAsk | null;
   /** Whether a yes can be undone, where the kind alone says (yaaf.server.rows). */
   undo?: string | null;
   /** What silence decides on this project. */
@@ -966,6 +945,42 @@ export interface DeskApproval {
   /** The filer's own recommendation, in a sentence — null on kinds filed
       without one (assist, brief) and on rows older than the field. */
   recommendation?: string | null;
+}
+
+/** The CEO asking for one data source tool to move. Approving it is what
+    moves it; the CEO cannot, and nothing said in conversation does. */
+export interface ToolPermissionAsk {
+  source: string;
+  tool: string;
+  from: ToolPermission;
+  to: ToolPermission;
+  kind?: ToolKind;
+}
+
+export type ToolPermission = "allow" | "deny";
+export type ToolKind = "read" | "write" | "unknown";
+
+/** One tool a data source offers, as the platform recorded it. Every agent
+    call is checked against `permission` before it is forwarded. */
+export interface DataSourceTool {
+  source: string;
+  name: string;
+  title: string | null;
+  description: string | null;
+  input_schema: { properties?: Record<string, { type?: string; description?: string }>;
+    required?: string[] } | null;
+  annotations: Record<string, unknown> | null;
+  kind: ToolKind;
+  kind_reason: string;
+  permission: ToolPermission;
+  /** default: the kind decided it · allowlist: the source's saved list ·
+      chairman: a tick on this page · approval: a yes to the CEO's request. */
+  decided_by: "default" | "allowlist" | "chairman" | "approval";
+  decided_at: string | null;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  /** The server stopped listing it; its row and permission are kept. */
+  gone: boolean;
 }
 
 /** A capacity request's dial. Approving it is what raises the dial. */

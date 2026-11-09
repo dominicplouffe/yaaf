@@ -155,6 +155,8 @@ def boardroom_say(principal: Principal, session: Session, arguments: dict) -> di
     description=(
         "Approve or deny a pending approval. Approving a capacity request raises the "
         "dial at once, to `to` if given. A note is held until the CEO answers it. "
+        "A request to allow or deny a data source tool can be declined here but not "
+        "approved: a person approves that in the dashboard. "
         "Fulfilling a credential need is not here "
         "on purpose — that means handing over a secret value, and it stays in the "
         "browser where the chairman is the only reader."

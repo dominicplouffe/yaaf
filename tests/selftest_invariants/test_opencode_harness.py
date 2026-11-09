@@ -211,7 +211,7 @@ def test_a_grant_the_role_leaves_off_is_a_tool_opencode_does_not_have(stage, per
     assert "task" not in rules
 
 
-def test_data_sources_mount_with_their_allowlist_and_sse_says_why_not(stage):
+def test_data_sources_mount_through_the_gateway_with_their_allowlist(stage):
     r = stage(perms={"mcp_servers": [
         {"name": "crm", "url_env": "CRM_URL", "tools": ["lookup"]},
         {"name": "wiki", "url_env": "WIKI_URL"},
@@ -220,13 +220,15 @@ def test_data_sources_mount_with_their_allowlist_and_sse_says_why_not(stage):
              "LEGACY_URL": "https://legacy.example/sse"})
     _, _, calls, trace = _drive(r, [{"fixture": "text_reply.jsonl"}])
     config = calls[0]["config"]
-    assert config["mcp"]["crm"] == {"type": "remote", "url": "https://crm.example/mcp",
-                                    "enabled": True}
-    assert "legacy" not in config["mcp"]
+    assert config["mcp"]["crm"] == {"type": "remote", "url": "http://api:8080/agent/mcp/crm",
+                                    "enabled": True,
+                                    "headers": {"Authorization": "Bearer test-token"}}
+    # The gateway speaks streamable HTTP to the harness whatever the spec said.
+    assert config["mcp"]["legacy"]["url"] == "http://api:8080/agent/mcp/legacy"
     rules = config["permission"]
     assert rules.get("crm_lookup") == "allow" and "crm_*" not in rules
     assert rules.get("wiki_*") == "allow"
-    assert [t["source"] for t in trace if t["type"] == "data_source_unmounted"] == ["legacy"]
+    assert not [t for t in trace if t["type"] == "data_source_unmounted"]
 
 
 def test_the_roles_skills_are_inline_and_the_only_ones(stage):

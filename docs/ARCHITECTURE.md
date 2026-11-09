@@ -51,6 +51,7 @@ One Python process (FastAPI + Uvicorn). It serves:
 | `/admin`, `/observe`, `/me` | The dashboard and the CLI |
 | `/auth`, `/oauth` | Sign-in, and OAuth for MCP clients and data sources |
 | `/agent` | Agents, from inside their sandbox |
+| `/agent/mcp/<source>` | Agents reaching a data source: the gateway that checks each tool's permission before forwarding the call |
 | `/mcp` | Claude and other MCP clients |
 | `/webhooks` | Signed events from outside (GitHub, your systems) |
 | `/healthz`, `/readyz` | Liveness, and readiness (database and schema) |
@@ -68,6 +69,25 @@ It also runs background threads:
   `mail_send` through the project's SMTP server, and reads its IMAP inbox for
   replies. A reply wakes the CEO only after passing the checks in
   `yaaf/server/mail/inbound.py`.
+
+### Data sources
+
+A data source is an MCP server the chairman connects. Its address and token
+stay in yaaf-server: no sandbox receives them. Agents mount the source through
+`/agent/mcp/<source>` with their run token, and every call is checked against
+the tool's recorded permission immediately before it is forwarded. A denied
+call is refused (and counted against the run's refusal cap) without anything
+being sent.
+
+Saving or checking a source records every tool it offers
+(`data_source_tools`) and classifies it from the server's hints and the tool's
+name (`yaaf/server/datasource_tools.py`). A tool that reads starts allowed. A
+tool that writes, or one the platform cannot classify, starts denied. Only the
+chairman moves a permission: on the Data sources page, or by approving the
+CEO's `tool_permission_request`. Silence never approves one, and neither does a
+model client acting for him. Nothing else gets a call through a denied tool: the
+gateway reads the switch and nothing else, so no approval, argument or
+instruction can.
 
 ### yaaf-runner
 

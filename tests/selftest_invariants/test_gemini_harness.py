@@ -272,7 +272,10 @@ def test_data_sources_mount_with_their_allowlist(stage):
     (call,) = [json.loads(p.read_text()) for p in (r.tmp / "fake-gemini").glob("call-*")]
     servers = call["settings"]["mcpServers"]
     assert servers["crm"]["includeTools"] == ["lookup"] and servers["crm"]["type"] == "http"
-    assert servers["legacy"]["type"] == "sse"
+    # Through the platform's gateway, with the run's token, whatever the spec said.
+    assert servers["crm"]["url"] == "http://api:8080/agent/mcp/crm"
+    assert servers["crm"]["headers"] == {"Authorization": "Bearer test-token"}
+    assert servers["legacy"]["type"] == "http"
     assert call["settings"]["mcp"]["allowed"] == ["yaaf", "crm", "legacy"]
     assert call["argv"][call["argv"].index("--allowed-mcp-server-names") + 1] == "yaaf,crm,legacy"
 

@@ -29,7 +29,7 @@ scoped so that a compromised agent is bounded by the project it belongs to.
 
 ## What contains an agent run
 
-Four things, and it is worth being exact because a fifth used to be on this list:
+Five things, and it is worth being exact because another used to be on this list:
 
 1. **A fresh container per run.** No privileges (`no-new-privileges`), CPU and
    memory caps, and it dies when the run does. In host mode it is a fresh
@@ -52,6 +52,16 @@ Four things, and it is worth being exact because a fifth used to be on this list
 4. **An audited API.** Agents act only through `/agent/*` on a per-run token.
    Every rule is an HTTP refusal or an automatic state change, enforced
    server-side where the token cannot reach around it.
+5. **Data sources are reached through the platform, not around it.** A data
+   source's address and token are never injected into a sandbox, whatever
+   their role grant says. Agents call it through `/agent/mcp/<source>`, which
+   refuses a denied tool before anything is sent. Tools that write start
+   denied, and only the chairman can allow one
+   (`tests/selftest_invariants/test_data_source_permissions.py`). **The limit:**
+   a source with no sign-in is protected only by its address being unknown to
+   the agent. An agent with a shell and a network that already knows or guesses
+   that address can call it directly. Put a token or OAuth on any source whose
+   tools can change something.
 
 ## What does **not** contain an agent run
 

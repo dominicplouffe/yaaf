@@ -236,8 +236,9 @@ export function DataSourceIntro({ children }: { children?: ReactNode }) {
   return (
     <p className="help">
       A data source is an MCP server: an address that offers tools. Saving one checks that it
-      answers, stores its address and any token encrypted, and hands them to the teams you
-      switch on. {children}
+      answers, records every tool it offers, and stores its address and any token encrypted.
+      Agents on the teams you switch on reach it only through yaaf, which lets a tool that
+      reads through and refuses one that writes until you allow it. {children}
     </p>
   );
 }
@@ -286,8 +287,8 @@ export function DataSourceFields({
             />
             {!!name && (
               <div className="help" style={{ marginTop: 4 }}>
-                granted roles will get <code>${envVarName(`mcp-${name}-url`)}</code> and
-                call its tools as <code>mcp__{name}__*</code>
+                granted roles call its tools as <code>mcp__{name}__*</code>, through yaaf —
+                its address and token never reach an agent
               </div>
             )}
           </div>
