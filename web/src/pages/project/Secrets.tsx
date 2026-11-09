@@ -115,10 +115,9 @@ function KindIcon({ kind, locked }: { kind: VarKind; locked?: boolean }) {
   );
 }
 
-/** A credential need an agent filed and nobody has answered yet. A data write
-    is a tool_request too, but what it needs is a yes, and it carries a grant. */
+/** A credential need an agent filed and nobody has answered yet. */
 export function pendingNeeds(approvals: ApprovalRow[]): ApprovalRow[] {
-  return approvals.filter((a) => a.kind === "tool_request" && !a.grant && a.status === "pending");
+  return approvals.filter((a) => a.kind === "tool_request" && a.status === "pending");
 }
 
 type Drawn =

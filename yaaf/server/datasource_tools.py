@@ -43,6 +43,7 @@ from datetime import UTC, timedelta
 
 import httpx
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
@@ -52,7 +53,6 @@ from yaaf.core.models import (
     DataSourceTool,
     Project,
     Role,
-    Secret,
     ToolPermission,
     utcnow,
 )
@@ -82,6 +82,10 @@ SCHEMA_BYTES = 64 * 1024
 #: tool should not wait for the chairman to press "Test" before it is seen.
 REFRESH_AFTER = timedelta(minutes=10)
 
+#: How many gateway requests may be in flight at once, per server process. Its
+#: own budget, separate from the threads every other route shares: twenty slow
+#: exports wait their turn here rather than leaving the API with no threads.
+GATEWAY_CONCURRENCY = 16
 #: Request header asking for the whole list, denied tools included, each marked.
 LISTING_HEADER = "x-yaaf-listing"
 
@@ -201,7 +205,12 @@ def record_catalog(session: Session, project_id: str, entry: dict,
     A tool whose description or hints changed is re-classified, and the change
     may only ever tighten a permission nobody chose: a default allow becomes a
     deny if the tool now writes, but a default deny is never loosened by the
-    server rewording itself. A permission a person set is never touched.
+    server rewording itself. A permission a person set — his tick, his yes, or
+    the list he saved with the source — is never touched.
+
+    Agents' requests discover too (a tool not seen yet, a stale list), so two
+    can record the same new tool at once. Each insert is its own savepoint: one
+    wins, the other reads the winner's row and carries on, as breakers.py does.
     """
     source = entry["name"]
     now = utcnow()
@@ -221,14 +230,21 @@ def record_catalog(session: Session, project_id: str, entry: dict,
         row = rows.get(name)
         if row is None:
             permission, decided_by = default_permission(kind, name, entry)
-            row = DataSourceTool(
+            fresh = DataSourceTool(
                 id=ids.new_id(ids.DATA_SOURCE_TOOL), project_id=project_id, source=source,
                 name=name, kind=kind, kind_reason=why[:300], permission=permission,
-                decided_by=decided_by, decided_at=now, first_seen_at=now)
-            session.add(row)
+                decided_by=decided_by, decided_at=now, first_seen_at=now, last_seen_at=now)
+            try:
+                with session.begin_nested():
+                    session.add(fresh)
+                row = fresh
+            except IntegrityError:
+                row = session.execute(select(DataSourceTool).where(
+                    DataSourceTool.project_id == project_id, DataSourceTool.source == source,
+                    DataSourceTool.name == name)).scalar_one()
             rows[name] = row
         else:
-            if (row.decided_by in ("default", "allowlist")
+            if (row.decided_by == "default"
                     and row.permission == ToolPermission.ALLOW and kind != "read"
                     and row.kind == "read"):
                 row.permission = ToolPermission.DENY
@@ -253,8 +269,11 @@ def catalog(session: Session, project_id: str, source: str | None = None) -> lis
     query = select(DataSourceTool).where(DataSourceTool.project_id == project_id)
     if source is not None:
         query = query.where(DataSourceTool.source == source)
+    # populate_existing: another session may have recorded or moved a tool
+    # since this one first loaded it, and the gateway decides on what is true now.
     return list(session.execute(
-        query.order_by(DataSourceTool.source, DataSourceTool.name)).scalars())
+        query.order_by(DataSourceTool.source, DataSourceTool.name),
+        execution_options={"populate_existing": True}).scalars())
 
 
 def tool_row(row: DataSourceTool) -> dict:
@@ -347,8 +366,14 @@ class Upstream:
     Stateless on purpose — a session per call is what data_fetch did, and it
     means a server restart between two calls costs nothing."""
 
-    def __init__(self, url: str, token: str | None):
+    def __init__(self, url: str, token: str | None, *, transport=None,
+                 read_timeout: float = READ_TIMEOUT_S,
+                 connect_timeout: float = CONNECT_TIMEOUT_S):
         self.url = url
+        self.transport = transport if transport is not None else TRANSPORT
+        self.read_timeout, self.connect_timeout = read_timeout, connect_timeout
+        #: What the server said it is, from its handshake ({"name", "version"}).
+        self.server_info: dict = {}
         self.headers = {"Content-Type": "application/json",
                         "Accept": "application/json, text/event-stream"}
         if token:
@@ -359,14 +384,15 @@ class Upstream:
 
     def __enter__(self) -> Upstream:
         self._client = httpx.Client(
-            transport=TRANSPORT, follow_redirects=True,
-            timeout=httpx.Timeout(READ_TIMEOUT_S, connect=CONNECT_TIMEOUT_S))
+            transport=self.transport, follow_redirects=True,
+            timeout=httpx.Timeout(self.read_timeout, connect=self.connect_timeout))
         try:
             opened = self._post({"jsonrpc": "2.0", "id": self._id(), "method": "initialize",
                                  "params": {"protocolVersion": UPSTREAM_PROTOCOL,
                                             "capabilities": {},
                                             "clientInfo": {"name": "yaaf", "version": "1.0"}}})
             self.session_id = opened.get("_session")
+            self.server_info = opened.get("serverInfo") or {}
             self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
         except BaseException:
             self._client.close()
@@ -390,11 +416,16 @@ class Upstream:
             with self._client.stream("POST", self.url, json=payload, headers=headers) as resp:
                 if resp.status_code in (401, 403):
                     raise UpstreamError(
-                        f"the server refused the credential (HTTP {resp.status_code})",
-                        state="unauthorized")
+                        f"the server refused the credential (HTTP {resp.status_code}) — "
+                        "check the bearer token", state="unauthorized")
+                if resp.status_code == 404:
+                    raise UpstreamError(
+                        "no MCP endpoint at that path (HTTP 404) — the address needs the "
+                        "server's own path, often /mcp", state="not_found")
                 if resp.status_code >= 400:
-                    raise UpstreamError(f"the server answered HTTP {resp.status_code}",
-                                        state="not_mcp")
+                    raise UpstreamError(
+                        "something is listening, but it did not accept an MCP handshake "
+                        f"(HTTP {resp.status_code})", state="not_mcp")
                 chunks, size = [], 0
                 for chunk in resp.iter_bytes():
                     size += len(chunk)
@@ -410,25 +441,34 @@ class Upstream:
                 try:
                     messages = _messages(resp, b"".join(chunks))
                 except ValueError as exc:
-                    raise UpstreamError("the server answered, but not with MCP",
+                    raise UpstreamError("that address answered, but not with MCP — it looks "
+                                        "like an ordinary web page or API",
                                         state="not_mcp") from exc
         except httpx.ProxyError as exc:
-            raise UpstreamError("a proxy between yaaf and the source refused the connection",
-                                state="blocked") from exc
+            # Before ConnectError: a proxy refusal is not "nothing is listening",
+            # and telling someone to check a port that is fine sends them the wrong way.
+            raise UpstreamError("a proxy between yaaf and that address refused the "
+                                "connection — the host probably needs allowing on this "
+                                "network", state="blocked") from exc
         except httpx.ConnectError as exc:
-            raise UpstreamError("nothing is listening at the source's address",
+            raise UpstreamError("nothing is listening at that address — check host and "
+                                "port, and that the server is running",
                                 state="unreachable") from exc
         except httpx.TimeoutException as exc:
-            raise UpstreamError("the source did not answer in time", state="timeout") from exc
+            raise UpstreamError(f"no answer within {int(self.read_timeout)} seconds — the "
+                                "server may be down, or a firewall is dropping the "
+                                "connection", state="timeout") from exc
         except httpx.HTTPError as exc:
-            raise UpstreamError(f"could not reach the source: {exc.__class__.__name__}") \
-                from exc
+            raise UpstreamError(f"could not connect: {exc.__class__.__name__}") from exc
         reply = next((m for m in messages if isinstance(m, dict) and m.get("id") == payload["id"]
                       and ("result" in m or "error" in m)), None)
         if reply is None:
             raise UpstreamError("the server sent no answer to the request", state="not_mcp")
         if "error" in reply:
             message = (reply.get("error") or {}).get("message", "unknown error")
+            if payload["method"] == "initialize":
+                raise UpstreamError(f"the server refused the handshake: {message}",
+                                    state="not_mcp")
             raise UpstreamError(f"the server refused {payload['method']}: {message}",
                                 state="rpc_error")
         result = reply.get("result") or {}
@@ -463,12 +503,9 @@ class Upstream:
 def _secret_value(session: Session, project_id: str, name: str | None) -> str | None:
     if not name:
         return None
-    from yaaf.core.crypto import decrypt
+    from yaaf.server.api.admin import _project_secret_value
 
-    row = session.execute(
-        select(Secret).where(Secret.project_id == project_id, Secret.name == name)
-    ).scalar_one_or_none()
-    return decrypt(row.ciphertext) if row is not None else None
+    return _project_secret_value(session, project_id, name)
 
 
 def credentials(session: Session, project: Project, entry: dict) -> tuple[str, str | None]:
@@ -477,14 +514,37 @@ def credentials(session: Session, project: Project, entry: dict) -> tuple[str, s
         raise UpstreamError(f"data source '{entry.get('name')}' has no stored address — "
                             "the chairman must re-save it", state="misconfigured")
     if entry.get("auth") == "oauth":
-        from yaaf.server.mcp_oauth import ensure_fresh_token
-
-        token = ensure_fresh_token(session, project, entry)
+        token = _oauth_token(session, project.id, entry)
         if token is None:
             raise UpstreamError(f"data source '{entry.get('name')}' is not signed in — the "
                                 "chairman must press Connect", state="needs_signin")
         return url, token
     return url, _secret_value(session, project.id, entry.get("bearer_secret"))
+
+
+def _oauth_token(session: Session, project_id: str, entry: dict) -> str | None:
+    """The access token to present now, renewed if it is about to expire.
+
+    Renewing rewrites the source's entry in `project.integrations`, which is one
+    JSON value the chairman edits too. Done on the caller's copy of the project
+    — loaded before a slow call, and on every agent call — it would write back a
+    stale list and undo whatever he saved meanwhile. So a token that is still
+    good is read and nothing is written; a renewal runs in a short transaction
+    of its own on the project row as it is now, locked where the database can
+    (Postgres), and merges into that."""
+    from yaaf.core.db import db_session
+    from yaaf.server import mcp_oauth
+
+    oauth = entry.get("oauth") or {}
+    if not mcp_oauth._expires_soon(oauth.get("expires_at"), mcp_oauth.REFRESH_MARGIN_S):
+        held = _secret_value(session, project_id, entry.get("bearer_secret"))
+        if held:
+            return held
+    with db_session() as own:
+        current = own.execute(select(Project).where(Project.id == project_id)
+                              .with_for_update()).scalar_one()
+        fresh = source_entry(current, entry["name"])
+        return mcp_oauth.ensure_fresh_token(own, current, fresh) if fresh else None
 
 
 def discover(session: Session, project: Project, entry: dict) -> list[DataSourceTool]:
@@ -617,7 +677,9 @@ def decide(session: Session, project: Project, agent: Agent, source: str,
     if tool not in rows:
         # A tool the platform has never seen has no permission yet. Ask the
         # server what it offers before deciding — a listing, never the call.
-        rows = {r.name: r for r in ensure_catalog(session, project, entry, refresh=True)}
+        # If it cannot be asked, that raises UpstreamError: "unreachable" is
+        # the honest answer, and not one the agent should pay a refusal for.
+        rows = {r.name: r for r in discover(session, project, entry)}
     row = rows.get(tool)
     if row is None or row.gone_at is not None:
         raise Refusal(deny_message(source, tool, None, agent.kind == AgentKind.CEO),

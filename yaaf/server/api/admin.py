@@ -2518,21 +2518,6 @@ def _oauth_secret_names(entry: dict) -> list[str]:
                               oauth.get("client_secret_secret")) if name]
 
 
-def _sse_or_json(response) -> dict | None:
-    """An MCP server answers a POST with either JSON or a one-event SSE
-    stream, depending on what it felt like negotiating. Both carry the same
-    JSON-RPC envelope."""
-    import json as jsonlib
-
-    body = response.text or ""
-    if "text/event-stream" in response.headers.get("content-type", ""):
-        for line in body.splitlines():
-            if line.startswith("data:"):
-                return jsonlib.loads(line[5:].strip())
-        return None
-    return jsonlib.loads(body) if body.strip() else None
-
-
 def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
     """Would an agent actually get tools here? The old answer to that was a GET
     and a shrug: any HTTP status counted as success, so a healthy MCP endpoint
@@ -2554,91 +2539,25 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
     green. The state picks the label and the one button that fixes it; the
     `detail` stays the sentence.
     """
-    import httpx
-
     from yaaf.server import datasource_tools
 
-    transport = transport if transport is not None else datasource_tools.TRANSPORT
-    headers = {"Content-Type": "application/json",
-               "Accept": "application/json, text/event-stream"}
-    if bearer:
-        headers["Authorization"] = f"Bearer {bearer}"
-
-    def rpc(client, payload: dict, session_id: str | None):
-        sent = {**headers, **({"Mcp-Session-Id": session_id} if session_id else {})}
-        return client.post(url, json=payload, headers=sent)
-
+    # The same client the gateway forwards agents' calls with — one way to
+    # speak MCP to a source, so a server the check passes is one the gateway
+    # can reach, page for page and frame for frame.
     try:
-        with httpx.Client(timeout=10, follow_redirects=True, transport=transport) as client:
-            opened = rpc(client, {
-                "jsonrpc": "2.0", "id": 1, "method": "initialize",
-                "params": {"protocolVersion": "2025-06-18", "capabilities": {},
-                           "clientInfo": {"name": "yaaf", "version": "1.0"}},
-            }, None)
-            if opened.status_code in (401, 403):
-                return {"ok": False, "code": "unauthorized", "state": "unauthorized",
-                        "detail": f"the server refused the credential (HTTP "
-                                  f"{opened.status_code}) — check the bearer token"}
-            if opened.status_code == 404:
-                return {"ok": False, "state": "not_found",
-                        "detail": "no MCP endpoint at that path (HTTP 404) — the "
-                                               "address needs the server's own path, often /mcp"}
-            if opened.status_code >= 400:
-                return {"ok": False, "state": "not_mcp",
-                        "detail": f"something is listening, but it did not accept an "
-                                  f"MCP handshake (HTTP {opened.status_code})"}
+        with datasource_tools.Upstream(url, bearer, transport=transport,
+                                       read_timeout=10, connect_timeout=10) as upstream:
+            info = upstream.server_info
             try:
-                envelope = _sse_or_json(opened) or {}
-            except ValueError:
-                return {"ok": False, "state": "not_mcp",
-                        "detail": "that address answered, but not with MCP — it "
-                                  "looks like an ordinary web page or API"}
-            if "error" in envelope:
-                message = (envelope["error"] or {}).get("message", "unknown error")
-                return {"ok": False, "state": "not_mcp",
-                        "detail": f"the server refused the handshake: {message}"}
-
-            info = (envelope.get("result") or {}).get("serverInfo") or {}
-            named = " ".join(str(p) for p in (info.get("name"), info.get("version")) if p)
-            session_id = opened.headers.get("mcp-session-id")
-            rpc(client, {"jsonrpc": "2.0", "method": "notifications/initialized"}, session_id)
-
-            tools = []
-            cursor = None
-            # Every page: a catalog that stops at the first fifty tools would
-            # leave the fifty-first with no permission, and so uncallable.
-            for page_no in range(datasource_tools.MAX_LIST_PAGES):
-                listed = rpc(client, {"jsonrpc": "2.0", "id": 2 + page_no,
-                                      "method": "tools/list",
-                                      "params": {"cursor": cursor} if cursor else {}},
-                             session_id)
-                if listed.status_code >= 400:
-                    break
-                try:
-                    page = (_sse_or_json(listed) or {}).get("result") or {}
-                except ValueError:
-                    break
-                tools += [t for t in (page.get("tools") or []) if isinstance(t, dict)]
-                cursor = page.get("nextCursor")
-                if not cursor:
-                    break
-    except httpx.ProxyError:
-        # Before ConnectError: a proxy refusal is not "nothing is listening",
-        # and telling someone to check a port that is fine sends them the wrong way.
-        return {"ok": False, "state": "blocked",
-                "detail": "a proxy between yaaf and that address refused the connection — "
-                          "the host probably needs allowing on this network"}
-    except httpx.ConnectError:
-        return {"ok": False, "state": "unreachable",
-                "detail": "nothing is listening at that address — check "
-                          "host and port, and that the server is running"}
-    except httpx.TimeoutException:
-        return {"ok": False, "state": "timeout",
-                "detail": "no answer within 10 seconds — the server may be down, or a "
-                          "firewall is dropping the connection"}
-    except httpx.HTTPError as exc:
-        return {"ok": False, "state": "unreachable",
-                "detail": f"could not connect: {exc.__class__.__name__}"}
+                tools = upstream.list_tools()
+            except datasource_tools.UpstreamError:
+                tools = []  # a handshake with nothing to list is "offers no tools"
+    except datasource_tools.UpstreamError as exc:
+        failed = {"ok": False, "state": exc.state, "detail": str(exc)}
+        if exc.state == "unauthorized":
+            failed["code"] = "unauthorized"
+        return failed
+    named = " ".join(str(p) for p in (info.get("name"), info.get("version")) if p)
 
     who = f"MCP server{f' {named}' if named else ''}"
     if not tools:
@@ -2718,6 +2637,14 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
             _delete_project_secret(session, project.id, stale)
         prior = {k: v for k, v in prior.items() if k not in ("bearer_secret", "oauth")}
 
+    # Read before the address is overwritten below: reading it after returns
+    # the new value, and every edit then looks like "same address".
+    prior_url = (_project_secret_value(session, project.id, prior["url_secret"])
+                 if prior and prior.get("url_secret") else None)
+    # A new address is a new server, whatever the name says. Its tools are
+    # decided afresh — an allow given to `delete_record` on staging is not an
+    # allow on production because the source kept its name.
+    readdressed = prior is not None and (prior_url or "").strip() != body.url.strip()
     url_secret = _upsert_project_secret(
         session, project.id, f"mcp-{body.name}-url", body.url.strip(), body.roles)
     entry = {
@@ -2741,11 +2668,7 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         token = None
         carried_oauth = dict((prior or {}).get("oauth") or {}) \
             if prior is not None and _source_auth(prior) == "oauth" else {}
-        # Only decrypted here, in the one branch that compares it — ordinary
-        # bearer/none saves must not pay a secret read they never look at.
-        prior_url = (_project_secret_value(session, project.id, prior["url_secret"])
-                     if prior and prior.get("url_secret") else None)
-        if carried_oauth and (prior_url or "").strip() == body.url.strip():
+        if carried_oauth and not readdressed:
             # Same source, same address: the connection survives the edit. The
             # access token is re-stored so its grants track this save's roles.
             oauth_state = carried_oauth
@@ -2801,12 +2724,15 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
 
     servers = [s for s in servers if s.get("name") != body.name]
     project.integrations = {**(project.integrations or {}), "mcp_servers": [*servers, entry]}
+    if readdressed:
+        session.execute(delete(DataSourceTool).where(DataSourceTool.project_id == project.id,
+                                                     DataSourceTool.source == body.name))
     _record_tools(session, project, entry, listed, check,
                   explicit=body.tools if body.tools is not None else None)
     _audit(session, project.id, "mcp_server.save", "project", project.id,
            {"name": body.name, "roles": body.roles, "host": entry["url_host"],
             "access": body.access, "auth": auth, "check_ok": check["ok"],
-            "tools": entry.get("tools")})
+            "tools": entry.get("tools"), "readdressed": readdressed})
     return {"name": body.name, "check": check, "needs_connect": needs_connect,
             "tools": _tool_counts(session, project.id, body.name),
             "note": "Effective on each granted role's next run. Tool permissions are "
@@ -3001,17 +2927,28 @@ def set_data_source_tool_permission(project_id: str, name: str, body: ToolPermis
 def _tell_the_ceo_a_tool_moved(session: Session, project: Project, moved: dict) -> None:
     """The CEO learns the new rule from the platform, not from a guess: a
     tool that was denied yesterday and is allowed today would otherwise be
-    discovered by a run that happened to try it."""
+    discovered by a run that happened to try it.
+
+    Not urgent, so it wakes nobody (dispatcher.URGENT_NOTICE_KINDS), and folded
+    into the CEO's unread notice of this kind when there is one: the chairman
+    going through a source's tools is many clicks and one piece of news."""
     ceo = session.execute(select(Agent).where(Agent.project_id == project.id,
                                               Agent.kind == AgentKind.CEO)).scalars().first()
     if ceo is None:
         return
+    line = (f"{moved['source']}.{moved['tool']}: "
+            f"{'ALLOWED' if moved['to'] == ToolPermission.ALLOW else 'DENIED'}")
+    unread = session.execute(select(Notice).where(
+        Notice.agent_id == ceo.id, Notice.kind == NoticeKind.TOOL_PERMISSION_CHANGED,
+        Notice.consumed_at.is_(None))).scalars().first()
+    if unread is not None:
+        unread.body = f"{unread.body}\n- {line}"
+        return
     session.add(Notice(
         id=ids.new_id(ids.NOTICE), project_id=project.id, agent_id=ceo.id,
-        kind=NoticeKind.APPROVAL_DECIDED,
-        body=(f"The chairman {'allowed' if moved['to'] == 'allow' else 'denied'} "
-              f"{moved['source']}.{moved['tool']}. In force now, for every agent given "
-              f"{moved['source']}.")))
+        kind=NoticeKind.TOOL_PERMISSION_CHANGED,
+        body=("The chairman changed what data source tools may be called, in force now for "
+              f"every agent given the source:\n- {line}")))
 
 
 class DataSourceProbeIn(BaseModel):

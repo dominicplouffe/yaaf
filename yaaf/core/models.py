@@ -547,6 +547,11 @@ class NoticeKind(enum.StrEnum):
     APPROVAL_EXPIRED = "approval_expired"
     THREAD_FROZEN = "thread_frozen"
     CONSTITUTION_AMENDED = "constitution_amended"
+    # The chairman moved a data source tool's permission himself. A rule
+    # change like an amendment, and like one it does not wake anybody: the CEO
+    # reads it on its next run. Several moves made in one sitting arrive as one
+    # notice, because reviewing a source's tools is a dozen clicks, not news.
+    TOOL_PERMISSION_CHANGED = "tool_permission_changed"
     GOAL_CHANGED = "goal_changed"
     TASK_CHECK_FAILED = "task_check_failed"
     TASK_BLOCKED = "task_blocked"

@@ -899,16 +899,9 @@ export interface ApprovalRow {
   decided_at: string | null;
   /** The chairman's note — the agent reads it, so history shows it. */
   decision_note: string | null;
-  /** What a data change would do, filed with it: every before → after, how
-      much it touches, an estimate, whether it can be undone, the case against.
-      Null on every kind but a data write, and on one filed without it. */
-  disclosure?: ApprovalDisclosure | null;
   /** A brief only: the direction the CEO wrote back for you to confirm.
       Confirming it replaces the goal and the standing orders. */
   brief?: BriefDraft | null;
-  /** Set on a data write: the one call approving it buys. A need for a
-      credential is also a tool_request, and carries none. */
-  grant?: { source: string; tool: string; arguments_sha256: string } | null;
   capacity?: CapacityAsk | null;
   /** A tool permission request: the one move approving it makes. */
   tool_permission?: ToolPermissionAsk | null;
@@ -933,23 +926,6 @@ export interface BriefDraft {
   standing_orders: string[];
   retired: string[];
   what_changed?: string;
-}
-
-type Cell = string | number | boolean | null;
-
-export interface ApprovalDisclosure {
-  category?: string | null;
-  change_set?: { entity: string; field: string; before: Cell; after: Cell }[];
-  scope_counts?: Record<string, number>;
-  evidence?: {
-    columns: string[]; rows: Cell[][];
-    period_start?: string | null; period_end?: string | null;
-    currency?: string | null; as_of?: string | null;
-  } | null;
-  estimate?: { label: string; value: string; basis?: string } | null;
-  reversible?: boolean | null;
-  counter_case?: string;
-  spend_affected_usd_month?: number | null;
 }
 
 // ── the Desk: cross-project attention, one request ─────────────────────────────

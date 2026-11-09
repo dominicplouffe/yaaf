@@ -7,13 +7,15 @@ never held: they live here, server-side, not in its prompt.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
+import weakref
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Request, Response
-from fastapi.concurrency import run_in_threadpool
+import anyio
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import and_, func, or_, select
@@ -2923,12 +2925,18 @@ def _source_tool(session: Session, ctx: RunContext, entry: dict, tool: str):
     there yet. A name the server does not offer is refused by name."""
     rows = {r.name: r for r in datasource_tools.catalog(session, ctx.project.id, entry["name"])}
     if tool not in rows:
+        # Committed first, so this request holds no write lock while discovery
+        # (and an OAuth renewal in a transaction of its own) talks to the source.
+        session.commit()
         try:
-            listed = datasource_tools.ensure_catalog(session, ctx.project, entry, refresh=True)
+            listed = datasource_tools.discover(session, ctx.project, entry)
         except datasource_tools.UpstreamError as exc:
-            raise Refusal(f"Could not list what {entry['name']} offers ({exc}), so "
-                          f"{tool!r} cannot be checked. Try again later.",
-                          status_code=503) from exc
+            # Not a Refusal: nothing was decided against the agent, and an
+            # outage must not spend its refusal budget.
+            raise HTTPException(
+                status_code=503,
+                detail=f"Could not list what {entry['name']} offers ({exc}), so {tool!r} "
+                       "cannot be checked. Try again later.") from exc
         rows = {r.name: r for r in listed}
     row = rows.get(tool)
     if row is None or row.gone_at is not None:
@@ -2985,12 +2993,18 @@ def data_source_gateway_stream(source: str) -> JSONResponse:
 @router.post("/mcp/{source}")
 async def data_source_gateway(
     source: str, request: Request, ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
 ) -> Response:
     """One data source, as an MCP server, for one run — with every call checked
     against the tool's permission before it is forwarded to the real server.
 
-    Async so the request body can be read; the work (database, upstream call)
-    runs on a worker thread so a slow vendor holds a thread, not the loop."""
+    Async so the request body can be read. A forwarded call can take minutes,
+    so nothing the request opened is held across it: the authentication's own
+    session is committed and released first (on Postgres an open transaction
+    is a pooled connection, idle-in-transaction, for as long as the vendor
+    takes), and the work runs on threads of the gateway's own limiter, so a
+    burst of slow pulls queues behind each other instead of taking the threads
+    every other route runs on."""
     try:
         message = await request.json()
     except ValueError:
@@ -3002,10 +3016,27 @@ async def data_source_gateway(
         return Response(status_code=202)  # a notification: nothing to answer
     listing_all = (request.headers.get(datasource_tools.LISTING_HEADER) or "") == "all"
     run_id, agent_id, project_id = ctx.run.id, ctx.agent.id, ctx.project.id
-    answer = await run_in_threadpool(
+    session.commit()
+    session.close()
+    answer = await anyio.to_thread.run_sync(
         _gateway_answer, run_id, agent_id, project_id, source, message,
-        listing_all, request.method, request.url.path)
+        listing_all, request.method, request.url.path, limiter=_gateway_limiter())
     return JSONResponse(answer)
+
+
+_GATEWAY_LIMITERS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def _gateway_limiter() -> anyio.CapacityLimiter:
+    """One per event loop, made inside the loop that will wait on it: a limiter
+    waits on that loop's primitives, and a server process may run more than one
+    (the test client does)."""
+    loop = asyncio.get_running_loop()
+    limiter = _GATEWAY_LIMITERS.get(loop)
+    if limiter is None:
+        limiter = _GATEWAY_LIMITERS[loop] = anyio.CapacityLimiter(
+            datasource_tools.GATEWAY_CONCURRENCY)
+    return limiter
 
 
 def _gateway_answer(run_id: str, agent_id: str, project_id: str, source: str, message: dict,
@@ -3065,12 +3096,16 @@ def _gateway_answer(run_id: str, agent_id: str, project_id: str, source: str, me
             return _rpc(id_, error={"code": -32601,
                                     "message": f"{rpc_method!r} is not offered here"})
     except Refusal as exc:
-        remaining = count_refusal(run_id, exc, method, path)
         if rpc_method == "tools/call":
-            # A refusal is the tool's answer, not a broken connection: a harness
+            # A call the model chose to make: it costs what every refusal costs.
+            # Answered as the tool's result, not a broken connection — a harness
             # that reads an HTTP error as "server gone" would drop every tool.
+            remaining = count_refusal(run_id, exc, method, path)
             return _rpc(id_, _tool_result(refusal_text(exc, remaining), exc.status_code))
-        return _rpc(id_, error={"code": -32001, "message": refusal_text(exc, remaining)})
+        # The harness's own traffic — connecting, listing — for a source this
+        # role no longer has (taken away mid-run). Nobody chose to retry it, so
+        # it is answered as an error and never counted against the run.
+        return _rpc(id_, error={"code": -32001, "message": exc.message})
     except datasource_tools.UpstreamError as exc:
         # The source's list could not be read to decide on a tool the platform
         # had not seen. Nothing was forwarded; it is not the agent's fault.

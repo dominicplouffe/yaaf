@@ -2813,22 +2813,10 @@ def approvals(project_id: str, session: Session = Depends(db)) -> list[dict]:
         .order_by(Approval.created_at.desc())
         .limit(100)
     ).scalars())
-    # The outcome an agent filed after spending a grant: the newest per approval.
-    outcomes: dict[str, dict] = {}
-    if rows:
-        for entry in session.execute(
-            select(AuditLog)
-            .where(AuditLog.project_id == project_id,
-                   AuditLog.action == "data_write.outcome",
-                   AuditLog.entity_id.in_([a.id for a in rows]))
-            .order_by(AuditLog.at.asc())
-        ).scalars():
-            outcomes[entry.entity_id] = entry.detail or {}
     from yaaf.server import chairman_notes
 
     held = chairman_notes.replies_for(session, "approval", [a.id for a in rows])
-    return [approval_row(a, outcome=outcomes.get(a.id), held_note=held.get(a.id))
-            for a in rows]
+    return [approval_row(a, held_note=held.get(a.id)) for a in rows]
 
 
 @router.get("/projects/{project_id}/heads_ups", dependencies=[authority.READ])

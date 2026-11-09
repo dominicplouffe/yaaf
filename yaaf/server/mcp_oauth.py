@@ -349,7 +349,7 @@ def ensure_fresh_token(session: Session, project: Project, entry: dict, *,
     """The access token this source should present right now — refreshed and
     re-stored when it is close to expiry, stale when renewal is impossible,
     None only when the source was never connected. Both callers (the health
-    check and the lease path) get the same behavior: a broken renewal marks
+    check and the data source gateway) get the same behavior: a broken renewal marks
     the source needs_reauth and keeps the old token mounted, so the failure
     shows up as a named auth error instead of a silently absent source."""
     from yaaf.server.api.admin import _project_secret_value

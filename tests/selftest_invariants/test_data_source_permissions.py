@@ -583,3 +583,115 @@ def test_the_mcp_client_library_mounts_the_gateway(client, vendor, _app):
     assert not allowed.is_error if hasattr(allowed, "is_error") else not allowed.isError
     assert (denied.is_error if hasattr(denied, "is_error") else denied.isError) is True
     assert vendor.called == ["get_stats"]
+
+
+# ── what the review of this change found, held ────────────────────────────────
+
+
+def test_two_discoveries_of_the_same_new_tool_both_succeed(client, vendor, monkeypatch):
+    """Agents' requests discover too, so two can record one new tool at once.
+    The loser of the insert reads the winner's row instead of failing. The
+    winner's insert is landed between the loser's read and its insert — the
+    one window where the race exists."""
+    project = make_project(client)
+    _attach(client, project["id"])
+    vendor.tools.append({"name": "list_audiences", "description": "List audiences."})
+    real = datasource_tools.default_permission
+    raced = []
+
+    def the_other_run_wins(kind, name, entry):
+        if name == "list_audiences" and not raced:
+            raced.append(name)
+            with db_session() as other:
+                datasource_tools.record_catalog(other, project["id"], entry, vendor.tools)
+        return real(kind, name, entry)
+
+    monkeypatch.setattr(datasource_tools, "default_permission", the_other_run_wins)
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        rows = datasource_tools.record_catalog(
+            session, project["id"], datasource_tools.source_entry(row, SOURCE), vendor.tools)
+        assert "list_audiences" in {r.name for r in rows}
+    assert raced == ["list_audiences"]
+    with db_session() as session:
+        assert session.query(DataSourceTool).filter_by(
+            project_id=project["id"], name="list_audiences").count() == 1
+
+
+def test_the_chairmans_saved_list_is_not_undone_by_the_server_rewording(client, vendor):
+    project = make_project(client)
+    _attach(client, project["id"], tools=["get_stats"])
+    for tool in vendor.tools:
+        if tool["name"] == "get_stats":
+            tool["annotations"] = {"readOnlyHint": False}
+    client.post(f"/admin/projects/{project['id']}/mcp_servers/{SOURCE}/check", json={},
+                headers=ADMIN)
+    row = _tools(project["id"])["get_stats"]
+    assert (row.permission, row.decided_by) == ("allow", "allowlist")
+
+
+def test_a_new_address_is_a_new_server_and_its_tools_are_decided_afresh(client, vendor):
+    project = make_project(client)
+    _attach(client, project["id"])
+    assert _set(client, project["id"], "create_campaigns", "allow").status_code == 200
+
+    _attach(client, project["id"], roles=["worker"])  # same address: kept
+    assert _permission(project["id"], "create_campaigns") == "allow"
+    _attach(client, project["id"], url="https://prod.example.com/mcp")  # moved: reset
+    row = _tools(project["id"])["create_campaigns"]
+    assert (row.permission, row.decided_by) == ("deny", "default")
+
+
+def test_the_chairmans_clicks_reach_the_ceo_as_one_notice_that_wakes_nobody(client, vendor):
+    from yaaf.core.models import Notice, NoticeKind
+    from yaaf.server.dispatcher import URGENT_NOTICE_KINDS
+
+    project = make_project(client)
+    _attach(client, project["id"])
+    for tool, permission in (("create_campaigns", "allow"), ("get_stats", "deny"),
+                             ("pricing_actions", "allow")):
+        assert _set(client, project["id"], tool, permission).status_code == 200
+    with db_session() as session:
+        notices = session.query(Notice).filter_by(agent_id=project["ceo_agent_id"]).all()
+        kinds = [n.kind for n in notices]
+        body = next(n.body for n in notices if n.kind == NoticeKind.TOOL_PERMISSION_CHANGED)
+    assert kinds.count(NoticeKind.TOOL_PERMISSION_CHANGED) == 1
+    assert NoticeKind.APPROVAL_DECIDED not in kinds
+    assert NoticeKind.TOOL_PERMISSION_CHANGED not in URGENT_NOTICE_KINDS
+    assert "create_campaigns: ALLOWED" in body and "get_stats: DENIED" in body
+
+
+def test_a_source_taken_away_mid_run_costs_the_harness_no_refusals(client, vendor):
+    """The harness reconnects and re-lists on its own; only a call the model
+    chose to make is a refusal."""
+    project = make_project(client)
+    _attach(client, project["id"])
+    run_id, headers = _worker(project)
+    client.post(f"/admin/projects/{project['id']}/mcp_servers/{SOURCE}/roles",
+                json={"roles": ["ceo"]}, headers=ADMIN)
+    for _ in range(6):
+        assert "error" in fake_mcp.rpc(client, SOURCE, headers, "initialize")
+        assert "error" in fake_mcp.rpc(client, SOURCE, headers, "tools/list")
+    with db_session() as session:
+        assert session.get(Run, run_id).refusal_count == 0
+    assert _call(client, headers, "get_stats")["_meta"]["yaaf/refused"] is True
+    with db_session() as session:
+        assert session.get(Run, run_id).refusal_count == 1
+
+
+def test_an_unreachable_source_is_an_outage_not_a_refusal(client, vendor, monkeypatch):
+    project = make_project(client)
+    _attach(client, project["id"])
+    run_id, headers = _worker(project)
+
+    def down(request):
+        raise httpx.ConnectError("down", request=request)
+
+    monkeypatch.setattr(datasource_tools, "TRANSPORT", httpx.MockTransport(down))
+    out = _call(client, headers, "a_tool_never_seen")
+    assert out["isError"] is True and "_meta" not in out
+    assert "could not be reached" in out["content"][0]["text"]
+    asked = _ask(client, project, tool="a_tool_never_seen")
+    assert asked.status_code == 503
+    with db_session() as session:
+        assert session.get(Run, run_id).refusal_count == 0

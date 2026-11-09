@@ -28,8 +28,7 @@ def approval_undo(kind: str) -> str | None:
     return _UNDO.get(kind)
 
 
-def approval_row(a: Approval, *, outcome: dict | None = None,
-                 held_note: dict | None = None) -> dict:
+def approval_row(a: Approval, *, held_note: dict | None = None) -> dict:
     return {
         "id": a.id, "kind": a.kind, "title": a.title, "body": a.body,
         "amount_usd": a.amount_usd, "status": a.status,
@@ -39,9 +38,8 @@ def approval_row(a: Approval, *, outcome: dict | None = None,
         "expires_at": a.expires_at.isoformat() if a.expires_at else None,
         "decided_at": a.decided_at.isoformat() if a.decided_at else None,
         "decision_note": a.decision_note,
-        # A TOOL_REQUEST's grant names the call the chairman is deciding on, and
-        # spent_at is when the granted call was actually made. A client that
-        # renders "you approved · applied at" needs both; neither is secret.
+        # A retired one-call grant's call, and when it was made: history only.
+        # Nothing files one now, and nothing it says lets a call through.
         "grant": a.grant,
         "spent_at": a.spent_at.isoformat() if a.spent_at else None,
         "disclosure": a.disclosure,
@@ -51,8 +49,6 @@ def approval_row(a: Approval, *, outcome: dict | None = None,
         # A tool_permission request's move: {"source", "tool", "from", "to"}.
         "tool_permission": a.tool_permission,
         "undo": approval_undo(a.kind),
-        # What the spent call was observed to do, filed by the agent afterwards.
-        "outcome": outcome,
         # His note as held for the CEO's answer, and the answer once given.
         "held_note": held_note,
     }
