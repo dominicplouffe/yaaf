@@ -107,14 +107,17 @@ STANDING_CHECK_TABLES = ("standing_checks",)
 MAILBOX_TABLES = ("mail_threads", "mail_messages", "mailbox_states")
 # 0069: whether a project's job runs through email.
 NEEDS_MAIL_COLUMNS = (("projects", "needs_mail"), ("mail_threads", "opened_by"))
+# 0070: a data source's tools with their permissions, and the CEO's request to move one.
+DATA_SOURCE_TOOL_TABLES = ("data_source_tools",)
+DATA_SOURCE_TOOL_COLUMNS = (("approvals", "tool_permission"),)
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
                   + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES + RUNTIMES_TABLES
                   + PEOPLE_TABLES + PROVIDERS_TABLES + STANDING_CHECK_TABLES
-                  + MAILBOX_TABLES)
+                  + MAILBOX_TABLES + DATA_SOURCE_TOOL_TABLES)
 REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
                    + STAGE_10_COLUMNS + RUNTIMES_COLUMNS + PEOPLE_COLUMNS + PROVIDERS_COLUMNS
-                   + SHORTCUTS_COLUMNS + NEEDS_MAIL_COLUMNS
+                   + SHORTCUTS_COLUMNS + NEEDS_MAIL_COLUMNS + DATA_SOURCE_TOOL_COLUMNS
                    + (("secrets", "llm_mode"),))
 
 

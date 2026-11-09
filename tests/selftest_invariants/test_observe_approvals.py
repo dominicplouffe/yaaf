@@ -9,6 +9,7 @@ is spent). These pin the listing so a client built on it cannot silently lose th
 
 from __future__ import annotations
 
+from tests import fake_mcp
 from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
 
 SOURCE = "ads"
@@ -36,7 +37,9 @@ def _row(client, project_id: str, approval_id: str) -> dict:
     return next(row for row in listing.json() if row["id"] == approval_id)
 
 
-def test_a_data_write_lists_when_asked_what_it_grants_and_when_spent(client):
+def test_a_data_write_lists_when_asked_what_it_grants_and_when_spent(client, monkeypatch):
+    # The source answers, so its write tool is recorded and denied.
+    fake_mcp.install(monkeypatch)
     project = make_project(client)
     _attach(client, project["id"])
     headers = _agent(client, project)

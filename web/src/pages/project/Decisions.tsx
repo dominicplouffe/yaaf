@@ -23,6 +23,8 @@ function whyYours(kind: string): string {
       return "An agent is asking for a capability it does not have. Only you can grant one.";
     case "capacity":
       return "The project is asking for more room to work — runs, concurrency, queue depth or money. It is the one kind where the CEO argues for itself, so it stays yours at every autonomy setting. Saying yes raises the dial at once. It is not blocking: the project keeps working at the cap it has, and if you say nothing the cap simply stays.";
+    case "tool_permission":
+      return "The CEO is asking to change what agents may call on a connected data source. Every call goes through the platform and is refused before it is sent if the tool is denied; the CEO cannot change that, and nothing said in conversation does. Saying yes moves the tool for every agent given the source, from the next call; saying nothing leaves it where it is.";
     case "brief":
       return "Only you decide what this project is for. Until you confirm, every agent keeps working from the brief in force; once you do, this one replaces it in every agent's instructions, on every run.";
     case "assist":
@@ -255,6 +257,15 @@ function DecisionCard({
             </button>
             <span className="help">Or answer below without a credential.</span>
           </div>
+        </div>
+      )}
+      {approval.tool_permission && (
+        <div className="help" style={{ marginTop: 12 }}>
+          <code>{approval.tool_permission.source}.{approval.tool_permission.tool}</code> is{" "}
+          <b>{approval.tool_permission.from === "allow" ? "allowed" : "denied"}</b> now
+          {approval.tool_permission.kind ? <> — the platform reads it as a {approval.tool_permission.kind === "unknown" ? "tool that may write" : approval.tool_permission.kind}</> : null}.
+          {" "}Yes {approval.tool_permission.to === "allow" ? "allows" : "denies"} it for every agent given{" "}
+          {approval.tool_permission.source}, until you change it in Settings → Data sources.
         </div>
       )}
       {approval.capacity && (

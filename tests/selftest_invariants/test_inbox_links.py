@@ -20,6 +20,7 @@ from datetime import timedelta
 
 import pytest
 
+from tests import fake_mcp
 from tests.conftest import ADMIN, bearer, live_token, make_project
 from yaaf.core import config, ids
 from yaaf.core.db import db_session
@@ -194,6 +195,8 @@ def test_an_open_review_links_to_the_meeting(client, origin, sent):
 
 
 def test_a_write_to_his_account_links_to_the_approval(client, origin, monkeypatch):
+    # The source answers, so its write tool is recorded and denied.
+    fake_mcp.install(monkeypatch)
     from tests.selftest_invariants.test_data_source_allowlist import (
         READS,
         SOURCE,

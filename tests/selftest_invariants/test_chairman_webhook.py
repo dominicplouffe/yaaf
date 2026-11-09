@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import json
 
+from tests import fake_mcp
 from tests.conftest import ADMIN, make_project
 from yaaf.core.db import db_session
 from yaaf.core.models import Project
@@ -218,6 +219,8 @@ class Recorded:
 
 
 def test_a_data_write_request_notifies_with_the_approval_row(client, monkeypatch):
+    # The source answers, so its write tool is recorded and denied.
+    fake_mcp.install(monkeypatch)
     from tests.conftest import agent_by_name, bearer, live_token
     from yaaf.server.api import agent as agent_api
 

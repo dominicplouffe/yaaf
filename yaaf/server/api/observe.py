@@ -288,10 +288,11 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             {"id": a.id, "title": a.title, "kind": a.kind, "amount_usd": a.amount_usd,
              "recommendation": a.recommendation,
              "expires_at": aware(a.expires_at).isoformat(), "capacity": a.capacity,
+             "tool_permission": a.tool_permission,
              "undo": approval_undo(a.kind),
              # What silence decides on THIS project; the row said "denied"
              # on every project, including those whose rules approve.
-             "if_silent": ("approved" if cons.approval_timeout_decision == "approve"
+             "if_silent": ("approved" if policy.silence_approves(cons, a.kind)
                            else "declined")}
             for a in session.execute(
                 select(Approval)

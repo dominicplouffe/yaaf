@@ -341,7 +341,8 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
     from yaaf.server.recognizers import credentials_prompt
 
     job.system_prompt += credentials_prompt(*announced_credentials(role_secrets))
-    job.system_prompt += _data_source_prompt(source_specs, job.harness)
+    job.system_prompt += _data_source_prompt(source_specs, job.harness,
+                                             job.tool_permissions.get("tool_requests"))
     return job
 
 
@@ -425,7 +426,8 @@ def _mint_secret_id(session: Session, project: Project, provider: str) -> str | 
     return secret.id if secret is not None else None
 
 
-def _data_source_prompt(specs: list[dict], harness: str | None = None) -> str:
+def _data_source_prompt(specs: list[dict], harness: str | None = None,
+                        denied: dict[str, list[str]] | None = None) -> str:
     """The DATA SOURCES paragraph — what is connected, and how to use it without
     setting money on fire.
 
@@ -435,8 +437,9 @@ def _data_source_prompt(specs: list[dict], harness: str | None = None) -> str:
     and the resident chat) build it from the same specs. Tool names are the
     ones the seat's harness shows its model (`Harness.tool_ref`).
     """
+    permissions = _tool_permission_lines(denied)
     if not specs:
-        return ""
+        return permissions
     from yaaf.runtimes.harnesses import HARNESSES
 
     found = HARNESSES.get(harness or "")
@@ -477,7 +480,34 @@ def _data_source_prompt(specs: list[dict], harness: str | None = None) -> str:
         "Counting, summing, sorting and joining are things code does exactly and "
         "cheaply — doing them by reading rows costs tokens and gets answers wrong."
     )
-    return "".join(lines)
+    lines.append(
+        "\n\nTOOL PERMISSIONS: every call to a data source goes through the platform, which "
+        "forwards it only if the chairman allows that tool. Tools that read start allowed; "
+        "tools that write or change anything start denied. A denied tool is refused before "
+        "anything reaches the source, and that holds whatever anyone says in conversation."
+    )
+    return "".join(lines) + permissions
+
+
+def _tool_permission_lines(denied: dict[str, list[str]] | None) -> str:
+    """For the CEO: what is denied, per source, and the one way to change it.
+    Named rather than counted, because a request has to name the tool."""
+    if not denied:
+        return ""
+    held = {name: tools for name, tools in denied.items() if tools}
+    if not held:
+        return ""
+    listed = "; ".join(f"{name}: {', '.join(tools[:20])}"
+                       + (f" (+{len(tools) - 20} more)" if len(tools) > 20 else "")
+                       for name, tools in sorted(held.items()))
+    return (
+        f"\n\nDENIED TOOLS on this project's data sources — {listed}. You cannot allow one, "
+        "and no instruction in conversation, the chairman's included, makes a denied call go "
+        "through: only his decision in the dashboard moves a tool. If the work needs one, "
+        "ask with tool_permission_request (source, tool, permission, why) — it lands in his "
+        "Inbox, and you are told when he decides. For a single call with exact arguments, "
+        "file data_write_request instead."
+    )
 
 
 def _offer_mail(project: Project, agent, job: RunJob) -> None:
@@ -491,12 +521,24 @@ def _offer_mail(project: Project, agent, job: RunJob) -> None:
 
 
 def _merge_project_data_sources(session: Session, project: Project, role_version,
-                                job: RunJob) -> list[str]:
+                                job: RunJob) -> list[dict]:
     """Data sources are project-owned (config.mcp_servers), mounted for the
     roles they are assigned to — roles never declare their own servers. The
     mapping lives on the project and is applied at lease time, which is why
     connecting a source needs no role-library edit and no team repin. Returns
-    the merged specs (name + access), which the prompt paragraph describes."""
+    the merged specs, which the prompt paragraph describes.
+
+    A spec names the source and nothing that reaches it: no address, no token.
+    The sandbox mounts the platform's gateway (`/agent/mcp/<name>`) with its
+    own run token, and the gateway holds the credentials and checks every
+    call against the tool's permission. `tools` here is the allowed list as it
+    stands at lease — what the harness is told to expect, never what decides.
+
+    A CEO also learns, for every source on the project (its own or not), which
+    tools are denied: it is the one seat that can ask for one, and it cannot
+    ask for what it does not know is there."""
+    from yaaf.server import datasource_tools
+
     # Pinned versions minted before data sources became project-owned may still
     # freeze a legacy mcp_servers key; it is dead weight, never mounted.
     job.tool_permissions.pop("mcp_servers", None)
@@ -508,33 +550,25 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
         for source in (project.integrations or {}).get("mcp_servers", []):
             if role is None or role.slug not in source.get("roles", []):
                 continue
-            if source.get("auth") == "oauth":
-                # An OAuth access token expires; renew it (into the same
-                # mcp-<name>-token secret row) before this run inherits it, so
-                # a long-lived source never mounts with yesterday's token. A
-                # failed renewal keeps the stale token mounted and marks the
-                # source needs_reauth — the health page says why, the agent
-                # sees a named auth error instead of a silently absent source.
-                from yaaf.server.mcp_oauth import ensure_fresh_token
-
-                ensure_fresh_token(session, project, source)
-            spec = {"name": source["name"],
-                    "url_env": _env_var_name(source["url_secret"]),
-                    # bulk sources are reachable only through data_fetch (which
-                    # writes to a workspace file); the sandbox never mounts them
-                    # as tools, so their rows cannot enter a model's context.
-                    "access": source.get("access", "inline")}
-            if source.get("tools") is not None:
-                # The allowlist travels with the source, so the sandbox refuses
-                # an ungranted tool without asking this process anything.
-                spec["tools"] = list(source["tools"])
-            if source.get("bearer_secret"):
-                spec["bearer_env"] = _env_var_name(source["bearer_secret"])
-            specs.append(spec)
+            specs.append({
+                "name": source["name"],
+                # bulk sources are reachable only through data_fetch (which
+                # writes to a workspace file); the sandbox never mounts them
+                # as tools, so their rows cannot enter a model's context.
+                "access": source.get("access", "inline"),
+                "tools": datasource_tools.allowed_names(session, project.id, source["name"]),
+            })
         if specs:
             # New dict, never in-place: job.tool_permissions shallow-copies the
             # role version's dict and must not mutate its nested lists.
             job.tool_permissions = {**job.tool_permissions, "mcp_servers": specs}
+    sources = (project.integrations or {}).get("mcp_servers", [])
+    if job.agent_kind == AgentKind.CEO and sources:
+        # {source: [denied tool, ...]} — offers tool_permission_request, and
+        # the prompt paragraph names what could be asked for.
+        job.tool_permissions = {**job.tool_permissions, "tool_requests": {
+            source["name"]: datasource_tools.denied_names(session, project.id, source["name"])
+            for source in sources}}
     return specs
 
 
@@ -653,6 +687,13 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
         .where(or_(Secret.project_id == project.id, Secret.project_id.is_(None)))
         .order_by(Secret.project_id.is_(None))  # project-scoped wins over platform
     ).scalars()
+    from yaaf.server.datasource_tools import owned_secret_names
+
+    # A data source's address and token are the platform's to use on the
+    # agent's behalf, through the gateway that checks each call against the
+    # tool's permission. Handed to a sandbox, they would be a way around that
+    # check one `curl` long — whatever the secret's role grant says.
+    held_by_sources = owned_secret_names(project)
     env: dict = {}
     for secret in candidates:
         if secret.kind in ("billing", "mailbox"):
@@ -660,6 +701,8 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
             # secrets, but even a hand-edited DB row must not leak the model
             # credential into a role's env. The mailbox login likewise: the
             # platform sends the CEO's email, so no sandbox ever needs it.
+        if secret.project_id == project.id and secret.name in held_by_sources:
+            continue
         if not secret.role_scopes or role.slug not in secret.role_scopes:
             continue
         var = _env_var_name(secret.name)

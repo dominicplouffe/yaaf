@@ -2184,7 +2184,7 @@ def nag_approvals(session: Session, project: Project, cons: ConstitutionDoc) -> 
         # "expires at 2026-10-16 19:00 UTC, the timeout decision is DENY" was
         # true and made him do a sum and a translation before he could tell
         # whether it was tonight, and what silence would mean.
-        silence = "yes" if cons.approval_timeout_decision == "approve" else "no"
+        silence = "yes" if policy.silence_approves(cons, approval.kind) else "no"
         chairman_notify(
             session, project,
             f"approval expiring: {approval.title}",
@@ -2203,7 +2203,6 @@ def nag_approvals(session: Session, project: Project, cons: ConstitutionDoc) -> 
 def expire_approvals(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     now = utcnow()
     expired = 0
-    approve_on_timeout = cons.approval_timeout_decision == "approve"
     for approval in session.execute(
         select(Approval).where(
             Approval.project_id == project.id,
@@ -2211,6 +2210,7 @@ def expire_approvals(session: Session, project: Project, cons: ConstitutionDoc) 
             Approval.expires_at <= now,
         )
     ).scalars():
+        approve_on_timeout = policy.silence_approves(cons, approval.kind)
         if approve_on_timeout:
             approval.status = ApprovalStatus.APPROVED
             approval.decision_note = (
@@ -2218,7 +2218,12 @@ def expire_approvals(session: Session, project: Project, cons: ConstitutionDoc) 
             )
         else:
             approval.status = ApprovalStatus.EXPIRED
-            approval.decision_note = "expired: no chairman decision in time; default is deny"
+            approval.decision_note = (
+                "expired: no chairman decision in time; a data source tool is let through "
+                "by his decision, never by silence"
+                if approval.kind in policy.NEVER_BY_SILENCE
+                and cons.approval_timeout_decision == "approve"
+                else "expired: no chairman decision in time; default is deny")
         approval.decided_at = now
         # The answer silence gave, in the words he would have used, and what
         # to do if it was the wrong one — "DENIED per this constitution" told

@@ -72,7 +72,7 @@ const MAILBOX = "Email";
 function ownerPlace(owner: string): { section: string; sub: string } {
   if (owner === "Slack") return { section: "integrations", sub: "Slack bridge" };
   if (owner === MAILBOX) return { section: "mail", sub: "Mailbox password · the platform signs in, no agent gets it" };
-  return { section: "sources", sub: `Belongs to ${owner}` };
+  return { section: "sources", sub: `Belongs to ${owner} · yaaf calls it for agents, no agent gets it` };
 }
 
 /** "your data sources, Slack and Email" — only the owners actually present. */
@@ -927,7 +927,7 @@ function AccessMap({ projectId, dash, options, rows, onSaved }: {
               </tr>
             ))}
             {sources.length > 0 && (
-              <tr className="msect"><th colSpan={options.length + 2}>Data sources — their address and token travel together</th></tr>
+              <tr className="msect"><th colSpan={options.length + 2}>Data sources — who may call their tools (the address and token stay with yaaf)</th></tr>
             )}
             {sources.map((s) => (
               <tr key={s.name}>

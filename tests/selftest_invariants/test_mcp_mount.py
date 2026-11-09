@@ -1,6 +1,11 @@
 """Invariant selftests: external MCP servers mount from the lease-time-merged
-permissions (project data sources assigned to the role) plus role-scoped
-secret env vars — and never from garbage."""
+permissions (project data sources assigned to the role) — and always through
+the platform's gateway, never from an address or token in the environment.
+
+They used to mount from role-scoped secret env vars: the source's URL and its
+bearer token, inside the sandbox, one `curl` away from any check on which tools
+could be called. A sandbox now gets the gateway's address and its own run
+token, and nothing that reaches the source around the gateway."""
 
 from __future__ import annotations
 
@@ -21,39 +26,35 @@ def sandbox_entry(monkeypatch):
     return importlib.reload(mod)
 
 
-def test_external_mcp_servers_mount_from_permissions_and_env(sandbox_entry, monkeypatch):
+def test_external_mcp_servers_mount_through_the_gateway(sandbox_entry, monkeypatch):
     sandbox_entry.PERMS = {
         "mcp_servers": [
+            # A spec minted before the gateway still names env vars; they are
+            # ignored, and holding them changes nothing.
             {"name": "ppc", "url_env": "MCP_SERVER_URL", "bearer_env": "MCP_SERVER_TOKEN"},
-            {"name": "events", "url_env": "EVENTS_URL", "transport": "sse"},
+            {"name": "events", "transport": "sse"},
         ]
     }
     monkeypatch.setenv("MCP_SERVER_URL", "https://data.example.com:3845/mcp")
     monkeypatch.setenv("MCP_SERVER_TOKEN", "tok-123")
-    monkeypatch.setenv("EVENTS_URL", "http://events.example.com/sse")
     servers = sandbox_entry._external_mcp_servers()
     assert servers["ppc"] == {
         "type": "http",
-        "url": "https://data.example.com:3845/mcp",
-        "headers": {"Authorization": "Bearer tok-123"},
+        "url": "http://api:8080/agent/mcp/ppc",
+        "headers": {"Authorization": "Bearer test-token"},
     }
-    assert servers["events"] == {"type": "sse", "url": "http://events.example.com/sse"}
+    # The gateway speaks streamable HTTP whatever the source does upstream.
+    assert servers["events"]["url"] == "http://api:8080/agent/mcp/events"
+    assert "tok-123" not in repr(servers) and "data.example.com" not in repr(servers)
     # Server-level tool grant appears alongside the yaaf platform tools.
     allowed = sandbox_entry._allowed_tools()
     assert "mcp__ppc" in allowed and "mcp__events" in allowed
 
 
-def test_ungranted_or_garbage_values_mount_nothing(sandbox_entry):
-    sandbox_entry.PERMS = {
-        "mcp_servers": [{"name": "ppc", "url_env": "MCP_SERVER"}],
-    }
-    # Role not granted the secret: env var absent → no server, silently —
-    # the same way an ungranted role gets no secret.
-    assert sandbox_entry._external_mcp_servers({}) == {}
-    # A password-shaped value is not an address; mounting it would produce
-    # exactly the confusing dead-ends this feature exists to prevent.
-    assert sandbox_entry._external_mcp_servers({"MCP_SERVER": "wrath1q2w!"}) == {}
-    assert "mcp__ppc" not in sandbox_entry._allowed_tools()
+def test_a_source_is_granted_tool_by_tool_when_the_lease_names_its_tools(sandbox_entry):
+    sandbox_entry.PERMS = {"mcp_servers": [{"name": "ppc", "tools": ["get_stats"]}]}
+    allowed = sandbox_entry._allowed_tools()
+    assert "mcp__ppc__get_stats" in allowed and "mcp__ppc" not in allowed
 
 
 def test_builtin_tools_mirror_permissions(sandbox_entry):

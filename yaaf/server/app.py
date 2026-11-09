@@ -54,6 +54,64 @@ def _recent_refusals(run_id: str) -> int:
     return len(hits)
 
 
+def count_refusal(run_id: str | None, exc: Refusal, method: str, path: str) -> int | None:
+    """Count one refusal against its run's cap, revoking the token at the cap,
+    and return how many it has left (None when no run made the call).
+
+    The exception handler is the usual caller. The other is a door that must
+    answer a refusal in its own protocol rather than as an HTTP error — the
+    data source gateway answers MCP clients, which read a JSON-RPC result, not a
+    403 — and a refusal answered that way must cost exactly what a 403 costs,
+    or a denied tool becomes a free thing to retry."""
+    remaining = None
+    if run_id is not None:
+        with db_session() as session:
+            run = session.get(Run, run_id)
+            if run is not None:
+                run.refusal_count += 1
+                run.last_refusal = exc.message[:500]
+                run.last_refusal_route = path[:200]
+                run.last_refusal_at = utcnow()
+                run.last_refusal_cleared_at = None
+                try:
+                    cap = effective(session, run.project_id).refusal_cap_per_run
+                except LookupError:
+                    cap = 5
+                # The cap is "refusals this run", and a chat session is one
+                # run row that lives for days. Counted over a lifetime it
+                # meant five mistakes spread across a week revoked the
+                # boardroom — the chairman's reply was then dropped into
+                # stderr and the room went silent. Loop protection wants a
+                # rate, not a total; the lifetime count stays on the row
+                # because the Runs page is right to show it.
+                if run.kind == RunKind.CHAT_SESSION:
+                    hits = _recent_refusals(run.id)
+                    remaining = max(0, cap - hits)
+                    if hits >= cap:
+                        run.token_revoked = True
+                else:
+                    remaining = max(0, cap - run.refusal_count)
+                    if run.refusal_count >= cap:
+                        run.token_revoked = True
+    # Every wall an agent hits, in the operator's log. Until this line, a
+    # refusal existed only inside the run that died of it — the platform
+    # could refuse the same agent the same way for a week and the only
+    # trace was a banner that needs three terminated runs to appear.
+    log.warning("refusal %s on %s %s (run=%s, %s left): %s",
+                exc.status_code, method, path, run_id,
+                "?" if remaining is None else remaining, exc.message)
+    return remaining
+
+
+def refusal_text(exc: Refusal, remaining: int | None) -> str:
+    if remaining == 0:
+        return exc.message + (
+            " [Your run token has been revoked: too many refused calls this run. "
+            "Rephrasing a refused request is not a strategy — the rule is the rule.]"
+        )
+    return exc.message
+
+
 class _Compressed:
     """gzip for everything worth compressing, which is nearly everything here.
 
@@ -153,52 +211,11 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Refusal)
     def refusal_handler(request: Request, exc: Refusal) -> JSONResponse:
-        remaining = None
-        run_id = getattr(request.state, "run_id", None)
-        if run_id is not None:
-            with db_session() as session:
-                run = session.get(Run, run_id)
-                if run is not None:
-                    run.refusal_count += 1
-                    run.last_refusal = exc.message[:500]
-                    run.last_refusal_route = request.url.path[:200]
-                    run.last_refusal_at = utcnow()
-                    run.last_refusal_cleared_at = None
-                    try:
-                        cap = effective(session, run.project_id).refusal_cap_per_run
-                    except LookupError:
-                        cap = 5
-                    # The cap is "refusals this run", and a chat session is one
-                    # run row that lives for days. Counted over a lifetime it
-                    # meant five mistakes spread across a week revoked the
-                    # boardroom — the chairman's reply was then dropped into
-                    # stderr and the room went silent. Loop protection wants a
-                    # rate, not a total; the lifetime count stays on the row
-                    # because the Runs page is right to show it.
-                    if run.kind == RunKind.CHAT_SESSION:
-                        hits = _recent_refusals(run.id)
-                        remaining = max(0, cap - hits)
-                        if hits >= cap:
-                            run.token_revoked = True
-                    else:
-                        remaining = max(0, cap - run.refusal_count)
-                        if run.refusal_count >= cap:
-                            run.token_revoked = True
-        # Every wall an agent hits, in the operator's log. Until this line, a
-        # refusal existed only inside the run that died of it — the platform
-        # could refuse the same agent the same way for a week and the only
-        # trace was a banner that needs three terminated runs to appear.
-        log.warning("refusal %s on %s %s (run=%s, %s left): %s",
-                    exc.status_code, request.method, request.url.path, run_id,
-                    "?" if remaining is None else remaining, exc.message)
-        body = {"error": exc.message}
+        remaining = count_refusal(getattr(request.state, "run_id", None), exc,
+                                  request.method, request.url.path)
+        body = {"error": refusal_text(exc, remaining)}
         if remaining is not None:
             body["refusals_remaining"] = remaining
-            if remaining == 0:
-                body["error"] += (
-                    " [Your run token has been revoked: too many refused calls this run. "
-                    "Rephrasing a refused request is not a strategy — the rule is the rule.]"
-                )
         return JSONResponse(status_code=exc.status_code, content=body)
 
     @app.get("/healthz")

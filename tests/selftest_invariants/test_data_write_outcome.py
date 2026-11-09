@@ -7,6 +7,9 @@ has happened, and the chairman's listing carries the newest one.
 
 from __future__ import annotations
 
+import pytest
+
+from tests import fake_mcp
 from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
 
 SOURCE = "ads"
@@ -15,6 +18,13 @@ OUTCOME = {"ok": True,
            "observed": {"label": "ad spend on the 14 terms", "value": "$0",
                         "basis": "7 days since", "as_of": "2026-09-11T06:00:00Z"},
            "note": "All 14 negatives are live."}
+
+
+@pytest.fixture(autouse=True)
+def vendor(monkeypatch):
+    """The source answers, so its tools are recorded and the write is denied."""
+    return fake_mcp.install(monkeypatch, fake_mcp.FakeVendor(
+        fake_mcp.READ_TOOLS + [{"name": "keyword_bulk_actions"}]))
 
 
 def _attach(client, project_id: str) -> None:

@@ -1038,6 +1038,7 @@ export interface Decidable {
   title?: string;
   amount_usd?: number | null;
   capacity?: { from: number; to: number } | null;
+  tool_permission?: { source: string; tool: string; to: "allow" | "deny" } | null;
   grant?: unknown;
 }
 
@@ -1060,6 +1061,11 @@ export function decideLabels(a: Decidable): {
       return a.grant ? withNote("Allow this call", "Decline")
         : { ...withNote("It's set up", "Decline"), yesMore: "It's set up, here's where…",
             yesHint: "Tell the CEO where to find it", yesPlaceholder: "e.g. it's in the aws-key credential" };
+    case "tool_permission":
+      return a.tool_permission
+        ? withNote(`${a.tool_permission.to === "allow" ? "Allow" : "Deny"} ${a.tool_permission.tool}`,
+          `Keep it ${a.tool_permission.to === "allow" ? "denied" : "allowed"}`)
+        : withNote("Approve", "Decline");
     case "brief":
       return withNote("Confirm", "Not yet");
     case "assist":

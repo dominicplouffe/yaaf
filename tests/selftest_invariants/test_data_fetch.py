@@ -45,10 +45,11 @@ def sandbox_entry(monkeypatch, tmp_path):
     (workspace / ".yaaf").mkdir(parents=True)
     monkeypatch.setattr(entry, "WORKSPACE", workspace)
     monkeypatch.setattr(entry, "STAGING", workspace / ".yaaf")
-    # The platform API is a different thing entirely; a data pull must never
-    # route through it (nor bill it).
+    # A data pull goes to the platform's data source gateway over MCP, and
+    # never through the agent REST surface (`_call`): that client has a
+    # 30-second timeout and JSON bodies, and a 60 MB export is neither.
     monkeypatch.setattr(entry, "_call",
-                        lambda *a, **k: pytest.fail("data_fetch must not call the platform API"))
+                        lambda *a, **k: pytest.fail("data_fetch must not call the REST API"))
     return entry
 
 
@@ -97,10 +98,13 @@ def test_the_result_lands_on_disk_and_only_a_pointer_comes_back(
     assert len(json.dumps(out)) < len(rows) / 10
     assert body["path"].startswith("data/ppc/export_spend-")
 
-    # The source was called with its own url, auth and arguments, verbatim.
+    # The call went to the platform's gateway with this run's token — never to
+    # the source with its own — and the arguments went verbatim. The gateway
+    # holds the source's address and token, and checks the tool before it
+    # forwards anything (test_data_source_permissions.py attacks that half).
     config, tool_name, arguments = calls[0]
-    assert config["url"] == "https://data.example.com:3845/mcp"
-    assert config["headers"] == {"Authorization": "Bearer tok-123"}
+    assert config["url"] == "http://api:8080/agent/mcp/ppc"
+    assert config["headers"] == {"Authorization": "Bearer test-token"}
     assert (tool_name, arguments) == ("export_spend", {"days": 90})
 
 

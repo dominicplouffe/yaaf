@@ -413,11 +413,12 @@ def test_ensure_fresh_token_refreshes_and_honors_rotation(world, client):
     assert "refresh token is not current" in entry["oauth"]["error"]
 
 
-def test_the_lease_injects_a_token_refreshed_for_the_run(world, client):
-    """End to end, the pattern of test_mcp_project: the sandbox spec is
-    byte-identical to a bearer source's — same env vars, same shape — but the
-    value behind MCP_PPC_TOKEN was renewed at lease time, not at connect time."""
+def test_the_token_is_renewed_where_it_is_used_and_never_leased(world, client):
+    """The lease used to renew the access token and inject it as MCP_PPC_TOKEN.
+    Now no token is injected at all — the gateway presents it on the agent's
+    behalf — so it is renewed where it is used: by the platform, at call time."""
     from yaaf.runner import daemon
+    from yaaf.server import datasource_tools
 
     project = _connected_project(world, client)
     stale = world.access_token
@@ -430,11 +431,15 @@ def test_the_lease_injects_a_token_refreshed_for_the_run(world, client):
                              trigger={"reasons": []}, attempt=1))
     job = daemon.lease_and_prepare(limit=1)[0]
     specs = job.tool_permissions["mcp_servers"]
-    assert {"name": "ppc", "url_env": "MCP_PPC_URL", "access": "inline",
-            "bearer_env": "MCP_PPC_TOKEN"} in specs
-    assert job.billing_env["MCP_PPC_TOKEN"] == world.access_token != stale
-    # The refresh secret exists for the control plane alone.
-    assert "MCP_PPC_OAUTH_REFRESH" not in job.billing_env
+    assert [s["name"] for s in specs] == ["ppc"]
+    assert not {"url_env", "bearer_env"} & set(specs[0])
+    assert not [k for k in job.billing_env if k.startswith("MCP_PPC")]
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        entry = next(s for s in row.integrations["mcp_servers"] if s["name"] == "ppc")
+        _, token = datasource_tools.credentials(session, row, entry)
+    assert token == world.access_token != stale
 
 
 def test_the_check_endpoint_renews_before_it_probes(world, client):

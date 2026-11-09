@@ -50,6 +50,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.core.tokens import hash_token, mint
+from yaaf.server import datasource_tools
 
 settings.cache_clear()
 
@@ -64,6 +65,10 @@ def _offline(request: httpx.Request) -> httpx.Response:
 # falls back to the shipped snapshot — exactly what an air-gapped install does —
 # rather than downloading three megabytes from GitHub on every list it reads.
 price_feed.TRANSPORT = httpx.MockTransport(_offline)
+# The same for data sources: every check, discovery and forwarded call the
+# platform makes to one goes through the gateway's seam, and a test that wants
+# a server stands one in there.
+datasource_tools.TRANSPORT = httpx.MockTransport(_offline)
 
 #: The suite's person, seeded into every test's empty database: the instance
 #: admin, and — through `make_project` — the chairman of every project a test

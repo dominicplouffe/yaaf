@@ -76,7 +76,7 @@ def mcp_oauth_callback(state: str = "", code: str = "", error: str = "",
                        error_description: str = "",
                        session: Session = Depends(db)) -> HTMLResponse:
     from yaaf.core.crypto import decrypt
-    from yaaf.server.api.admin import _audit, _oauth_checked
+    from yaaf.server.api.admin import _audit, _oauth_checked, _record_tools, _split_listing
 
     # This route is unauthenticated; a real callback always carries a state and
     # either a code or an error. Reject the malformed shape before the pending
@@ -160,9 +160,12 @@ def mcp_oauth_callback(state: str = "", code: str = "", error: str = "",
     if entry.get("url_secret"):
         url = _project_secret_value(session, project.id, entry["url_secret"])
     if url:
-        check = _oauth_checked(url, tokens["access_token"], entry)
+        check, listed = _split_listing(_oauth_checked(url, tokens["access_token"], entry))
         entry["last_check"] = {**check, "at": utcnow().isoformat()}
         mcp_oauth.persist_entry(project, entry)
+        # An OAuth source lists nothing until it is signed in; this is the
+        # first moment its tools can be recorded and given their permissions.
+        _record_tools(session, project, entry, listed, check)
 
     _audit(session, project.id, "mcp_server.oauth_connect", "project", project.id,
            {"name": name, "expires_at": oauth.get("expires_at"),

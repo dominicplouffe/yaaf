@@ -13,7 +13,9 @@ import hashlib
 import json
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request, Response
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
@@ -63,10 +65,11 @@ from yaaf.core.models import (
     Task,
     TaskStatus,
     Team,
+    ToolPermission,
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import acting, activity, policy, standing, typing_state
+from yaaf.server import acting, activity, datasource_tools, policy, standing, typing_state
 from yaaf.server.contextpack import _speaker
 from yaaf.server.deps import RunContext, db, run_auth
 from yaaf.server.notify import (
@@ -2627,6 +2630,13 @@ def approval_request(
         # nothing.
         raise Refusal("A brief is filed with brief_propose, which carries the goal and "
                       "standing orders his Confirm puts in force.", status_code=422)
+    if body.kind == ApprovalKind.TOOL_PERMISSION:
+        # Same reason: approving one is what moves the tool, so it must name
+        # the tool and the move. Prose asking for access would be approved and
+        # move nothing — and the agent would read the yes as permission.
+        raise Refusal("A tool permission is asked for with tool_permission_request, which "
+                      "names the source, the tool and the move his yes applies.",
+                      status_code=422)
     # An approval is a blocker on a human's desk with a default-deny clock on
     # it. Filing one for something the dial already put in the CEO's hands is
     # the one way an autonomous project can still stall on its chairman.
@@ -2640,7 +2650,7 @@ def approval_request(
     # first word he heard of a spend, legal or tool approval — five days into a
     # seven-day default-deny clock — so silence became a veto he never got to
     # cast. The ration still applies; the expiry nag still follows.
-    silence = "yes" if cons.approval_timeout_decision == "approve" else "no"
+    silence = "yes" if policy.silence_approves(cons, body.kind) else "no"
     chairman_notify(
         session, ctx.project, f"waiting on your decision: {body.title}",
         f"Recommended: {row.recommendation}\n\n{row.body[:4000]}\n\n"
@@ -2888,12 +2898,14 @@ def approval_list(ctx: RunContext = Depends(run_auth), session: Session = Depend
     ]
 
 
-# ── approved writes ─────────────────────────────────────────────────────────────
+# ── data sources: the gateway, and the ways past a denied tool ─────────────────
 #
-# A data source can name the tools it may be called with (`mcp_servers[].tools`).
-# Anything else is refused in the sandbox — and these two endpoints are the only
-# way past that refusal, because the rule that lets a call through has to live
-# where an agent cannot argue with it.
+# Every agent call to a data source arrives here (`/agent/mcp/<source>`) and is
+# checked against the tool's recorded permission before it is forwarded; the
+# sandbox holds neither the source's address nor its token. A denied tool has
+# two ways past, and the agent holds neither: the chairman allowing the tool
+# (his tick, or his yes to the CEO's tool_permission_request), or the chairman
+# approving ONE call with exact arguments (data_write_request, below).
 #
 # The shape is one call, one approval. The chairman decides on a rendered call
 # with its literal arguments; the platform stores their fingerprint; spending
@@ -2918,6 +2930,263 @@ def _project_data_source(project, name: str) -> dict | None:
         if source.get("name") == name:
             return source
     return None
+
+
+def _source_tool(session: Session, ctx: RunContext, entry: dict, tool: str):
+    """The recorded tool, discovering the source's list first when it is not
+    there yet. A name the server does not offer is refused by name."""
+    rows = {r.name: r for r in datasource_tools.catalog(session, ctx.project.id, entry["name"])}
+    if tool not in rows:
+        try:
+            listed = datasource_tools.ensure_catalog(session, ctx.project, entry, refresh=True)
+        except datasource_tools.UpstreamError as exc:
+            raise Refusal(f"Could not list what {entry['name']} offers ({exc}), so "
+                          f"{tool!r} cannot be checked. Try again later.",
+                          status_code=503) from exc
+        rows = {r.name: r for r in listed}
+    row = rows.get(tool)
+    if row is None or row.gone_at is not None:
+        offered = ", ".join(sorted(n for n, r in rows.items() if r.gone_at is None))
+        raise Refusal(f"{entry['name']} offers no tool named {tool!r}"
+                      f"{f'. It offers: {offered}' if offered else ''}.", status_code=404)
+    return row
+
+
+# The gateway speaks just enough MCP for a harness to mount a source through
+# it: initialize, tools/list, tools/call, ping. JSON responses only, no session
+# — every call is checked on its own, so there is nothing a session could hold.
+
+def _rpc(id_, result: dict | None = None, error: dict | None = None) -> dict:
+    out: dict = {"jsonrpc": "2.0", "id": id_}
+    if error is not None:
+        out["error"] = error
+    else:
+        out["result"] = result if result is not None else {}
+    return out
+
+
+def _tool_result(text: str, refused: int | None = None) -> dict:
+    out: dict = {"content": [{"type": "text", "text": text}], "isError": True}
+    if refused is not None:
+        # Marked, so a client can tell "the platform refused this" from "the
+        # source answered with an error" — data_fetch reports the first as the
+        # refusal it is, with its status, rather than as a vendor failure.
+        out["_meta"] = {"yaaf/refused": True, "yaaf/status": refused}
+    return out
+
+
+def _listed(row, marked: bool) -> dict:
+    tool = {"name": row.name, "description": row.description or "",
+            "inputSchema": row.input_schema or {"type": "object", "properties": {}}}
+    if row.title:
+        tool["title"] = row.title
+    if row.annotations:
+        tool["annotations"] = row.annotations
+    if marked:
+        tool["_meta"] = {"yaaf/permission": row.permission, "yaaf/kind": row.kind,
+                         "yaaf/why": row.kind_reason}
+    return tool
+
+
+@router.get("/mcp/{source}")
+@router.delete("/mcp/{source}")
+def data_source_gateway_stream(source: str) -> JSONResponse:
+    """No server-initiated stream and no session to end: every call is its own."""
+    return JSONResponse(status_code=405, content={"error": "POST JSON-RPC to this address"},
+                        headers={"Allow": "POST"})
+
+
+@router.post("/mcp/{source}")
+async def data_source_gateway(
+    source: str, request: Request, ctx: RunContext = Depends(run_auth),
+) -> Response:
+    """One data source, as an MCP server, for one run — with every call checked
+    against the tool's permission before it is forwarded to the real server.
+
+    Async so the request body can be read; the work (database, upstream call)
+    runs on a worker thread so a slow vendor holds a thread, not the loop."""
+    try:
+        message = await request.json()
+    except ValueError:
+        return JSONResponse(_rpc(None, error={"code": -32700, "message": "parse error"}))
+    if not isinstance(message, dict):
+        return JSONResponse(_rpc(None, error={"code": -32600,
+                                              "message": "send one JSON-RPC message"}))
+    if "id" not in message:
+        return Response(status_code=202)  # a notification: nothing to answer
+    approval_id = (request.headers.get(datasource_tools.APPROVAL_HEADER) or "").strip() or None
+    listing_all = (request.headers.get(datasource_tools.LISTING_HEADER) or "") == "all"
+    run_id, agent_id, project_id = ctx.run.id, ctx.agent.id, ctx.project.id
+    answer = await run_in_threadpool(
+        _gateway_answer, run_id, agent_id, project_id, source, message, approval_id,
+        listing_all, request.method, request.url.path)
+    return JSONResponse(answer)
+
+
+def _gateway_answer(run_id: str, agent_id: str, project_id: str, source: str, message: dict,
+                    approval_id: str | None, listing_all: bool, method: str,
+                    path: str) -> dict:
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Agent
+    from yaaf.server.app import count_refusal, refusal_text
+
+    id_ = message.get("id")
+    rpc_method = message.get("method")
+    params = message.get("params") if isinstance(message.get("params"), dict) else {}
+    try:
+        with db_session() as session:
+            acting.bind(acting.agent(agent_id))
+            project = session.get(Project, project_id)
+            agent = session.get(Agent, agent_id)
+            entry = datasource_tools.granted_entry(session, project, agent, source)
+            if rpc_method == "initialize":
+                return _rpc(id_, {
+                    "protocolVersion": params.get("protocolVersion")
+                    or datasource_tools.GATEWAY_PROTOCOL,
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": {"name": f"yaaf:{source}", "version": "1.0"},
+                    "instructions": (
+                        f"The {source} data source, reached through yaaf. Only the tools "
+                        "the chairman allows are listed and only those are forwarded; a "
+                        "denied tool is refused before anything reaches the source."),
+                })
+            if rpc_method == "ping":
+                return _rpc(id_, {})
+            if rpc_method == "tools/list":
+                fresh = datasource_tools.catalog_fresh(session, project.id, source)
+                try:
+                    rows = datasource_tools.ensure_catalog(session, project, entry,
+                                                           refresh=not fresh)
+                except datasource_tools.UpstreamError as exc:
+                    return _rpc(id_, error={"code": -32603,
+                                            "message": f"{source} could not be listed: {exc}"})
+                live = [r for r in rows if r.gone_at is None]
+                if not listing_all:
+                    live = [r for r in live if r.permission == ToolPermission.ALLOW]
+                return _rpc(id_, {"tools": [_listed(r, listing_all) for r in live]})
+            if rpc_method == "tools/call":
+                tool = str(params.get("name") or "")
+                if tool.startswith(f"mcp__{source}__"):
+                    tool = tool[len(f"mcp__{source}__"):]
+                arguments = params.get("arguments") if isinstance(params.get("arguments"),
+                                                                  dict) else {}
+                decision = datasource_tools.decide(session, project, agent, source, tool,
+                                                   arguments, approval_id)
+                try:
+                    result = datasource_tools.forward(session, project, agent, decision,
+                                                      arguments, run_id)
+                except datasource_tools.UpstreamError as exc:
+                    return _rpc(id_, _tool_result(
+                        f"{source}.{tool} was allowed, but the call did not complete: {exc}"))
+                return _rpc(id_, result)
+            return _rpc(id_, error={"code": -32601,
+                                    "message": f"{rpc_method!r} is not offered here"})
+    except Refusal as exc:
+        remaining = count_refusal(run_id, exc, method, path)
+        if rpc_method == "tools/call":
+            # A refusal is the tool's answer, not a broken connection: a harness
+            # that reads an HTTP error as "server gone" would drop every tool.
+            return _rpc(id_, _tool_result(refusal_text(exc, remaining), exc.status_code))
+        return _rpc(id_, error={"code": -32001, "message": refusal_text(exc, remaining)})
+    except datasource_tools.UpstreamError as exc:
+        # The source's list could not be read to decide on a tool the platform
+        # had not seen. Nothing was forwarded; it is not the agent's fault.
+        if rpc_method == "tools/call":
+            return _rpc(id_, _tool_result(f"{source} could not be reached, so nothing was "
+                                          f"sent: {exc}"))
+        return _rpc(id_, error={"code": -32603, "message": f"{source} could not be reached: {exc}"})
+
+
+class ToolPermissionRequest(BaseModel):
+    source: str = Field(min_length=1, max_length=64)
+    tool: str = Field(min_length=1, max_length=128)
+    permission: str = Field(pattern="^(allow|deny)$")
+    # What the tool would be used for, or why it should be shut — the case.
+    why: str = Field(min_length=20, max_length=4000)
+    # What happens if he says no, for the reason every approval carries it.
+    if_declined: str = Field(min_length=10, max_length=2000)
+
+
+@router.post("/data_sources/tool_permission")
+def tool_permission_request(
+    body: ToolPermissionRequest, ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    """Ask the chairman to allow (or deny) one data source tool.
+
+    It does not move the tool. Nothing an agent sends moves a tool: the
+    permission is written by his tick on the Data sources page and by his yes
+    to this request, and by nothing else. Until he answers, the tool is exactly
+    as it was; unanswered, the request expires to no.
+    """
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "Only the CEO asks the chairman to change what a data source may be called "
+            "with. If your work needs a denied tool, say so to the CEO.", status_code=403)
+    entry = _project_data_source(ctx.project, body.source)
+    if entry is None:
+        raise Refusal(
+            f"{body.source!r} is not one of this project's data sources.", status_code=404)
+    row = _source_tool(session, ctx, entry, body.tool)
+    if row.permission == body.permission:
+        raise Refusal(
+            f"{body.source}.{body.tool} is already {row.permission.upper()}. There is "
+            "nothing to ask for.", status_code=409)
+    waiting = session.execute(
+        select(Approval).where(Approval.project_id == ctx.project.id,
+                               Approval.kind == ApprovalKind.TOOL_PERMISSION,
+                               Approval.status == ApprovalStatus.PENDING)).scalars()
+    for other in waiting:
+        ask = other.tool_permission or {}
+        if ask.get("source") == body.source and ask.get("tool") == body.tool:
+            raise Refusal(
+                f"You already asked about {body.source}.{body.tool} ({other.id}); it is on "
+                "his desk. Asking again does not move it faster.", status_code=409)
+
+    cons = effective(session, ctx.project.id)
+    verb = "Allow" if body.permission == ToolPermission.ALLOW else "Deny"
+    what = (row.description or "").strip().splitlines()[0][:300] if row.description else ""
+    detail = [
+        f"{verb} {body.source}.{body.tool} for every agent given {body.source}.",
+        f"What it does: {what or '(the server gives no description)'}",
+        f"The platform reads it as a {row.kind} tool: {row.kind_reason}.",
+        f"Why: {body.why.strip()}",
+    ]
+    if body.permission == ToolPermission.ALLOW and row.kind != "read":
+        detail.append("Allowing it lets any agent given this source call it, with any "
+                      "arguments, until you deny it again — not one call. For one call with "
+                      "exact arguments, the CEO can file data_write_request instead.")
+    detail.append(f"What happens without it: {body.if_declined.strip()}")
+    approval = _file_approval(
+        session, ctx, ApprovalKind.TOOL_PERMISSION,
+        f"{verb} {body.source}.{body.tool}", "\n".join(detail))
+    # Structured, so approving it is what moves the tool.
+    approval.tool_permission = {"source": body.source, "tool": body.tool,
+                                "from": row.permission, "to": body.permission,
+                                "kind": row.kind}
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="tool_permission.request",
+        entity="approval", entity_id=approval.id,
+        detail={"source": body.source, "tool": body.tool, "from": row.permission,
+                "to": body.permission}))
+    session.flush()
+    chairman_notify(
+        session, ctx.project, f"Your CEO asks: {verb.lower()} {body.source}.{body.tool}?",
+        "\n".join(detail) + "\n\n" + inbox_line(approval.id),
+        kind="approval_requested", data={"approval": approval_row(approval)},
+        attention=Attention.ASK, waits_on=("approval", approval.id))
+    return {
+        "approval_id": approval.id,
+        "source": body.source, "tool": body.tool,
+        "permission": row.permission, "asked_for": body.permission,
+        "note": (
+            f"Filed. {body.source}.{body.tool} is still {row.permission.upper()} and stays "
+            "that way until the chairman decides — you cannot change it, and neither can "
+            "anything he says in conversation. His yes moves it for every agent given the "
+            f"source; unanswered within {cons.approval_timeout_days} days it expires to no. "
+            "Plan around it as it is."),
+    }
 
 
 class DisclosedChange(BaseModel):
@@ -2980,12 +3249,8 @@ def data_write_request(
     if source is None:
         raise Refusal(
             f"{body.source!r} is not one of this project's data sources.", status_code=404)
-    allowlist = source.get("tools")
-    if allowlist is None:
-        raise Refusal(
-            f"{body.source}.{body.tool} needs no approval — this source has no allowlist. "
-            "Call it with data_fetch.")
-    if body.tool in allowlist:
+    row = _source_tool(session, ctx, source, body.tool)
+    if row.permission == ToolPermission.ALLOW:
         raise Refusal(
             f"{body.source}.{body.tool} is already yours to call. Use data_fetch; an "
             "approval here would put a decision on the chairman's desk that changes "
@@ -3041,53 +3306,13 @@ def data_write_spend(
 ) -> dict:
     """Burn an approved grant for exactly the call it was approved for.
 
-    Every refusal here is written to be read by the agent that hit it, because
-    it arrives as its tool output — it should say what to do next, not merely
-    that something was denied.
+    The gateway spends a grant itself, in the request that makes the call
+    (`data_fetch` passes the id along); this route remains for a client that
+    spends first and calls after, and runs the same checks.
     """
-    approval = session.get(Approval, approval_id)
-    if approval is None or approval.project_id != ctx.project.id:
-        raise Refusal(f"{approval_id!r} is not an approval on this project.", status_code=404)
-    grant = approval.grant or {}
-    if not grant:
-        raise Refusal(
-            f"Approval {approval_id} carries no grant, so it authorises no call. File the "
-            "call with data_write_request, which records what is being approved.")
-    if approval.status != ApprovalStatus.APPROVED:
-        raise Refusal(
-            f"Approval {approval_id} is {approval.status}, not approved."
-            + (" It expired undecided, which the constitution reads as no — re-plan around"
-               " it or file it again with a reason that answers why it went unanswered."
-               if approval.status == ApprovalStatus.EXPIRED else ""),
-            status_code=409)
-    if approval.spent_at is not None:
-        raise Refusal(
-            f"Approval {approval_id} was already spent at "
-            f"{approval.spent_at.isoformat()}. One approval buys one call — file another.",
-            status_code=409)
-    if grant.get("source") != body.source or grant.get("tool") != body.tool:
-        raise Refusal(
-            f"Approval {approval_id} authorises {grant.get('source')}.{grant.get('tool')}, "
-            f"not {body.source}.{body.tool}.", status_code=409)
-    if grant.get("arguments_sha256") != _arguments_digest(body.arguments):
-        raise Refusal(
-            f"These are not the arguments approval {approval_id} was approved for. The "
-            "chairman decided on a specific call, so changing the arguments voids it — "
-            "file the call you actually intend with data_write_request.", status_code=409)
-
-    approval.spent_at = utcnow()
-    session.add(
-        AuditLog(
-            id=ids.new_id(ids.AUDIT),
-            project_id=approval.project_id,
-            actor=f"agent:{ctx.agent.id}",
-            action="data_write.spend",
-            entity="approval",
-            entity_id=approval.id,
-            detail={"source": body.source, "tool": body.tool,
-                    "arguments_sha256": grant.get("arguments_sha256")},
-        )
-    )
+    approval = datasource_tools.spend_grant(session, ctx.project.id, ctx.agent.id,
+                                            approval_id, body.source, body.tool,
+                                            body.arguments)
     return {"id": approval.id, "spent": True}
 
 
@@ -3745,10 +3970,15 @@ def credentials_list(
     billing credential is not listed at all."""
     if ctx.agent.kind != AgentKind.CEO:
         raise Refusal("The credential roster is the CEO's to read.", status_code=403)
-    rows = session.execute(
+    # A data source's address and token are not on the roster: no role holds
+    # them (the platform uses them on an agent's behalf, through the gateway),
+    # so listing them with role scopes would describe a grant that delivers
+    # nothing — and invite the CEO to widen one.
+    held_by_sources = datasource_tools.owned_secret_names(ctx.project)
+    rows = [s for s in session.execute(
         select(Secret).where(Secret.project_id == ctx.project.id,
                              Secret.kind == "service").order_by(Secret.name)
-    ).scalars()
+    ).scalars() if s.name not in held_by_sources]
     # `file` is not decoration: a CEO answering "do we have Google access?" or
     # delegating one to a team needs to know the variable will hold a path, or
     # it will tell a worker to read a credential out of a variable that holds a
@@ -3801,6 +4031,13 @@ def credential_scope(
     if row is None or row.kind != "service":
         raise Refusal(f"No service credential named {name!r} on this project.",
                       status_code=404)
+    if name in datasource_tools.owned_secret_names(ctx.project):
+        raise Refusal(
+            f"{name!r} belongs to a data source. Its address and token never reach a "
+            "sandbox — every call goes through the platform, which checks the tool's "
+            "permission — so there is no grant to re-scope. Who gets a source is the "
+            "chairman's tick on Data sources; what it may be called with is his too: "
+            "ask with tool_permission_request.", status_code=403)
     scopes = list(row.role_scopes or [])
     was = list(scopes)
     for slug in body.add_roles:

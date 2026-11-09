@@ -204,13 +204,16 @@ def project_configure(principal: Principal, session: Session, arguments: dict) -
     scope="configure",
     description=(
         "External MCP servers this project's agents may reach. verb: list, add (name, "
-        "url, roles), check (speak MCP to it and report its tools), oauth_start (get the "
-        "sign-in URL for a hosted server), remove. Mark anything that serves rows as "
-        "access `bulk` — for a bulk source the expensive path stops existing."
+        "url, roles), check (speak MCP to it and report its tools), tools (every tool a "
+        "source offers and whether agents may call it — read only; a person changes a "
+        "permission in the dashboard), oauth_start (get the sign-in URL for a hosted "
+        "server), remove. Mark anything that serves rows as access `bulk` — for a bulk "
+        "source the expensive path stops existing."
     ),
     input_schema=_schema([],
                          verb={"type": "string",
-                               "enum": ["list", "add", "check", "oauth_start", "remove"]},
+                               "enum": ["list", "add", "check", "tools", "oauth_start",
+                                        "remove"]},
                          name={"type": "string", "description": "The source's short name"},
                          url={"type": "string"},
                          roles={"type": "array", "items": {"type": "string"}},
@@ -230,6 +233,22 @@ def data_source(principal: Principal, session: Session, arguments: dict) -> dict
             # Names, URLs, roles and health — never the token secret's value,
             # which is not in this structure to begin with.
             "sources": [{k: v for k, v in s.items() if k != "bearer"} for s in sources],
+        }, arguments.get("detail"))
+
+    if verb == "tools":
+        rows = _call(principal, admin.list_data_source_tools, project_id=project.id,
+                     source=arguments.get("name"), session=session)
+        return envelope.fit({
+            "project": project.slug,
+            # Descriptions come from the source's server, not from the chairman:
+            # what a tool says it does is input, like anything else read.
+            "tools": [{**{k: v for k, v in r.items() if k not in ("input_schema",
+                                                                  "description")},
+                       "description": envelope.untrusted(r["description"] or "",
+                                                         author=f"server:{r['source']}")}
+                      for r in rows],
+            "note": "Allowed tools are forwarded; denied ones are refused before anything "
+                    "is sent. A person changes a permission in Settings → Data sources.",
         }, arguments.get("detail"))
 
     name = required(arguments, "name")

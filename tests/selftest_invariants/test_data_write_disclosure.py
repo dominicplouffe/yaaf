@@ -11,6 +11,9 @@ digest binds the arguments, not the argument for them.
 
 from __future__ import annotations
 
+import pytest
+
+from tests import fake_mcp
 from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
 from yaaf.core.db import db_session
 from yaaf.core.models import Approval
@@ -37,6 +40,13 @@ DISCLOSURE = {
     "counter_case": "Two of the terms had a sale 47 days ago, outside this window.",
     "spend_affected_usd_month": 1240.0,
 }
+
+
+@pytest.fixture(autouse=True)
+def vendor(monkeypatch):
+    """The source answers, so its tools are recorded and the write is denied."""
+    return fake_mcp.install(monkeypatch, fake_mcp.FakeVendor(
+        fake_mcp.READ_TOOLS + [{"name": "keyword_bulk_actions"}]))
 
 
 def _attach(client, project_id: str) -> None:

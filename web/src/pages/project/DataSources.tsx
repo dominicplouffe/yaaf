@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { Dashboard, del, get, McpServerEntry, OrgView, post, SecretRow, SourceState } from "../../api";
+import {
+  Dashboard, DataSourceTool, del, get, McpServerEntry, OrgView, post, SecretRow, SourceState,
+  ToolPermission,
+} from "../../api";
 import {
   AccessPicker,
   AuthPicker,
   BLANK_DATA_SOURCE,
   DataSourceDraft,
   dataSourceBody,
-  envVarName,
   isFullUrl,
   OAuthClientFields,
   savedName,
@@ -111,7 +113,8 @@ export function nameFromUrl(url: string): string {
   }
 }
 
-type Drawn = { kind: "add" } | { kind: "edit"; name: string; confirmDelete?: boolean };
+type Drawn = { kind: "add" } | { kind: "edit"; name: string; confirmDelete?: boolean }
+  | { kind: "tools"; name: string };
 
 export default function DataSources({
   projectId, dash, org, secrets, notice, reload,
@@ -131,6 +134,16 @@ export default function DataSources({
   // The source whose sign-in tab is open right now. While set, the dash is
   // re-polled so the page notices the callback landing without a refresh.
   const [connecting, setConnecting] = useState<string | null>(null);
+  // Every tool every source offers, with its permission. Read whole: a project
+  // has a handful of sources and each a few dozen tools at most.
+  const [tools, setTools] = useState<DataSourceTool[]>([]);
+  const loadTools = () => {
+    get<DataSourceTool[]>(`/admin/projects/${projectId}/data_source_tools`)
+      .then(setTools)
+      .catch(() => setTools([]));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(loadTools, [projectId, dash]);
 
   useEffect(() => {
     if (!connecting) return;
@@ -157,6 +170,7 @@ export default function DataSources({
       const check = await post<{ ok: boolean; detail: string }>(
         `/admin/projects/${projectId}/mcp_servers/${name}/check`, {});
       notice(`'${name}': ${check.detail}`);
+      loadTools();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -190,7 +204,8 @@ export default function DataSources({
           <h2 style={{ marginTop: 0 }}>Data sources</h2>
           <p className="subtitle" style={{ marginBottom: 0 }}>
             MCP servers your agents call as tools. Each keeps its own address and sign-in, and is
-            checked when you save it.
+            checked when you save it. Every call goes through yaaf: tools that read are allowed,
+            tools that write are refused until you allow them.
           </p>
         </div>
         <div className="actions" style={{ marginTop: 0 }}>
@@ -247,6 +262,8 @@ export default function DataSources({
                   <span className="gchip">
                     {(source.access ?? "inline") === "bulk" ? "Results to a file" : "Results into the conversation"}
                   </span>
+                  <ToolCountChip tools={tools.filter((t) => t.source === source.name && !t.gone)}
+                    onOpen={() => setDrawn({ kind: "tools", name: source.name })} />
                 </span>
               </div>
               <div className="swho">
@@ -256,6 +273,7 @@ export default function DataSources({
               <div className="sacts">
                 {fixButton}
                 <RowMenu label={`More for ${source.name}`} items={[
+                  { label: "Tools & permissions", icon: "shield", onClick: () => setDrawn({ kind: "tools", name: source.name }) },
                   { label: "Test connection", icon: "refresh", onClick: () => test(source.name) },
                   { label: "Edit", icon: "edit", onClick: () => setDrawn({ kind: "edit", name: source.name }) },
                   { label: "Remove…", icon: "trash", danger: true,
@@ -271,7 +289,18 @@ export default function DataSources({
         })}
       </div>
 
-      {drawn && (
+      {drawn?.kind === "tools" && (
+        <ToolsDrawer
+          projectId={projectId}
+          source={drawn.name}
+          tools={tools.filter((t) => t.source === drawn.name)}
+          onChanged={loadTools}
+          onTest={() => test(drawn.name)}
+          testing={busy === drawn.name}
+          onClose={() => setDrawn(null)}
+        />
+      )}
+      {drawn && drawn.kind !== "tools" && (
         <SourceDrawer
           key={drawn.kind === "edit" ? drawn.name : "add"}
           projectId={projectId}
@@ -492,7 +521,7 @@ function SourceDrawer({ projectId, org, secrets, source, taken, startDeleting, o
                  onChange={(e) => { setNameTouched(true); set({ name: slugifyName(e.target.value) }); }} />
           <span className={clash ? "error" : "help"} style={clash ? { margin: 0 } : undefined}>
             {clash ? `There is already a source called '${name}'. Pick another name, or edit that one.`
-              : name ? <>Agents call its tools as <code>mcp__{name}__*</code> and get <code>${envVarName(`mcp-${name}-url`)}</code>.</>
+              : name ? <>Agents call its tools as <code>mcp__{name}__*</code>, through yaaf: its address and token never reach them.</>
               : "Lowercase letters, digits and dashes. Filled in from the address."}
           </span>
         </div>
@@ -528,5 +557,193 @@ function SourceDrawer({ projectId, org, secrets, source, taken, startDeleting, o
         <span className="help">Switch on at least one team. A source nobody receives is an address stored for no one.</span>
       )}
     </Drawer>
+  );
+}
+
+
+/** "12 tools · 3 denied", clickable — the count a source row needs, and the
+    way into the list behind it. */
+function ToolCountChip({ tools, onOpen }: { tools: DataSourceTool[]; onOpen: () => void }) {
+  if (tools.length === 0) return null;
+  const denied = tools.filter((t) => t.permission === "deny").length;
+  return (
+    <button type="button" className="gchip tool-count" onClick={onOpen}
+            title="See every tool and whether agents may call it">
+      <Icon name="shield" size={12} />
+      {tools.length} tool{tools.length === 1 ? "" : "s"}
+      {denied > 0 && <> · {denied} denied</>}
+    </button>
+  );
+}
+
+const KIND_LABEL: Record<DataSourceTool["kind"], { label: string; tone: string }> = {
+  read: { label: "Reads", tone: "ok" },
+  write: { label: "Writes", tone: "critical" },
+  unknown: { label: "Unclear", tone: "warn" },
+};
+
+const DECIDED: Record<DataSourceTool["decided_by"], string> = {
+  default: "set by what it does",
+  allowlist: "set by the list saved with the source",
+  chairman: "set by you",
+  approval: "set by you, on the CEO's request",
+};
+
+type ToolFilter = "all" | "allow" | "deny" | "write";
+
+/** Every tool a source offers, what it does, and the switch that decides
+    whether an agent's call to it is forwarded. The switch is yours alone: the
+    CEO can ask (it lands in your Inbox), and nothing it or anyone says in
+    conversation moves it. In force on the next call any agent makes. */
+function ToolsDrawer({ projectId, source, tools, onChanged, onTest, testing, onClose }: {
+  projectId: string;
+  source: string;
+  tools: DataSourceTool[];
+  onChanged: () => void;
+  onTest: () => void;
+  testing: boolean;
+  onClose: () => void;
+}) {
+  const [filter, setFilter] = useState<ToolFilter>("all");
+  const [query, setQuery] = useState("");
+  const [saving, setSaving] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const live = tools.filter((t) => !t.gone);
+  const gone = tools.filter((t) => t.gone);
+  const count = (f: ToolFilter) => live.filter((t) => matches(t, f)).length;
+  const q = query.trim().toLowerCase();
+  const shown = live.filter((t) => matches(t, filter)
+    && (!q || t.name.toLowerCase().includes(q) || (t.description ?? "").toLowerCase().includes(q)));
+
+  async function setPermission(tool: DataSourceTool, permission: ToolPermission) {
+    if (tool.permission === permission) return;
+    setSaving(tool.name);
+    setError(null);
+    try {
+      await post(`/admin/projects/${projectId}/mcp_servers/${source}/permissions`,
+        { tool: tool.name, permission });
+      onChanged();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  return (
+    <Drawer wide title={<><code>{source}</code> tools</>}
+      sub={live.length
+        ? `${live.length} tool${live.length === 1 ? "" : "s"} · ${count("allow")} allowed · ${count("deny")} denied`
+        : "No tools recorded yet"}
+      onClose={onClose}
+      footer={<>
+        <span className="help" style={{ flex: 1 }}>
+          Changes apply on the next call any agent makes. The CEO can ask you to change one; only you can.
+        </span>
+        <button disabled={testing} onClick={onTest}>
+          <Icon name="refresh" size={13} /> {testing ? "Checking…" : "Check for new tools"}
+        </button>
+        <button className="primary" onClick={onClose}>Done</button>
+      </>}
+    >
+      {error && <div className="error" style={{ margin: 0 }}>{error}</div>}
+      {live.length === 0 ? (
+        <div className="vempty">
+          <b>No tools recorded yet.</b> They are recorded when the source answers a check — test the
+          connection once it is reachable{" "}(and signed in, for OAuth). Until then every call to it is refused.
+        </div>
+      ) : (
+        <>
+          <div className="tool-bar">
+            <div className="pills" role="tablist">
+              {(["all", "allow", "deny", "write"] as ToolFilter[]).map((f) => (
+                <button key={f} type="button" role="tab" aria-selected={filter === f}
+                        className={filter === f ? "active" : ""} onClick={() => setFilter(f)}>
+                  {{ all: "All", allow: "Allowed", deny: "Denied", write: "Writes" }[f]}
+                  <span className="pill-n">{count(f)}</span>
+                </button>
+              ))}
+            </div>
+            <input className="tool-search" value={query} placeholder="Find a tool…"
+                   onChange={(e) => setQuery(e.target.value)} />
+          </div>
+          <div className="tool-list">
+            {shown.map((t) => (
+              <ToolRow key={t.name} tool={t} saving={saving === t.name}
+                       onSet={(permission) => setPermission(t, permission)} />
+            ))}
+            {shown.length === 0 && <div className="vempty">Nothing matches.</div>}
+          </div>
+        </>
+      )}
+      {gone.length > 0 && (
+        <details className="tool-gone">
+          <summary className="help">
+            {gone.length} tool{gone.length === 1 ? " is" : "s are"} no longer offered by the server
+          </summary>
+          <p className="help">
+            Kept with their permission, which applies again if the server offers them again:{" "}
+            {gone.map((t) => <code key={t.name} style={{ marginRight: 6 }}>{t.name} ({t.permission})</code>)}
+          </p>
+        </details>
+      )}
+    </Drawer>
+  );
+}
+
+function matches(t: DataSourceTool, f: ToolFilter): boolean {
+  if (f === "all") return true;
+  if (f === "write") return t.kind !== "read";
+  return t.permission === f;
+}
+
+function ToolRow({ tool, saving, onSet }: {
+  tool: DataSourceTool;
+  saving: boolean;
+  onSet: (permission: ToolPermission) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const kind = KIND_LABEL[tool.kind];
+  const params = Object.entries(tool.input_schema?.properties ?? {});
+  const required = new Set(tool.input_schema?.required ?? []);
+  return (
+    <div className={`trow ${tool.permission}`}>
+      <div className="tmain">
+        <div className="thead">
+          <button type="button" className="tname" aria-expanded={open} onClick={() => setOpen(!open)}>
+            <span className={`caret${open ? " open" : ""}`}>▸</span>
+            <code>{tool.name}</code>
+          </button>
+          <span className={`chip ${kind.tone}`} title={tool.kind_reason}>{kind.label}</span>
+        </div>
+        {tool.description && <p className={`tdesc${open ? " open" : ""}`}>{tool.description}</p>}
+        {open && (
+          <div className="tdetail">
+            <div><span className="dim">Why “{kind.label.toLowerCase()}”:</span> {tool.kind_reason}.</div>
+            <div><span className="dim">Permission:</span> {DECIDED[tool.decided_by]}
+              {tool.decided_at && <> · {fmtWhen(tool.decided_at)}</>}</div>
+            {params.length > 0 ? (
+              <div>
+                <span className="dim">Takes:</span>{" "}
+                {params.map(([name, spec]) => (
+                  <code key={name} className="tparam" title={spec.description ?? ""}>
+                    {name}{required.has(name) ? "" : "?"}{spec.type ? `: ${spec.type}` : ""}
+                  </code>
+                ))}
+              </div>
+            ) : <div className="dim">Takes no arguments.</div>}
+          </div>
+        )}
+      </div>
+      <div className="permseg" role="radiogroup" aria-label={`Can agents call ${tool.name}?`}>
+        {(["allow", "deny"] as ToolPermission[]).map((p) => (
+          <button key={p} type="button" role="radio" aria-checked={tool.permission === p}
+                  disabled={saving} className={`${p}${tool.permission === p ? " on" : ""}`}
+                  onClick={() => onSet(p)}>
+            {p === "allow" ? "Allow" : "Deny"}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }

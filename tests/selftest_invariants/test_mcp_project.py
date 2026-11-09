@@ -65,10 +65,14 @@ def test_one_save_wires_config_secrets_and_runner(client):
     assert len(jobs) == 1
     job = jobs[0]
     specs = job.tool_permissions["mcp_servers"]
-    assert {"name": "ppc", "url_env": "MCP_PPC_URL", "access": "inline",
-            "bearer_env": "MCP_PPC_TOKEN"} in specs
-    assert job.billing_env["MCP_PPC_URL"] == "http://data.example.com:3845/mcp"
+    # The spec names the source and nothing that reaches it: the sandbox mounts
+    # the platform's gateway with its run token. The address and the token are
+    # granted to the role on the Secrets page and are still never injected —
+    # held in a sandbox, they would be a way around every tool permission.
+    assert {"name": "ppc", "access": "inline", "tools": []} in specs
+    assert "MCP_PPC_URL" not in job.billing_env and "MCP_PPC_TOKEN" not in job.billing_env
     assert "Mounted as tools: ppc (mcp__ppc__*)" in job.system_prompt
+    assert "TOOL PERMISSIONS:" in job.system_prompt
     # The cost lesson rides with the sources, not with every run.
     assert "DATA HANDLING:" in job.system_prompt and "data_fetch" in job.system_prompt
 
