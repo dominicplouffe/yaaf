@@ -1,12 +1,11 @@
 """Invariant selftests: what the approvals listing tells the chairman's client.
 
-A chairman deciding on a data write needs three things the listing did not carry:
-when it was asked (a deadline without an asked-at is decoration), what call it
-grants (the tool, so a client can say "negative keywords" rather than parse the
-title), and when the granted call was made (an approval is a change only once it
-is spent). These pin the listing so a client built on it cannot silently lose them.
+A chairman deciding on a request needs what it would change, structured: when
+it was asked (a deadline without an asked-at is decoration) and, for a request
+to move a data source tool, which tool and which way — so a client can say
+"allow create_campaigns" rather than parse the title. These pin the listing so
+a client built on it cannot silently lose them.
 """
-
 from __future__ import annotations
 
 from tests import fake_mcp
@@ -37,35 +36,27 @@ def _row(client, project_id: str, approval_id: str) -> dict:
     return next(row for row in listing.json() if row["id"] == approval_id)
 
 
-def test_a_data_write_lists_when_asked_what_it_grants_and_when_spent(client, monkeypatch):
+def test_a_tool_permission_request_lists_when_asked_and_what_it_moves(client, monkeypatch):
     # The source answers, so its write tool is recorded and denied.
     fake_mcp.install(monkeypatch)
     project = make_project(client)
     _attach(client, project["id"])
-    headers = _agent(client, project)
-    arguments = {"campaigns": [{"name": "Q4", "budget": 50}]}
-    call = {"source": SOURCE, "tool": WRITE, "arguments": arguments}
-
-    approval_id = client.post("/agent/data_writes", headers=headers,
-                              json={**call, "why": "Launch Q4."}).json()["id"]
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    approval_id = client.post("/agent/data_sources/tool_permission", headers=bearer(token), json={
+        "source": SOURCE, "tool": WRITE, "permission": "allow",
+        "why": "Launching the Q4 campaigns needs it; the budgets are set.",
+        "if_declined": "Campaigns are created by hand."}).json()["approval_id"]
 
     row = _row(client, project["id"], approval_id)
-    assert row["created_at"]
-    assert row["spent_at"] is None
-    assert row["grant"]["source"] == SOURCE
-    assert row["grant"]["tool"] == WRITE
-    assert row["grant"]["arguments_sha256"]
+    assert row["created_at"] and row["grant"] is None
+    assert row["tool_permission"] == {"source": SOURCE, "tool": WRITE, "from": "deny",
+                                      "to": "allow", "kind": "write"}
 
     decided = client.post(f"/admin/approvals/{approval_id}/decide",
-                          json={"approve": True, "note": "go"}, headers=ADMIN)
+                          json={"approve": True}, headers=ADMIN)
     assert decided.status_code == 200, decided.text
-    spent = client.post(f"/agent/data_writes/{approval_id}/spend", json=call, headers=headers)
-    assert spent.status_code == 200, spent.text
-
     row = _row(client, project["id"], approval_id)
-    assert row["spent_at"]
-    assert row["decided_at"]
-    assert row["spent_at"] >= row["created_at"]
+    assert row["decided_at"] and row["status"] == "approved"
 
 
 def test_an_approval_that_is_not_a_grant_says_so(client):

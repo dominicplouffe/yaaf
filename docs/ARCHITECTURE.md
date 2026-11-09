@@ -85,9 +85,9 @@ name (`yaaf/server/datasource_tools.py`). A tool that reads starts allowed. A
 tool that writes, or one the platform cannot classify, starts denied. Only the
 chairman moves a permission: on the Data sources page, or by approving the
 CEO's `tool_permission_request`. Silence never approves one, and neither does a
-model client acting for him. One denied call with exact arguments can also be
-approved through `data_write_request`; the gateway spends that approval in the
-same request that makes the call.
+model client acting for him. Nothing else gets a call through a denied tool: the
+gateway reads the switch and nothing else, so no approval, argument or
+instruction can.
 
 ### yaaf-runner
 

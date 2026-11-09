@@ -12,7 +12,8 @@ What the chairman asked for, each held by an attack rather than a sentence:
 4. The CEO can ask the chairman to move a tool, in his Inbox, and cannot move it
    itself: no /agent route writes a permission, an approval only he can decide is
    the CEO's one lever, silence never decides it, and his own model client cannot
-   approve it either. What he says in conversation changes nothing, because nothing
+   approve it either. And nothing gets a call through a denied tool — the switch
+   is the only thing the gateway reads. What he says in conversation changes nothing, because nothing
    on the call path reads conversation.
 
 The vendor is faked at the transport (`tests/fake_mcp.py`), so every request the
@@ -463,24 +464,22 @@ def test_the_ceo_cannot_decide_its_own_request(client, vendor):
 
 def test_silence_never_moves_a_tool_even_where_silence_means_yes(client, vendor):
     """On a project whose rules approve on silence, every other approval kind
-    goes through unanswered. A tool's permission, and a one-call grant past
-    one, do not: they expire to no."""
+    goes through unanswered. A tool's permission does not: it expires to no."""
     from yaaf.server.janitor import janitor_once
 
     project = make_project(client, constitution={"approval_timeout_decision": "approve"})
     _attach(client, project["id"])
     moved = _ask(client, project).json()["approval_id"]
-    one_call = client.post("/agent/data_writes", headers=_worker(project)[1], json={
-        "source": SOURCE, "tool": "create_campaigns", "arguments": {"budget": 5}}).json()["id"]
     with db_session() as session:
-        for approval_id in (moved, one_call):
-            session.get(Approval, approval_id).expires_at = utcnow() - timedelta(minutes=1)
+        session.get(Approval, moved).expires_at = utcnow() - timedelta(minutes=1)
     with db_session() as session:
         janitor_once(session)
     with db_session() as session:
         assert session.get(Approval, moved).status == ApprovalStatus.EXPIRED
-        assert session.get(Approval, one_call).status == ApprovalStatus.EXPIRED
     assert _permission(project["id"], "create_campaigns") == "deny"
+    _, headers = _worker(project)
+    assert _call(client, headers, "create_campaigns")["_meta"]["yaaf/refused"] is True
+    assert vendor.called == []
 
 
 def test_his_own_model_client_cannot_approve_it(client, vendor):

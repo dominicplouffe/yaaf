@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
-import json
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -2898,31 +2897,18 @@ def approval_list(ctx: RunContext = Depends(run_auth), session: Session = Depend
     ]
 
 
-# ── data sources: the gateway, and the ways past a denied tool ─────────────────
+# ── data sources: the gateway, and the one way past a denied tool ──────────────
 #
 # Every agent call to a data source arrives here (`/agent/mcp/<source>`) and is
 # checked against the tool's recorded permission before it is forwarded; the
-# sandbox holds neither the source's address nor its token. A denied tool has
-# two ways past, and the agent holds neither: the chairman allowing the tool
-# (his tick, or his yes to the CEO's tool_permission_request), or the chairman
-# approving ONE call with exact arguments (data_write_request, below).
+# sandbox holds neither the source's address nor its token. A denied tool fails,
+# every time, whoever asks and whatever they hold. The one way past is the
+# chairman moving the switch — his tick on the Data sources page, or his yes to
+# the CEO's tool_permission_request — and then it is no longer denied.
 #
-# The shape is one call, one approval. The chairman decides on a rendered call
-# with its literal arguments; the platform stores their fingerprint; spending
-# checks the fingerprint again and burns the approval. So an approval obtained
-# for one change cannot be replayed on a bigger one, or on a second one.
-
-
-def _arguments_digest(arguments: dict | None) -> str:
-    """The fingerprint the chairman's decision is bound to.
-
-    Canonical: sorted keys, no incidental whitespace. Computed HERE and never
-    accepted from a caller — a digest an agent supplies is a digest an agent
-    chooses.
-    """
-    canonical = json.dumps(arguments or {}, sort_keys=True, separators=(",", ":"),
-                           default=str)
-    return hashlib.sha256(canonical.encode()).hexdigest()
+# There used to be a second way: a TOOL_REQUEST approval carrying a grant let
+# ONE call through to a tool whose switch still said deny. It was retired,
+# because a switch that says deny while a call goes through is not a switch.
 
 
 def _project_data_source(project, name: str) -> dict | None:
@@ -3014,18 +3000,16 @@ async def data_source_gateway(
                                               "message": "send one JSON-RPC message"}))
     if "id" not in message:
         return Response(status_code=202)  # a notification: nothing to answer
-    approval_id = (request.headers.get(datasource_tools.APPROVAL_HEADER) or "").strip() or None
     listing_all = (request.headers.get(datasource_tools.LISTING_HEADER) or "") == "all"
     run_id, agent_id, project_id = ctx.run.id, ctx.agent.id, ctx.project.id
     answer = await run_in_threadpool(
-        _gateway_answer, run_id, agent_id, project_id, source, message, approval_id,
+        _gateway_answer, run_id, agent_id, project_id, source, message,
         listing_all, request.method, request.url.path)
     return JSONResponse(answer)
 
 
 def _gateway_answer(run_id: str, agent_id: str, project_id: str, source: str, message: dict,
-                    approval_id: str | None, listing_all: bool, method: str,
-                    path: str) -> dict:
+                    listing_all: bool, method: str, path: str) -> dict:
     from yaaf.core.db import db_session
     from yaaf.core.models import Agent
     from yaaf.server.app import count_refusal, refusal_text
@@ -3070,8 +3054,7 @@ def _gateway_answer(run_id: str, agent_id: str, project_id: str, source: str, me
                     tool = tool[len(f"mcp__{source}__"):]
                 arguments = params.get("arguments") if isinstance(params.get("arguments"),
                                                                   dict) else {}
-                decision = datasource_tools.decide(session, project, agent, source, tool,
-                                                   arguments, approval_id)
+                decision = datasource_tools.decide(session, project, agent, source, tool)
                 try:
                     result = datasource_tools.forward(session, project, agent, decision,
                                                       arguments, run_id)
@@ -3154,8 +3137,7 @@ def tool_permission_request(
     ]
     if body.permission == ToolPermission.ALLOW and row.kind != "read":
         detail.append("Allowing it lets any agent given this source call it, with any "
-                      "arguments, until you deny it again — not one call. For one call with "
-                      "exact arguments, the CEO can file data_write_request instead.")
+                      "arguments, until you deny it again.")
     detail.append(f"What happens without it: {body.if_declined.strip()}")
     approval = _file_approval(
         session, ctx, ApprovalKind.TOOL_PERMISSION,
@@ -3189,181 +3171,18 @@ def tool_permission_request(
     }
 
 
-class DisclosedChange(BaseModel):
-    """One before → after, on one thing: a campaign's daily budget, a keyword's bid."""
-
-    entity: str = Field(min_length=1, max_length=200)
-    field: str = Field(min_length=1, max_length=80)
-    before: str | float | int | bool | None = None
-    after: str | float | int | bool | None = None
-
-
-class DisclosedEvidence(BaseModel):
-    """The rows the ask rests on, with what a person needs to reconcile them."""
-
-    columns: list[str] = Field(min_length=1, max_length=30)
-    rows: list[list[str | float | int | bool | None]] = Field(default_factory=list, max_length=200)
-    period_start: str | None = Field(default=None, max_length=40)
-    period_end: str | None = Field(default=None, max_length=40)
-    currency: str | None = Field(default=None, max_length=8)
-    as_of: str | None = Field(default=None, max_length=40)
-
-
-class DisclosedEstimate(BaseModel):
-    label: str = Field(min_length=1, max_length=120)
-    value: str = Field(min_length=1, max_length=80)
-    basis: str = Field(default="", max_length=1000)
-
-
-class Disclosure(BaseModel):
-    """What the chairman needs to decide well. Bounded, because it is stored on
-    the approval row and rendered to a person; an agent that wants to show
-    ten thousand rows shows the two hundred that matter."""
-
-    category: str | None = Field(default=None, max_length=64)
-    change_set: list[DisclosedChange] = Field(default_factory=list, max_length=500)
-    scope_counts: dict[str, int] = Field(default_factory=dict)
-    evidence: DisclosedEvidence | None = None
-    estimate: DisclosedEstimate | None = None
-    reversible: bool | None = None
-    counter_case: str = Field(default="", max_length=4000)
-    spend_affected_usd_month: float | None = None
-
-
-class DataWriteRequest(BaseModel):
-    source: str = Field(min_length=1, max_length=64)
-    tool: str = Field(min_length=1, max_length=128)
-    arguments: dict = Field(default_factory=dict)
-    why: str = Field(default="", max_length=4000)
-    # Prose for the chairman, never part of the grant: the digest binds the
-    # arguments, and two requests that differ only here spend identically.
-    disclosure: Disclosure | None = None
-
-
 @router.post("/data_writes")
-def data_write_request(
-    body: DataWriteRequest, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
-) -> dict:
-    """File ONE call for the chairman to approve, fingerprint and all."""
-    source = _project_data_source(ctx.project, body.source)
-    if source is None:
-        raise Refusal(
-            f"{body.source!r} is not one of this project's data sources.", status_code=404)
-    row = _source_tool(session, ctx, source, body.tool)
-    if row.permission == ToolPermission.ALLOW:
-        raise Refusal(
-            f"{body.source}.{body.tool} is already yours to call. Use data_fetch; an "
-            "approval here would put a decision on the chairman's desk that changes "
-            "nothing.")
-
-    cons = effective(session, ctx.project.id)
-    rendered = json.dumps(body.arguments or {}, indent=2, sort_keys=True, default=str)
-    row = _file_approval(
-        session, ctx, ApprovalKind.TOOL_REQUEST,
-        f"Run {body.source}.{body.tool} on your account",
-        (f"{body.why}\n\n" if body.why else "")
-        + f"This would call `{body.tool}` on your connected {body.source} account "
-          f"with exactly these arguments:\n\n```json\n"
-          f"{rendered[:4000]}\n```\n\n"
-          "Approving authorises this one call and nothing else — the arguments above "
-          "are part of what you are approving, and a different call needs a new "
-          "approval.",
-    )
-    row.grant = {"source": body.source, "tool": body.tool,
-                 "arguments_sha256": _arguments_digest(body.arguments)}
-    row.disclosure = body.disclosure.model_dump(mode="json") if body.disclosure else None
-    session.flush()
-    chairman_notify(
-        session, ctx.project,
-        f"Approve a change to your {body.source} account?",
-        f"{row.title}\n\n{row.body}\n\n{inbox_line(row.id)}",
-        kind="approval_requested", data={"approval": approval_row(row)},
-        attention=Attention.ASK,
-        waits_on=("approval", row.id),
-    )
-    return {
-        "id": row.id,
-        "expires_at": row.expires_at.isoformat(),
-        "note": (
-            f"Filed. Unanswered within {cons.approval_timeout_days} days this expires as "
-            "DENIED and you are woken to re-plan. When it is approved, call data_fetch "
-            "with approval_id and the SAME arguments — the approval is bound to them, and "
-            "it is good for one call."
-        ),
-    }
-
-
-class DataWriteSpend(BaseModel):
-    source: str
-    tool: str
-    arguments: dict = Field(default_factory=dict)
-
-
-@router.post("/data_writes/{approval_id}/spend")
-def data_write_spend(
-    approval_id: str, body: DataWriteSpend,
-    ctx: RunContext = Depends(run_auth), session: Session = Depends(db),
-) -> dict:
-    """Burn an approved grant for exactly the call it was approved for.
-
-    The gateway spends a grant itself, in the request that makes the call
-    (`data_fetch` passes the id along); this route remains for a client that
-    spends first and calls after, and runs the same checks.
-    """
-    approval = datasource_tools.spend_grant(session, ctx.project.id, ctx.agent.id,
-                                            approval_id, body.source, body.tool,
-                                            body.arguments)
-    return {"id": approval.id, "spent": True}
-
-
-class ObservedEffect(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    label: str = Field(min_length=1, max_length=120)
-    value: str = Field(min_length=1, max_length=80)
-    basis: str = Field(default="", max_length=500)
-    as_of: str | None = Field(default=None, max_length=40)
-
-
-class DataWriteOutcome(BaseModel):
-    ok: bool
-    observed: ObservedEffect | None = None
-    note: str = Field(default="", max_length=2000)
-
-
-@router.post("/data_writes/{approval_id}/outcome")
-def data_write_outcome(
-    approval_id: str, body: DataWriteOutcome,
-    ctx: RunContext = Depends(run_auth), session: Session = Depends(db),
-) -> dict:
-    """What a spent grant actually did, filed after the fact.
-
-    The disclosure said what the call would do and `spent_at` says it was made;
-    this is the only record of what came of it. Refused before the spend: an
-    outcome for a call that has not happened is a forecast wearing a receipt.
-    """
-    approval = session.get(Approval, approval_id)
-    if approval is None or approval.project_id != ctx.project.id:
-        raise Refusal(f"{approval_id!r} is not an approval on this project.", status_code=404)
-    if approval.spent_at is None:
-        raise Refusal(
-            f"Approval {approval_id} has not been spent, so it has no outcome yet. Make "
-            "the call with data_fetch and approval_id first, then file what it did.",
-            status_code=409)
-    detail = body.model_dump(mode="json")
-    detail["filed_at"] = utcnow().isoformat()
-    session.add(
-        AuditLog(
-            id=ids.new_id(ids.AUDIT),
-            project_id=approval.project_id,
-            actor=f"agent:{ctx.agent.id}",
-            action="data_write.outcome",
-            entity="approval",
-            entity_id=approval.id,
-            detail=detail,
-        )
-    )
-    return {"id": approval.id, "outcome": detail}
+def data_write_request(ctx: RunContext = Depends(run_auth)) -> dict:
+    """Retired: the one-call approval past a denied tool. Kept as a refusal
+    rather than removed, because agents remember verbs across runs (memory,
+    notes, a CEO's habits) and a 404 teaches nothing about what replaced it."""
+    raise Refusal(
+        "One-call approvals past a denied tool are retired: a denied data source tool "
+        "fails, every time, and nothing — an approval included — gets a call through it. "
+        "The only way past is the chairman allowing the tool."
+        + (" Ask him with tool_permission_request." if ctx.agent.kind == AgentKind.CEO
+           else " If your work needs it, tell your CEO, who can ask him."),
+        status_code=403)
 
 
 class SpendIn(BaseModel):

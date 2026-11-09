@@ -1,4 +1,4 @@
-"""Invariant selftests: a data source's tool allowlist, and the one way past it.
+"""Invariant selftests: a data source's tool allowlist, and that nothing gets past it.
 
 A data source can name the tools it may be called with. Without that, `data_fetch`
 validates the *server* name and passes the *tool* name straight to the vendor — so
@@ -6,25 +6,22 @@ a source connected for reading serves its write tools too, and "read-only" is a
 sentence in a prompt rather than a rule. These tests attack the rule over HTTP the
 way an agent would.
 
-The way past it is a TOOL_REQUEST approval carrying a grant: source, tool, and the
-SHA-256 of the arguments the chairman decided on. One call, one approval. The tests
-that matter most here are the ones that try to spend an approval on something other
-than what it was approved for — different tool, different arguments, twice — because
-those are the shapes an agent under pressure actually produces.
-
 The allowlist used to be enforced inside the sandbox — by `data_fetch`, in the same
 process that held the vendor's URL and token. It is enforced by the platform now: every
 call goes through the gateway (`/agent/mcp/<source>`), which checks the tool's recorded
-permission and spends any approval in the request that makes the call. So the attacks
-below are made over HTTP with a real run token, against a fake vendor that records
-what actually reached it (`tests/fake_mcp.py`).
+permission before anything is sent. So the attacks below are made over HTTP with a
+real run token, against a fake vendor that records what actually reached it
+(`tests/fake_mcp.py`).
 
-Two rules here changed on purpose. A source saved without a list is no longer
-unrestricted: each tool starts allowed if it reads and denied if it writes. And
-`data_write_request` is offered with any source, because any source can now have a
-denied tool.
+There used to be one way past a denied tool: a TOOL_REQUEST approval carrying a
+grant bought ONE call with exact arguments. It was retired — a switch that says
+deny while a call goes through is not a switch — and the last section here attacks
+that it stays retired: an approved grant, forged straight into the database, still
+gets nothing through.
+
+A rule here changed on purpose: a source saved without a list is no longer
+unrestricted. Each tool starts allowed if it reads and denied if it writes.
 """
-
 from __future__ import annotations
 
 import asyncio
@@ -129,8 +126,7 @@ def test_an_empty_allowlist_is_the_strict_end_not_a_way_to_clear_it(client):
 # ── the gateway refuses a denied tool before it does anything ──────────────────
 
 
-def _call(client, project, tool, arguments=None, approval_id=None) -> dict:
-    extra = {"X-Yaaf-Approval": approval_id} if approval_id else None
+def _call(client, project, tool, arguments=None, extra=None) -> dict:
     return fake_mcp.rpc(client, SOURCE, _agent(client, project), "tools/call",
                         {"name": tool, "arguments": arguments or {}}, extra)["result"]
 
@@ -143,12 +139,12 @@ def test_an_ungranted_tool_is_refused_naming_what_is_callable(client, vendor):
     assert out["isError"] is True and out["_meta"]["yaaf/refused"] is True
     error = out["content"][0]["text"]
     assert "DENIED" in error and "get_stats" in error
-    assert "data_write_request" in error
+    assert "Nothing else gets a call through a denied tool" in error
     # Refused before the vendor was reached: a denied write must not have happened.
     assert vendor.called == []
 
 
-def test_a_granted_tool_needs_no_approval(client, vendor):
+def test_a_granted_tool_is_forwarded(client, vendor):
     project = make_project(client)
     _attach(client, project["id"], READS)
     out = _call(client, project, "get_stats", {"days": 7})
@@ -197,7 +193,7 @@ def _result(text="{}"):
                            structuredContent=None, isError=False)
 
 
-def test_discovery_says_which_tools_need_an_approval(monkeypatch, tmp_path):
+def test_discovery_says_which_tools_are_denied(monkeypatch, tmp_path):
     """So an agent plans around the rule instead of finding it one refusal at a
     time. The sandbox asks the gateway for the whole list and reports its marks."""
     entry = _entry(monkeypatch, tmp_path, READS)
@@ -219,14 +215,14 @@ def test_discovery_says_which_tools_need_an_approval(monkeypatch, tmp_path):
 
     flags = {t["name"]: t["needs_approval"] for t in body["tools"]}
     assert flags == {"get_stats": False, WRITE: True}
-    assert "tool_permission_request" in body["note"] and "data_write_request" in body["note"]
+    assert "tool_permission_request" in body["note"]
     assert asked[0]["url"] == f"http://api:8080/agent/mcp/{SOURCE}"
     assert asked[0]["headers"]["X-Yaaf-Listing"] == "all"
 
 
-def test_data_fetch_hands_the_approval_to_the_gateway(monkeypatch, tmp_path):
-    """data_fetch decides nothing: it carries the approval id to the platform,
-    which spends it in the request that makes the call."""
+def test_data_fetch_carries_nothing_that_could_unlock_a_tool(monkeypatch, tmp_path):
+    """data_fetch decides nothing and has nothing to present: no approval id, no
+    vendor credential — the run's own token and the call, to the gateway."""
     entry = _entry(monkeypatch, tmp_path, READS)
     sent = []
 
@@ -236,15 +232,13 @@ def test_data_fetch_hands_the_approval_to_the_gateway(monkeypatch, tmp_path):
 
     monkeypatch.setattr(entry, "_mcp_call_tool", fake_call_tool)
     monkeypatch.setattr(entry, "_call", lambda *a, **k: pytest.fail("no platform call"))
-    out = json.loads(asyncio.run(entry.t_data_fetch.handler(
+    asyncio.run(entry.t_data_fetch.handler(
         {"server": SOURCE, "tool": WRITE, "arguments": {"budget": 5},
-         "approval_id": "apr_1"}))["content"][0]["text"])
-
-    assert out["status"] == 200, out
-    config, tool_name, arguments = sent[0]
-    assert (tool_name, arguments) == (WRITE, {"budget": 5})
-    assert config["headers"]["X-Yaaf-Approval"] == "apr_1"
-    assert config["headers"]["Authorization"] == "Bearer test-token"
+         "approval_id": "apr_1"}))
+    config, tool_name, _ = sent[0]
+    assert tool_name == WRITE
+    assert config["headers"] == {"Authorization": "Bearer test-token"}
+    assert "approval_id" not in entry.t_data_fetch.input_schema["properties"]
 
 
 def test_a_platform_refusal_reaches_the_agent_as_one(monkeypatch, tmp_path):
@@ -260,49 +254,6 @@ def test_a_platform_refusal_reaches_the_agent_as_one(monkeypatch, tmp_path):
     out = json.loads(asyncio.run(entry.t_data_fetch.handler(
         {"server": SOURCE, "tool": WRITE, "arguments": {}}))["content"][0]["text"])
     assert out["status"] == 403 and "DENIED" in out["body"]["error"]
-
-
-def test_the_gateway_spends_an_approval_in_the_call_that_uses_it(client, vendor):
-    project = make_project(client)
-    _attach(client, project["id"], READS)
-    arguments = {"budget": 50}
-    approval_id = _approved(client, project, arguments)
-
-    first = _call(client, project, WRITE, arguments, approval_id)
-    assert not first.get("isError"), first
-    assert vendor.called == [WRITE]
-    with db_session() as session:
-        assert session.get(Approval, approval_id).spent_at is not None
-
-    # One approval, one call: the second is refused and never reaches the vendor.
-    second = _call(client, project, WRITE, arguments, approval_id)
-    assert second["_meta"]["yaaf/refused"] is True
-    assert "already spent" in second["content"][0]["text"]
-    assert vendor.called == [WRITE]
-
-
-def test_a_refused_spend_stops_the_call(client, vendor):
-    project = make_project(client)
-    _attach(client, project["id"], READS)
-    arguments = {"budget": 50}
-    pending = client.post(
-        "/agent/data_writes", headers=_agent(client, project),
-        json={"source": SOURCE, "tool": WRITE, "arguments": arguments}).json()["id"]
-
-    out = _call(client, project, WRITE, arguments, pending)
-    assert out["_meta"]["yaaf/refused"] is True
-    assert "pending" in out["content"][0]["text"]
-    # The refusal reached the agent AND the vendor was never called.
-    assert vendor.called == []
-
-
-def test_an_approval_for_other_arguments_lets_nothing_through(client, vendor):
-    project = make_project(client)
-    _attach(client, project["id"], READS)
-    approval_id = _approved(client, project, {"budget": 50})
-    out = _call(client, project, WRITE, {"budget": 5000}, approval_id)
-    assert out["_meta"]["yaaf/refused"] is True
-    assert vendor.called == []
 
 
 # ── an inline source is granted tool by tool, not server-wide ──────────────
@@ -323,176 +274,91 @@ def test_an_inline_source_without_one_keeps_the_server_wide_grant(monkeypatch, t
     assert f"mcp__{SOURCE}" in entry._allowed_tools()
 
 
-def test_data_write_request_rides_any_data_source(monkeypatch, tmp_path):
-    """An undeclared schema is input-token cost on every call, so a role with no
-    source is not sent it. A role with one is: any source can have a denied
-    tool now, including one saved without a list (its writes start denied)."""
+def test_no_tool_offers_a_way_past_a_denied_one(monkeypatch, tmp_path):
     entry = _entry(monkeypatch, tmp_path, None)
     names = {t.name for t in entry.run_tools()}
-    assert "data_fetch" in names and "data_write_request" in names
-
-    entry.PERMS = {}
-    assert "data_write_request" not in {t.name for t in entry.run_tools()}
+    assert "data_fetch" in names
+    assert not {"data_write_request", "data_write_outcome"} & names
 
 
-# ── filing a request ───────────────────────────────────────────────────────────
+# ── the retired one-call approval stays retired ───────────────────────────────
 
 
-def test_a_request_records_the_arguments_fingerprint_not_the_agents(client):
-    project = make_project(client)
-    _attach(client, project["id"], READS)
-    arguments = {"campaigns": [{"name": "Q4", "budget": 50}]}
+def _approved_grant(project_id: str, arguments: dict, tool: str = WRITE) -> str:
+    """A grant exactly as the retired path would have left it — approved by a
+    person, unspent, for these exact arguments — written straight to the
+    database, since no route files one any more."""
+    from datetime import timedelta
 
-    response = client.post("/agent/data_writes", headers=_agent(client, project),
-                           json={"source": SOURCE, "tool": WRITE, "arguments": arguments,
-                                 "why": "Launch the Q4 campaign."})
-    assert response.status_code == 200, response.text
+    from yaaf.core import ids
+    from yaaf.core.models import User, utcnow
 
     with db_session() as session:
-        approval = session.get(Approval, response.json()["id"])
-        grant, body, status = approval.grant, approval.body, approval.status
-    assert grant == {"source": SOURCE, "tool": WRITE,
-                     "arguments_sha256": _digest(arguments)}
-    assert status == ApprovalStatus.PENDING
-    # The chairman decides on the literal call, so the arguments are in front of him.
-    assert '"budget": 50' in body
+        chair = session.query(User).first()
+        row = Approval(
+            id=ids.new_id(ids.APPROVAL), project_id=project_id, kind="tool_request",
+            requested_by_agent_id="agnt_x", title="Run ads.create_campaigns",
+            body="one call", status=ApprovalStatus.APPROVED,
+            expires_at=utcnow() + timedelta(days=7), decided_at=utcnow(),
+            decided_by_user_id=chair.id,
+            grant={"source": SOURCE, "tool": tool, "arguments_sha256": _digest(arguments)})
+        session.add(row)
+        return row.id
 
 
-def test_a_request_for_an_already_callable_tool_is_refused(client):
-    project = make_project(client)
-    _attach(client, project["id"], READS)
-    response = client.post("/agent/data_writes", headers=_agent(client, project),
-                           json={"source": SOURCE, "tool": "get_stats", "arguments": {}})
-    assert response.status_code == 422
-    assert "already yours to call" in response.text
-
-
-def test_a_request_against_an_unknown_source_is_refused(client):
-    project = make_project(client)
-    _attach(client, project["id"], READS)
-    response = client.post("/agent/data_writes", headers=_agent(client, project),
-                           json={"source": "not-a-source", "tool": WRITE, "arguments": {}})
-    assert response.status_code == 404
-
-
-# ── spending one ───────────────────────────────────────────────────────────────
-
-
-def _approved(client, project: dict, arguments: dict, tool: str = WRITE) -> str:
-    headers = _agent(client, project)
-    approval_id = client.post(
-        "/agent/data_writes", headers=headers,
-        json={"source": SOURCE, "tool": tool, "arguments": arguments}).json()["id"]
-    decided = client.post(f"/admin/approvals/{approval_id}/decide",
-                          json={"approve": True, "note": "go ahead"}, headers=ADMIN)
-    assert decided.status_code == 200, decided.text
-    return approval_id
-
-
-def test_an_approved_grant_is_spendable_once(client):
+def test_an_approved_grant_gets_no_call_through_a_denied_tool(client, vendor):
     project = make_project(client)
     _attach(client, project["id"], READS)
     arguments = {"budget": 50}
-    approval_id = _approved(client, project, arguments)
-    headers = _agent(client, project)
-    call = {"source": SOURCE, "tool": WRITE, "arguments": arguments}
+    approval_id = _approved_grant(project["id"], arguments)
 
-    first = client.post(f"/agent/data_writes/{approval_id}/spend", json=call, headers=headers)
-    assert first.status_code == 200 and first.json()["spent"] is True
-
-    second = client.post(f"/agent/data_writes/{approval_id}/spend", json=call, headers=headers)
-    assert second.status_code == 409
-    assert "already spent" in second.text
-
-
-def test_an_approval_cannot_be_spent_on_different_arguments(client):
-    """The whole point of the digest: approval for a $50 change is not approval
-    for a $5,000 one."""
-    project = make_project(client)
-    _attach(client, project["id"], READS)
-    approval_id = _approved(client, project, {"budget": 50})
-
-    response = client.post(
-        f"/agent/data_writes/{approval_id}/spend", headers=_agent(client, project),
-        json={"source": SOURCE, "tool": WRITE, "arguments": {"budget": 5000}})
-    assert response.status_code == 409
-    assert "not the arguments" in response.text
+    for extra in (None, {"X-Yaaf-Approval": approval_id}, {"x-yaaf-approval": approval_id}):
+        out = _call(client, project, WRITE, arguments, extra)
+        assert out["_meta"]["yaaf/refused"] is True
+    params_meta = fake_mcp.rpc(client, SOURCE, _agent(client, project), "tools/call", {
+        "name": WRITE, "arguments": arguments,
+        "_meta": {"approval_id": approval_id}})["result"]
+    assert params_meta["_meta"]["yaaf/refused"] is True
+    assert vendor.called == []
     with db_session() as session:
         assert session.get(Approval, approval_id).spent_at is None
 
 
-def test_an_approval_cannot_be_spent_on_a_different_tool(client):
+@pytest.mark.parametrize("path", ["/agent/data_writes", "/agent/data_writes/x/spend",
+                                  "/agent/data_writes/x/outcome"])
+def test_no_route_files_or_spends_a_grant(client, vendor, path):
     project = make_project(client)
     _attach(client, project["id"], READS)
-    approval_id = _approved(client, project, {"budget": 50})
-
-    response = client.post(
-        f"/agent/data_writes/{approval_id}/spend", headers=_agent(client, project),
-        json={"source": SOURCE, "tool": "pricing_actions", "arguments": {"budget": 50}})
-    assert response.status_code == 409
-    assert WRITE in response.text
+    response = client.post(path, headers=_agent(client, project),
+                           json={"source": SOURCE, "tool": WRITE, "arguments": {}})
+    assert response.status_code in (403, 404, 405)
+    with db_session() as session:
+        assert session.query(Approval).filter(Approval.grant.isnot(None)).count() == 0
 
 
-def test_a_pending_approval_is_not_spendable(client):
+def test_filing_one_is_refused_naming_what_replaced_it(client, vendor):
     project = make_project(client)
     _attach(client, project["id"], READS)
-    arguments = {"budget": 50}
-    approval_id = client.post(
-        "/agent/data_writes", headers=_agent(client, project),
-        json={"source": SOURCE, "tool": WRITE, "arguments": arguments}).json()["id"]
-
-    response = client.post(
-        f"/agent/data_writes/{approval_id}/spend", headers=_agent(client, project),
-        json={"source": SOURCE, "tool": WRITE, "arguments": arguments})
-    assert response.status_code == 409 and "pending" in response.text
+    refused = client.post("/agent/data_writes", headers=_agent(client, project),
+                          json={"source": SOURCE, "tool": WRITE, "arguments": {}})
+    assert refused.status_code == 403 and "retired" in refused.text
+    ceo = bearer(live_token(project["id"], project["ceo_agent_id"])[1])
+    as_ceo = client.post("/agent/data_writes", headers=ceo, json={})
+    assert "tool_permission_request" in as_ceo.text
 
 
-def test_a_denied_approval_is_not_spendable(client):
+def test_the_chairman_cannot_approve_a_grant_left_pending(client, vendor):
+    """A yes would let nothing through, and saying it had would be untrue to him
+    and to the agent — so a grant still on his desk can only be declined."""
     project = make_project(client)
     _attach(client, project["id"], READS)
-    arguments = {"budget": 50}
-    approval_id = client.post(
-        "/agent/data_writes", headers=_agent(client, project),
-        json={"source": SOURCE, "tool": WRITE, "arguments": arguments}).json()["id"]
-    client.post(f"/admin/approvals/{approval_id}/decide",
-                json={"approve": False, "note": "no"}, headers=ADMIN)
-
-    response = client.post(
-        f"/agent/data_writes/{approval_id}/spend", headers=_agent(client, project),
-        json={"source": SOURCE, "tool": WRITE, "arguments": arguments})
-    assert response.status_code == 409 and "denied" in response.text
-
-
-def test_an_approval_from_another_project_is_invisible(client):
-    """yaaf has no tenancy, so a grant that leaked across projects would be a
-    capability an agent could reach by guessing an id."""
-    mine = make_project(client, slug="mine")
-    theirs = make_project(client, slug="theirs")
-    _attach(client, mine["id"], READS)
-    _attach(client, theirs["id"], READS)
-    arguments = {"budget": 50}
-    theirs_approval = _approved(client, theirs, arguments)
-
-    response = client.post(
-        f"/agent/data_writes/{theirs_approval}/spend", headers=_agent(client, mine),
-        json={"source": SOURCE, "tool": WRITE, "arguments": arguments})
-    assert response.status_code == 404
-
-
-def test_an_ordinary_approval_grants_no_call(client):
-    """A prose approval the chairman happened to say yes to is not a capability."""
-    project = make_project(client)
-    _attach(client, project["id"], READS)
-    approval_id = client.post(
-        "/agent/approvals", headers=_agent(client, project),
-        json={"kind": "tool_request", "title": "Please let me change budgets",
-              "body": "I would like to raise the Q4 budget.",
-              "recommendation": "Approve it; the case says why.", "if_declined": "The Q4 budget stays where it is."}).json()["id"]
-    client.post(f"/admin/approvals/{approval_id}/decide",
-                json={"approve": True}, headers=ADMIN)
-
-    response = client.post(
-        f"/agent/data_writes/{approval_id}/spend", headers=_agent(client, project),
-        json={"source": SOURCE, "tool": WRITE, "arguments": {}})
-    assert response.status_code == 422 and "carries no grant" in response.text
-
+    approval_id = _approved_grant(project["id"], {"budget": 50})
+    with db_session() as session:
+        row = session.get(Approval, approval_id)
+        row.status, row.decided_at, row.decided_by_user_id = ApprovalStatus.PENDING, None, None
+    approve = client.post(f"/admin/approvals/{approval_id}/decide",
+                          json={"approve": True}, headers=ADMIN)
+    assert approve.status_code == 409 and "Data sources" in approve.text
+    decline = client.post(f"/admin/approvals/{approval_id}/decide",
+                          json={"approve": False, "note": "use the switch"}, headers=ADMIN)
+    assert decline.status_code == 200

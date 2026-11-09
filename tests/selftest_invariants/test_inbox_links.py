@@ -194,29 +194,25 @@ def test_an_open_review_links_to_the_meeting(client, origin, sent):
         f"Take the meeting: {ORIGIN}/app/#/projects/{project['id']}/details/reviews")
 
 
-def test_a_write_to_his_account_links_to_the_approval(client, origin, monkeypatch):
+def test_a_tool_permission_request_links_to_the_approval(client, origin, monkeypatch):
     # The source answers, so its write tool is recorded and denied.
     fake_mcp.install(monkeypatch)
-    from tests.selftest_invariants.test_data_source_allowlist import (
-        READS,
-        SOURCE,
-        WRITE,
-        _agent,
-        _attach,
-    )
+    from tests.selftest_invariants.test_data_source_allowlist import READS, _attach
     from yaaf.server.api import agent as agent_api
 
     caught = _Sent()
     monkeypatch.setattr(agent_api, "chairman_notify", caught)
     project = make_project(client)
     _attach(client, project["id"], READS)
-    filed = client.post("/agent/data_writes", headers=_agent(client, project), json={
-        "source": SOURCE, "tool": WRITE, "arguments": {"campaigns": []},
-        "why": "Launch the Q4 campaign."})
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    filed = client.post("/agent/data_sources/tool_permission", headers=bearer(token),
+                        json={"source": "ads", "tool": "create_campaigns", "permission": "allow",
+              "why": "Launching the Q4 campaigns needs it; the budgets are set.",
+              "if_declined": "Campaigns are created by hand."})
     assert filed.status_code == 200, filed.text
 
-    mail = caught.about("Approve a change to your")
-    assert mail.endswith(f"Decide it in your Inbox: {INBOX}{filed.json()['id']}")
+    mail = caught.about("Your CEO asks: allow ads.create_campaigns")
+    assert mail.endswith(f"Decide it in your Inbox: {INBOX}{filed.json()['approval_id']}")
 
 
 def test_a_brief_to_confirm_links_to_the_approval(client, origin, monkeypatch):

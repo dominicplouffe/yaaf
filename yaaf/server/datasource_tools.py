@@ -25,9 +25,10 @@ Three facts about the permission, each held by code rather than by a prompt:
 * **Saying so is not a door.** The chairman telling the CEO "go ahead, call it"
   changes nothing: the gateway never asked anyone's opinion.
 
-The one call-sized exception predates this and is kept: a TOOL_REQUEST approval
-carrying a grant lets ONE denied call through with the exact arguments the
-chairman approved. It is spent here, in the same request that makes the call.
+Nothing gets a call through a denied tool. A one-call approval used to (a
+TOOL_REQUEST carrying a grant); it was retired, because a switch that says deny
+while a call goes through is not a switch. The only way past is the chairman
+moving the switch, and then the tool is no longer denied.
 """
 
 from __future__ import annotations
@@ -47,8 +48,6 @@ from sqlalchemy.orm import Session
 from yaaf.core import ids
 from yaaf.core.models import (
     Agent,
-    Approval,
-    ApprovalStatus,
     AuditLog,
     DataSourceTool,
     Project,
@@ -83,8 +82,6 @@ SCHEMA_BYTES = 64 * 1024
 #: tool should not wait for the chairman to press "Test" before it is seen.
 REFRESH_AFTER = timedelta(minutes=10)
 
-#: Request header an approved one-call grant rides on (data_fetch sets it).
-APPROVAL_HEADER = "x-yaaf-approval"
 #: Request header asking for the whole list, denied tools included, each marked.
 LISTING_HEADER = "x-yaaf-listing"
 
@@ -592,8 +589,7 @@ def deny_message(source: str, tool: str, row: DataSourceTool | None, ceo: bool,
     allowed = ", ".join(callable_now or []) or "none"
     return (f"{source}.{tool} is DENIED on this project ({why}), so the call was refused "
             f"before anything was sent to {source}. Callable on {source} now: {allowed}. "
-            f"{ask}. For a single call with exact arguments, file data_write_request and "
-            "pass the approved id to data_fetch.")
+            f"{ask}. Nothing else gets a call through a denied tool.")
 
 
 def _arguments_digest(arguments: dict | None) -> str:
@@ -602,68 +598,18 @@ def _arguments_digest(arguments: dict | None) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def spend_grant(session: Session, project_id: str, agent_id: str, approval_id: str,
-                source: str, tool: str, arguments: dict) -> Approval:
-    """Burn an approved one-call grant for exactly the call it was approved for.
-    Every refusal is written to be read by the agent that hit it."""
-    approval = session.get(Approval, approval_id)
-    if approval is None or approval.project_id != project_id:
-        raise Refusal(f"{approval_id!r} is not an approval on this project.", status_code=404)
-    grant = approval.grant or {}
-    if not grant:
-        raise Refusal(
-            f"Approval {approval_id} carries no grant, so it authorises no call. File the "
-            "call with data_write_request, which records what is being approved.")
-    if approval.status != ApprovalStatus.APPROVED:
-        raise Refusal(
-            f"Approval {approval_id} is {approval.status}, not approved."
-            + (" It expired undecided, which the constitution reads as no — re-plan around"
-               " it or file it again with a reason that answers why it went unanswered."
-               if approval.status == ApprovalStatus.EXPIRED else ""),
-            status_code=409)
-    if approval.decided_by_user_id is None:
-        # Approved by a rule that answers yes on silence, before silence was
-        # barred from data source tools (policy.NEVER_BY_SILENCE). Nobody
-        # decided it, so it lets nothing through.
-        raise Refusal(
-            f"Approval {approval_id} was approved by silence, not by the chairman. A "
-            "denied tool is let through by his decision only — file it again.",
-            status_code=409)
-    if approval.spent_at is not None:
-        raise Refusal(
-            f"Approval {approval_id} was already spent at "
-            f"{approval.spent_at.isoformat()}. One approval buys one call — file another.",
-            status_code=409)
-    if grant.get("source") != source or grant.get("tool") != tool:
-        raise Refusal(
-            f"Approval {approval_id} authorises {grant.get('source')}.{grant.get('tool')}, "
-            f"not {source}.{tool}.", status_code=409)
-    if grant.get("arguments_sha256") != _arguments_digest(arguments):
-        raise Refusal(
-            f"These are not the arguments approval {approval_id} was approved for. The "
-            "chairman decided on a specific call, so changing the arguments voids it — "
-            "file the call you actually intend with data_write_request.", status_code=409)
-    approval.spent_at = utcnow()
-    session.add(AuditLog(
-        id=ids.new_id(ids.AUDIT), project_id=approval.project_id,
-        actor=f"agent:{agent_id}", action="data_write.spend", entity="approval",
-        entity_id=approval.id,
-        detail={"source": source, "tool": tool,
-                "arguments_sha256": grant.get("arguments_sha256")}))
-    return approval
-
-
 @dataclass
 class Decision:
     entry: dict
     row: DataSourceTool
-    approval: Approval | None
 
 
-def decide(session: Session, project: Project, agent: Agent, source: str, tool: str,
-           arguments: dict, approval_id: str | None) -> Decision:
-    """Whether this call may be forwarded. Raises Refusal when it may not —
-    and nothing in this function, or before it, has contacted the source."""
+def decide(session: Session, project: Project, agent: Agent, source: str,
+           tool: str) -> Decision:
+    """Whether this call may be forwarded: only if the tool is allowed, and
+    nothing else is consulted — no approval, no argument, nothing anyone said.
+    Raises Refusal when it may not, and nothing in this function, or before
+    it, has sent the call to the source."""
     from yaaf.core.models import AgentKind
 
     entry = granted_entry(session, project, agent, source)
@@ -676,29 +622,25 @@ def decide(session: Session, project: Project, agent: Agent, source: str, tool: 
     if row is None or row.gone_at is not None:
         raise Refusal(deny_message(source, tool, None, agent.kind == AgentKind.CEO),
                       status_code=404)
-    if row.permission == ToolPermission.ALLOW:
-        return Decision(entry, row, None)
-    if not approval_id:
+    if row.permission != ToolPermission.ALLOW:
         raise Refusal(deny_message(source, tool, row, agent.kind == AgentKind.CEO,
                                    sorted(n for n, r in rows.items()
                                           if r.permission == ToolPermission.ALLOW
                                           and r.gone_at is None)),
                       status_code=403)
-    approval = spend_grant(session, project.id, agent.id, approval_id, source, tool, arguments)
-    return Decision(entry, row, approval)
+    return Decision(entry, row)
 
 
 def forward(session: Session, project: Project, agent: Agent, decision: Decision,
             arguments: dict, run_id: str | None = None) -> dict:
-    """Make the call `decide` allowed. The approval it spent (and any tools it
-    recorded) are committed first: an upstream call can take minutes, and one
-    approval buys one attempt whether or not the vendor answers."""
+    """Make the call `decide` allowed. Anything it recorded is committed first:
+    an upstream call can take minutes, and must not hold a write lock that long."""
     session.commit()
     url, token = credentials(session, project, decision.entry)
     session.commit()  # a refreshed OAuth token, kept even if the call fails
     with Upstream(url, token) as upstream:
         result = upstream.call_tool(decision.row.name, arguments)
-    if decision.row.kind != "read" or decision.approval is not None:
+    if decision.row.kind != "read":
         # Reads are the common case and are not written down call by call. A
         # tool that may change the chairman's account is, every time — and it
         # is the run doing something, which a read is not (deps.GATEWAY_PREFIX).
@@ -711,8 +653,7 @@ def forward(session: Session, project: Project, agent: Agent, decision: Decision
             id=ids.new_id(ids.AUDIT), project_id=project.id, actor=f"agent:{agent.id}",
             action="data_source.call", entity="data_source", entity_id=decision.entry["name"],
             detail={"source": decision.entry["name"], "tool": decision.row.name,
-                    "kind": decision.row.kind, "approval_id":
-                        decision.approval.id if decision.approval is not None else None,
+                    "kind": decision.row.kind,
                     "arguments_sha256": _arguments_digest(arguments),
                     "is_error": bool(result.get("isError"))}))
     return result

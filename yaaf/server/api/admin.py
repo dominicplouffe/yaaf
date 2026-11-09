@@ -4270,6 +4270,16 @@ def decide_approval(
         return _decide_capacity(session, approval, project, body)
     if approval.kind == ApprovalKind.TOOL_PERMISSION and approval.tool_permission:
         return _decide_tool_permission(session, approval, project, body)
+    if body.approve and approval.kind == ApprovalKind.TOOL_REQUEST and approval.grant:
+        # A one-call grant past a denied tool. Retired: a yes would let nothing
+        # through (the gateway reads only the switch), and saying it did would
+        # be the platform telling him and the agent something untrue.
+        grant = approval.grant
+        raise HTTPException(
+            status_code=409,
+            detail=f"One-call approvals are retired: {grant.get('source')}.{grant.get('tool')} "
+                   "is denied, and a denied tool fails every time. To let it be called, allow "
+                   "the tool in Settings → Data sources. Decline this one.")
     _apply_decision(
         session, approval, project, body.approve, body.note,
         notice_body=(f"Approval '{approval.title}' was "

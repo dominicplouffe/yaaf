@@ -988,57 +988,6 @@ async def t_spend_book(args):
 
 
 @tool(
-    "data_write_request",
-    "Ask the chairman to approve ONE call to a data source tool that is denied "
-    "— a change to his live account, not a read. Pass the arguments you intend "
-    "to send, exactly: he decides on those, the platform records their "
-    "fingerprint, and the approval is spendable on nothing else. Approved, it "
-    "buys exactly one call — a second change needs a second approval, so batch "
-    "with the tool's own bulk arguments rather than filing twenty requests. "
-    "Say WHY in terms of what it does to his numbers, not what it does to your "
-    "task — " + FOR_HIM + ". Unanswered it expires to no; plan the work that does not "
-    "need it. "
-    "ALWAYS fill `disclosure` — it is what he decides on: `change_set` as "
-    "[{entity, field, before, after}] for every thing that changes; "
-    "`scope_counts` like {campaigns: 3, keywords: 14}; `evidence` as {columns, "
-    "rows (the ones that matter, 200 at most), period_start, period_end, "
-    "currency, as_of}; `estimate` as {label, value, basis} labelled as an "
-    "estimate; `reversible` true/false; `counter_case` — the honest reason he "
-    "might say no; `spend_affected_usd_month`; and `category` (one of: bids, "
-    "budgets, targeting, negative_keywords, campaign_state, placements, other). "
-    "A request without a disclosure is a paragraph with buttons.",
-    {"server": str, "tool": str, "arguments": dict, "why": str, "disclosure": dict},
-)
-async def t_data_write_request(args):
-    payload = {"source": (args.get("server") or "").strip(),
-               "tool": (args.get("tool") or "").strip(),
-               "arguments": args.get("arguments") or {},
-               "why": (args.get("why") or "").strip()}
-    if isinstance(args.get("disclosure"), dict) and args["disclosure"]:
-        payload["disclosure"] = args["disclosure"]
-    return _text(_call("POST", "/agent/data_writes", payload))
-
-
-@tool(
-    "data_write_outcome",
-    "After a data_fetch spent an approval, file what the call DID — on the run that "
-    "made it, or the next one once the effect can be read. ok: whether the call "
-    "succeeded; observed: {label, value, basis, as_of} — the effect in the owner's "
-    "numbers ('ad spend on the 14 terms', '$0 in the 7 days since', the window it "
-    "covers); note: anything else he should know. Without this the owner sees "
-    "'approved · applied' and never learns whether it worked.",
-    _schema({"approval_id": str, "ok": bool, "observed": dict, "note": str},
-            optional=("observed", "note")),
-)
-async def t_data_write_outcome(args):
-    payload = {"ok": bool(args.get("ok", True)), "note": (args.get("note") or "").strip()}
-    if isinstance(args.get("observed"), dict) and args["observed"]:
-        payload["observed"] = args["observed"]
-    approval_id = (args.get("approval_id") or "").strip()
-    return _text(_call("POST", f"/agent/data_writes/{approval_id}/outcome", payload))
-
-
-@tool(
     "tool_permission_request",
     "CEO only. Ask the chairman to ALLOW (or DENY) one data source tool for every agent "
     "given that source, from now on. Denied tools are refused by the platform before "
@@ -1047,9 +996,8 @@ async def t_data_write_outcome(args):
     "source: the data source name; tool: the tool's name exactly as the source lists it "
     "(see DENIED TOOLS in your system prompt, or data_fetch(server) with no tool); "
     "permission: allow | deny; why: what it would be used for and what it would change "
-    "on his account — " + FOR_HIM + "; if_declined: what happens without it. For ONE "
-    "call with exact arguments, data_write_request is the better ask. Unanswered it "
-    "expires to no; plan around the tool as it is.",
+    "on his account — " + FOR_HIM + "; if_declined: what happens without it. Unanswered "
+    "it expires to no; plan around the tool as it is.",
     {"source": str, "tool": str, "permission": str, "why": str, "if_declined": str},
 )
 async def t_tool_permission_request(args):
@@ -1707,12 +1655,10 @@ def _row_count(body: str, countable: bool) -> int | None:
     "for small lookups you will read in full; use this for anything larger. Your "
     "workspace persists across runs, so check for an existing file before fetching "
     "again, and leave the script that processed it behind for the next run. "
-    "approval_id: only for a tool that is denied — file data_write_request first, wait "
-    "to be woken with the decision, then pass the approved id here with the SAME "
-    "arguments you had approved. Every call goes through the platform, which refuses a "
-    "denied tool before anything reaches the source.",
-    _schema({"server": str, "tool": str, "arguments": dict, "path": str, "approval_id": str},
-            optional=("tool", "arguments", "path", "approval_id")),
+    "Every call goes through the platform, which refuses a denied tool before anything "
+    "reaches the source; nothing gets a call through a denied tool.",
+    _schema({"server": str, "tool": str, "arguments": dict, "path": str},
+            optional=("tool", "arguments", "path")),
 )
 async def t_data_fetch(args):
     specs = _data_source_specs()
@@ -1756,19 +1702,13 @@ async def t_data_fetch(args):
             "note": ("Every tool listed is yours to call."
                      if all(t["permission"] == "allow" for t in tools) else
                      "Tools marked deny are refused by the platform before anything is "
-                     "sent. Only the chairman allows one: the CEO asks him with "
-                     "tool_permission_request, or file data_write_request for ONE call "
-                     "with exact arguments and pass the approved approval_id here."),
+                     "sent, every time. Only the chairman allows one; the CEO asks him "
+                     "with tool_permission_request."),
             "tools": tools}})
 
     # Nothing is decided here. The gateway checks the tool's permission on every
     # call, after this process has handed the call over and before anything
-    # reaches the source — and an approval is spent there, in the same request,
-    # against these exact arguments.
-    approval_id = (args.get("approval_id") or "").strip()
-    if approval_id:
-        config = {**config, "headers": {**config.get("headers", {}),
-                                        GATEWAY_APPROVAL_HEADER: approval_id}}
+    # reaches the source.
 
     destination = (args.get("path") or "").strip()
     if not destination:
@@ -1920,8 +1860,6 @@ def run_tools() -> list:
     if not specs:
         return tools
     tools.append(t_data_fetch)
-    # Any source can have a denied tool, so any source can need a one-call ask.
-    tools.extend([t_data_write_request, t_data_write_outcome])
     return tools
 
 
@@ -2030,9 +1968,8 @@ def _allowed_tools() -> list[str]:
     return allowed
 
 
-#: Headers the platform's gateway reads (yaaf.server.datasource_tools): the
-#: approval a denied call spends, and a request for the whole tool list.
-GATEWAY_APPROVAL_HEADER = "X-Yaaf-Approval"
+#: The header asking the platform's gateway for the whole tool list, denied
+#: tools included and marked (yaaf.server.datasource_tools).
 GATEWAY_LISTING_HEADER = "X-Yaaf-Listing"
 
 
