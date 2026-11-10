@@ -2800,7 +2800,7 @@ def ask_chairman(
     policy.check_plain_parts({
         "title": body.title, "body": body.body, "why": body.why,
         "recommendation": body.recommendation, "default_action": body.default_action,
-        **{f"options[{i}]": o for i, o in enumerate(body.options)}})
+        **{f"options[{i}]": o for i, o in enumerate(body.options)}}, by_name=True)
     boardroom = session.execute(
         select(Channel).where(Channel.project_id == ctx.project.id,
                               Channel.kind == ChannelKind.BOARDROOM)
@@ -3738,7 +3738,7 @@ def heads_up_send(
         raise Refusal(
             "Only the CEO puts things in front of the chairman. If he should hear "
             "this, tell the CEO — a suggestion survives your run.", status_code=403)
-    policy.check_plain_parts({"title": body.title, "body": body.body})
+    policy.check_plain_parts({"title": body.title, "body": body.body}, by_name=True)
     try:
         row = heads.file(session, ctx.project, ctx.agent.id, body.title, body.body,
                          body.standing_order)

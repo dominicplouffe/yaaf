@@ -2531,15 +2531,25 @@ def check_plain_to_chairman(
     raise Refusal(plain.refusal_text(found))
 
 
-def check_plain_parts(parts: dict[str, str | None]) -> None:
+def check_plain_parts(parts: dict[str, str | None], *, by_name: bool = False) -> None:
     """The same measure for the CEO's other words to him — a question, a
     heads-up — field by field. Sentence length only: the platform assembles
     those fields into the item he reads, so their total is not the writer's.
-    Without this, the run-on refused in the boardroom moves one tool over."""
+    Without this, the run-on refused in the boardroom moves one tool over.
+
+    `by_name` also refuses an ID where a name belongs (R-07, a row id), for
+    the items he reads cold and on their own — a question, a heads-up. The
+    tool descriptions asked for names for months; flags were the first place
+    it was refused, and it went no further than flags, so an ID turned away
+    from a flag could move one tool over just like a run-on."""
     from yaaf.server import plain
 
-    found = [f"In `{name}`: {problem}" for name, text in parts.items() if text
-             for problem in plain.problems(text, whole_message=False)]
+    found = []
+    if by_name:
+        found += [f"In `{name}`: {problem}" for name, text in parts.items() if text
+                  for problem in plain.named_by_id(text)]
+    found += [f"In `{name}`: {problem}" for name, text in parts.items() if text
+              for problem in plain.problems(text, whole_message=False)]
     if found:
         raise Refusal(plain.refusal_text(found))
 

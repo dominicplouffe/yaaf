@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
+from tests.selftest_invariants.test_inbox_tiers import ORDER, with_order
 from yaaf.core import ids
 from yaaf.core.db import db_session
 from yaaf.core.models import (
@@ -107,6 +108,48 @@ def test_a_question_of_fact_needs_no_options_or_recommendation(client):
     with db_session() as session:
         stored = session.query(Ask).filter(Ask.project_id == project["id"]).one().body
     assert "The options" not in stored and "What I recommend" not in stored
+
+
+def test_a_question_that_names_a_thing_by_its_id_is_refused_in_any_part(client):
+    """He reads it cold, often from an email, and "R-07" is a name only the
+    CEO knows. Flags refused it first; an ID turned away there must not move
+    one tool over."""
+    project = make_project(client, slug="byname", constitution=ZONE)
+    base = {**QUESTION, "why": "The page has to be live by the 30th and design takes two weeks.",
+            "recommendation": "Ana. The $900 difference is less than one bad week of signups."}
+    for part, text in (("title", "Which designer should do R-07?"),
+                       ("body", "Two designers can start Monday on R-12 and its copy."),
+                       ("why", "R-07 has to be live by the 30th and design takes two weeks."),
+                       ("recommendation", "Ana, because rqcr_018f2a9b3c4d slips otherwise."),
+                       ("default_action", "Book Ana on Monday morning for R-07 and tell you.")):
+        refused = client.post("/agent/asks", headers=_ceo(project), json={**base, part: text})
+        assert refused.status_code == 422, part
+        assert f"In `{part}`" in refused.text, part
+        assert "does not know what that is" in refused.text, part
+    refused = client.post("/agent/asks", headers=_ceo(project), json={
+        **base, "options": ["Ana — $2,400", "Ben — $1,500, takes R-07 too"]})
+    assert refused.status_code == 422
+    assert "In `options[1]`" in refused.text
+    with db_session() as session:
+        assert session.query(Ask).filter(Ask.project_id == project["id"]).count() == 0
+
+    # Non-vacuity: the same question by name lands.
+    assert client.post("/agent/asks", headers=_ceo(project), json=base).status_code == 200
+
+
+def test_a_heads_up_that_names_a_thing_by_its_id_is_refused(client):
+    project = make_project(client, slug="huname", constitution=ZONE)
+    with_order(project)
+    told = {"title": "The weekly price check went out",
+            "body": "It went out at 6am as you asked.", "standing_order": ORDER}
+    for part, text in (("title", "R-07 shipped this morning"),
+                       ("body", "The weekly price check (R-07) went out at 6am as you asked.")):
+        refused = client.post("/agent/heads_up", headers=_ceo(project),
+                              json={**told, part: text})
+        assert refused.status_code == 422, part
+        assert f"In `{part}`" in refused.text, part
+    landed = client.post("/agent/heads_up", headers=_ceo(project), json=told)
+    assert landed.status_code == 200, landed.text
 
 
 def test_the_chase_for_a_question_reads_in_his_time(client, monkeypatch):
