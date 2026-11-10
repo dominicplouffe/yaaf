@@ -96,6 +96,39 @@ def problems(text: str, *, whole_message: bool = True) -> list[str]:
     return found
 
 
+#: Names that mean something only inside the platform: a requirement's key
+#: (R-07) and a row's id (flag_018f…, cycl_x). A sentence can be short and
+#: still unreadable cold when the thing it is about is called by one of these.
+_KEY = re.compile(r"\bR-\d+\b")
+_ROW_ID = re.compile(r"\b[a-z]{2,5}_[0-9a-f]{6,}\b")
+
+#: The platform's own nouns for how work is organised. Fine in a sentence that
+#: explains; not as the thing a headline is about, because a headline in these
+#: words reads the same for every project — "a cycle ended with scope open" —
+#: and the chairman cannot tell from it what happened to HIS.
+_PLATFORM_NOUNS = re.compile(
+    r"\b(cycles?|scope|requirements?|obligations?|flags?)\b", re.I)
+
+
+def named_by_id(text: str) -> list[str]:
+    """IDs where a name belongs, one plain line each. Empty = fine."""
+    found = sorted(set(_KEY.findall(text)) | set(_ROW_ID.findall(text)))
+    if not found:
+        return []
+    return [f"It names {', '.join(found[:4])} — he does not know what that is. Say "
+            "what the thing is (\"the weekly results report\", \"the price check\")."]
+
+
+def abstract_headline(text: str) -> list[str]:
+    """A headline that names a category rather than the event. Empty = fine."""
+    nouns = sorted({m.lower() for m in _PLATFORM_NOUNS.findall(text)})
+    if not nouns:
+        return []
+    return [f"The headline is in platform words ({', '.join(nouns)}). Say what "
+            "happened to what, in his words: \"The weekly results report did not go "
+            "out at 6am\", \"Last week ended with the server schedule unfinished\"."]
+
+
 def refusal_text(found: list[str]) -> str:
     return (
         "Not sent — the chairman would have to read this twice. "

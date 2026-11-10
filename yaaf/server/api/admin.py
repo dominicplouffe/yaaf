@@ -5297,11 +5297,12 @@ def acknowledge_flag(flag_id: str, body: FlagAck, session: Session = Depends(db)
     _audit(session, flag.project_id, "flag.ack", "flag", flag.id,
            {"kind": flag.kind, "status": flag.status})
     held = chairman_notes.record(session, flag.project_id, "flag", flag.id,
-                                 f"Noted: {flag.summary[:300]}", body.note,
+                                 f"Noted: {(flag.headline or flag.summary)[:300]}", body.note,
                                  user_id=_decider(project))
     _notice_ceo(
         session, flag.project_id, NoticeKind.FLAG_ACKNOWLEDGED,
         f"The chairman answered the {flag.kind.replace('_', ' ')} flag you raised"
+        + (f" (\"{flag.headline}\")" if flag.headline else "")
         + (f": {flag.acknowledgement}" if flag.acknowledgement else " and said nothing further.")
         + (" It is closed." if flag.status == FlagStatus.RESOLVED else
            " The condition is still true, so the flag stays open — what closes it is the "

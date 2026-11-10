@@ -293,8 +293,10 @@ def test_the_ceo_can_close_a_flag_end_to_end(client):
     raised = client.post("/agent/flags/raise", json={
         "flag_id": flag_id,
         "message_id": posted.json()["id"],
-        "proposal": "Shift two runs a week from memo polish to captaincy modelling, "
-                    "and review in two gameweeks.",
+        "headline": "The team is further from the rank target than when it started",
+        "why": "Rank is 6,698,328 against a target of 500,000, and it fell this week.",
+        "plan": "Shift two runs a week from memo polish to captaincy modelling, "
+                "and review in two gameweeks.",
     }, headers=bearer(token))
     assert raised.status_code == 200, raised.text
 

@@ -4,11 +4,11 @@ import { ApprovalRow, AskRow, DeskProject, get, HeadsUpRow, HeldNote, post, spli
 import { BriefBody, DeskBrief, ProjectBrief } from "../briefing";
 import { isLive, Item, ItemType, needsYou, ScopeAccept, SnoozeMenu, soonestClock, useDesk, wake } from "../desk";
 import { fmtWhen, usePoll } from "../hooks";
-import { clip, DecideButtons, fmtAgo, fmtSoon, NotedButton, SEND_HINT, sendOnEnter } from "../ui";
+import { clip, DecideButtons, FlagAnswer, fmtAgo, fmtSoon, SEND_HINT, sendOnEnter } from "../ui";
 import { holdDecision } from "../undo";
 import { Avatar, EmptyState, Seg } from "../ui/kit";
 import { Icon, IconName } from "../ui/Icon";
-import { flagPlain } from "../ui/project";
+import { flagPlain, flagTold, oneCardPerCause } from "../ui/project";
 import { Fact, Facts, Recommendation } from "../ui/signal";
 
 /** One place for everything that wants the chairman, across every project.
@@ -24,8 +24,10 @@ import { Fact, Facts, Recommendation } from "../ui/signal";
     sidebar badge counts.
 
     **Acknowledge** is what he must know but not decide: a problem the CEO was
-    made to raise, and a heads-up he asked for by standing order. One button,
-    Noted. Nothing there blocks or expires.
+    made to raise, and a heads-up he asked for by standing order. A problem
+    reads as what happened, why, what happens next and what (if anything) he
+    does, and is answered "Sounds good" or "Change the plan". Nothing there
+    blocks or expires.
 
     **Updates** is information — the daily brief. **Watching** is every clock
     the CEO is running down on its own. **Done** is what he decided, with the
@@ -35,12 +37,14 @@ type Tab = "needs" | "ack" | "updates" | "watching" | "done";
 
 interface FlagRow {
   id: string; kind: string; status: string; summary: string; proposal: string | null;
+  headline: string | null; why: string | null; plan: string | null; from_you: string | null;
+  covered_by_flag_id: string | null;
   raised_at: string | null; acknowledged_at: string | null; acknowledgement: string | null;
   held_note?: HeldNote | null;
 }
 
 type Update =
-  | { key: string; type: "flag"; at: string; project: DeskProject; flag: FlagRow }
+  | { key: string; type: "flag"; at: string; project: DeskProject; flag: FlagRow; also: FlagRow[] }
   | { key: string; type: "heads_up"; at: string; project: DeskProject; heads: HeadsUpRow }
   | { key: string; type: "brief"; at: string; project: DeskProject; brief: ProjectBrief };
 
@@ -384,7 +388,7 @@ function HeadsUpDetail({ u, onChanged }: {
 function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
   if (u.type === "heads_up") return <HeadsUpDetail u={u} onChanged={onChanged} />;
   if (u.type === "flag") {
-    const plain = flagPlain(u.flag.kind);
+    const told = flagTold(u.flag);
     return (
       <div className="ib-doc">
         <div className="ib-meta">
@@ -394,14 +398,27 @@ function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
           <span className="grow" />
           {u.flag.raised_at && <span className="help">{fmtAgo(u.flag.raised_at)}</span>}
         </div>
-        <h2 className="ib-title">{plain.title}</h2>
+        <h2 className="ib-title">{told.headline}</h2>
         <dl className="case">
-          <div><dt>What it means</dt><dd>{plain.means}</dd></div>
-          <div><dt>The CEO proposes</dt><dd className="pre">{u.flag.proposal ?? "Nothing yet."}</dd></div>
-          <div><dt>In the platform's words</dt><dd>{u.flag.summary}</dd></div>
-          <div><dt>If you say nothing</dt><dd>The proposal goes ahead. Nothing here blocks or expires.</dd></div>
+          {told.parts.map(([k, v]) => (
+            <div key={k}><dt>{k}</dt><dd className="pre">{v}</dd></div>
+          ))}
           {u.flag.held_note && <NoteAndAnswer held={u.flag.held_note} />}
         </dl>
+        {u.also.length > 0 && (
+          <p className="help">
+            One cause behind {u.also.length + 1} alerts — your answer here answers all of them.
+          </p>
+        )}
+        {/* The check that opened it, for whoever wants the evidence. Folded,
+            because it is written in the platform's terms and the parts above
+            are the version meant for reading. */}
+        <details className="help">
+          <summary>What the platform's check found</summary>
+          {[u.flag, ...u.also].map((f) => (
+            <p key={f.id}><b>{flagPlain(f.kind).title}.</b> {f.summary}</p>
+          ))}
+        </details>
         <div className="ib-acts">
           {u.flag.acknowledged_at ? (
             <span className="help">
@@ -409,7 +426,7 @@ function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
               {u.flag.acknowledgement ? `: “${clip(u.flag.acknowledgement, 120)}”` : ""}. It stays until the numbers turn.
             </span>
           ) : (
-            <NotedButton
+            <FlagAnswer
               onSubmit={async (note) => { await post(`/admin/flags/${u.flag.id}/ack`, { note }); onChanged(); }} />
           )}
           <span className="grow" />
@@ -494,9 +511,11 @@ function useUpdates(projects: DeskProject[]) {
   const updates = useMemo(() => {
     const byId = new Map(projects.map((p) => [p.id, p]));
     const out: Update[] = [];
-    for (const { project, flag } of flags ?? []) {
-      if (flag.status !== "raised") continue;
-      out.push({ key: `flag-${flag.id}`, type: "flag", at: flag.raised_at ?? "", project, flag });
+    for (const p of projects) {
+      const raised = (flags ?? []).filter((r) => r.project.id === p.id && r.flag.status === "raised");
+      for (const { lead, also } of oneCardPerCause(raised.map((r) => r.flag))) {
+        out.push({ key: `flag-${lead.id}`, type: "flag", at: lead.raised_at ?? "", project: p, flag: lead, also });
+      }
     }
     for (const { project, heads: h } of heads ?? []) {
       out.push({ key: `hu-${h.id}`, type: "heads_up", at: h.created_at, project, heads: h });
@@ -644,7 +663,7 @@ export function InboxView({ project }: { project?: string }) {
               <span className="grow">
                 <span className="ib-r1"><span className="ib-kind">{u.type === "flag" ? "A problem, raised" : u.type === "heads_up" ? "You asked to be told" : "While you were away"}</span>
                   <span className="grow" /><span className="help">{u.at ? fmtAgo(u.at) : ""}</span></span>
-                <span className="ib-t">{u.type === "flag" ? flagPlain(u.flag.kind).title : u.type === "heads_up" ? u.heads.title : clip(u.brief.headline, 120)}</span>
+                <span className="ib-t">{u.type === "flag" ? flagTold(u.flag).headline : u.type === "heads_up" ? u.heads.title : clip(u.brief.headline, 120)}</span>
                 <span className="ib-r3">{!project && <ProjectTag p={u.project} />}
                   {isAck(u) && !unnoted(u) && <span className="help">noted</span>}</span>
               </span>
@@ -754,7 +773,7 @@ export function InboxView({ project }: { project?: string }) {
           )}
           <p className="ib-hint help">
             {tab === "needs" && "Only what you alone can settle or do, soonest consequence first. Each says what happens if you do nothing."}
-            {tab === "ack" && "What you should know but not decide: problems the CEO raised, and what you asked to be told. One click — Noted. Nothing here expires."}
+            {tab === "ack" && "What you should know but not decide: problems the CEO raised, each with its plan, and what you asked to be told. One click answers each. Nothing here expires."}
             {tab === "updates" && "Information: what happened while you were away. Nothing to press."}
             {tab === "watching" && "Clocks the CEO is handling on its own. Nothing here waits on you."}
             {tab === "done" && "What you decided in the last seven days."}

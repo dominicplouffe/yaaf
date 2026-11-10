@@ -1769,11 +1769,30 @@ def propose_commitment(
 
 
 class FlagRaiseIn(BaseModel):
+    # A raise carrying the old one-paragraph `proposal` dies here rather than
+    # landing as a card with nothing in its parts.
+    model_config = ConfigDict(extra="forbid")
+
     flag_id: str
     # The boardroom message in which it was actually said. The flag closes
     # because the chairman was told, and this is the proof.
     message_id: str
-    proposal: str = Field(min_length=20, max_length=4000)
+    # The four questions he has, in the order he has them. One paragraph under
+    # the flag's category name was the CEO's working notes cut off at 200
+    # characters, and he had to ask somebody what his own screen meant.
+    #
+    # What happened, to what — the card's title. Short on purpose: a headline
+    # that needs a second line is a paragraph.
+    headline: str = Field(min_length=10, max_length=120)
+    # Why it happened, with the number that shows it.
+    why: str = Field(min_length=20, max_length=1000)
+    # What you will do, and by when he will see it fixed.
+    plan: str = Field(min_length=20, max_length=1500)
+    # What you need from him. Null is "nothing", and his screen says so; the
+    # field exists so a request cannot hide in the middle of the plan.
+    from_you: str | None = Field(default=None, min_length=10, max_length=1000)
+    # Other open flags this same telling explains — one cause, one card.
+    also_covers: list[str] = Field(default_factory=list, max_length=8)
 
 
 @router.get("/flags")
@@ -1789,7 +1808,7 @@ def list_flags(ctx: RunContext = Depends(run_auth), session: Session = Depends(d
         "note": (
             "Each of these was opened by arithmetic or a failed check, not by anyone's "
             "judgement about whether it matters. Raise it in the boardroom with the "
-            "numbers and a proposal, then close it with flag_raise. The chairman can "
+            "numbers and a plan, then close it with flag_raise. The chairman can "
             "see how many are unraised, so saying nothing is not a quiet option."
             if unraised else "Nothing outstanding."
         ),
@@ -1812,6 +1831,10 @@ def raise_flag(
     the warehouse API was down four minutes, it self-healed, no action needed"
     is this verb working exactly as intended. What is no longer available is
     leaving it open while reporting that everything is fine.
+
+    The proposal arrives in parts — headline, why, plan, from_you — because a
+    paragraph did not survive the trip to his screen (see `FlagRaiseIn`). Each
+    part is held to the plain measure, and none may call a thing by its ID.
     """
     from yaaf.core.models import Flag, FlagStatus
 
@@ -1844,21 +1867,49 @@ def raise_flag(
             status_code=422,
         )
 
-    flag.status = FlagStatus.RAISED
-    flag.raised_at = utcnow()
-    flag.raised_in_message_id = message.id
-    flag.proposal = body.proposal.strip()
-    session.add(AuditLog(
-        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
-        actor=f"agent:{ctx.agent.id}", action="flag.raised",
-        entity="flag", entity_id=flag.id,
-        detail={"kind": flag.kind, "message_id": message.id,
-                "proposal": flag.proposal[:500]},
-    ))
+    covered = []
+    for other_id in dict.fromkeys(body.also_covers):
+        other = session.get(Flag, other_id)
+        if other is None or other.project_id != ctx.project.id or other.id == flag.id:
+            raise Refusal(f"also_covers: no other flag {other_id} on this project.",
+                          status_code=404)
+        if other.status != FlagStatus.OPEN:
+            raise Refusal(
+                f"also_covers: {other_id} is already {other.status}. List only open "
+                "flags this telling explains.", status_code=409)
+        covered.append(other)
+
+    told = {"headline": body.headline.strip(), "why": body.why.strip(),
+            "plan": body.plan.strip(),
+            "from_you": (body.from_you or "").strip() or None}
+    policy.check_flag_telling(told["headline"], {k: told[k] for k in ("why", "plan", "from_you")})
+    proposal = (f"{told['headline']}. Why: {told['why']} Plan: {told['plan']} "
+                f"From you: {told['from_you'] or 'nothing'}")
+
+    now = utcnow()
+    for row in (flag, *covered):
+        row.status = FlagStatus.RAISED
+        row.raised_at = now
+        row.raised_in_message_id = message.id
+        row.headline, row.why, row.plan, row.from_you = (
+            told["headline"], told["why"], told["plan"], told["from_you"])
+        row.proposal = proposal
+        row.covered_by_flag_id = flag.id if row is not flag else None
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+            actor=f"agent:{ctx.agent.id}", action="flag.raised",
+            entity="flag", entity_id=row.id,
+            detail={"kind": row.kind, "message_id": message.id,
+                    "covered_by": row.covered_by_flag_id,
+                    "proposal": proposal[:500]},
+        ))
     return {
         "flag_id": flag.id,
         "status": flag.status,
-        "note": "Raised. He has it, with what you propose — that is the job.",
+        "covered": [row.id for row in covered],
+        "note": ("Raised. He has it, with what you propose — that is the job."
+                 + (f" One card for {len(covered) + 1} flags: answering it answers all of them."
+                    if covered else "")),
     }
 
 

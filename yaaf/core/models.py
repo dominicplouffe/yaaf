@@ -1922,7 +1922,28 @@ class Flag(Base):
     raised_in_message_id: Mapped[str | None] = mapped_column(String(40))
     # What the CEO proposed doing about it. Required to raise: the value a CEO
     # adds over a monitoring alert is the sentence after the bad news.
+    #
+    # Since the four parts below exist this is assembled from them, not written
+    # — kept so a row raised before them still reads, and so the audit line and
+    # the CLI carry one string.
     proposal: Mapped[str | None] = mapped_column(Text)
+    # The telling, in parts, because one paragraph was not readable. The kind
+    # names a category ("Something owed every cycle did not happen") and the
+    # paragraph was the CEO's working notes, cut off at the part he needed —
+    # so the chairman had to ask somebody else what two cards on his own
+    # screen meant. Each part answers one question he has, in his order:
+    # what happened, why, what happens next, and what (if anything) he does.
+    headline: Mapped[str | None] = mapped_column(Text)
+    why: Mapped[str | None] = mapped_column(Text)
+    plan: Mapped[str | None] = mapped_column(Text)
+    # Null means "nothing": the common case, said as such on his screen rather
+    # than left for him to infer from the absence of a request.
+    from_you: Mapped[str | None] = mapped_column(Text)
+    # Raised in the same telling as another flag, because one cause tripped
+    # both. He reads one card for one problem; a server schedule that was never
+    # set up arrived as a missed report AND a week closed short, and nothing
+    # said they were the same thing.
+    covered_by_flag_id: Mapped[str | None] = mapped_column(String(40))
     # When the chairman said something back, and what he said. A flag that has
     # been raised is news he has been given, not news he has read: without this
     # the raised ones sat on his desk under "needs you" with nothing to press,

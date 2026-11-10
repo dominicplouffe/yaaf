@@ -1013,16 +1013,18 @@ export function SplitAction({
   );
 }
 
-/** Noted, with Reply behind the arrow — flags and heads-ups, where there is
-    nothing to decide and so nothing to say no to. */
-export function NotedButton({ onSubmit, primary = true }: {
+/** The answer to a problem the CEO raised: go ahead with its plan, or say what
+    to change. Both acknowledge the flag on the server; what changed is the
+    words. "Noted" did not say what pressing it meant, and the other choice hid
+    behind an arrow, so the way to object is a button of its own. */
+export function FlagAnswer({ onSubmit, primary = true }: {
   onSubmit: (note: string) => Promise<void>;
   primary?: boolean;
 }) {
   return (
-    <SplitAction label="Noted" primary={primary} run={() => onSubmit("")} choices={[{
-      label: "Noted, with a reply…", hint: "Say something back; the CEO answers it",
-      send: "Noted, send reply", placeholder: "e.g. send it by 8pm from now on",
+    <SplitAction label="Sounds good" primary={primary} run={() => onSubmit("")} exposed={0} choices={[{
+      label: "Change the plan…", hint: "Say what you want instead; the CEO answers it",
+      send: "Send to the CEO", placeholder: "e.g. fix the skills first; the server schedule can wait a week",
       run: onSubmit,
     }]} />
   );

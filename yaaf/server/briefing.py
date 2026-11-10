@@ -1059,12 +1059,16 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
             Approval.status == ApprovalStatus.PENDING,
         ).order_by(Approval.expires_at)
     ).scalars())
-    raised_flags = int(session.execute(
-        select(func.count(Flag.id)).where(
+    # One per telling: flags told together are one problem on his screen, so
+    # they are one here too — the letter and the desk must not disagree.
+    raised = session.execute(
+        select(Flag.headline).where(
             Flag.project_id == project.id,
             Flag.status == FlagStatus.RAISED,
-        )
-    ).scalar_one())
+            Flag.covered_by_flag_id.is_(None),
+        ).order_by(Flag.raised_at)
+    ).scalars().all()
+    raised_flags = len(raised)
     open_review = session.execute(
         select(func.count(Review.id)).where(
             Review.project_id == project.id,
@@ -1083,6 +1087,9 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
         "verdicts": len(waiting["verdicts"]),
         "commitment": waiting["commitment"] is not None,
         "flags_raised": raised_flags,
+        # What each one IS, in the CEO's headline. A count alone sent him to
+        # the screen to find out, and the screen's title was the category.
+        "flag_headlines": [h for h in raised if h][:3],
         "open_reviews": int(open_review),
         # What he asked to be told and has not noted yet.
         "heads_ups": heads_ups,
@@ -1487,6 +1494,11 @@ def desk_briefing(session: Session, since: datetime | None = None,
 # ── the same content, as text ───────────────────────────────────────────────────
 
 
+def _flag_lines(waiting: dict) -> list[str]:
+    """The CEO's headline for each problem it raised — what it is, not that it is."""
+    return [f"      – {headline}" for headline in waiting.get("flag_headlines", [])]
+
+
 def _waiting_lines(waiting: dict, when) -> list[str]:
     """What is his to do, as the letter's first block."""
     body: list[str] = []
@@ -1516,12 +1528,14 @@ def _waiting_lines(waiting: dict, when) -> list[str]:
         if waiting.get("frozen"):
             body.append("  · frozen thread(s) only you can release")
         if waiting["flags_raised"]:
-            body.append(f"  · {waiting['flags_raised']} flag(s) the CEO raised with a "
-                        "proposal")
+            body.append(f"  · {waiting['flags_raised']} problem(s) the CEO raised, each "
+                        "with its plan")
+            body.extend(_flag_lines(waiting))
         if waiting["open_reviews"]:
             body.append(f"  · {waiting['open_reviews']} review(s) open")
     elif waiting.get("to_read"):
         body.append(f"Waiting on you: nothing to decide; {waiting['to_read']} to read.")
+        body.extend(_flag_lines(waiting))
     else:
         body.append("Waiting on you: nothing.")
     if waiting.get("heads_ups"):

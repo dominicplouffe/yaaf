@@ -132,6 +132,66 @@ export function flagPlain(kind: string): { title: string; means: string } {
   };
 }
 
+/** The parts of a raised flag every screen draws it from. */
+export interface FlagTelling {
+  id: string;
+  kind: string;
+  proposal: string | null;
+  headline?: string | null;
+  why?: string | null;
+  plan?: string | null;
+  from_you?: string | null;
+  covered_by_flag_id?: string | null;
+}
+
+/** What a raised flag says, in the order he asks it: what happened, why,
+ *  what happens next, and what he has to do.
+ *
+ * The kind's title used to be the headline, and it named a category — two
+ * cards on one screen read "Something owed every cycle did not happen" and "A
+ * cycle ended with work still open", over a proposal cut off at 200
+ * characters, and the chairman had to ask somebody what they meant. The CEO
+ * now writes the headline and the parts (`FlagRaiseIn`), and the platform
+ * refuses one in its own nouns. A flag raised before that keeps its title
+ * and its whole proposal, labelled, never cut. */
+export function flagTold(f: FlagTelling): { headline: string; parts: [string, string][] } {
+  const nothing = "Nothing. This goes ahead unless you say otherwise.";
+  if (f.headline) {
+    return {
+      headline: f.headline,
+      parts: [
+        ["Why", f.why ?? ""],
+        ["What happens next", f.plan ?? ""],
+        ["What you need to do", f.from_you ?? nothing],
+      ],
+    };
+  }
+  const plain = flagPlain(f.kind);
+  return {
+    headline: plain.title,
+    parts: [
+      ["What it means", plain.means],
+      ["What happens next", f.proposal ?? "Your CEO has not said yet."],
+      ["What you need to do", nothing],
+    ],
+  };
+}
+
+/** One card per problem. A flag told together with another one rides under
+ *  it; one whose card is no longer on the list stands on its own, so nothing
+ *  he was told can drop out of sight with its partner. */
+export function oneCardPerCause<T extends FlagTelling>(rows: T[]): { lead: T; also: T[] }[] {
+  const shown = new Set(rows.map((r) => r.id));
+  const cards = new Map<string, { lead: T; also: T[] }>();
+  for (const r of rows) {
+    if (!(r.covered_by_flag_id && shown.has(r.covered_by_flag_id))) cards.set(r.id, { lead: r, also: [] });
+  }
+  for (const r of rows) {
+    if (r.covered_by_flag_id && cards.has(r.covered_by_flag_id)) cards.get(r.covered_by_flag_id)!.also.push(r);
+  }
+  return [...cards.values()];
+}
+
 function daysBetween(a: string, b: string): number {
   return Math.round((new Date(a).getTime() - new Date(b).getTime()) / DAY);
 }

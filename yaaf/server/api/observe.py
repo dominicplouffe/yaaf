@@ -767,6 +767,14 @@ def project_flags(project_id: str, session: Session = Depends(db)) -> dict:
                 "opened_at": f.opened_at.isoformat() if f.opened_at else None,
                 "raised_at": f.raised_at.isoformat() if f.raised_at else None,
                 "proposal": f.proposal,
+                # The telling in parts; null on a flag raised before they
+                # existed, which reads from `proposal` as it always did.
+                "headline": f.headline,
+                "why": f.why,
+                "plan": f.plan,
+                "from_you": f.from_you,
+                # Told together with this flag: one card, not two.
+                "covered_by_flag_id": f.covered_by_flag_id,
                 # Raised is news given; acknowledged is news answered. The desk
                 # needs both to tell a decision waiting on him from one he made.
                 "acknowledged_at": (

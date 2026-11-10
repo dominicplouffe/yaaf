@@ -2544,6 +2544,28 @@ def check_plain_parts(parts: dict[str, str | None]) -> None:
         raise Refusal(plain.refusal_text(found))
 
 
+def check_flag_telling(headline: str, parts: dict[str, str | None]) -> None:
+    """A flag told so he can read the card without asking anyone what it means.
+
+    The plain measure, field by field, plus two things a short sentence can
+    still get wrong. A headline in the platform's nouns names the flag's
+    category, which he already has, instead of what happened. And an ID —
+    R-07, a row id — is a name only the CEO knows, in any part. Both reached
+    his screen: "Something owed every cycle did not happen", over a proposal
+    about "skills 8 to 10" and "the clean scheduled week".
+    """
+    from yaaf.server import plain
+
+    found = [f"In `headline`: {p}" for p in plain.abstract_headline(headline)]
+    every = {"headline": headline, **parts}
+    found += [f"In `{name}`: {p}" for name, text in every.items() if text
+              for p in plain.named_by_id(text)]
+    found += [f"In `{name}`: {p}" for name, text in every.items() if text
+              for p in plain.problems(text, whole_message=False)]
+    if found:
+        raise Refusal(plain.refusal_text(found))
+
+
 def check_plain_message(name: str, text: str | None) -> None:
     """One field he reads first and on its own, held to a whole boardroom
     message's limits: sentence length and total length."""

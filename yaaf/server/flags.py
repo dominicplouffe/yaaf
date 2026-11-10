@@ -503,14 +503,24 @@ def acknowledge(session: Session, project: Project, flag: Flag, note: str) -> Fl
     seen, not fixed. What clears them is the arithmetic turning, which is
     `evaluate`'s job and was always `evaluate`'s job.
     """
-    flag.acknowledged_at = utcnow()
-    flag.acknowledgement = note.strip() or None
-    if flag.kind in ACK_CLOSES:
-        flag.status = FlagStatus.RESOLVED
-        flag.resolution = f"the chairman answered: {flag.acknowledgement or 'noted'}"
-        flag.closed_at = flag.acknowledged_at
-    log.info("flag %s acknowledged for %s (status %s)",
-             flag.kind, project.slug, flag.status)
+    now = utcnow()
+    # One card answers every flag told with it. He read one problem and said
+    # one thing; leaving the others on his desk would ask him to say it again
+    # to cards he was never shown.
+    covered = session.execute(
+        select(Flag).where(Flag.covered_by_flag_id == flag.id,
+                           Flag.status == FlagStatus.RAISED,
+                           Flag.acknowledged_at.is_(None))
+    ).scalars().all()
+    for row in (flag, *covered):
+        row.acknowledged_at = now
+        row.acknowledgement = note.strip() or None
+        if row.kind in ACK_CLOSES:
+            row.status = FlagStatus.RESOLVED
+            row.resolution = f"the chairman answered: {row.acknowledgement or 'noted'}"
+            row.closed_at = now
+        log.info("flag %s acknowledged for %s (status %s)",
+                 row.kind, project.slug, row.status)
     return flag
 
 

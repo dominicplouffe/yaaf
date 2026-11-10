@@ -810,18 +810,31 @@ async def t_hypothesis_kill(args):
     "Two steps, in this order: message_post the news in the boardroom, then flag_raise "
     "with that message_id — the message is the proof he was told, which is why saying "
     "it in the boardroom does not close the flag on its own and why nothing else can. "
-    "flag_id comes from the flags in your context pack. The proposal is required: a "
-    "flag without one is anxiety forwarded to his desk, and what you add over a "
-    "monitoring alert is the sentence AFTER the bad news — what broke, the arithmetic, "
-    "the ways out, the one you would pick, and what you need from him — and " + FOR_HIM
-    + ". Closing it "
-    "dismissively is legitimate and expected: 'the cycle boundary caused it, no action "
-    "needed' is this verb working exactly as intended. What is not available is leaving "
-    "it open while telling him everything is fine.",
-    {"flag_id": str, "message_id": str, "proposal": str},
+    "flag_id comes from the flags in your context pack. What you add over a monitoring "
+    "alert is what comes AFTER the bad news, and it reaches his screen as a card with "
+    "four labelled parts, so " + FOR_HIM + ". headline: what happened, to what, in one "
+    "line — 'The weekly results report did not go out at 6am today', never the flag's "
+    "category ('a cycle ended with work open') and never a platform word (cycle, scope, "
+    "requirement, obligation, flag) or an ID; refused otherwise. why: the cause, with "
+    "the number that shows it. plan: what you will do and when he will see it fixed. "
+    "from_you: the one thing you need from him — leave it out when the answer is "
+    "nothing, and his screen says so. also_covers: other open flag ids this same cause "
+    "explains (a missed report AND a week that closed short because of it) — he gets "
+    "one card for one problem, and answering it answers them all. Closing a flag "
+    "dismissively is legitimate and expected: plan 'nothing to do — the warehouse API "
+    "was down four minutes and recovered' is this verb working exactly as intended. "
+    "What is not available is leaving it open while telling him everything is fine.",
+    _schema({"flag_id": str, "message_id": str, "headline": str, "why": str,
+             "plan": str, "from_you": str, "also_covers": list[str]},
+            optional=("from_you", "also_covers")),
 )
 async def t_flag_raise(args):
-    return _text(_call("POST", "/agent/flags/raise", dict(args)))
+    payload = {k: args[k] for k in ("flag_id", "message_id", "headline", "why", "plan")}
+    if args.get("from_you"):
+        payload["from_you"] = args["from_you"]
+    if args.get("also_covers"):
+        payload["also_covers"] = args["also_covers"]
+    return _text(_call("POST", "/agent/flags/raise", payload))
 
 
 @tool(
