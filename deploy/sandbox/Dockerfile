@@ -57,6 +57,11 @@ ENV PATH="/opt/venv/bin:${PATH}"
 # cannot cheaply fetch mid-run. PLAYWRIGHT_BROWSERS_PATH is world-readable so
 # the non-root agent user finds it.
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
+# The node binary newer playwright wheels bundle links libatomic.so.1, which
+# node:22-slim lacks: without it the install below exits 127 (2026-11-11).
+# Its own layer, so adding it does not rebuild the unpinned layers above.
+RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
 RUN /opt/venv/bin/playwright install --with-deps chromium \
     && chmod -R a+rX /opt/pw-browsers
 # ENV alone is not enough: /etc/profile OVERWRITES PATH (it does not prepend),
