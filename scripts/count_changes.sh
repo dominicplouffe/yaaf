@@ -22,6 +22,20 @@
 #   Merge commits are never counted as a change of their own, so no pull request can be
 #   counted twice by appearing both as a merge commit and as a branch commit.
 #
+# WHICH COMMITS ARE THIS PROJECT'S OWN RELEASE COMMITS (they count zero)
+#   Two tests, either one excludes the commit:
+#     1. By subject: "Release vX.Y.Z ...", or "Changelog ... X.Y.Z ...". These catch a
+#        release commit that touches no changelog.
+#     2. By content: the commit changes CHANGELOG.md AND every file it changes is one of
+#        CHANGELOG.md, pyproject.toml, yaaf/__init__.py. That is the release itself (the
+#        notes plus the declared version) and nothing else. Content is the test that
+#        matters, because real release commits land with titles that do not look like
+#        releases, for example "Publish the changelog for 0.1.1 to 0.5.0 and declare
+#        version 0.5.0 (#121)".
+#   A pull request that also changes code touches other files, so it still counts. A plain
+#   dependency bump does not touch CHANGELOG.md, so it still counts. No title wording has
+#   to be guessed.
+#
 # TIME ZONE
 #   Weeks are cut in UTC, because the public timestamps of a merge (the GitHub Release
 #   date, the pull request's merged_at) are UTC. Commit dates are read with TZ=UTC so the
@@ -76,6 +90,28 @@ log="$(TZ=UTC git log --first-parent --format='%H%x09%cd%x09%s' \
         --date=format-local:'%Y-%m-%dT%H:%M:%SZ' "$BASE_ANCESTOR_REF" |
        awk -F'\t' -v first="$FIRST_WEEK_START" 'substr($2,1,10) >= first')"
 
+# --- this project's own release commits, identified by what they change ------
+# Rule 2 of the header: a first-parent commit counts as zero when it changes CHANGELOG.md
+# and every file it changes is one of the release files below. Each commit is compared
+# with its first parent, which is exactly what the pull request brought to the mainline.
+RELEASE_FILES="CHANGELOG.md pyproject.toml yaaf/__init__.py"
+own_release_shas=" "
+while IFS=$'\t' read -r sha _; do
+  [ -n "${sha:-}" ] || continue
+  files="$(git diff-tree --no-commit-id --name-only -r "$sha^1" "$sha" 2>/dev/null || true)"
+  [ -n "$files" ] || continue
+  printf '%s\n' "$files" | grep -qxF 'CHANGELOG.md' || continue
+  own=1
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case " $RELEASE_FILES " in
+      *" $f "*) ;;
+      *) own=0; break ;;
+    esac
+  done <<< "$files"
+  [ "$own" -eq 1 ] && own_release_shas="$own_release_shas$sha "
+done <<< "$log"
+
 printf 'Week boundaries: Thursday to Wednesday, cut in UTC, from %s.\n' "$FIRST_WEEK_START"
 printf 'Base: v%s on %s (the last commit on %s before %s).\n' \
   "$BASE_VERSION" "$(git rev-parse --short "$base_sha")" "$DEFAULT_BRANCH" "$FIRST_WEEK_START"
@@ -84,10 +120,13 @@ printf 'Weeks covered: %s to %s.\n\n' "$FIRST_WEEK_START" "$last_week_end"
 # --- classify, then walk the weeks -------------------------------------------
 # Emits, per counted change: <utc-date> <counted-as> <label>
 #   counted-as is "pr" for a merged pull request, "commit" for a direct push.
-change_rows="$(printf '%s\n' "$log" | awk -F'\t' '
+change_rows="$(printf '%s\n' "$log" | awk -F'\t' -v own="$own_release_shas" '
   NF < 3 { next }
   {
     sha = $1; day = substr($2, 1, 10); subject = $3;
+
+    # an own release commit of this project, found by what it changes (see own_release_shas)
+    if (index(own, " " sha " ") > 0) next
 
     # the release commits of this project count as zero (changelog and version bump)
     if (subject ~ /^Release v?[0-9]+\.[0-9]+\.[0-9]+/) next
