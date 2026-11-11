@@ -55,6 +55,13 @@ MAX_USD = float(os.environ.get("YAAF_MAX_USD", "0") or 0)
 # Constitution run_token_budget: handed to the model as an API-side task
 # budget so it paces itself and wraps up before the line. 0 = off.
 TASK_BUDGET = int(os.environ.get("YAAF_TASK_BUDGET", "0") or 0)
+# Claude Code writes its prompt cache at the 1-hour TTL on a plan (8.00/M on
+# Opus 5.5 against 5.00/M at 5 minutes). A work run calls the model every few
+# seconds, so the extra hour only buys the NEXT run its system prompt, ~$0.10,
+# while the premium costs ~$0.60 a run: measured on a transcript project on
+# 2026-11-11, where cache writes were 40% of all spend. Work runs only — a chat
+# session idles between messages, and that is what the hour is for.
+CLAUDE_WORK_ENV = {"FORCE_PROMPT_CACHING_5M": "1"}
 PERMS = json.loads(os.environ.get("YAAF_TOOL_PERMISSIONS", "{}"))
 # The model's row from yaaf's catalog, which this file cannot import: its price
 # (USD per million tokens; null for a model the catalog does not list) and what
@@ -2542,6 +2549,7 @@ class SdkDriver:
             # default 1MB transport buffer and kills the run; seen live on
             # audit data.
             max_buffer_size=16 * 1024 * 1024,
+            env=dict(CLAUDE_WORK_ENV),
         )
         self.assistant_error: str | None = None
 

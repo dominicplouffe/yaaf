@@ -74,6 +74,11 @@ CAUSES: list[tuple[tuple[str, ...], str]] = [
      "the model account's own spend limit, upstream of this project — every "
      "project on this deployment stops together and no project setting raises "
      "it; this one is the chairman's to fix at the provider"),
+    (("you've hit your 5-hour limit", "you've hit your weekly limit",
+      "you've hit your session limit"),
+     "the Claude plan paying this seat used up its usage window — every "
+     "project on that plan stops together until the reset time in the message; "
+     "queued runs now wait for it instead of failing"),
     (("not logged in", "please run /login", "invalid x-api-key",
       "authentication_error", "oauth token has expired"),
      "the model credential was rejected — nothing this project can spend its "

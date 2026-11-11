@@ -207,3 +207,48 @@ def stored(session, token: str) -> dict | None:
                           "credential's next agent run",
                 **answer}
     return {"available": True, "reason": None, **answer}
+
+
+def exhausted_until(session, token: str) -> datetime | None:
+    """When the plan behind this token takes work again, if it is refusing it now.
+
+    Anthropic's own word, not a guess at a percentage: the last reading must
+    say `rejected` and name a window that is full and has not turned over. The
+    answer is the latest such window's reset — a full week outlasts a full
+    session. None means nothing on file says the plan is shut, which includes
+    every credential that is not a plan at all.
+
+    Without this the queue went on starting runs into a shut plan: on
+    2026-11-11 one project failed ~80 runs in three seconds each against
+    "You've hit your 5-hour limit", and the readings that said so sat here.
+    """
+    from yaaf.core.models import PlanReading
+
+    row = session.get(PlanReading, fingerprint(token))
+    if row is None or row.status != "rejected" or not row.windows:
+        return None
+    now = datetime.now(UTC)
+    ends = []
+    for window in row.windows:
+        share = _fraction(window.get("utilization"))
+        resets_at = window.get("resets_at")
+        if share is None or share < 1.0 or not isinstance(resets_at, str) \
+                or _has_turned_over(resets_at, now):
+            continue
+        try:
+            when = datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        ends.append(when if when.tzinfo else when.replace(tzinfo=UTC))
+    return max(ends) if ends else None
+
+
+def shut_fingerprints(session) -> set[str]:
+    """Tokens whose last reading was a refusal: one cheap query, so the lease
+    can skip all per-run work on the ordinary tick where nothing is shut."""
+    from sqlalchemy import select
+
+    from yaaf.core.models import PlanReading
+
+    return set(session.scalars(select(PlanReading.token_fingerprint)
+                               .where(PlanReading.status == "rejected")))

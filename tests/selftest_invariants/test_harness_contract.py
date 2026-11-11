@@ -45,7 +45,8 @@ if step.get("die_before_reading"):
     (state / f"call-{n}.json").write_text(json.dumps({"argv": sys.argv[1:], "stdin": ""}))
     sys.exit(2)
 (state / f"call-{n}.json").write_text(json.dumps(
-    {"argv": sys.argv[1:], "stdin": sys.stdin.read(), "pid": os.getpid()}))
+    {"argv": sys.argv[1:], "stdin": sys.stdin.read(), "pid": os.getpid(),
+     "force_5m": os.environ.get("FORCE_PROMPT_CACHING_5M")}))
 for line in pathlib.Path(step["fixture"]).read_text().splitlines():
     print(line, flush=True)
 if step.get("hang"):
@@ -100,7 +101,8 @@ def _on_sdk(r, script: list[dict]) -> tuple[int, dict, list[dict]]:
     async def fake_query(prompt=None, options=None):
         step = script[len(calls)]
         calls.append({"stdin": prompt, "resume": options.resume,
-                      "max_budget_usd": options.max_budget_usd})
+                      "max_budget_usd": options.max_budget_usd,
+                      "force_5m": (options.env or {}).get("FORCE_PROMPT_CACHING_5M")})
         last_error = None
         for record in _records(step["fixture"]):
             if record.get("type") == "result" and record.get("is_error"):
@@ -271,6 +273,16 @@ def test_the_resume_prompt_is_what_the_resumed_cli_is_told(fresh):
     calls = _calls(state)
     assert "Do ONE unit of work" in calls[0]["stdin"]
     assert calls[1]["stdin"] == r.base.RESUME_PROMPT
+
+
+def test_every_claude_harness_caches_a_work_run_for_five_minutes(fresh):
+    """A plan defaults Claude Code to the 1-hour cache, billed 8.00/M on Opus
+    5.5 against 5.00/M. A work run calls the model every few seconds, so the
+    hour only ever bought the next run its system prompt: ~$0.10 a run for a
+    ~$0.60 premium, with cache writes 40% of a transcript project's spend."""
+    results = _both(fresh, [{"fixture": "text_reply.jsonl"}])
+    for name, (_code, _result, calls) in results.items():
+        assert calls[0]["force_5m"] == "1", name
 
 
 # ── 2. the per-run cap holds across resumes ─────────────────────────────────────

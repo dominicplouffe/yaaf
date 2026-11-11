@@ -23,7 +23,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids, model_policy, prices
+from yaaf.core import ids, model_policy, plan_usage, prices
 from yaaf.core.config import settings
 from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
@@ -154,6 +154,7 @@ def lease_and_prepare(limit: int = 1) -> list[RunJob]:
         now = utcnow()
         ceilings = model_policy.ceilings(session)
         running = _running_by_provider(session) if ceilings else {}
+        shut = plan_usage.shut_fingerprints(session)
         rows = list(
             session.execute(
                 select(RunQueue)
@@ -181,10 +182,19 @@ def lease_and_prepare(limit: int = 1) -> list[RunJob]:
                          project.status if project else "missing")
                 session.delete(queued)
                 continue
-            seat = _queued_seat(session, queued, project) if ceilings else None
+            seat = _queued_seat(session, queued, project) if ceilings or shut else None
             provider = seat.provider if seat is not None and seat.harness != "mock" else None
             if provider in ceilings and running.get(provider, 0) >= ceilings[provider]:
                 continue
+            # The plan paying this seat has said no until a stated time: hold
+            # the row until then rather than start a run that fails in three
+            # seconds. A held row keeps its agent "busy" (dispatcher), so
+            # nothing piles up behind it, and it runs the moment the plan opens.
+            if provider and shut:
+                reopens = _plan_reopens(session, project, provider, shut)
+                if reopens is not None:
+                    queued.not_before = reopens
+                    continue
             # The seat resolved for the ceiling is the seat the run is pinned
             # to: resolving it twice is a context's worth of reads per row,
             # under the rows' locks.
@@ -208,6 +218,21 @@ def _running_by_provider(session: Session) -> dict[str, int]:
                Run.provider.is_not(None))
         .group_by(Run.provider)).all()
     return {provider: count for provider, count in rows}
+
+
+def _plan_reopens(session: Session, project: Project, provider: str, shut: set[str]):
+    """When the plan paying `provider` on this project takes work again, or
+    None if it is not shut (or is not a plan)."""
+    from yaaf.core import project_credentials
+    from yaaf.core.crypto import decrypt
+
+    payer = project_credentials.credential_for(session, project, provider)
+    if payer is None:
+        return None
+    token = decrypt(payer.ciphertext)
+    if plan_usage.fingerprint(token) not in shut:
+        return None
+    return plan_usage.exhausted_until(session, token)
 
 
 def _queued_seat(session: Session, queued: RunQueue, project: Project):

@@ -66,6 +66,10 @@ class ClaudeCliDriver(base.CliDriver):
         self.system_prompt_path = system_prompt_path
         self.mcp_config_path = self._write_mcp_config()
 
+    def env(self) -> dict[str, str]:
+        # The same binary as the SDK harness, so the same cache TTL.
+        return {**super().env(), **base.CLAUDE_WORK_ENV}
+
     def _write_mcp_config(self) -> Path:
         """The yaaf tools as a stdio server, plus every data source this role
         mounts, exactly as the SDK hands them to the CLI. The file carries the

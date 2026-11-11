@@ -462,3 +462,61 @@ def test_a_model_named_with_an_at_sign_is_a_model_not_a_class():
         assert not catalog.is_class(ref) and catalog.valid_ref(ref) is None, ref
     assert catalog.parse("openai/@fast") == ("openai", "fast")
     assert catalog.valid_ref("@fastest") is not None, "a typo of a class is still refused"
+
+
+def test_a_plan_that_said_no_holds_its_runs_until_the_reset_it_named(client):
+    """A Claude plan out of its window refuses every run until a stated time,
+    and the refusal is already on file: the run that hit it filed the reading.
+    The queue used to start runs into it anyway — ~80 three-second failures on
+    one project on 2026-11-11. Now the row waits for the reset, and a project
+    paid by another credential behind it in the queue is not held up."""
+    from datetime import UTC, datetime, timedelta
+
+    from yaaf.core import plan_usage
+
+    _library(client)
+    shut_token = "sk-ant-oat01-plan-that-is-shut"
+    shut = _credential(client, "Shut plan", "anthropic", shut_token, mode="subscription")
+    open_ = _credential(client, "Open key", "anthropic", "sk-ant-api03-open-key")
+    on_shut = client.post("/admin/projects", headers=ADMIN, json=_body("sh", shut)).json()
+    on_open = client.post("/admin/projects", headers=ADMIN, json=_body("op", open_)).json()
+    for project in (on_shut, on_open):
+        assert client.post(f"/admin/projects/{project['id']}/start",
+                           headers=ADMIN).status_code == 200
+    reopens = (datetime.now(UTC) + timedelta(hours=2)).replace(microsecond=0)
+    with db_session() as session:
+        plan_usage.record(session, shut_token, {"status": "rejected", "windows": [
+            {"key": "five_hour", "utilization": 1.0, "resets_at": reopens.isoformat()},
+            {"key": "seven_day", "utilization": 0.2,
+             "resets_at": (reopens + timedelta(days=3)).isoformat()}]})
+        held_id = ids.new_id(ids.RUN)
+        session.add(RunQueue(id=held_id, project_id=on_shut["id"],
+                             agent_id=agent_by_name(on_shut, "Ada"), kind="agent_run",
+                             trigger={"type": "test"}))
+        session.add(RunQueue(id=ids.new_id(ids.RUN), project_id=on_open["id"],
+                             agent_id=agent_by_name(on_open, "Ada"), kind="agent_run",
+                             trigger={"type": "test"}))
+    leased = lease_and_prepare(limit=10)
+    assert [j.project_id for j in leased] == [on_open["id"]], "only the open plan ran"
+    with db_session() as session:
+        held = session.get(RunQueue, held_id)
+        assert held is not None, "held, not dropped"
+        assert held.not_before == reopens
+
+    # The window turns over on the clock, with no run to say so: the row runs.
+    with db_session() as session:
+        plan_usage.record(session, shut_token, {"status": "rejected", "windows": [
+            {"key": "five_hour", "utilization": 1.0,
+             "resets_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat()}]})
+        session.get(RunQueue, held_id).not_before = None
+    assert [j.project_id for j in lease_and_prepare(limit=10)] == [on_shut["id"]]
+
+
+def test_a_plan_out_of_its_window_is_named_when_a_run_dies_of_it():
+    from yaaf.server import deaths
+
+    summary = ("You've hit your 5-hour limit · resets 7pm (UTC)\n[sandbox_entry error: "
+               "ResultError(\"Claude Code returned an error result\")]")
+    rule = next(text for needles, text in deaths.CAUSES
+                if any(n in summary.lower() for n in needles))
+    assert "usage window" in rule
