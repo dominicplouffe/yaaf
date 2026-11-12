@@ -1456,6 +1456,12 @@ def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
             # budget's API-key seat (a DeepSeek CEO) moves real money too, and a
             # frozen review that left it out would disagree with the Spend page.
             "usd_mtd": round(float(usd), 4),
+            # Whether the month lands inside its plan, frozen beside the level.
+            # "60% of plan" on the 9th is alarming and on the 27th is fine, and
+            # a level alone made the chairman do the calendar sum — the one the
+            # burn rate exists to refuse when the days are not alike.
+            "rate": _frozen_rate(session, project.id, cap,
+                                 usd if cap_unit == "USD" else tokens),
         },
         "scope": {
             "open": len([r for r in scope if r.status in policy.OPEN_REQUIREMENT_STATUSES]),
@@ -1580,6 +1586,13 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
     velocity = numbers["velocity"]
     commitment = numbers["commitment"]
     headline = review_record.headline(project.mode, numbers, record)
+    read = review_record.verdict(project.mode, numbers, record)
+    verdict_lines = (
+        f"Results: {read['results']['says']}\nMoney: {read['money']['says']}\n"
+        + ("".join(f"Matters: {m['what']} — {m['why']}\n" for m in read["matters"])
+           or "Nothing that matters was missed.\n")
+        + "\n"
+    )
     prior_lines = ""
     if numbers.get("prior", {}).get("decisions"):
         bought = numbers["prior"]["bought"]
@@ -1592,7 +1605,9 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
         )
     chairman_notify(
         session, project, f"status meeting #{number} is open",
-        f"The status meeting for {project.name} is open. {headline}\n\n"
+        f"The status meeting for {project.name} is open.\n\n"
+        + verdict_lines
+        + f"The record: {headline}\n\n"
         + _record_lines(record)
         + "The numbers:\n\n"
         f"  goal: {project.goal[:300]}\n"
@@ -2405,6 +2420,18 @@ def daily_spend(session: Session, project_id: str, days: int = BURN_WINDOW_DAYS
 def _is_usd(session: Session, project_id: str) -> bool:
     project = session.get(Project, project_id)
     return bool(project and project.billing_mode == "api_key")
+
+
+def _frozen_rate(session: Session, project_id: str, cap: float | None,
+                 spent: float) -> dict | None:
+    """The three facts of the burn rate a status meeting needs, without the
+    series: whether it may project at all, and where it lands if it can."""
+    if not cap:
+        return None
+    rate = burn_rate(session, project_id, cap, float(spent or 0))
+    return {"projectable": rate["projectable"],
+            "lands_on_cap_at": rate["lands_on_cap_at"],
+            "days_observed": rate["days_observed"]}
 
 
 def burn_rate(session: Session, project_id: str, cap: float, spent: float) -> dict:

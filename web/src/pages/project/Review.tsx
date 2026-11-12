@@ -2,7 +2,7 @@ import { type ReactNode, useState } from "react";
 import {
   CycleObligation, Decision, get, PlanMark, post, requirementName, RequirementMeta, ReviewNumbers,
   ReviewRecord,
-  ReviewReport, ReviewRow, ReviewsView,
+  ReviewReport, ReviewRow, ReviewsView, ReviewVerdict, VerdictTone,
 } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import { AsOf, ExportCsv, NoteAction, Skeleton, clip, downloadCsv } from "../../ui";
@@ -754,6 +754,76 @@ function AuditTile({ n, record }: { n: ReviewNumbers; record: ReviewRecord | nul
   );
 }
 
+const TONE: Record<VerdictTone, { color: string; word: string }> = {
+  good: { color: "var(--good)", word: "Good" },
+  watch: { color: "var(--warning)", word: "Watch" },
+  bad: { color: "var(--critical)", word: "Problem" },
+  unknown: { color: "var(--warning)", word: "Unconfirmed" },
+};
+
+/** A fold whose starting state follows the verdict but whose later state is
+    the reader's: the page polls every ten seconds, and a controlled `open`
+    snapped shut under the hand that had just opened it. */
+function Fold({ initiallyOpen, summary, children }: {
+  initiallyOpen: boolean; summary: ReactNode; children: ReactNode;
+}) {
+  const [isOpen, setOpen] = useState(initiallyOpen);
+  return (
+    <details open={isOpen} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+      style={{ marginBottom: 16 }}>
+      <summary style={{ fontSize: 13, fontWeight: 600, cursor: "pointer" }}>{summary}</summary>
+      <div style={{ marginTop: 10 }}>{children}</div>
+    </details>
+  );
+}
+
+/** The chairman's three questions, in the order he asks them, each answered
+    in one line he can stop at. The misses that matter are named with why;
+    the ones that do not are counted and folded, because a count of misses is
+    not a severity — and "never checked" is always among those that matter. */
+function VerdictSection({ verdict }: { verdict: ReviewVerdict }) {
+  const row = (label: string, tone: VerdictTone, body: ReactNode) => (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(90px, 120px) 1fr", gap: 12,
+      padding: "10px 0", borderTop: "1px solid var(--border)", alignItems: "baseline" }}>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{label}</div>
+        <div style={{ fontSize: 12, color: TONE[tone].color, fontWeight: 600 }}>
+          ● {TONE[tone].word}
+        </div>
+      </div>
+      <div style={{ maxWidth: "70ch", minWidth: 0 }}>{body}</div>
+    </div>
+  );
+  const misses = verdict.matters.length;
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {row("Results", verdict.results.tone, verdict.results.says)}
+      {row("Money", verdict.money.tone, verdict.money.says)}
+      {row("Misses that matter", misses ? "bad" : "good", misses === 0
+        ? "None." : (
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {verdict.matters.map((m, i) => (
+              <li key={i}><b>{m.what}</b><span className="help"> — {m.why}</span></li>
+            ))}
+          </ul>
+        ))}
+      {verdict.minor.length > 0 && (
+        <details style={{ borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+          <summary className="help" style={{ fontSize: 13, cursor: "pointer" }}>
+            {verdict.minor.length} other {verdict.minor.length === 1 ? "thing" : "things"} slipped
+            or changed that {verdict.minor.length === 1 ? "does" : "do"} not matter yet
+          </summary>
+          <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13 }}>
+            {verdict.minor.map((m, i) => (
+              <li key={i}>{m.what}<span className="help"> — {m.why}</span></li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export default function Review({ ctx }: { ctx: ProjectCtx }) {
   const { projectId } = ctx;
   const { data, at, error, reload } = usePoll<ReviewsView>(
@@ -774,12 +844,18 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
         <p className="subtitle" style={{ margin: 0, flex: 1 }}>
+          {/* "Nothing here is waiting on you" sat above a week with its one
+              owed result unconfirmed. The dial says who decides; it does not
+              say nothing went wrong. */}
           {selfRunning
-            ? "Your CEO's status report. You left the decisions to it, so nothing here is "
-              + "waiting on you — read what it did and what it will do, say anything you want "
-              + "said back, and close it."
-            : "The status meeting: the platform brings what was done, the CEO explains what "
-              + "it bought and what is next, and asks for what it needs. Every lever is "
+            ? (open && open.verdict.matters.length > 0
+                ? "Your CEO's status report. You left the decisions to it, but something "
+                  + "that matters went wrong — read it, say anything you want said back, "
+                  + "and close it."
+                : "Your CEO's status report. You left the decisions to it, so nothing here "
+                  + "is waiting on you — read the first line, and close it.")
+            : "The status meeting: results first, then money, then what was missed that "
+              + "matters. The CEO explains and asks for what it needs; every lever is "
               + "recorded with your reason and shown at the next meeting beside what it bought."}
         </p>
         <AsOf at={at} error={error} />
@@ -809,17 +885,25 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
               }} />
           </div>
 
-          {/* One sentence in words before any number: a reader who does not
-              live in the project knows where it stands by the second line. */}
+          {/* One sentence a chairman can stop at. It used to be the record's
+              headline — "6 of 9 one-off requirements met, R-06, R-08, R-10
+              carried forward. This month's spend is 60% of plan" — which
+              counted everything and judged nothing. That sentence is still
+              the record's, under the fold at the bottom. */}
           <p style={{ fontFamily: "var(--font-display)", fontSize: 22, lineHeight: 1.3,
             margin: "10px 0 14px", maxWidth: "60ch" }}>
-            {open.headline}
+            {open.verdict.sentence}
           </p>
 
-          <div style={{ marginBottom: 16 }}>
-            <RecordSection record={open.record} mode={ctx.dash.mode} />
-          </div>
+          <VerdictSection verdict={open.verdict} />
 
+          {/* The CEO's account. Open when something needs reading; folded
+              when results are in, the money is fine and nothing that matters
+              was missed — because then, who cares. */}
+          <Fold initiallyOpen={!open.verdict.fine}
+            summary={open.verdict.fine
+              ? "The CEO's account — nothing in it needs you"
+              : "The CEO's account"}>
           {open.numbers.prior?.plan && open.numbers.prior.plan.length > 0 && (
             <div style={{ marginBottom: 16 }}>
               <PlanVsActual plan={open.numbers.prior.plan} outcomes={open.report?.last_plan} />
@@ -875,6 +959,7 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
             )}
           </div>
           )}
+          </Fold>
 
           {open.decisions.length > 0 && (
             <div style={{ marginBottom: 12 }}>
@@ -891,11 +976,19 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
           <AskSection open={open} selfRunning={selfRunning} requirements={requirements ?? []}
             unit={unit} onChanged={reload} />
 
-          {/* The forecast's inputs, last. They opened the meeting for a year
-              and a reader who did not live in the project could not say
-              what "11 a week · 0.4 weeks at this rate" meant for him. */}
+          {/* The record and the forecast's inputs, last. Both opened the
+              meeting once — the file list and "11 a week · 0.4 weeks at this
+              rate" — and a chairman could not say what either meant for him.
+              They are the appendix to the verdict: there to check it, not to
+              be read before it. */}
           <details style={{ marginTop: 16 }}>
-            <summary style={{ fontSize: 13, fontWeight: 600 }}>The numbers behind this</summary>
+            <summary style={{ fontSize: 13, fontWeight: 600 }}>
+              The record and the numbers behind this
+            </summary>
+            <p className="help" style={{ margin: "8px 0 12px", maxWidth: "70ch" }}>
+              {open.headline}
+            </p>
+            <RecordSection record={open.record} mode={ctx.dash.mode} />
             <NumbersTiles n={open.numbers} mode={ctx.dash.mode} record={open.record}
               requirements={requirements ?? []} />
           </details>
@@ -948,7 +1041,7 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
                   {showHistory[r.number] ? "less" : "more"}
                 </button>
               </div>
-              <p className="help" style={{ margin: "4px 0 0" }}>{r.headline}</p>
+              <p className="help" style={{ margin: "4px 0 0" }}>{r.verdict.sentence}</p>
               <DecisionList decisions={r.decisions} />
               {showHistory[r.number] && r.narrative && (
                 <p style={{ whiteSpace: "pre-wrap", fontSize: 13, marginTop: 8 }}>

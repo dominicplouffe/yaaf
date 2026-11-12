@@ -1888,6 +1888,21 @@ export interface ReviewReport {
     why: string | null };
 }
 
+export type VerdictTone = "good" | "watch" | "bad" | "unknown";
+
+/** A miss, with why it does or does not matter. */
+export interface VerdictMiss { key?: string; what: string; why: string }
+
+export interface ReviewVerdict {
+  results: { tone: VerdictTone; says: string };
+  money: { tone: VerdictTone; says: string };
+  matters: VerdictMiss[];
+  minor: VerdictMiss[];
+  /** Results good, money fine, nothing that matters missed: stop reading. */
+  fine: boolean;
+  sentence: string;
+}
+
 export interface ReviewRow {
   id: string;
   number: number;
@@ -1901,6 +1916,9 @@ export interface ReviewRow {
   /** One sentence in words from the frozen facts; composed server-side so the
       screen, the reader tool and the opening mail say the same thing. */
   headline: string;
+  /** The same facts read the way a chairman reads them: are we getting
+      results, is the money fine, did we miss anything that matters. */
+  verdict: ReviewVerdict;
   narrative: string | null;
   recommended: string | null;
   narrative_filed_at: string | null;

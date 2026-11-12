@@ -3380,6 +3380,10 @@ def reviews(project_id: str, session: Session = Depends(db)) -> dict:
             # of the record and cannot be edited into disagreeing with it.
             "record": r.record,
             "headline": review_record.headline(project.mode, r.numbers, r.record),
+            # The same facts read the way a chairman reads them: results, then
+            # money, then only the misses that matter. The headline counts;
+            # this judges, and says why each miss does or does not matter.
+            "verdict": review_record.verdict(project.mode, r.numbers, r.record),
             # The structured filing, or None on a meeting filed the old way —
             # which the screen renders the old way rather than inventing a
             # `next` list the CEO never wrote.

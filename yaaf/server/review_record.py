@@ -357,6 +357,249 @@ def _their(n: int) -> str:
     return "its" if n == 1 else "their"
 
 
+# ── the chairman's read ─────────────────────────────────────────────────────────
+#
+# The headline above is the evidence in a sentence: it counts. A chairman of a
+# business that does not live in the project read "Cycle 1: Monday pack with
+# audit note: owed this cycle and never checked; 6 of 9 one-off requirements
+# met, R-06, R-08, R-10 carried forward. This month's spend is 60% of plan" and
+# could not say whether it was good news. He asks three questions, in order,
+# and stops at the first good-enough answer:
+#
+#   1. Are we getting results?
+#   2. If so, is the money fine?
+#   3. Did we miss anything that matters?
+#
+# A count of misses is not a severity — one that matters outweighs four that do
+# not — so every miss here carries why it does or does not matter, and only the
+# ones that do are put in front of him. "Never checked" always matters: an
+# unverified result cannot be judged trivial, because it is the answer to the
+# first question that it undermines.
+
+GOOD, WATCH, BAD, UNKNOWN = "good", "watch", "bad", "unknown"
+
+
+def verdict(mode: str, numbers: dict, record: dict | None) -> dict:
+    """Results, then money, then the misses that matter — from the same
+    frozen facts as the headline, at zero tokens. Pure, for the headline's
+    reasons: the screen, the reader tool and the opening mail say one thing."""
+    numbers = numbers or {}
+    matters: list[dict] = []
+    minor: list[dict] = []
+    results = _results(mode, numbers, record, matters, minor)
+    money = _money(numbers, record)
+
+    spot = (record or {}).get("spot_checks") or {}
+    if spot.get("failed"):
+        n = spot["failed"]
+        matters.append({
+            "what": f"{_count(n, 'close')} failed your spot-check",
+            "why": "work the platform called done did not hold up when looked at, "
+                   "so the results above are less certain than they read"})
+        if results["tone"] == GOOD:
+            results["tone"] = UNKNOWN
+
+    fine = results["tone"] == GOOD and money["tone"] in (GOOD, UNKNOWN) and not matters
+    if fine:
+        sentence = ("Getting results"
+                    + (" and within budget" if money["tone"] == GOOD else "")
+                    + ". Nothing that matters was missed.")
+    else:
+        sentence = f"{results['says']} {money['says']}"
+        if matters:
+            sentence += f" {_count(len(matters), 'miss', 'misses')} that "
+            sentence += "matters." if len(matters) == 1 else "matter."
+    return {"results": results, "money": money, "matters": matters, "minor": minor,
+            "fine": fine, "sentence": sentence}
+
+
+def _results(mode: str, numbers: dict, record: dict | None,
+             matters: list[dict], minor: list[dict]) -> dict:
+    if record is None:
+        return {"tone": UNKNOWN,
+                "says": "This meeting opened before the platform kept a record, "
+                        "so it cannot say what the period achieved."}
+    if mode == ProjectMode.OPERATE:
+        return _operate_results(numbers, record, matters, minor)
+    if mode == ProjectMode.EXPLORE:
+        return _explore_results(record, minor)
+    return _deliver_results(numbers, record, matters, minor)
+
+
+def _operate_results(numbers: dict, record: dict, matters: list[dict],
+                     minor: list[dict]) -> dict:
+    """An Operate project's results are what it owes on a rhythm — the report
+    that lands every Monday, the feed that refreshes daily. One-offs are the
+    work that builds it, and slipping one is a schedule fact, not a result."""
+    cycle = record.get("cycle")
+    if not cycle:
+        return {"tone": UNKNOWN, "says": "No cycle closed this period, so there is "
+                                         "nothing delivered to judge yet."}
+    owed = [r for r in cycle.get("standing") or [] if r.get("verdict") != scorecard.NOT_DUE]
+    standing_keys = {r["key"] for r in cycle.get("standing") or []}
+    done = [k for k in cycle.get("met_keys") or [] if k not in standing_keys]
+    carried = cycle.get("carried_keys") or []
+    for key in carried:
+        minor.append({"key": key, "what": f"{key} slipped to the next cycle",
+                      "why": "a one-off piece of the build, not something owed to "
+                             "anyone this cycle"})
+    for key in cycle.get("cut_keys") or []:
+        minor.append({"key": key, "what": f"{key} was cut", "why": "a decision, with "
+                      "its reason on the Roadmap — not a miss"})
+
+    landed, missed, unchecked = [], [], []
+    for row in owed:
+        label = row.get("title") or row.get("name") or row["key"]
+        v = row.get("verdict")
+        if v == scorecard.HONOURED:
+            landed.append(label)
+        elif v == scorecard.MISSED:
+            missed.append(label)
+            matters.append({"key": row["key"], "what": f"{label} was not delivered",
+                            "why": "it is owed every cycle; this is the result itself"})
+        else:
+            unchecked.append(label)
+            matters.append({"key": row["key"], "what": f"{label} was never checked",
+                            "why": "it may have gone out, but nobody confirmed it — "
+                                   "so whether this cycle got its result is unknown"})
+    build = (f" The build behind it: {len(done)} of {len(done) + len(carried)} "
+             f"one-off pieces done." if done or carried else "")
+    if missed:
+        return {"tone": BAD, "says": f"Not getting results: {_and(missed)} "
+                f"{'was' if len(missed) == 1 else 'were'} not delivered." + build}
+    if unchecked:
+        return {"tone": UNKNOWN, "says": f"Results unconfirmed: {_and(unchecked)} "
+                f"{'was' if len(unchecked) == 1 else 'were'} owed and never checked." + build}
+    if landed:
+        return {"tone": GOOD, "says": f"Getting results: {_and(landed)} delivered."}
+    # Nothing owed on a rhythm yet: the build is the only result there is.
+    if done:
+        return {"tone": GOOD, "says": f"Still building, and moving: "
+                f"{len(done)} of {len(done) + len(carried)} pieces done this cycle."}
+    return {"tone": BAD, "says": "Nothing owed was delivered and nothing was built "
+                                 "this cycle."}
+
+
+def _deliver_results(numbers: dict, record: dict, matters: list[dict],
+                     minor: list[dict]) -> dict:
+    """A Deliver project's result is the thing on the date. Before there is a
+    date, it is whether the period made anything true."""
+    for r in record.get("requirements_cut") or []:
+        minor.append({"key": r["key"], "what": f"{r['key']} was cut",
+                      "why": r.get("reason") or "a decision, not a miss"})
+    commitment = numbers.get("commitment") or {}
+    status = commitment.get("status")
+    if status == "met":
+        return {"tone": GOOD, "says": "Delivered."}
+    if status in ("at_risk", "breached"):
+        clause = _date_clause(commitment)
+        matters.append({"what": clause.rstrip("."),
+                        "why": "the date was a promise; the period's work does not "
+                               "change that it is late"})
+        return {"tone": BAD, "says": f"Not on track: {clause[0].lower()}{clause[1:]}"}
+    made = record.get("requirements_met") or []
+    if status == "accepted":
+        return {"tone": GOOD, "says": f"On track: {_date_clause(commitment)[0].lower()}"
+                f"{_date_clause(commitment)[1:]}"}
+    if made:
+        checked = len([r for r in made if r.get("how") == "verified"])
+        return {"tone": GOOD, "says": f"Moving: {_count(len(made), 'requirement')} "
+                f"made true this period, {checked} checked by the platform itself."}
+    return {"tone": BAD, "says": "Nothing was made true this period."}
+
+
+def _explore_results(record: dict, minor: list[dict]) -> dict:
+    """An Explore project's result is learning: evidence the platform verified,
+    and bets settled one way or the other."""
+    evidence = record.get("evidence") or {}
+    bets = record.get("bets") or {}
+    for h in bets.get("expired") or []:
+        minor.append({"what": f"A bet ran out its clock: {h['statement'][:80]}",
+                      "why": "expiry is the rule working; extend or let it go"})
+    settled = len(bets.get("killed") or []) + len(bets.get("expired") or [])
+    if evidence.get("verified"):
+        return {"tone": GOOD, "says": f"Learning: {_count(evidence['verified'], 'piece')} "
+                f"of evidence verified" + (f", {settled} bet(s) settled." if settled else ".")}
+    if settled:
+        return {"tone": GOOD, "says": f"Learning: {settled} bet(s) settled this period."}
+    if evidence.get("failed"):
+        return {"tone": BAD, "says": "No result: every piece of evidence offered "
+                                     "was refused by the verifier."}
+    return {"tone": BAD, "says": "No evidence came in and no bet was settled."}
+
+
+def _money(numbers: dict, record: dict | None) -> dict:
+    """On, over, or under pace — in money, not a percentage of an unstated
+    cap. The burn rate decides whether a projection may be said at all."""
+    budget = numbers.get("budget") or {}
+    cap = budget.get("cap")
+    if not cap:
+        return {"tone": UNKNOWN, "says": "No budget is set."}
+    spent = budget.get("spent_mtd") or 0
+    unit = budget.get("unit") or ""
+    # One format for both sides: "$60.00 of $100" reads as two kinds of number.
+    whole = cap >= 100
+    amount = f"{_amount(spent, unit, whole)} of {_amount(cap, unit, whole)}"
+    waste = _waste(record)
+    if spent > cap:
+        return {"tone": BAD, "says": f"Over budget: {amount} this month.{waste}"}
+    rate = budget.get("rate")
+    if rate and rate.get("lands_on_cap_at"):
+        return {"tone": BAD, "says": f"Will run out: {amount} spent, on pace to hit "
+                f"the budget on {_day(rate['lands_on_cap_at'])}, before the month "
+                f"ends.{waste}"}
+    if rate and rate.get("projectable"):
+        return {"tone": GOOD, "says": f"Within budget: {amount}, on pace to finish "
+                                      "the month under it."}
+    # No measured rate (too few days, lumpy days, or a meeting frozen before the
+    # rate was): the calendar is the only yardstick, and it is said as one.
+    elapsed = _month_elapsed(numbers.get("as_of"))
+    if elapsed is not None and spent / cap > elapsed + 0.15:
+        return {"tone": WATCH, "says": f"Spending ahead of the calendar: {amount} with "
+                f"{round(elapsed * 100)}% of the month gone — too early to say where it "
+                f"lands.{waste}"}
+    return {"tone": GOOD, "says": f"Within budget: {amount} this month."}
+
+
+def _waste(record: dict | None) -> str:
+    """Dead runs are money, so they are said with the money and only when the
+    money is a problem — a third of runs dying on budget is somebody's tuning
+    question, not the chairman's."""
+    runs = (record or {}).get("runs") or {}
+    total, dead = runs.get("total") or 0, runs.get("dead") or 0
+    if total >= 10 and dead / total >= 0.25:
+        return f" {dead} of {total} runs died without a result — that is where to look."
+    return ""
+
+
+def _month_elapsed(iso: str | None) -> float | None:
+    import calendar
+
+    if not iso:
+        return None
+    try:
+        at = datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+    days = calendar.monthrange(at.year, at.month)[1]
+    return (at.day - 1 + at.hour / 24) / days
+
+
+def _amount(n: float, unit: str, whole: bool = True) -> str:
+    if unit.upper() == "USD":
+        return f"${n:,.0f}" if whole else f"${n:,.2f}"
+    for size, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "k")):
+        if n >= size:
+            return f"{n / size:.1f}{suffix} tokens"
+    return f"{n:,.0f} tokens"
+
+
+def _and(items: list[str]) -> str:
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
 # ── plan versus actual ──────────────────────────────────────────────────────────
 
 #: What the platform can say about an item the CEO said it would do.
