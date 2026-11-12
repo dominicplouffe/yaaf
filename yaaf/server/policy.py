@@ -2531,15 +2531,47 @@ def check_plain_to_chairman(
     raise Refusal(plain.refusal_text(found))
 
 
-def check_plain_parts(parts: dict[str, str | None]) -> None:
+def check_plain_parts(parts: dict[str, str | None], *, by_name: bool = False) -> None:
     """The same measure for the CEO's other words to him — a question, a
     heads-up — field by field. Sentence length only: the platform assembles
     those fields into the item he reads, so their total is not the writer's.
-    Without this, the run-on refused in the boardroom moves one tool over."""
+    Without this, the run-on refused in the boardroom moves one tool over.
+
+    `by_name` also refuses an ID where a name belongs (R-07, a row id), for
+    the items he reads cold and on their own — a question, a heads-up. The
+    tool descriptions asked for names for months; flags were the first place
+    it was refused, and it went no further than flags, so an ID turned away
+    from a flag could move one tool over just like a run-on."""
     from yaaf.server import plain
 
-    found = [f"In `{name}`: {problem}" for name, text in parts.items() if text
-             for problem in plain.problems(text, whole_message=False)]
+    found = []
+    if by_name:
+        found += [f"In `{name}`: {problem}" for name, text in parts.items() if text
+                  for problem in plain.named_by_id(text)]
+    found += [f"In `{name}`: {problem}" for name, text in parts.items() if text
+              for problem in plain.problems(text, whole_message=False)]
+    if found:
+        raise Refusal(plain.refusal_text(found))
+
+
+def check_flag_telling(headline: str, parts: dict[str, str | None]) -> None:
+    """A flag told so he can read the card without asking anyone what it means.
+
+    The plain measure, field by field, plus two things a short sentence can
+    still get wrong. A headline in the platform's nouns names the flag's
+    category, which he already has, instead of what happened. And an ID —
+    R-07, a row id — is a name only the CEO knows, in any part. Both reached
+    his screen: "Something owed every cycle did not happen", over a proposal
+    about "skills 8 to 10" and "the clean scheduled week".
+    """
+    from yaaf.server import plain
+
+    found = [f"In `headline`: {p}" for p in plain.abstract_headline(headline)]
+    every = {"headline": headline, **parts}
+    found += [f"In `{name}`: {p}" for name, text in every.items() if text
+              for p in plain.named_by_id(text)]
+    found += [f"In `{name}`: {p}" for name, text in every.items() if text
+              for p in plain.problems(text, whole_message=False)]
     if found:
         raise Refusal(plain.refusal_text(found))
 

@@ -27,13 +27,13 @@ import {
   fmtSoon,
   fmtUnit,
   fmtWhenShort,
-  NotedButton,
+  FlagAnswer,
   paceDate,
   runHealth,
 } from "../../ui";
 import { Avatar, Badge, Term, Verdict } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
-import { chairmanDecides, deliveryVerdict, cycleOverdue, flagPlain, fmtDate, fmtRoll, fullyAutonomous } from "../../ui/project";
+import { chairmanDecides, deliveryVerdict, cycleOverdue, flagPlain, flagTold, fmtDate, fmtRoll, fullyAutonomous, oneCardPerCause } from "../../ui/project";
 import { MoneyMeter, NODE_WORD, PathNode, requirementNode, Seal, sealOf, verdictBadge } from "../../ui/signal";
 import "./overview.css";
 import { DecisionCard } from "../Inbox";
@@ -61,6 +61,11 @@ interface FlagRow {
   opened_at: string | null;
   raised_at: string | null;
   proposal: string | null;
+  headline: string | null;
+  why: string | null;
+  plan: string | null;
+  from_you: string | null;
+  covered_by_flag_id: string | null;
   /** Raised is news he was given; acknowledged is news he answered. */
   acknowledged_at: string | null;
   acknowledgement: string | null;
@@ -792,24 +797,29 @@ export default function Overview({
   // not you answer — so it reads beside the CEO's last word, never under the
   // heading that says a decision is waiting on you.
   const news: React.ReactNode[] = [];
-  for (const f of rawFlags.filter((f) => f.status === "raised" && !f.acknowledged_at)) {
-    const plain = flagPlain(f.kind);
+  for (const { lead: f, also } of oneCardPerCause(
+    rawFlags.filter((f) => f.status === "raised" && !f.acknowledged_at))) {
+    const told = flagTold(f);
     news.push(
       <div className="flag" key={f.id}>
-        <div className="flag-t"><Icon name="flag" size={14} /> <b>{plain.title}</b></div>
-        <div className="help">
-          {ceo} proposes: {f.proposal ? clip(f.proposal, 200) : "nothing yet"}. That goes ahead unless
-          you say otherwise.
-        </div>
+        <div className="flag-t"><Icon name="flag" size={14} /> <b>{told.headline}</b></div>
+        <dl className="flag-parts">
+          {told.parts.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+        </dl>
+        {also.length > 0 && (
+          <div className="help">
+            One cause behind {also.length + 1} alerts — your answer here answers all of them.
+          </div>
+        )}
         <div className="flag-a">
-          <NotedButton
+          <FlagAnswer
             primary={false}
             onSubmit={async (note) => {
               await post(`/admin/flags/${f.id}/ack`, { note });
               reloadFlags();
             }}
           />
-          <Link to={`${base}/chat`}>talk it through →</Link>
+          <Link to={`${base}/chat`}>talk it through with {ceo} →</Link>
         </div>
       </div>,
     );
@@ -846,12 +856,13 @@ export default function Overview({
   }
   // Acknowledged, and still true: your word ended the conversation, not the
   // condition, so it waits here under your note until the arithmetic turns.
-  for (const f of rawFlags.filter((f) => f.status === "raised" && f.acknowledged_at)) {
+  for (const { lead: f } of oneCardPerCause(
+    rawFlags.filter((f) => f.status === "raised" && f.acknowledged_at))) {
     watch.push(
       <div className="wrow" key={f.id}>
         <span className="badge">noted</span>
         <div className="grow">
-          <b>{flagPlain(f.kind).title}</b>{" "}
+          <b>{flagTold(f).headline}</b>{" "}
           <span className="help">
             — still true. You noted it{f.acknowledged_at ? ` ${fmtWhenShort(f.acknowledged_at)}` : ""}
             {f.acknowledgement ? `: “${clip(f.acknowledgement, 100)}”` : ""}; it clears when the numbers do.

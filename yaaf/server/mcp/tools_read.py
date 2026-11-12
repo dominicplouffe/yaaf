@@ -287,15 +287,23 @@ def _also_yours(session: Session, reachable: set[str]) -> list[dict]:
     out: list[dict] = []
     for project in session.execute(
             select(Project).where(Project.id.in_(reachable))).scalars():
-        for flag in flag_lib.open_flags(session, project.id):
-            if flag.raised_at is not None and flag.acknowledged_at is None:
-                # Platform-written, but it quotes agent text — a requirement's
-                # statement, a team's name, a cycle's goal — so it is data too.
-                out.append({"project": project.slug, "kind": "flag", "id": flag.id,
-                            "what": envelope.untrusted(
-                                flag.summary[:_TITLE_CHARS],
-                                author="platform, quoting CEO text", kind="flag"),
-                            "answer_with": "flag_ack"})
+        live = [f for f in flag_lib.open_flags(session, project.id)
+                if f.raised_at is not None and f.acknowledged_at is None]
+        leads = {f.id for f in live}
+        for flag in live:
+            # Told with another flag that is still here: that card carries it,
+            # and answering it answers this one.
+            if flag.covered_by_flag_id in leads:
+                continue
+            # The CEO's headline when it wrote one; the platform's summary for
+            # a flag raised before headlines existed. Data either way — the
+            # summary quotes agent text too.
+            what = (envelope.untrusted(flag.headline[:_TITLE_CHARS], author="CEO", kind="flag")
+                    if flag.headline else
+                    envelope.untrusted(flag.summary[:_TITLE_CHARS],
+                                       author="platform, quoting CEO text", kind="flag"))
+            out.append({"project": project.slug, "kind": "flag", "id": flag.id,
+                        "what": what, "answer_with": "flag_ack"})
         for note in session.execute(select(HeadsUp).where(
                 HeadsUp.project_id == project.id,
                 HeadsUp.acknowledged_at.is_(None))).scalars():

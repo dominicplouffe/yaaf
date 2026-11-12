@@ -489,23 +489,40 @@
     "name": "evidence_add"
   },
   {
-    "description": "Close a flag by having TOLD the chairman, with what you propose doing about it. Two steps, in this order: message_post the news in the boardroom, then flag_raise with that message_id \u2014 the message is the proof he was told, which is why saying it in the boardroom does not close the flag on its own and why nothing else can. flag_id comes from the flags in your context pack. The proposal is required: a flag without one is anxiety forwarded to his desk, and what you add over a monitoring alert is the sentence AFTER the bad news \u2014 what broke, the arithmetic, the ways out, the one you would pick, and what you need from him \u2014 and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. Closing it dismissively is legitimate and expected: 'the cycle boundary caused it, no action needed' is this verb working exactly as intended. What is not available is leaving it open while telling him everything is fine.",
+    "description": "Close a flag by having TOLD the chairman, with what you propose doing about it. Two steps, in this order: message_post the news in the boardroom, then flag_raise with that message_id \u2014 the message is the proof he was told, which is why saying it in the boardroom does not close the flag on its own and why nothing else can. flag_id comes from the flags in your context pack. What you add over a monitoring alert is what comes AFTER the bad news, and it reaches his screen as a card with four labelled parts, so he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. headline: what happened, to what, in one line \u2014 'The weekly results report did not go out at 6am today', never the flag's category ('a cycle ended with work open') and never a platform word (cycle, scope, requirement, obligation, flag) or an ID; refused otherwise. why: the cause, with the number that shows it. plan: what you will do and when he will see it fixed. from_you: the one thing you need from him \u2014 leave it out when the answer is nothing, and his screen says so. also_covers: other open flag ids this same cause explains (a missed report AND a week that closed short because of it) \u2014 he gets one card for one problem, and answering it answers them all. Closing a flag dismissively is legitimate and expected: plan 'nothing to do \u2014 the warehouse API was down four minutes and recovered' is this verb working exactly as intended. What is not available is leaving it open while telling him everything is fine.",
     "input_schema": {
       "properties": {
+        "also_covers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "flag_id": {
+          "type": "string"
+        },
+        "from_you": {
+          "type": "string"
+        },
+        "headline": {
           "type": "string"
         },
         "message_id": {
           "type": "string"
         },
-        "proposal": {
+        "plan": {
+          "type": "string"
+        },
+        "why": {
           "type": "string"
         }
       },
       "required": [
         "flag_id",
         "message_id",
-        "proposal"
+        "headline",
+        "why",
+        "plan"
       ],
       "type": "object"
     },

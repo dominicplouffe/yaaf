@@ -439,7 +439,9 @@ def test_a_flag_cannot_be_closed_by_going_quiet(client):
     # A proposal alone is not enough — the chairman has to have been told.
     forged = client.post("/agent/flags/raise", json={
         "flag_id": flag_id, "message_id": "msg_nope",
-        "proposal": "Cut the chip calendar to GW3 and keep the memo.",
+        "headline": "Thursday's memo cannot include the chip calendar",
+        "why": "Six ordinary runs are left and the calendar needs three of them.",
+        "plan": "Cut the chip calendar to GW3 and keep the memo.",
     }, headers=bearer(ceo))
     assert forged.status_code == 422
     assert "boardroom message you posted" in forged.json()["error"]
@@ -459,7 +461,9 @@ def test_a_flag_cannot_be_closed_by_going_quiet(client):
 
     raised = client.post("/agent/flags/raise", json={
         "flag_id": flag_id, "message_id": message_id,
-        "proposal": "Cut the chip calendar to GW3; first expiry is GW19.",
+        "headline": "Thursday's memo cannot include the chip calendar",
+        "why": "Six ordinary runs are left and the calendar needs three of them.",
+        "plan": "Cut the chip calendar to GW3; first expiry is GW19.",
     }, headers=bearer(ceo))
     assert raised.status_code == 200, raised.text
 
@@ -569,7 +573,10 @@ def _raise_flag(client, project, flag_id: str, proposal: str) -> str:
     }, headers=bearer(ceo))
     assert said.status_code == 200, said.text
     raised = client.post("/agent/flags/raise", json={
-        "flag_id": flag_id, "message_id": said.json()["id"], "proposal": proposal,
+        "flag_id": flag_id, "message_id": said.json()["id"],
+        "headline": "Last week's report went out a day late",
+        "why": "The run that writes it was held for a day by the spending limit.",
+        "plan": proposal,
     }, headers=bearer(ceo))
     assert raised.status_code == 200, raised.text
     return ceo

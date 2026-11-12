@@ -611,7 +611,10 @@ def _chairman_state(session: Session, project: Project, agent: Agent, now) -> di
             f"{unraised} flag(s) the chairman has NOT been told about. The cadence does "
             "not hold you here — raising these is the reason this run may post. Say what "
             "tripped, quote the arithmetic, and propose what to cut or raise; then close "
-            "each one with flag_raise citing the message. Deciding it is not worth his "
+            "each one with flag_raise citing the message — headline (what happened, to "
+            "what, in his words), why, plan, and from_you only if you need something. "
+            "Flags with one cause go in one flag_raise with also_covers, so he reads one "
+            "card for one problem. Deciding it is not worth his "
             "time is a judgement you do not have: he can see the count."
         )
     if notes:

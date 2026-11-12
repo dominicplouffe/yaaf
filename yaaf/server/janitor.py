@@ -1132,7 +1132,8 @@ def evaluate_flags(session: Session, project: Project, cons: ConstitutionDoc) ->
         f"{opened} flag(s) opened: the platform's own arithmetic says something is "
         "wrong that the chairman has not been told. Read `situation.flags`, say it in "
         "the boardroom with the numbers and what you propose cutting or raising, then "
-        "close each with flag_raise. The reporting cadence does not hold you here, and "
+        "close each with flag_raise (one call, with also_covers, for flags that share a "
+        "cause). The reporting cadence does not hold you here, and "
         "he can see how many are unraised — so saying nothing is not a quiet option.",
     )
 
