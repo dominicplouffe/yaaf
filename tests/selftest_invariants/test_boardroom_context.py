@@ -213,10 +213,17 @@ def test_every_agent_is_told_to_write_in_plain_short_english(client):
     too, and that was a different instruction wearing the same sentence. A blog
     writer read "a longer answer is not a better one" before it read its task,
     and the posts came back thin. A message is time he did not ask for; the
-    deliverable is the thing he asked for. So the halves are separate now, and
-    this asserts they stay separate — the plain-language rule reaches both, the
-    length rule reaches only the first, and the deliverable is aimed at the
-    goal's beneficiary and standard rather than at brevity."""
+    deliverable is the thing he asked for. So the halves are separate, and
+    this asserts they stay separate — the plain-language rule reaches both, and
+    the length rule reaches only messages.
+
+    What a file is written to changed on 12 Nov 2026. It was aimed at "the
+    goal's beneficiary and standard", which in practice meant one reader for
+    everything; people then opened 2 of 17 published files in a day while
+    agents read notes back hundreds of times. The chairman approved guidance
+    set by who READS the file — and ruled out word caps, so none may appear
+    here. A long piece he asked for is still written at the length he asked
+    for, which is the guard against thin posts."""
     from yaaf.core.models import Agent as AgentRow
     from yaaf.server.contextpack import build_system_prompt
 
@@ -236,20 +243,25 @@ def test_every_agent_is_told_to_write_in_plain_short_english(client):
 
         # The length rule, and the fact that it is scoped to messages.
         assert "a longer one is not a better one" in prompt, who
-        message_half, _, deliverable_half = prompt.partition(
-            "HOW YOU WRITE THE DELIVERABLE ITSELF:")
-        assert deliverable_half, f"{who}: the deliverable half must be stated at all"
-        assert "longer" not in deliverable_half.split("THE CONSTITUTION")[0], (
-            f"{who}: brevity must not follow the rule into the deliverable — that is "
-            "the instruction that produced thin posts")
+        message_half, _, file_half = prompt.partition(
+            "WHO READS IT DECIDES HOW YOU WRITE IT.")
+        assert file_half, f"{who}: how a file is written must be stated at all"
+        file_half = file_half.split("THE CONSTITUTION")[0]
 
-        # What the deliverable is aimed at instead.
-        assert "beneficiary" in deliverable_half and "standard" in deliverable_half, (
-            f"{who}: a deliverable is judged against the goal's reader and reference "
-            "class, not against a word count")
-        assert "Padding is not thoroughness and brevity is not rigour" in prompt, who
-        assert "asks for a particular length, format or register" in prompt, (
-            f"{who}: a format the chairman asked for must still win")
+        # Both readers, and the default.
+        assert "FOR THE TEAM" in file_half and "FOR THE CHAIRMAN" in file_half, who
+        assert "it is for the team" in file_half, who
+        # Dense is not cryptic, and the qualifiers survive the cut.
+        assert "no made-up abbreviations" in file_half, who
+        assert "caveats and what is not known" in file_half, who
+        # Guidance, not a cap: no word count anywhere in it.
+        assert not re.search(r"\d+ words", file_half), (
+            f"{who}: the chairman ruled out word caps on files")
+        # A long piece he asked for is written at the length he asked for —
+        # the guard against the instruction that produced thin blog posts.
+        assert "at the length and to the standard he asked for" in file_half, (
+            f"{who}: a length the chairman asked for must still win")
+        assert "Padding is not thoroughness" in file_half, who
 
 
 def test_the_length_rule_is_a_number_and_stops_at_the_deliverable(client):
@@ -276,11 +288,12 @@ def test_the_length_rule_is_a_number_and_stops_at_the_deliverable(client):
         }
 
     for who, prompt in prompts.items():
-        message_half, _, deliverable_half = prompt.partition(
-            "HOW YOU WRITE THE DELIVERABLE ITSELF:")
+        message_half, _, file_half = prompt.partition(
+            "WHO READS IT DECIDES HOW YOU WRITE IT.")
+        file_half = file_half.split("THE CONSTITUTION")[0]
         assert "THREE SENTENCES" in message_half, who
-        assert "THREE SENTENCES" not in deliverable_half.split("THE CONSTITUTION")[0], (
-            f"{who}: the count must not follow the rule into the deliverable")
+        assert "THREE SENTENCES" not in file_half, (
+            f"{who}: the message count must not follow the rule into a file")
 
         # The thing that was actually filling the space. Naming it is the half
         # of this rule that a word count alone never bought.
@@ -292,16 +305,6 @@ def test_the_length_rule_is_a_number_and_stops_at_the_deliverable(client):
         # A count is a licence to omit unless it says otherwise, and the seat
         # that goes quiet about a number is the failure this platform is for.
         assert "never less of what matters" in message_half, who
-
-        # A PUBLISHED FILE IS EXEMPT, and the chairman has said so twice. I
-        # once put a ceiling on it — open with the answer, move the method and
-        # provenance to sibling files — and that is the same instinct that made
-        # the blog posts thin, one level up: a file is how he gets what he is
-        # paying for, and he will decide what he needs in it. The count stops
-        # at the channel.
-        assert "no ceiling on this page reaches it" in deliverable_half, who
-        assert "THREE SENTENCES" not in deliverable_half, (
-            f"{who}: the count must not follow the rule into a published file")
 
         # The route the count would otherwise be dodged by: paste the document
         # into the room instead. A 9,990-character memo reached the boardroom

@@ -70,6 +70,11 @@ function TaskCard({ task, parent, bet, requirement, onPerson }: {
             <Icon name="shield" size={12} /> outside proof
           </span>
         )}
+        {task.result_for && task.result_for !== "team" && (
+          <span className="tc-proof" title="Written up for a person to read, not for the team">
+            {task.result_for === "chairman" ? "for you" : "for a client or the public"}
+          </span>
+        )}
         {task.audit_status && <span className="tc-proof">audited</span>}
         {holder && task.holder_name ? (
           <button className="tc-who" onClick={() => onPerson(holder)} title={`${task.holder_name} — see what they are doing`}>

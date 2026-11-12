@@ -21,6 +21,8 @@ interface PublishedRow {
       somebody judged), pending (not settled yet). Absent when it claims none. */
   checked?: "verified" | "judged" | "pending" | null;
   checked_why?: string | null;
+  /** How often a person opened it in the app. */
+  opens?: number;
 }
 
 /** The proof, on the file. It used to live on another page, so a deliverable
@@ -776,6 +778,7 @@ function Preview({
                 ? ` · satisfies ${entry.receipt.satisfies.join(", ")}`
                 : ""}
               {entry.receipt?.checked_why ? ` — ${entry.receipt.checked_why}` : ""}
+              {entry.receipt && ` · ${entry.receipt.opens ? `opened ${entry.receipt.opens}×` : "not opened yet"}`}
               {entry.receipt && (
                 <>
                   {" · "}

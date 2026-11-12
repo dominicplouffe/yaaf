@@ -77,7 +77,9 @@ function ResultLine({ row, on, onPick }: { row: ResultRow; on: boolean; onPick: 
             {row.made_by?.name ?? "maker not recorded"}
             {" · "}<span title={fmtWhen(row.published_at)}>{fmtAgo(row.published_at)}</span>
             {row.serves.length > 0 && ` · for ${row.serves.map((s) => s.key).join(", ")}`}
+            {row.opens === 0 && " · not opened yet"}
           </span>
+          {row.opening && <span className="rs-row-opening">{row.opening}</span>}
         </span>
         <span title={strongest ? sentence(strongest.label) : "Nothing outside the agent checked it"}>
           <Seal level={sealOf(row.checked)} />

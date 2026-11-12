@@ -345,20 +345,25 @@ async def t_board(args):
     "projects: a task that serves no requirement is refused, because work that makes "
     "nothing true is how a project stays busy without finishing. Your context pack's "
     "`board` and `roster` carry the team ids, agent ids and requirement ids you need — "
-    "read them rather than guessing at an id.",
+    "read them rather than guessing at an id. "
+    "result_for says who will read the result, and so how it is written up: "
+    "\"chairman\" when it is for him, \"outside\" when a client or the public reads "
+    "it, \"team\" (the default) when you or another agent will use it. Say it every "
+    "time — the writer cannot know otherwise. A subtask inherits its parent's.",
     _schema({
         "team_id": str,
         "title": str,
         "goal": str,
         "success_test": dict,
         "produces_external_evidence": bool,
+        "result_for": str,
         "parent_task_id": str,
         "assignee_agent_id": str,
         "hypothesis_id": str,
         "requirement_id": str,
         "not_before": str,
-    }, optional=("produces_external_evidence", "parent_task_id", "assignee_agent_id",
-                 "hypothesis_id", "requirement_id", "not_before")),
+    }, optional=("produces_external_evidence", "result_for", "parent_task_id",
+                 "assignee_agent_id", "hypothesis_id", "requirement_id", "not_before")),
 )
 async def t_task_create(args):
     payload = {k: v for k, v in args.items() if v not in (None, "")}
@@ -1251,10 +1256,12 @@ async def t_side_effect_finish(args):
     "artifact_put",
     "Persist a finished deliverable (report, dataset, document) to the platform's "
     "artifact store — the shipped, versioned record the platform serves and audits. "
-    "A published file is how the chairman gets what he is paying for: no message or "
-    "chat ceiling applies to it, so give him everything he needs to act, to check you "
-    "and to decide. Ship it here and CITE it — never paste its contents into a "
-    "channel or the boardroom. "
+    "Write it for the reader its task names (result_for): for the team, the answer "
+    "first, then the facts with their units, windows, sources and caveats, and no "
+    "prose; for the chairman, a client or the public, the bottom line first and one "
+    "screen unless he asked for more. The chairman is told about every file published "
+    "here, and his announcement quotes its opening, so open with the answer. Ship it "
+    "here and CITE it — never paste its contents into a channel or the boardroom. "
     "Your /workspace is NOT ephemeral: it persists with the project across runs and is "
     "shared by every agent on it, which makes it the right home for working state and "
     "cached data pulls; ship an artifact when the work is FINISHED. "

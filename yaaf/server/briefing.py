@@ -653,6 +653,9 @@ def _delivered(session: Session, project: Project, since, until) -> list[dict]:
         seen.add(artifact.name)
         out.append({
             "name": artifact.name, "version": artifact.version,
+            # Its own first lines: the letter says what it found, not only
+            # what it is called.
+            "opening": artifact.opening,
             "link": (f"{origin}/app/#/projects/{project.id}/deliverables"
                      f"?open={quote(artifact.storage_key, safe='')}") if origin else None,
         })
@@ -1554,6 +1557,8 @@ def render_text(brief: dict) -> str:
             version = f" (v{item['version']})" if item["version"] > 1 else ""
             body.append(f"  + {item['name']}{version}"
                         + (f" — {item['link']}" if item.get("link") else ""))
+            if item.get("opening"):
+                body.append(f"    {item['opening']}")
         if len(delivered) > DELIVERED_LISTED:
             body.append(f"  … and {len(delivered) - DELIVERED_LISTED} more in Deliverables")
         body.append("")

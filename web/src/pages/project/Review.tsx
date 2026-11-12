@@ -366,6 +366,18 @@ function RecordSection({ record, mode }: { record: ReviewRecord | null; mode: st
       {record.runs.total} runs, {record.runs.dead} dead
       {record.tasks_closed > 0 ? ` · ${record.tasks_closed} tasks closed` : ""}
     </p>));
+  const w = record.writing;
+  if (w && (w.for_people.files > 0 || w.for_team.files > 0)) {
+    cells.push(cell(
+      w.for_people.files > 0 ? `${w.for_people.opened} of ${w.for_people.files}` : "—",
+      "written for you, opened",
+      <p className="help" style={{ marginTop: 6 }} title={w.note}>
+        {w.for_people.files > 0 ? `${w.for_people.median_words} words typical · ` : ""}
+        {w.for_team.files} notes for the team, {w.for_team.median_words} words typical
+        {w.long_writers.length > 0
+          ? ` · writing long: ${w.long_writers.map((l) => l.agent).join(", ")}` : ""}
+      </p>));
+  }
   return (
     <div>
       <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>

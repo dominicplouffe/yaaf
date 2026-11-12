@@ -37,6 +37,7 @@ from yaaf.core.models import (
     Project,
     ProjectMode,
     RequirementStatus,
+    ResultFor,
     Role,
     RoleVersion,
     Run,
@@ -311,6 +312,45 @@ WORKSPACE_CHAT = (
 )
 
 
+#: How a file is written, set by who will read it. Approved by the chairman
+#: on 12 Nov 2026 as GUIDANCE — he ruled out word caps outright ("world class
+#: applications don't have hard caps, world class applications do the right
+#: thing for the user"). It replaced a section that exempted every published
+#: file from length and aimed it at "the goal's beneficiary", which in practice
+#: meant one reader for everything. Measured when it changed: people opened 2
+#: of 17 published files in a day; agents read whole notes back hundreds of
+#: times. Most of what an agent writes is read by another agent, so the
+#: default reader is the team.
+#:
+#: What a note for agents keeps is the point of the second paragraph. Models
+#: read compressed facts well (LLMLingua: up to 20x with ~1.5 points lost) and
+#: lose the qualifiers first — and the qualifiers are what made "~16% since
+#: Prime Day" three different windows wearing one number on PC Micro. So: no
+#: prose, but every unit, window, source and caveat; dense, never cryptic.
+#:
+#: Visibility is not in here on purpose. Who a file is written for never
+#: decides whether the chairman is told about it: every deliverable reaches him.
+WRITING_FOR_THE_READER = (
+    "WHO READS IT DECIDES HOW YOU WRITE IT. Your task says who the result is for "
+    "(result_for); if it does not, it is for the team. "
+    "FOR THE TEAM (the CEO, another agent, the next run): skip the prose. Put the "
+    "answer first, in a line someone can lift as it is. Then give the facts, and give "
+    "each number with its unit, the time window it covers and its source. State the "
+    "caveats and what is not known as plainly as the findings. End with where the "
+    "evidence is: the script, the data files, the source. Do not retell the method, "
+    "because the script is the method. Use plain words and no made-up abbreviations. "
+    "Put rows and long tables in a CSV beside the note. "
+    "FOR THE CHAIRMAN, A CLIENT OR THE PUBLIC: bottom line first, then what to decide "
+    "or do, then a link to the detail. One screen is the normal size; write longer "
+    "only when he asked for it or the work is itself long by nature (a post, a "
+    "chapter, a report he commissioned) — then write it at the length and to the "
+    "standard he asked for. Padding is not thoroughness, and a missing caveat is not "
+    "brevity. "
+    "WHEN YOU READ A TEAMMATE'S NOTE, read its opening first and open the rest only "
+    "for the fact you need. Everything you read stays with you for the rest of the run."
+)
+
+
 #: How every agent writes. Each role prompt used to carry its own version of
 #: this and only the leadership ones did, so a memo the chairman actually had
 #: to read arrived as a four-page report with headings, while the CEO's cover
@@ -363,17 +403,7 @@ HOUSE_STYLE = (
     "a longer one is not a better one — cut anything that would not change "
     "what he does next. None of this licenses leaving out the number, the "
     "problem or the proposal: say less, never less of what matters. "
-    "HOW YOU WRITE THE DELIVERABLE ITSELF: the plain-English rule holds — short "
-    "words, no jargon, no throat-clearing — but the length rule does not, and "
-    "no ceiling on this page reaches it. A published file is how the chairman "
-    "gets what he is paying for: give him everything he needs to act, to check "
-    "you, and to decide, at whatever length that takes. Match its form to the "
-    "reader the goal names as its beneficiary, and its depth to the reference "
-    "class the goal names as its standard; where the goal, the task or the "
-    "chairman asks for a particular length, format or register, write that. "
-    "Padding is not thoroughness and brevity is not rigour: the test is whether "
-    "a reader in the beneficiary's position, holding the finished piece, would "
-    "still have to go and find out something it should have told them."
+    + WRITING_FOR_THE_READER
 )
 
 
@@ -966,6 +996,8 @@ def _task_context(session: Session, task: Task) -> dict:
         "goal": task.goal,
         "success_test": task.success_test,
         "produces_external_evidence": task.produces_external_evidence,
+        # Who reads the result — the first thing to know before writing it up.
+        "result_for": task.result_for or ResultFor.TEAM,
         "status": task.status,
         "check_output": task.check_output,
         "side_effects_already_fired": [
@@ -1631,6 +1663,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             "open": [
                 {"id": t.id, "title": t.title, "status": t.status, "team_id": t.team_id,
                  "external": t.produces_external_evidence,
+                 "result_for": t.result_for or ResultFor.TEAM,
                  "failed_checks": t.check_failures,
                  "requirement_id": t.requirement_id,
                  "claimed_by_agent_id": t.claimed_by_agent_id,
@@ -1745,6 +1778,14 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                        f"{plain.MAX_SENTENCE_WORDS} words, and `done` — the paragraph he reads "
                        f"first — under {plain.MAX_MESSAGE_WORDS} words. The platform refuses "
                        "longer.")
+                    + (" `record.writing` is how the team wrote this period: files for the "
+                       "team and for people, how long they ran, and which of his he opened. "
+                       "A writer in `long_writers` writes far past the team's norm — coach "
+                       "them against WHO READS IT DECIDES HOW YOU WRITE IT, by name, the "
+                       "way you would any habit that costs the project. It is not "
+                       "something to report to him."
+                       if ((review.record or {}).get("writing") or {}).get("long_writers")
+                       else "")
                 ),
             }
             # He said something back on the meeting. The thread rides along

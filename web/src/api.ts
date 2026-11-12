@@ -716,6 +716,8 @@ export interface TaskRow {
   /** Agent name of whoever holds the task (claimed or assigned). */
   holder_name: string | null;
   external: boolean;
+  /** Who the result is written for; it shapes the write-up, never who is told. */
+  result_for?: "team" | "chairman" | "outside";
   success_test: { type: string; command?: string; target?: string };
   evidence: string | null;
   check_output: string | null;
@@ -1286,6 +1288,10 @@ export interface ResultRow {
   task: { id: string; title: string } | null;
   run_id: string | null;
   cost: { usd: number; runs: number; failed: number };
+  /** Its own first lines, lifted at publish: what it found. */
+  opening?: string | null;
+  /** How often a person opened it in the app. */
+  opens?: number;
 }
 
 export interface ResultsView {
@@ -1872,6 +1878,15 @@ export interface ReviewRecord {
   bets: Record<"alive" | "added" | "killed" | "expired",
     { id: string; statement: string; kill_date: string; status: string }[]>;
   evidence: { verified: number; failed: number; pending: number };
+  /** How the team wrote in the window, by who each file was for. Absent on
+      meetings opened before it was recorded. */
+  writing?: {
+    for_team: { files: number; median_words: number };
+    for_people: { files: number; median_words: number; opened: number; not_opened: string[] };
+    long_writers: { agent: string; files: number; median_words: number;
+      team_median_words: number; opened_by_a_person: number }[];
+    note: string;
+  };
 }
 
 /** The CEO's status report, structured. Null on a meeting filed the old way

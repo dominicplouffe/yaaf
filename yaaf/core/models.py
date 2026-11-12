@@ -1283,6 +1283,11 @@ class Task(Base):
     # {"type": "command", "command": "..."} | {"type": "observable", "target": "..."}
     success_test: Mapped[dict] = mapped_column(JSONVariant)
     produces_external_evidence: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Who the result is written for — `ResultFor`. It decides how the work is
+    # written up (`contextpack.WRITING_FOR_THE_READER`), never who is told: a
+    # deliverable reaches the chairman whoever it was written for. NULL is
+    # "the team", the reader of most of what agents write.
+    result_for: Mapped[str | None] = mapped_column(String(12))
     status: Mapped[str] = mapped_column(String(16), default=TaskStatus.READY)
     blocked_reason: Mapped[str | None] = mapped_column(Text)
     not_before: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -1447,6 +1452,24 @@ class Artifact(Base):
     # "can you push to me every morning instead of me going to look for a file".
     slack_ts: Mapped[str | None] = mapped_column(String(40))
     published_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # How often a PERSON opened it, and when first. Before this the platform
+    # could not say whether anything it published was read: in one day people
+    # opened 2 of 17 published files, and that was only knowable from a
+    # request log. The CEO's review reads it (`writing.py`).
+    opens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # The file's own opening answer, lifted at publish (`writing.opening`) so
+    # every place that announces it — the boardroom, Slack, the morning letter,
+    # Results — can say what it found, not only what it is called.
+    opening: Mapped[str | None] = mapped_column(Text)
+    first_opened_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class ResultFor(enum.StrEnum):
+    """Who a task's result is written for."""
+
+    TEAM = "team"          # the CEO, another agent, the next run
+    CHAIRMAN = "chairman"  # the chairman reads it
+    OUTSIDE = "outside"    # a client or the public reads it
 
 
 class MailDirection(enum.StrEnum):

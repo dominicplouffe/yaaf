@@ -45,7 +45,7 @@ from yaaf.core.models import (
     TaskStatus,
     VerificationStatus,
 )
-from yaaf.server import policy, scorecard, velocity
+from yaaf.server import policy, scorecard, velocity, writing
 
 #: How much of a statement the record carries. The meeting lists things by
 #: name; the Roadmap holds the whole text.
@@ -185,6 +185,9 @@ def compose(session: Session, project: Project, since: datetime, until: datetime
             **(cycle.scorecard or {}),
         },
         "bets": _bets(session, project, since, until),
+        # How long the team's files ran, by who they were for, and whether a
+        # person opened his — what the CEO coaches writing from (`writing`).
+        "writing": writing.compose(session, project, since, until),
         "evidence": {
             "verified": (proof_by.get(VerificationStatus.VERIFIED, 0)
                          + proof_by.get(VerificationStatus.NOT_APPLICABLE, 0)),

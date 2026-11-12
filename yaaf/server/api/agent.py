@@ -13,6 +13,7 @@ import binascii
 import hashlib
 import weakref
 from datetime import datetime, timedelta
+from typing import Literal
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -52,6 +53,7 @@ from yaaf.core.models import (
     Requirement,
     RequirementEdge,
     RequirementStatus,
+    ResultFor,
     Review,
     ReviewStatus,
     Role,
@@ -70,7 +72,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import acting, activity, datasource_tools, policy, standing, typing_state
+from yaaf.server import acting, activity, datasource_tools, policy, standing, typing_state, writing
 from yaaf.server.contextpack import _speaker
 from yaaf.server.deps import RunContext, db, run_auth
 from yaaf.server.notify import (
@@ -112,6 +114,7 @@ def _task_view(task: Task) -> dict:
         "goal": task.goal,
         "success_test": task.success_test,
         "produces_external_evidence": task.produces_external_evidence,
+        "result_for": task.result_for or ResultFor.TEAM,
         "status": task.status,
         "blocked_reason": task.blocked_reason,
         "claimed_by_agent_id": task.claimed_by_agent_id,
@@ -269,6 +272,8 @@ class TaskCreate(BaseModel):
     goal: str = Field(min_length=10, max_length=10_000)
     success_test: dict
     produces_external_evidence: bool = False
+    # Who the result is written for. Absent on a subtask: its parent's.
+    result_for: Literal["team", "chairman", "outside"] | None = None
     parent_task_id: str | None = None
     assignee_agent_id: str | None = None
     hypothesis_id: str | None = None
@@ -288,10 +293,16 @@ def create_task(
             raise Refusal("Unknown requirement.", status_code=404)
     # A subtask inherits what its parent is for: a lead decomposing work cannot
     # quietly point half of it at something else.
-    if requirement is None and body.parent_task_id is not None:
+    result_for = body.result_for
+    if body.parent_task_id is not None:
         parent = session.get(Task, body.parent_task_id)
-        if parent is not None and parent.requirement_id:
+        if requirement is None and parent is not None and parent.requirement_id:
             requirement = session.get(Requirement, parent.requirement_id)
+        # An assignment is written for whoever the work it serves is for,
+        # unless the lead says otherwise (a teammate's piece of a chairman's
+        # report is usually for the lead who assembles it).
+        if result_for is None and parent is not None:
+            result_for = parent.result_for
     policy.check_task_create(
         session,
         cons,
@@ -330,6 +341,7 @@ def create_task(
         goal=body.goal,
         success_test=body.success_test,
         produces_external_evidence=body.produces_external_evidence,
+        result_for=result_for,
         not_before=body.not_before,
     )
     session.add(task)
@@ -4242,13 +4254,17 @@ def artifact_put(
         published_by_agent_id=ctx.agent.id if ctx.agent else None,
         run_id=ctx.run.id,
         requirement_ids=[r.id for r in satisfied],
+        # What it found, in its own first lines — quoted wherever it is
+        # announced, so he gets the answer without having to open it.
+        opening=writing.opening(filename, data),
     )
     session.add(row)
     session.flush()
     chairman_notify(
         session, ctx.project, f"deliverable published: {filename} v{version}",
         f"{filename} (v{version}, {len(data)} bytes) is in the artifact store"
-        + (f", satisfying {', '.join(r.key for r in satisfied)}." if satisfied else "."),
+        + (f", satisfying {', '.join(r.key for r in satisfied)}." if satisfied else ".")
+        + (f"\n\n{row.opening}" if row.opening else ""),
         kind="deliverable_published",
         data={"deliverable": {"id": row.id, "name": filename, "version": version,
                               "key": key, "size": len(data),
@@ -4274,7 +4290,8 @@ def artifact_put(
         f"Deliverable published: [**{label}**]({link})"
         + (f" (v{version})" if version > 1 else "")
         + (f" — {', '.join(r.key for r in satisfied)}" if satisfied else "")
-        + f" · {size}.",
+        + f" · {size}."
+        + (f"\n> {row.opening}" if row.opening else ""),
         slack_ts=SLACK_VIA_DELIVERABLE,
     )
     # The digest is returned at write time so the author can record what it

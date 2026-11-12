@@ -177,7 +177,8 @@ def _artifact_blurb(session: Session, artifact) -> str:
         else f"{artifact.size_bytes} B"
     serves = f" — {', '.join(keys)}" if keys else ""
     version = f" (v{artifact.version})" if artifact.version > 1 else ""
-    return f"Deliverable: *{artifact.name}*{version}{serves} · {size}"
+    opening = f"\n> {artifact.opening}" if getattr(artifact, "opening", None) else ""
+    return f"Deliverable: *{artifact.name}*{version}{serves} · {size}{opening}"
 
 
 def _mirror_artifacts(session: Session, project: Project,

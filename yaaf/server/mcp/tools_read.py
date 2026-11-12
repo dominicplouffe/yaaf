@@ -361,7 +361,11 @@ def project(principal: Principal, session: Session, arguments: dict) -> dict:
         payload = _as_dict(payload)
         payload["delivered"] = [
             {**item, "name": envelope.untrusted(str(item.get("name", ""))[:_TITLE_CHARS],
-                                                author="agent", kind="deliverable_name")}
+                                                author="agent", kind="deliverable_name"),
+             # Its opening lines are the agent's words too.
+             "opening": (envelope.untrusted(item["opening"], author="agent",
+                                            kind="deliverable_opening")
+                         if item.get("opening") else None)}
             for item in payload.get("delivered") or []]
     else:
         payload = _observe(observe.dashboard, project_id=row.id, session=session)

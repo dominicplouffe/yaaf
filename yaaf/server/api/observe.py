@@ -2058,6 +2058,7 @@ def board(project_id: str, session: Session = Depends(db)) -> list[dict]:
             "claimed_by": t.claimed_by_agent_id,
             "holder_name": agents.get(t.claimed_by_agent_id or t.assignee_agent_id),
             "external": t.produces_external_evidence,
+            "result_for": t.result_for or "team",
             "success_test": t.success_test, "evidence": t.completion_evidence,
             "check_output": t.check_output, "blocked_reason": t.blocked_reason,
             # A gated task is READY and unclaimable, and rendering it as plain
@@ -2933,6 +2934,7 @@ def _receipt(a: Artifact, reqs: dict) -> dict:
         "satisfies": sorted(reqs[rid].key if rid in reqs else rid
                             for rid in a.requirement_ids or []),
         "checked": checked, "checked_why": why,
+        "opens": a.opens or 0,
     }
 
 
@@ -3051,6 +3053,8 @@ def project_results(project_id: str, agent_id: str | None = None,
         out.append({
             "name": a.name, "key": a.storage_key, "version": a.version,
             "versions": versions.get(a.name, 1), "size": a.size_bytes,
+            # What it found, in its own first lines, and whether he has opened it.
+            "opening": a.opening, "opens": a.opens or 0,
             "published_at": a.published_at.isoformat(),
             "made_by": ({"id": a.published_by_agent_id,
                          "name": names.get(a.published_by_agent_id, "an agent no longer on it")}
@@ -3277,6 +3281,15 @@ def project_file_content(
             data = artifacts.store().get_bytes(artifact)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="no such artifact") from None
+        # A person opened it. Nothing recorded this before, so nobody could
+        # say whether what the team published was read (`writing.compose`).
+        row = session.execute(
+            select(Artifact).where(Artifact.project_id == project.id,
+                                   Artifact.storage_key == artifact)
+        ).scalar_one_or_none()
+        if row is not None:
+            row.opens = (row.opens or 0) + 1
+            row.first_opened_at = row.first_opened_at or utcnow()
         # Buffered, and safely so: `artifact_put` refuses anything over 100 MB,
         # so the worst case is one 100 MB read held in memory per download. The
         # workspace below has no such ceiling — it is where agents actually
