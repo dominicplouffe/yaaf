@@ -21,23 +21,6 @@ interface PublishedRow {
       somebody judged), pending (not settled yet). Absent when it claims none. */
   checked?: "verified" | "judged" | "pending" | null;
   checked_why?: string | null;
-  /** Who it was written for. A note for agents is the team's working record,
-      written as facts rather than prose; it is never announced to the
-      chairman and is not listed on Results. */
-  reader?: "people" | "agents";
-  /** For a long file for people: the chairman's own words asking for it. */
-  asked_for?: string | null;
-}
-
-/** Says, on the file, that it was written for the team rather than for him —
-    so a terse page of facts reads as what it is, not as a careless report. */
-function ReaderChip({ receipt }: { receipt: PublishedRow | null | undefined }) {
-  if (receipt?.reader !== "agents") return null;
-  return (
-    <span className="chip" title="Written for the team's agents: the facts, without the prose. Not announced to you.">
-      for agents
-    </span>
-  );
 }
 
 /** The proof, on the file. It used to live on another page, so a deliverable
@@ -784,7 +767,6 @@ function Preview({
                 <span className="chip">working</span>
               )}
               {entry.version > 1 && <span className="chip">v{entry.version}</span>}
-              <ReaderChip receipt={entry.receipt} />
             </div>
             <div className="help">
               {entry.dir && <span className="mono">{entry.dir} · </span>}
@@ -794,7 +776,6 @@ function Preview({
                 ? ` · satisfies ${entry.receipt.satisfies.join(", ")}`
                 : ""}
               {entry.receipt?.checked_why ? ` — ${entry.receipt.checked_why}` : ""}
-              {entry.receipt?.asked_for ? ` · long because you asked: “${entry.receipt.asked_for}”` : ""}
               {entry.receipt && (
                 <>
                   {" · "}
@@ -1036,7 +1017,6 @@ function Row(props: RowProps) {
             </span>
           ) : null}
           <CheckedChip receipt={entry.receipt} />
-          <ReaderChip receipt={entry.receipt} />
           {entry.older.length > 0 && (
             <button
               className="chip vchip"

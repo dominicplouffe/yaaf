@@ -1247,31 +1247,14 @@ async def t_side_effect_finish(args):
     return _text(_call("POST", f"/agent/side_effects/{effect_id}/finish", dict(args)))
 
 
-#: The reader rule at the moment of publishing, in artifact_put's own
-#: description. The full rule and its numbers are `yaaf.server.readers` (this
-#: file cannot import the server); a contract test holds the two together.
-READER_RULE = (
-    "For agents: the answer in the first lines, then the facts — each number with "
-    "its unit, window and source, the caveats, the script and data paths — no "
-    "narrative, no restated method, rows in a CSV beside it; 1,500 words at most. "
-    "For people: one screen, 500 words at most — the answer, the number, what to "
-    "do — unless the chairman asked for a long piece, in which case pass his "
-    "words, quoted exactly, as asked_for."
-)
-
-
 @tool(
     "artifact_put",
-    "Persist a finished file to the platform's artifact store — the shipped, versioned "
-    "record the platform serves and audits. Ship it here and CITE it — never paste its "
-    "contents into a channel or the boardroom. "
-    "reader is REQUIRED and decides how the file is held: \"agents\" when the CEO or "
-    "another agent will read it (a finding, a handoff, working notes — most files), "
-    "\"people\" when the chairman, a client or the public will. Only a file for people "
-    "is announced to the chairman; a note for agents is on the shelf for the team. "
-    + READER_RULE + " "
-    "A prose file over its reader's limit is refused with what to cut; a data file "
-    "(CSV, JSON, anything not prose) never is. "
+    "Persist a finished deliverable (report, dataset, document) to the platform's "
+    "artifact store — the shipped, versioned record the platform serves and audits. "
+    "A published file is how the chairman gets what he is paying for: no message or "
+    "chat ceiling applies to it, so give him everything he needs to act, to check you "
+    "and to decide. Ship it here and CITE it — never paste its contents into a "
+    "channel or the boardroom. "
     "Your /workspace is NOT ephemeral: it persists with the project across runs and is "
     "shared by every agent on it, which makes it the right home for working state and "
     "cached data pulls; ship an artifact when the work is FINISHED. "
@@ -1286,9 +1269,8 @@ READER_RULE = (
     "artifact's uri, key, size and sha256 — cite the uri in evidence, task "
     "completions and messages. The uri is NOT a path in your sandbox: read it back "
     "with artifact_get, never with a file tool.",
-    _schema({"path": str, "filename": str, "content_base64": str, "satisfies": list,
-             "reader": str, "asked_for": str},
-            optional=("path", "filename", "content_base64", "satisfies", "asked_for")),
+    _schema({"path": str, "filename": str, "content_base64": str, "satisfies": list},
+            optional=("path", "filename", "content_base64", "satisfies")),
 )
 async def t_artifact_put(args):
     path = (args.get("path") or "").strip()
@@ -1320,16 +1302,7 @@ async def t_artifact_put(args):
     if not filename:
         return _text({"status": 422, "body": {
             "error": "filename is required with content_base64."}})
-    reader = (args.get("reader") or "").strip().lower()
-    if reader not in ("people", "agents"):
-        return _text({"status": 422, "body": {
-            "error": "pass reader: \"agents\" if the CEO or another agent will read "
-                     "this file, \"people\" if the chairman, a client or the public "
-                     "will. It decides the form the file is held to and whether the "
-                     "chairman is told about it."}})
-    payload = {"filename": filename, "content_base64": encoded, "reader": reader}
-    if (args.get("asked_for") or "").strip():
-        payload["asked_for"] = args["asked_for"].strip()
+    payload = {"filename": filename, "content_base64": encoded}
     if isinstance(args.get("satisfies"), list) and args["satisfies"]:
         payload["satisfies"] = [str(k) for k in args["satisfies"]]
     return _text(_call("POST", "/agent/artifacts", payload))

@@ -139,16 +139,15 @@ def test_a_non_author_can_read_the_shipped_bytes(client):
 def test_artifact_get_pages_a_large_file_and_keeps_the_whole_file_digest(client):
     project = make_project(client)
     _, token = live_token(project["id"], project["ceo_agent_id"])
-    # A dataset, so no reader's word limit applies: paging is what is tested.
     content = ("line\n" * 40_000).encode()  # 200 KB, past the 64 KB read cap
     client.post(
         "/agent/artifacts",
-        json={"filename": "report.csv", "content_base64": base64.b64encode(content).decode()},
+        json={"filename": "report.md", "content_base64": base64.b64encode(content).decode()},
         headers=bearer(token),
     )
 
     # A bare filename is not a key; the store is addressed, not browsed.
-    assert client.get("/agent/artifacts/content", params={"ref": "report.csv"},
+    assert client.get("/agent/artifacts/content", params={"ref": "report.md"},
                       headers=bearer(token)).status_code == 404
 
     key = client.get("/agent/artifacts", headers=bearer(token)).json()["artifacts"][0]["key"]

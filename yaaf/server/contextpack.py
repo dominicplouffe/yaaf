@@ -36,7 +36,6 @@ from yaaf.core.models import (
     Notice,
     Project,
     ProjectMode,
-    Reader,
     RequirementStatus,
     Role,
     RoleVersion,
@@ -49,7 +48,7 @@ from yaaf.core.models import (
     Team,
     utcnow,
 )
-from yaaf.server import brief, plain, policy, readers
+from yaaf.server import brief, plain, policy
 from yaaf.server.rows import seat_row
 
 UNTRUSTED_NOTE = (
@@ -347,15 +346,6 @@ WORKSPACE_CHAT = (
 #: of them at `UNREAD_BODY_CHARS` each. Long-form content belongs in a file,
 #: which is fetched once by the one agent that needs it. Same reason the pack
 #: itself is a lease and not a library.
-#:
-#: The second half is about files, and it has changed hands twice. A published
-#: file was exempt from every length rule, on the reasoning that it is how the
-#: chairman gets what he pays for. What that bought, measured on 11–12 Nov:
-#: people opened 2 of 17 published Markdown files in a day, while agents read
-#: notes back in full hundreds of times and carried each one for the rest of
-#: their run. So the rule is now set by the READER (`readers`): a page for
-#: people is one screen unless he asked for more, and a note for agents is the
-#: facts without the prose — both held to a number, both refused past it.
 HOUSE_STYLE = (
     "HOW YOU WRITE, IN MESSAGES AND CHAT: plain English, short sentences. "
     "THREE SENTENCES IS THE SIZE OF A MESSAGE — a ceiling, not an average. The "
@@ -373,7 +363,17 @@ HOUSE_STYLE = (
     "a longer one is not a better one — cut anything that would not change "
     "what he does next. None of this licenses leaving out the number, the "
     "problem or the proposal: say less, never less of what matters. "
-    + readers.PROMPT
+    "HOW YOU WRITE THE DELIVERABLE ITSELF: the plain-English rule holds — short "
+    "words, no jargon, no throat-clearing — but the length rule does not, and "
+    "no ceiling on this page reaches it. A published file is how the chairman "
+    "gets what he is paying for: give him everything he needs to act, to check "
+    "you, and to decide, at whatever length that takes. Match its form to the "
+    "reader the goal names as its beneficiary, and its depth to the reference "
+    "class the goal names as its standard; where the goal, the task or the "
+    "chairman asks for a particular length, format or register, write that. "
+    "Padding is not thoroughness and brevity is not rigour: the test is whether "
+    "a reader in the beneficiary's position, holding the finished piece, would "
+    "still have to go and find out something it should have told them."
 )
 
 
@@ -1194,26 +1194,17 @@ def _deliverables(session: Session, project: Project) -> dict:
     So the pack says what is there, and — the load-bearing half — says plainly
     when there is nothing.
     """
-    # His shelf is what was written for a person. Notes for agents are the
-    # team's, counted so an agent knows they exist, and never mistaken for
-    # something he can find on his screen.
     rows = session.execute(
         select(Artifact)
-        .where(Artifact.project_id == project.id, readers.for_people())
+        .where(Artifact.project_id == project.id)
         .order_by(Artifact.published_at.desc())
         .limit(DELIVERABLES_IN_PACK)
     ).scalars().all()
     total = session.execute(
-        select(func.count(Artifact.id)).where(Artifact.project_id == project.id,
-                                              readers.for_people())
-    ).scalar_one()
-    notes = session.execute(
-        select(func.count(Artifact.id)).where(Artifact.project_id == project.id,
-                                              Artifact.reader == Reader.AGENTS)
+        select(func.count(Artifact.id)).where(Artifact.project_id == project.id)
     ).scalar_one()
     return {
         "published": total,
-        "notes_for_agents": notes,
         "recent": [
             {
                 "name": a.name,

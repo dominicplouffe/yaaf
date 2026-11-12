@@ -45,7 +45,7 @@ from yaaf.core.models import (
     TaskStatus,
     VerificationStatus,
 )
-from yaaf.server import policy, readers, scorecard, velocity
+from yaaf.server import policy, scorecard, velocity
 
 #: How much of a statement the record carries. The meeting lists things by
 #: name; the Roadmap holds the whole text.
@@ -111,7 +111,6 @@ def compose(session: Session, project: Project, since: datetime, until: datetime
             Artifact.project_id == project.id,
             Artifact.published_at > since,
             Artifact.published_at <= until,
-            readers.for_people(),
         ).order_by(Artifact.published_at.desc())
     ).scalars():
         if artifact.name in named:

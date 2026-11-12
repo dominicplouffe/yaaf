@@ -1447,23 +1447,6 @@ class Artifact(Base):
     # "can you push to me every morning instead of me going to look for a file".
     slack_ts: Mapped[str | None] = mapped_column(String(40))
     published_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
-    # Who the file is written for — `Reader`. It sets the form the platform
-    # holds the file to (`yaaf.server.readers`) and whether it reaches the
-    # chairman at all: a note for agents is on the shelf for the team and is
-    # never announced to him. NULL is every row from before the field, read
-    # as PEOPLE, which is how all of them were treated.
-    reader: Mapped[str | None] = mapped_column(String(8))
-    # When a file for people is long, the chairman's own words asking for it,
-    # quoted from where he wrote them. Kept so the length has a reason anyone
-    # can read next to it.
-    asked_for: Mapped[str | None] = mapped_column(Text)
-
-
-class Reader(enum.StrEnum):
-    """Who a published file is written for."""
-
-    PEOPLE = "people"  # the chairman, a client, the public: a person reads it
-    AGENTS = "agents"  # the CEO or another agent reads it; no person needs to
 
 
 class MailDirection(enum.StrEnum):

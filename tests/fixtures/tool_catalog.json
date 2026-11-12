@@ -117,12 +117,9 @@
     "name": "artifact_list"
   },
   {
-    "description": "Persist a finished file to the platform's artifact store \u2014 the shipped, versioned record the platform serves and audits. Ship it here and CITE it \u2014 never paste its contents into a channel or the boardroom. reader is REQUIRED and decides how the file is held: \"agents\" when the CEO or another agent will read it (a finding, a handoff, working notes \u2014 most files), \"people\" when the chairman, a client or the public will. Only a file for people is announced to the chairman; a note for agents is on the shelf for the team. For agents: the answer in the first lines, then the facts \u2014 each number with its unit, window and source, the caveats, the script and data paths \u2014 no narrative, no restated method, rows in a CSV beside it; 1,500 words at most. For people: one screen, 500 words at most \u2014 the answer, the number, what to do \u2014 unless the chairman asked for a long piece, in which case pass his words, quoted exactly, as asked_for. A prose file over its reader's limit is refused with what to cut; a data file (CSV, JSON, anything not prose) never is. Your /workspace is NOT ephemeral: it persists with the project across runs and is shared by every agent on it, which makes it the right home for working state and cached data pulls; ship an artifact when the work is FINISHED. Pass path: a file under /workspace (absolute or workspace-relative) \u2014 the platform reads and uploads the bytes itself. NEVER base64-encode a file or route its contents through your own output to ship it; write it to the workspace and hand over the path. filename optionally renames the artifact (plain name, no path separators; defaults to the file's own name). content_base64 is a fallback for small payloads you have in hand and nowhere on disk; filename is required with it. Max 100 MB decoded either way. satisfies lists the requirement keys (R-03) this file delivers on. Returns the artifact's uri, key, size and sha256 \u2014 cite the uri in evidence, task completions and messages. The uri is NOT a path in your sandbox: read it back with artifact_get, never with a file tool.",
+    "description": "Persist a finished deliverable (report, dataset, document) to the platform's artifact store \u2014 the shipped, versioned record the platform serves and audits. A published file is how the chairman gets what he is paying for: no message or chat ceiling applies to it, so give him everything he needs to act, to check you and to decide. Ship it here and CITE it \u2014 never paste its contents into a channel or the boardroom. Your /workspace is NOT ephemeral: it persists with the project across runs and is shared by every agent on it, which makes it the right home for working state and cached data pulls; ship an artifact when the work is FINISHED. Pass path: a file under /workspace (absolute or workspace-relative) \u2014 the platform reads and uploads the bytes itself. NEVER base64-encode a file or route its contents through your own output to ship it; write it to the workspace and hand over the path. filename optionally renames the artifact (plain name, no path separators; defaults to the file's own name). content_base64 is a fallback for small payloads you have in hand and nowhere on disk; filename is required with it. Max 100 MB decoded either way. satisfies lists the requirement keys (R-03) this file delivers on. Returns the artifact's uri, key, size and sha256 \u2014 cite the uri in evidence, task completions and messages. The uri is NOT a path in your sandbox: read it back with artifact_get, never with a file tool.",
     "input_schema": {
       "properties": {
-        "asked_for": {
-          "type": "string"
-        },
         "content_base64": {
           "type": "string"
         },
@@ -132,16 +129,11 @@
         "path": {
           "type": "string"
         },
-        "reader": {
-          "type": "string"
-        },
         "satisfies": {
           "type": "array"
         }
       },
-      "required": [
-        "reader"
-      ],
+      "required": [],
       "type": "object"
     },
     "name": "artifact_put"

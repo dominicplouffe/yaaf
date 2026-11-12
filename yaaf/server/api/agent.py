@@ -13,7 +13,6 @@ import binascii
 import hashlib
 import weakref
 from datetime import datetime, timedelta
-from typing import Literal
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -49,7 +48,6 @@ from yaaf.core.models import (
     Message,
     Project,
     ProjectMode,
-    Reader,
     Recurrence,
     Requirement,
     RequirementEdge,
@@ -4145,12 +4143,6 @@ class ArtifactPut(BaseModel):
     # Requirement ids or keys this deliverable claims to satisfy. A claim,
     # not a verdict — met is still only ever written by the platform.
     satisfies: list[str] = Field(default_factory=list, max_length=20)
-    # Who the file is for (`readers`). Absent reads as people — every caller
-    # from before the field — and the agent's tool always sends one.
-    reader: Literal["people", "agents"] = "people"
-    # The chairman's own words asking for a long piece, when a file for people
-    # runs past one screen. Checked against what he actually wrote.
-    asked_for: str | None = Field(default=None, max_length=2000)
 
 
 def _artifact_key(ctx: RunContext, ref: str) -> str:
@@ -4209,17 +4201,6 @@ def artifact_put(
             "somewhere addressable and record the URL as evidence instead.",
             status_code=413,
         )
-    # The form this reader is owed, refused here rather than asked for in a
-    # prompt: one screen for a person who did not ask for more, a compact
-    # note for an agent that will carry it for the rest of its run.
-    from yaaf.server import readers
-    from yaaf.server.readers import NOT_FOR_PEOPLE
-
-    why_not = readers.refusal(session, ctx.project, name=filename, data=data,
-                              reader=body.reader, asked_for=body.asked_for)
-    if why_not:
-        raise Refusal(why_not, status_code=422)
-    for_people = body.reader == Reader.PEOPLE
     # Satisfies: keys ("R-03") or ids, resolved and validated — an id from
     # another project or thin air is refused, not stored as decoration.
     satisfied: list[Requirement] = []
@@ -4261,18 +4242,9 @@ def artifact_put(
         published_by_agent_id=ctx.agent.id if ctx.agent else None,
         run_id=ctx.run.id,
         requirement_ids=[r.id for r in satisfied],
-        reader=body.reader,
-        asked_for=(body.asked_for or "").strip() or None if for_people else None,
-        # A note for agents is the team's, not the chairman's: nothing pushes
-        # it to his Slack, so it is never "undelivered" there.
-        slack_ts=None if for_people else NOT_FOR_PEOPLE,
     )
     session.add(row)
     session.flush()
-    if not for_people:
-        return {"uri": uri, "key": key, "size": len(data), "sha256": digest,
-                "artifact_id": row.id, "version": version, "reader": body.reader,
-                "satisfies": [r.key for r in satisfied]}
     chairman_notify(
         session, ctx.project, f"deliverable published: {filename} v{version}",
         f"{filename} (v{version}, {len(data)} bytes) is in the artifact store"
@@ -4308,7 +4280,7 @@ def artifact_put(
     # The digest is returned at write time so the author can record what it
     # shipped and a later reader can prove the store still holds those bytes.
     return {"uri": uri, "key": key, "size": len(data), "sha256": digest,
-            "artifact_id": row.id, "version": version, "reader": body.reader,
+            "artifact_id": row.id, "version": version,
             "satisfies": [r.key for r in satisfied]}
 
 

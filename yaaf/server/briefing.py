@@ -85,7 +85,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import heads_up, policy, readers
+from yaaf.server import heads_up, policy
 from yaaf.server.dispatcher import TALK_RUN_KINDS, heartbeat_only
 from yaaf.server.rows import chairman_time
 
@@ -595,7 +595,6 @@ def _deliverable_lines(session: Session, project: Project, since, until) -> list
             Artifact.project_id == project.id,
             Artifact.published_at > since,
             Artifact.published_at <= until,
-            readers.for_people(),
         ).order_by(Artifact.published_at.desc())
     ).scalars())
     if not artifacts:
@@ -647,7 +646,6 @@ def _delivered(session: Session, project: Project, since, until) -> list[dict]:
             Artifact.project_id == project.id,
             Artifact.published_at > since,
             Artifact.published_at <= until,
-            readers.for_people(),
         ).order_by(Artifact.published_at.desc())
     ).scalars():
         if artifact.name in seen:

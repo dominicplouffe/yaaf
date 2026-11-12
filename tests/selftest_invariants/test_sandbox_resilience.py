@@ -60,7 +60,7 @@ def test_artifact_put_reads_a_workspace_path_itself(sandbox_entry, monkeypatch, 
     monkeypatch.setattr(sandbox_entry, "_call", fake_call)
 
     # Workspace-relative path; filename defaults to the file's own name.
-    out = _put(sandbox_entry, {"path": "reports/q3.md", "reader": "people"})
+    out = _put(sandbox_entry, {"path": "reports/q3.md"})
     assert out["status"] == 200
     method, path, body = calls[0]
     assert (method, path) == ("POST", "/agent/artifacts")
@@ -69,7 +69,7 @@ def test_artifact_put_reads_a_workspace_path_itself(sandbox_entry, monkeypatch, 
 
     # Absolute path inside the workspace, with an explicit rename.
     out = _put(sandbox_entry, {"path": str(tmp_path / "reports" / "q3.md"),
-                               "filename": "final.md", "reader": "people"})
+                               "filename": "final.md"})
     assert out["status"] == 200
     assert calls[1][2]["filename"] == "final.md"
 
@@ -112,11 +112,11 @@ def test_artifact_put_inline_fallback_still_works_and_is_validated(
         or {"status": 200, "body": {}},
     )
 
-    ok = _put(sandbox_entry, {"filename": "tiny.txt", "reader": "agents",
+    ok = _put(sandbox_entry, {"filename": "tiny.txt",
                               "content_base64": base64.b64encode(b"hi").decode()})
     assert ok["status"] == 200 and sent[0]["filename"] == "tiny.txt"
 
-    nameless = _put(sandbox_entry, {"content_base64": "aGk=", "reader": "agents"})
+    nameless = _put(sandbox_entry, {"content_base64": "aGk="})
     assert nameless["status"] == 422 and "filename" in nameless["body"]["error"]
 
     empty = _put(sandbox_entry, {})
