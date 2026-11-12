@@ -84,6 +84,7 @@ from yaaf.server import (
     file_index,
     metrics,
     policy,
+    readers,
     spend_rollup,
     typing_state,
 )
@@ -2933,6 +2934,8 @@ def _receipt(a: Artifact, reqs: dict) -> dict:
         "satisfies": sorted(reqs[rid].key if rid in reqs else rid
                             for rid in a.requirement_ids or []),
         "checked": checked, "checked_why": why,
+        # Who it was written for; NULL rows predate the field and were for people.
+        "reader": a.reader or "people", "asked_for": a.asked_for,
     }
 
 
@@ -2984,8 +2987,10 @@ def project_results(project_id: str, agent_id: str | None = None,
     produced it. `agent_id` narrows it to one person's work, for their page.
     """
     project = _project(session, project_id)
+    # Results are what was made for a person. A note for agents is the team's
+    # working record: it is in the file explorer, marked, and not listed here.
     rows = list(session.execute(
-        select(Artifact).where(Artifact.project_id == project.id)
+        select(Artifact).where(Artifact.project_id == project.id, readers.for_people())
         .order_by(Artifact.published_at.desc())
     ).scalars())
     latest: dict[str, Artifact] = {}
