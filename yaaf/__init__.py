@@ -5,4 +5,4 @@ role-based agents, a human chairman, and governance enforced as API refusals
 rather than prompt suggestions.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
