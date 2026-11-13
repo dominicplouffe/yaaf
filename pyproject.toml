@@ -1,6 +1,6 @@
 [project]
 name = "yaaf"
-version = "0.5.0"
+version = "0.6.0"
 description = "Yet Another Agent Framework — a hardened multi-agent platform"
 readme = "README.md"
 requires-python = ">=3.12"
