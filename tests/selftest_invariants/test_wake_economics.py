@@ -696,6 +696,21 @@ def test_the_ceo_is_told_the_hourly_ration(client):
     assert "9 in any trailing hour" in prose
 
 
+def test_the_ceo_is_told_talking_costs_no_runs(client):
+    """Told the ration but not what it excludes, a CEO asked where the day's
+    twelve runs went answered "me, answering you here" — blaming the
+    chairman's own chat, which the count has never included."""
+    from yaaf.core.constitution import effective
+    from yaaf.server.contextpack import constitution_prose
+
+    project = make_project(client)
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        prose = constitution_prose(effective(session, row.id), row)
+    assert "spends none of it" in prose
+    assert "Runs that die still spend" not in prose
+
+
 # ── the per-run spend ceiling ───────────────────────────────────────────────
 
 
