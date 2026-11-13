@@ -1828,6 +1828,9 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .founding-compose textarea:focus { outline: none; border-color: var(--accent); }
 .founding-actions { display: flex; align-items: center; justify-content: space-between;
   gap: 12px; }
+.founding-actions { flex-wrap: wrap; }
+.founding-actions > .muted { flex: 1 1 220px; }
+.founding-buttons { display: flex; gap: 8px; flex-shrink: 0; margin-left: auto; }
 
 .founding-draft { position: sticky; top: 24px; display: flex; flex-direction: column;
   gap: 12px; min-width: 0; }

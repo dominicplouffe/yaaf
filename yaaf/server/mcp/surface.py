@@ -63,6 +63,8 @@ REACHED = {
     "GET /admin/crews": "catalog",
     "POST /admin/rehearse": "rehearse",
     "POST /admin/projects": "create_project",
+    "POST /admin/founder/quick": "quick_project — and quick_project_status reads the "
+                                 "quick founding it started, never a conversation",
     "GET /admin/projects/{project_id}/export": "clone_project (export), rehearse",
     "POST /admin/projects/{project_id}/clone": "clone_project",
     # configure

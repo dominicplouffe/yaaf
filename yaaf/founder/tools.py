@@ -265,6 +265,62 @@ ASK_SCHEMA = {
     "required": ["questions", "settled", "done"],
 }
 
+#: The draft's shape, for the same reason as `ASK_SCHEMA`. With `{"project":
+#: dict}` the model guessed at a team, and measured on 2026-11-13 it guessed
+#: wrong the same two ways on every brief tried — `teams[].role` for
+#: `role_slug`, employees as objects instead of names — and was refused twice
+#: per turn, rewriting the whole draft each time: about 40 of a turn's 160
+#: seconds. Only the parts it gets wrong are spelled out; the endpoint's own
+#: model is still the judge, and extra keys pass through to it.
+PROPOSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "project": {
+            "type": "object",
+            "description": "the body POST /admin/projects accepts",
+            "properties": {
+                "slug": {"type": "string", "description": "^[a-z0-9-]{2,64}$"},
+                "name": {"type": "string"},
+                "goal": {"type": "string"},
+                "mode": {"type": "string", "enum": ["explore", "deliver", "operate"]},
+                "ceo_role_slug": {"type": "string"},
+                "ceo_name": {"type": "string"},
+                "teams": {"type": "array", "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "the team's name"},
+                        "role_slug": {"type": "string",
+                                      "description": "a slug from search_roles — every seat "
+                                                     "on the team holds this one role"},
+                        "employees": {"type": "array", "items": {"type": "string"},
+                                      "description": "the seats' names, plain strings"},
+                        "lead": {"type": "string",
+                                 "description": "one of employees; only when more than one"},
+                        "model_overrides": {"type": "object",
+                                            "additionalProperties": {"type": "string"},
+                                            "description": "{employee name: model}"},
+                    },
+                    "required": ["name", "role_slug", "employees"]}},
+                "constitution": {"type": "object",
+                                 "description": "only the rules you can justify; never "
+                                                "pace rules — name `tempo` instead"},
+                "controlled_domains": {"type": "array", "items": {"type": "string"}},
+                "billing_secret_id": {"type": "string"},
+                "credentials": {"type": "object", "additionalProperties": {"type": "string"},
+                                "description": "{provider: credential id}"},
+                "ceo_model_override": {"type": "string"},
+                "deadline": {"type": "string"},
+                "deadline_source": {"type": "object"},
+                "needs_mail": {"type": "boolean"},
+            },
+            "required": ["slug", "name", "goal", "mode", "teams"],
+        },
+        "tempo": {"type": "string", "enum": list(TEMPO_PRESETS)},
+        "notes": {"type": "string"},
+    },
+    "required": ["project"],
+}
+
 
 def ask_round(args: dict) -> tuple[dict | None, list[str]]:
     """Check one round of the interview: (the round, problems).
@@ -483,7 +539,7 @@ def build_server(session: Session, state: dict, env: dict[str, str],
           "`needs_mail: true` when the project's work runs through email — it "
           "waits for mail, answers it, or sends its work out by it; such a project "
           "is created now and starts once the chairman sets up its mailbox.",
-          {"project": dict, "notes": str, "tempo": str})
+          PROPOSE_SCHEMA)
     async def _propose_bundle(args):
         progress.start_step(thread_id, progress.LABELS["propose_bundle"])
         try:
@@ -502,10 +558,21 @@ def build_server(session: Session, state: dict, env: dict[str, str],
                 return ok({"error": "project was not valid JSON"})
         if not isinstance(project, dict):
             return ok({"error": "project must be an object"})
+        # A copy: what follows stamps the tempo and the payer into it, and the
+        # caller's object is not this tool's to change.
+        project = dict(project)
+        quick = state.get("quick")
+        if quick:
+            # Who pays a quick project was decided before the turn began.
+            project.setdefault("billing_secret_id", quick["billing_id"])
         problems = stamp_tempo(project, args.get("tempo"))
         bundle = as_bundle(project)
         problems += (validate(bundle) + billing_problems(bundle["project"], session)
                      + doctrine_problems(bundle.get("project") or {}, session))
+        if quick:
+            from yaaf.founder import quick as quick_founding
+
+            problems += quick_founding.problems(bundle["project"], quick["billing_id"])
         if problems:
             # Refused rather than stored: a draft the create endpoint would
             # reject is worse than no draft, because the review screen would
@@ -521,7 +588,12 @@ def build_server(session: Session, state: dict, env: dict[str, str],
                        "hint": "fix these and call propose_bundle again"})
         state.pop("last_refusal", None)
         state["draft"] = bundle
-        return ok({"ok": True, "summary": summarise(bundle)})
+        graded = bool(thread_id) and not quick
+        if graded:
+            grade_in_background(state, bundle["project"].get("goal"), env, model, thread_id)
+        return ok({"ok": True, "summary": summarise(bundle),
+                   **({"grade": "the platform is grading this goal now; the verdict "
+                                "opens your next turn"} if graded else {})})
 
     @tool("rehearse", "Run the current draft as a project for nothing, on a mock "
           "runtime, and report what happened. Answers whether a well-behaved project "
@@ -569,6 +641,81 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         specs=[(fn.name, fn.description, schema(fn.input_schema), fn.handler)
                for fn in built],
     )
+
+
+#: Grades still being made, so a caller that must not outrun them — a test
+#: about to empty the database — can wait for them (`wait_for_grades`).
+_GRADING: set = set()
+
+
+def wait_for_grades(timeout: float = 10.0) -> None:
+    """Block until every background grade has landed, or `timeout` passes."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    for worker in list(_GRADING):
+        worker.join(max(0.0, deadline - time.monotonic()))
+
+
+def grade_in_background(state: dict, goal: str | None, env: dict[str, str],
+                        model: str, thread_id: str = "") -> None:
+    """Grade an accepted draft's goal beside the turn, and keep the verdict.
+
+    The Founder used to call `grade_goal` itself, before it asked anything:
+    measured on 2026-11-13, writing the goal out for the grader and waiting on
+    it was 60 of the ~85 seconds before the chairman saw a question. The grade
+    is still made, of every draft, by the same grader on the same credential —
+    by the platform, on a thread of its own, so neither the questions nor the
+    draft wait on it. It lands on the thread's own `goal_grade` column and
+    opens the next turn (`agent._prompt`), where its findings become that
+    turn's questions, which is what the doctrine asked of them anyway.
+
+    One grade per distinct goal: a draft that did not touch the goal is not
+    graded again, and a verdict on a goal the draft no longer carries is
+    ignored by its reader. A grade that fails is logged and dropped — the next
+    accepted draft is graded afresh.
+    """
+    import asyncio
+    import threading
+    import time
+
+    goal = (goal or "").strip()
+    if not goal or goal == state.get("graded_goal") or not thread_id:
+        return
+    state["graded_goal"] = goal
+
+    def work() -> None:
+        try:
+            grade()
+        finally:
+            _GRADING.discard(threading.current_thread())
+
+    def grade() -> None:
+        from yaaf.core.db import db_session
+        from yaaf.core.models import FoundingThread
+        from yaaf.founder.grade import grade_goal as _grade
+
+        began = time.monotonic()
+        try:
+            graded = asyncio.run(_grade(goal, env=env, model=model))
+        except Exception as exc:  # noqa: BLE001 — a lost grade is not a lost turn
+            log.warning("background goal grade on %s failed: %s", thread_id, exc)
+            return
+        seconds = round(time.monotonic() - began, 1)
+        log.info("founder goal graded in %ss [thread %s]: ready=%s missing=%s weak=%s",
+                 seconds, thread_id, graded.ready, graded.missing, graded.weak)
+        try:
+            with db_session() as session:
+                thread = session.get(FoundingThread, thread_id)
+                if thread is not None:
+                    thread.goal_grade = {"goal": goal, "seconds": seconds,
+                                         **graded.to_dict()}
+        except Exception:  # noqa: BLE001
+            log.exception("could not keep the goal grade of %s", thread_id)
+
+    worker = threading.Thread(target=work, name=f"grade-{thread_id[:12]}", daemon=True)
+    _GRADING.add(worker)
+    worker.start()
 
 
 def _timed(fn):

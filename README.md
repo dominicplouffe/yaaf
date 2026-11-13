@@ -60,7 +60,8 @@ deploy/install_desktop.sh
 
 Then open **http://localhost:24247/app**, sign in, add a model key under
 **Settings → Providers**, and create a project: click **New Project**, or from a
-terminal run `yaaf create-project "what you want, in your own words"`.
+terminal run `yaaf create-project "what you want, in your own words"`. Add
+`--quick` to skip the questions and have it running in about a minute.
 
 Full steps: **[docs/INSTALL.md](docs/INSTALL.md)**.
 

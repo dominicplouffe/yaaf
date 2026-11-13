@@ -33,14 +33,44 @@ from yaaf.founder.session import FounderModelError
 log = logging.getLogger("yaaf.founder")
 
 
-def _work(thread_id: str) -> None:
+#: Turns still running on threads of their own.
+_RUNNING: set = set()
+
+
+def wait_for_idle(timeout: float = 10.0) -> None:
+    """Block until every turn and every background grade this process started
+    has finished, or `timeout` passes — for a caller that must not outrun them
+    (a test about to empty the database)."""
+    import time
+
+    from yaaf.founder.tools import wait_for_grades
+
+    deadline = time.monotonic() + timeout
+    for worker in list(_RUNNING):
+        worker.join(max(0.0, deadline - time.monotonic()))
+    wait_for_grades(max(0.0, deadline - time.monotonic()))
+
+
+def _work(thread_id: str, quick: bool = False) -> None:
+    try:
+        _turn(thread_id, quick)
+    finally:
+        _RUNNING.discard(threading.current_thread())
+
+
+def _turn(thread_id: str, quick: bool = False) -> None:
     try:
         with db_session() as session:
             thread = session.get(FoundingThread, thread_id)
             if thread is None:  # deleted while we were starting
                 progress.end(thread_id, ok=False)
                 return
-            agent.run_turn(session, thread)
+            if quick:
+                from yaaf.founder import quick as quick_founding
+
+                quick_founding.run(session, thread)
+            else:
+                agent.run_turn(session, thread)
         # The session's commit lands as the block exits, so by the time the
         # turn is marked finished the reply and the draft are readable. Same
         # rule as the failure path below: record, then signal.
@@ -72,6 +102,8 @@ def _work(thread_id: str) -> None:
                 thread.last_error = detail
                 thread.turn_started_at = None
                 thread.updated_at = utcnow()
+                if thread.quick:
+                    thread.quick = {**thread.quick, "phase": "failed"}
     except Exception:  # pragma: no cover - the log is the last resort
         log.exception("could not record the failure of founding turn %s", thread_id)
     progress.end(thread_id, ok=False, error=detail, kind=kind)
@@ -91,13 +123,21 @@ def _stopped(thread_id: str) -> None:
             thread = session.get(FoundingThread, thread_id)
             if thread is not None:
                 withdrawn = agent.withdraw(thread)
+                # A stopped quick founding hands its brief back like any
+                # stopped turn, and what is left is an ordinary blank draft:
+                # whatever he sends next is a conversation, unless he asks
+                # for quick again.
+                thread.quick = None
     except Exception:  # pragma: no cover - the log is the last resort
         log.exception("could not withdraw the stopped turn on %s", thread_id)
     log.info("founding turn %s stopped by the chairman", thread_id)
     progress.end(thread_id, ok=False, stopped=True, withdrawn=withdrawn)
 
 
-def submit(thread_id: str) -> None:
-    """Start the turn. Returns immediately; the work outlives the request."""
-    threading.Thread(target=_work, args=(thread_id,),
-                     name=f"founder-{thread_id[:12]}", daemon=True).start()
+def submit(thread_id: str, quick: bool = False) -> None:
+    """Start the turn — or, with `quick`, the whole quick founding. Returns
+    immediately; the work outlives the request."""
+    worker = threading.Thread(target=_work, args=(thread_id, quick),
+                              name=f"founder-{thread_id[:12]}", daemon=True)
+    _RUNNING.add(worker)
+    worker.start()

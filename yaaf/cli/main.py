@@ -874,6 +874,75 @@ def _after_creating(client: httpx.Client, project_id: str, project: dict, bundle
         typer.echo(f"Not started. When you're ready: `yaaf start {slug}`.", err=err)
 
 
+#: How often a quick founding is polled while it drafts, and a running project
+#: while `--wait` waits for it to finish.
+QUICK_POLL_SECONDS = 1.0
+WAIT_POLL_SECONDS = 30.0
+
+
+def _quick_found(brief: str, billing: str | None, wait: bool) -> None:
+    """Quick founding from the terminal: say it started, then say what it is."""
+    import time
+
+    from yaaf.founder.quick import UNDER_WAY
+
+    with _client() as client:
+        body = {"brief": brief, **({"billing": billing} if billing else {})}
+        thread = _json_or_die(client.post("/admin/founder/quick", json=body))
+        typer.echo(f"Starting a project for that, paid by {thread['quick']['billing']}. "
+                   "The Founder is drafting it with no questions asked; agents are usually "
+                   "working within a minute or two.")
+        shown = thread["quick"]["phase"]
+        while thread["quick"]["phase"] in UNDER_WAY and thread.get("running", True):
+            time.sleep(QUICK_POLL_SECONDS)
+            thread = _json_or_die(client.get(f"/admin/founder/threads/{thread['id']}"))
+            if thread["quick"]["phase"] != shown:
+                shown = thread["quick"]["phase"]
+                if shown == "creating":
+                    typer.echo("Drafted. Creating it and starting its agents…")
+        status = thread["quick"]
+        if status["phase"] == "failed" or (status["error"] and not status["project_id"]):
+            typer.echo(f"It was not created: {status['error'] or thread.get('last_error')}",
+                       err=True)
+            raise typer.Exit(1)
+        for line in _quick_lines(status):
+            typer.echo(line)
+        if status["phase"] != "started":
+            typer.echo(f"\nCreated, not started: {status['error']}" if status["error"]
+                       else f"\nCreated, not started. `yaaf start {status['slug']}` starts it.")
+            return
+        if not wait:
+            typer.echo(f"\nFollow it with `yaaf briefing {status['slug']}`.")
+            return
+        typer.echo("\nWaiting for it to finish (Ctrl-C leaves it running)…")
+        project_id = status["project_id"]
+        while True:
+            state = _json_or_die(client.get(f"/observe/projects/{project_id}"))
+            if state.get("status") in ("completed", "stopped"):
+                break
+            time.sleep(WAIT_POLL_SECONDS)
+        from yaaf.server.briefing import render_text
+
+        brief_of = _json_or_die(client.get(
+            f"/observe/projects/{project_id}/briefing?hours=8760"))
+        typer.echo(f"\nIt {state['status']}.\n")
+        typer.echo(render_text(brief_of))
+
+
+def _quick_lines(status: dict) -> list[str]:
+    teams = ", ".join(f"{t['name']} ({t['role']})" for t in status.get("teams") or [])
+    lines = [f"\nStarted {status.get('name') or status['slug']} ({status['slug']}) — "
+             f"{str(status.get('mode') or '').title()}, paid by {status['billing']}."
+             if status["phase"] == "started" else
+             f"\nCreated {status.get('name') or status['slug']} ({status['slug']})."]
+    if teams:
+        lines.append(f"Team: the CEO, {teams}.")
+    if status.get("decided"):
+        lines.append("Decided for you:")
+        lines += [f"  - {d['question']}: {d['answer']}" for d in status["decided"]]
+    return lines
+
+
 @app.command()
 def create_project(
     brief: str = typer.Argument(
@@ -886,6 +955,17 @@ def create_project(
     start_now: bool = typer.Option(False, "--start", help="Start the project once it's created"),
     show_timing: bool = typer.Option(
         False, "--timing", help="After each Founder turn, say where its time went"),
+    quick: bool = typer.Option(
+        False, "--quick",
+        help="No questions: the Founder takes its own recommendation on each, and the "
+             "project is created and started — usually within a minute"),
+    billing: str = typer.Option(
+        None, "--billing",
+        help="With --quick: the LLM credential that pays, by name. Default: the one your "
+             "last project paid with, or the only one"),
+    wait: bool = typer.Option(
+        False, "--wait", help="With --quick: stay until the project finishes, then print "
+                              "what it delivered"),
 ) -> None:
     """Create a project: describe it in words and the Founder drafts it — the
     dashboard's "Describe it". `--from-file` creates one from a spec instead.
@@ -897,7 +977,21 @@ def create_project(
     `yaaf create-project` with no brief picks it up, here or in the browser.
 
     Either way, it then asks for the keys the agents need and lists what is
-    left to set up, each step linked to the dashboard section that does it."""
+    left to set up, each step linked to the dashboard section that does it.
+
+    `--quick` is for when the brief is all there is: no questions, no keys, no
+    data sources — one credential pays, and the project starts as soon as it
+    is drafted. What it decided on your behalf is printed and goes to the CEO."""
+    if quick:
+        if brief is None or from_file is not None:
+            typer.echo("--quick needs a brief, and only a brief: "
+                       "`yaaf create-project --quick \"what you want\"`.", err=True)
+            raise typer.Exit(2)
+        _quick_found(brief, billing, wait)
+        return
+    if billing is not None or wait:
+        typer.echo("--billing and --wait go with --quick.", err=True)
+        raise typer.Exit(2)
     if from_file is not None:
         if brief is not None:
             typer.echo("Give a brief or --from-file, not both.", err=True)
@@ -936,7 +1030,8 @@ def create_project(
         held = None
         while True:
             if thread.get("running"):
-                typer.echo("\nThe Founder is working on it — a turn takes a few minutes.")
+                typer.echo("\nThe Founder is working on it — its questions usually come "
+                           "within half a minute.")
             thread, held = _await_turn(client, thread, held)
             turns = thread.get("turns") or []
             last = turns[-1] if turns else {}

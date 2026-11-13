@@ -56,9 +56,22 @@ def test_the_founder_drafts_on_gemini_through_its_own_api(client, monkeypatch):
     replies = [[signed], [{"text": "Explore, because you are still choosing what to build."}]]
     sent = []
 
+    graded = []
+
     def gemini(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if "You grade a yaaf project goal" in json.dumps(body.get("systemInstruction")):
+            # The platform grades the accepted draft beside the turn, on the
+            # same provider, key and model as the Founder.
+            graded.append({"url": str(request.url),
+                           "key": request.headers.get("x-goog-api-key")})
+            parts = [{"text": json.dumps({"elements": [], "summary": "graded"})}]
+            return httpx.Response(200, json={
+                "candidates": [{"content": {"role": "model", "parts": parts},
+                                "finishReason": "STOP"}],
+                "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5}})
         sent.append({"url": str(request.url), "key": request.headers.get("x-goog-api-key"),
-                     "body": json.loads(request.content)})
+                     "body": body})
         parts = replies[len(sent) - 1]
         return httpx.Response(200, json={
             "candidates": [{"content": {"role": "model", "parts": parts},
@@ -70,6 +83,7 @@ def test_the_founder_drafts_on_gemini_through_its_own_api(client, monkeypatch):
     assert thread["last_error"] is None, thread
     assert thread["draft_bundle"]["project"]["slug"] == "sell-something"
     first, second = sent
+    assert graded == [{"url": first["url"], "key": first["key"]}]
     assert first["url"] == ("https://generativelanguage.googleapis.com/v1beta/models/"
                             "gemini-3.1-pro-preview:generateContent")
     assert first["key"] == "AIza-platform-gemini-key"

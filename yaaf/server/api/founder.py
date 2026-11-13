@@ -104,9 +104,18 @@ def _render(thread: FoundingThread, running: bool | None = None) -> dict:
         # thread that looks idle for no reason.
         "interrupted": bool(thread.turn_started_at) and not running,
         "last_error": thread.last_error,
+        # A quick founding's own account of itself: where it is, the project
+        # once there is one, and what was decided on the chairman's behalf.
+        "quick": _quick_status(thread),
         "created_at": thread.created_at,
         "updated_at": thread.updated_at,
     }
+
+
+def _quick_status(thread: FoundingThread) -> dict | None:
+    from yaaf.founder import quick
+
+    return quick.status(thread) if thread.quick else None
 
 
 @router.get("/status", dependencies=[authority.SIGNED_IN])
@@ -442,29 +451,65 @@ def attach(thread_id: str, body: AttachIn, session: Session = Depends(db),
     project = authority.require(session, person, body.project_id, authority.Level.STEER)
     if thread.created_project_id:
         raise HTTPException(status_code=409, detail="this thread is already attached")
+    return {"ok": True, "briefed": hand_over(session, thread, project, person.id)}
 
+
+def hand_over(session: Session, thread: FoundingThread, project, sender_user_id: str) -> bool:
+    """Record that the thread became `project`, and brief its CEO with it.
+
+    Both doors that turn a thread into a project come through here — the
+    chairman's own create (`attach`) and a quick founding — so a CEO is briefed
+    the same way whichever made it. Returns whether a briefing was posted.
+    """
     thread.created_project_id = project.id
     thread.updated_at = utcnow()
 
     briefing = founder_agent.briefing(thread)
     if not briefing:
-        return {"ok": True, "briefed": False}
+        return False
 
     channel = session.execute(
         select(Channel).where(
             Channel.project_id == project.id, Channel.kind == ChannelKind.BOARDROOM)
     ).scalar_one_or_none()
     if channel is None:
-        return {"ok": True, "briefed": False}
+        return False
     session.add(Message(
         id=ids.new_id(ids.MESSAGE),
         project_id=project.id,
         channel_id=channel.id,
-        sender_user_id=person.id,
+        sender_user_id=sender_user_id,
         # Trimmed to the boardroom's own ceiling rather than sent whole: a long
         # founding argument is still a boardroom message, and the limit is
         # there because a CEO has to be able to read it.
         body=briefing[:20_000],
     ))
     notify(session, WAKE_CHANNEL, project.id)
-    return {"ok": True, "briefed": True}
+    return True
+
+
+class QuickIn(BaseModel):
+    brief: str = Field(min_length=1, max_length=40_000)
+    #: The LLM credential that pays, by name. Omitted: the one the chairman's
+    #: last project paid with, or the only one (`quick.billing_for`).
+    billing: str | None = Field(default=None, max_length=200)
+    #: Start it once it is created. False leaves it created and stopped.
+    start: bool = True
+
+
+@router.post("/quick", dependencies=[authority.SIGNED_IN])
+def quick_found(body: QuickIn, session: Session = Depends(db)) -> JSONResponse:
+    """Quick founding: a brief in, a running project out, nobody answering.
+
+    Returns at once with the thread; the Founder drafts, every recommendation
+    is accepted, and the project is created and started on a background
+    thread. Poll `GET /threads/{id}` — its `quick` block says where it is."""
+    from yaaf.founder import quick
+
+    try:
+        thread = quick.begin(session, _founder(session), body.brief,
+                             billing=body.billing, start=body.start)
+    except quick.QuickRefusal as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    _after_commit(session, lambda: founder_runner.submit(thread.id, quick=True))
+    return _accepted(_render(thread))

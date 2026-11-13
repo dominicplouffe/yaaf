@@ -2979,3 +2979,12 @@ class FoundingThread(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+    # The platform's grade of the draft's goal, {"goal": ..., "ready": ...,
+    # "elements": [...]}. Written by the grader's own thread, never by a turn —
+    # its own column so the two writers cannot overwrite each other's work —
+    # and read by the next turn only while `goal` is still the draft's goal.
+    goal_grade: Mapped[dict | None] = mapped_column(JSONVariant)
+    # Set when the thread was founded in quick mode (`yaaf.founder.quick`):
+    # {"phase": "drafting" | "creating" | "started" | "failed", "billing":
+    # the credential the caller named, ...}. NULL is the conversation.
+    quick: Mapped[dict | None] = mapped_column(JSONVariant)

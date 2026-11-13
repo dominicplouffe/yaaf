@@ -411,6 +411,128 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
 
 
 @register(
+    "quick_project",
+    scope="create",
+    description=(
+        "Hand yaaf a job and get a running project back, with nobody answering "
+        "questions — for when the brief is all there is (\"research the best printer "
+        "for home use\"). The Founder drafts it, asks itself the questions it would "
+        "have asked you and takes its own recommendation on each, then the project "
+        "is created and started. Returns at once with a `thread`; poll "
+        "`quick_project_status` with it (about a minute to `started`), then read the "
+        "work with `project` (view=overview) and `files` as it lands. "
+        "What it cannot have, because nobody is there to supply it: data sources, "
+        "secrets, email, controlled domains, integrations, a repository. One "
+        "credential pays every seat: `billing` by name, or else the one your last "
+        "project paid with, or else the only one. Authority is autonomous. When the "
+        "brief needs any of that, or deserves your answers, use `create_project` "
+        "instead. Confirm-gated: the preview names who pays and how fast it may "
+        "spend."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "brief": {"type": "string",
+                      "description": "What the project is for, in plain words — all it "
+                                     "will have to go on"},
+            "billing": {"type": "string",
+                        "description": "Name of the LLM credential that pays (from "
+                                       "`catalog` what=credentials). Never a value"},
+            "start": {"type": "boolean",
+                      "description": "Start it once created (default true)"},
+            "confirm": {"type": "string", "description": "The token from this tool's preview"},
+            "detail": DETAIL_ARG,
+        },
+        "required": ["brief"],
+        "additionalProperties": False,
+    },
+)
+def quick_project(principal: Principal, session: Session, arguments: dict) -> dict:
+    from yaaf.core import platform
+    from yaaf.founder import quick
+    from yaaf.founder import runner as founder_runner
+    from yaaf.server.api.founder import _after_commit
+
+    brief = str(required(arguments, "brief")).strip()
+    user = session.get(User, principal.user_id)
+    if user is None:
+        raise ToolRefusal("this client's chairman no longer exists")
+    if not platform.has_credential(session):
+        raise ToolRefusal("the Founder has no credential to draft with — an administrator "
+                          "sets one in Settings → Founder.")
+    try:
+        paying = quick.billing_for(session, user, arguments.get("billing"))
+    except quick.QuickRefusal as exc:
+        raise ToolRefusal(str(exc)) from None
+    start = arguments.get("start", True) is not False
+    live = ConstitutionDoc().runs_per_project_per_day
+    preview = confirm.gate(session, principal, "quick_project", arguments, {
+        "about_to": "draft a project from this brief and create it"
+                    + (" and start it" if start else "") + ", with no questions asked",
+        "brief": brief[:600],
+        "chairman": user.email,
+        "billing": llm_credentials.describe(paying),
+        "billing_chosen": ("as you named it" if arguments.get("billing") else
+                           "your last project's credential, or the only one there is"),
+        "authority": _authority_line({}),
+        "tempo": (f"the Founder names the pace card that fits the shape; the fastest "
+                  f"allows up to {live} runs a day across every agent."),
+        "cannot_have": ["data sources", "secrets", "email", "controlled domains",
+                        "integrations", "a repository"],
+        "warning": ("This starts spending as soon as the project starts: its agents "
+                    "wake on a schedule and bill the credential above."),
+    })
+    if preview:
+        return preview
+    try:
+        thread = quick.begin(session, user, brief, billing=paying.name, start=start,
+                             via=f"mcp:{principal.name}")
+    except quick.QuickRefusal as exc:
+        raise ToolRefusal(str(exc)) from None
+    # After the commit, so the worker reads a thread that is there.
+    _after_commit(session, lambda: founder_runner.submit(thread.id, quick=True))
+    return _record(session, principal, None, "quick_project",
+                   {k: v for k, v in arguments.items() if k != "brief"},
+                   {"thread": thread.id, "phase": "drafting", "billing": paying.name,
+                    "next": "poll quick_project_status with this thread; it is usually "
+                            "started within a minute"})
+
+
+@register(
+    "quick_project_status",
+    scope="create",
+    description=(
+        "Where a `quick_project` is: phase drafting → creating → starting → started (or created, "
+        "when it was asked not to start or could not; or failed, with why — nothing is "
+        "created on a failed draft). Once there is a project it gives its id and slug, "
+        "the team, and every decision taken on your behalf. Read the work itself with "
+        "`project` and `files`."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {"thread": {"type": "string"}, "detail": DETAIL_ARG},
+        "required": ["thread"],
+        "additionalProperties": False,
+    },
+)
+def quick_project_status(principal: Principal, session: Session, arguments: dict) -> dict:
+    from yaaf.core.models import FoundingThread
+    from yaaf.founder import progress, quick
+
+    thread = session.get(FoundingThread, str(required(arguments, "thread")))
+    # Somebody else's, or a conversation rather than a quick founding, is
+    # answered as one that does not exist: neither is this client's to read.
+    if thread is None or thread.user_id != principal.user_id or not thread.quick:
+        raise ToolRefusal("no quick founding of yours has that id")
+    status = quick.status(thread)
+    status["working"] = progress.is_running(thread.id)
+    if status["phase"] == "started":
+        status["next"] = (f"read it with `project` (project={status['slug']}, "
+                          "view=overview); its files arrive under `files` as they land")
+    return envelope.fit(status, arguments.get("detail"))
+
+
+@register(
     "clone_project",
     scope="create",
     description=(

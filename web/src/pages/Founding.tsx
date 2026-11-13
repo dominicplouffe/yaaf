@@ -56,6 +56,16 @@ interface Thread {
   interrupted: boolean;
   /** Why the last turn failed, kept so it survives a reload. */
   last_error: string | null;
+  /** Set when the thread was a quick founding: where it got to. */
+  quick: QuickStatus | null;
+}
+
+/** A quick founding's account of itself (`yaaf.founder.quick.status`). */
+interface QuickStatus {
+  phase: "drafting" | "creating" | "starting" | "started" | "created" | "failed";
+  project_id: string | null;
+  billing: string | null;
+  error: string | null;
 }
 
 /** A step label is a line of the Founder's own markdown. It belongs on one
@@ -140,8 +150,8 @@ function Steps({ progress, onStop, stopping }: {
           </li>}
         </ul>
         <p className="muted">
-          {Math.round(progress?.seconds ?? 0)}s so far. It takes minutes — it is
-          doing the work you would otherwise do on the form.
+          {Math.round(progress?.seconds ?? 0)}s so far. Its questions usually land
+          within half a minute; the draft follows while you read them.
         </p>
         {/* Minutes of work built on a brief with a mistake in it is minutes
             wasted, and the box is shut while it runs. This is the way out:
@@ -486,6 +496,12 @@ export default function Founding() {
             settleStop(next, ended.withdrawn ?? null);
             return;
           }
+          // A quick founding that made its project ends here: the project is
+          // where he wanted to be, and its CEO already has this conversation.
+          if (next.quick?.project_id && next.quick.phase !== "failed") {
+            navigate(`/projects/${next.quick.project_id}`);
+            return;
+          }
           setThread(next);
           setBusy(false);
           // The turn's own failure, which outlived the request that started it.
@@ -508,7 +524,11 @@ export default function Founding() {
   // The round on the table: the one the Founder just asked on a saved turn,
   // or — mid-turn, before the draft is finished — the one it has already asked.
   const savedRound = last?.role === "founder" && last.round ? last.round : null;
-  const liveRound = busy && last?.role === "chairman" && progress?.round ? progress.round : null;
+  // A quick founding answers its own round, so it is never put to him.
+  const quickly =
+    busy && ["drafting", "creating", "starting"].includes(thread?.quick?.phase ?? "");
+  const liveRound =
+    busy && !quickly && last?.role === "chairman" && progress?.round ? progress.round : null;
   const tableRound = liveRound ?? savedRound;
   const asking = tableRound && !tableRound.done && tableRound.questions.length ? tableRound : null;
   const aligned = !busy && savedRound?.done ? savedRound : null;
@@ -599,6 +619,25 @@ export default function Founding() {
       setMessage(text);
       setBusy(false);
       if (err instanceof ApiError && err.status === 422) void loadStatus();
+      setError((err as Error).message);
+    }
+  }
+
+  /** Quick founding: no questions — the Founder takes its own recommendation
+   *  on each, and the project is created and started. */
+  async function startQuickly() {
+    const text = message.trim();
+    if (!text || busy) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    setProgress(null);
+    setMessage("");
+    try {
+      setThread(await post<Thread>("/admin/founder/quick", { brief: text }));
+    } catch (err) {
+      setMessage(text);
+      setBusy(false);
       setError((err as Error).message);
     }
   }
@@ -762,6 +801,12 @@ export default function Founding() {
                 willing to spend. Whatever you leave out, the Founder asks about — with its
                 recommended answer already chosen, so agreeing is one click.
               </Why>
+              <Why label="Just start it">
+                Skips the questions: the Founder takes its own recommendation on each, and
+                the project is created and started, usually within a minute. It gets no data
+                sources, secrets or email, and one credential pays — the one your last
+                project used. Use it when the brief is all there is.
+              </Why>
             </div>
           )}
           {turns.map((turn, i) => {
@@ -818,6 +863,21 @@ export default function Founding() {
             />
           )}
 
+          {quickly && (
+            <div className="card">
+              <h3>
+                {thread?.quick?.phase === "drafting"
+                  ? "Starting it, no questions asked"
+                  : "Drafted — creating it and starting its agents"}
+              </h3>
+              <p className="muted">
+                The Founder takes its own recommendation on everything it would have asked,
+                {thread?.quick?.billing ? ` ${thread.quick.billing} pays,` : ""} and you land on
+                the project once it is running. What it decided for you is in the CEO&apos;s
+                briefing.
+              </p>
+            </div>
+          )}
           {busy && <Steps progress={progress} onStop={() => void stop()}
             stopping={stopping || !!progress?.stopping} />}
 
@@ -859,9 +919,17 @@ export default function Founding() {
               />
               <div className="founding-actions">
                 <span className="muted">{SEND_HINT}</span>
-                <button className="primary" disabled={busy || !message.trim()} onClick={send}>
-                  {busy ? "Working (minutes)…" : turns.length ? "Send" : "Draft the project"}
-                </button>
+                <span className="founding-buttons">
+                  {turns.length === 0 && (
+                    <button disabled={busy || !message.trim()} onClick={() => void startQuickly()}
+                      title="No questions: the Founder picks every answer, one credential pays, and it starts">
+                      Just start it
+                    </button>
+                  )}
+                  <button className="primary" disabled={busy || !message.trim()} onClick={send}>
+                    {busy ? "Working…" : turns.length ? "Send" : "Draft the project"}
+                  </button>
+                </span>
               </div>
             </div>
           )}

@@ -17,6 +17,7 @@ unlabelled. The attacks on the measurement:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 
@@ -108,10 +109,16 @@ def test_a_turn_says_where_its_time_went_and_keeps_it(client, monkeypatch, caplo
     sent = []
 
     def gemini(request: httpx.Request) -> httpx.Response:
-        sent.append(request)
-        time.sleep(0.1)  # a model that takes a moment to answer
+        if b"You grade a yaaf project goal" in request.content:
+            # The platform's grade of the accepted draft, on a thread of its
+            # own: not one of the turn's calls, and not on its clock.
+            parts = [{"text": json.dumps({"elements": [], "summary": "graded"})}]
+        else:
+            sent.append(request)
+            time.sleep(0.1)  # a model that takes a moment to answer
+            parts = replies[len(sent) - 1]
         return httpx.Response(200, json={
-            "candidates": [{"content": {"role": "model", "parts": replies[len(sent) - 1]},
+            "candidates": [{"content": {"role": "model", "parts": parts},
                             "finishReason": "STOP"}],
             "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5}})
 

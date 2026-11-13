@@ -120,14 +120,57 @@ def render_answers(asked: dict, answers: list[dict], note: str = "") -> str:
     return "\n".join(lines)
 
 
-def _prompt(thread: FoundingThread) -> str:
+def library(session: Session | None) -> str:
+    """What the first lookups of every turn used to fetch, handed over up front.
+
+    Measured on 2026-11-13, a first turn spent its opening two model calls
+    asking for the credentials, the roles and the crews — and every later turn
+    asked for some of them again, because tool results are not replayed. They
+    are facts about the install, not judgement, so they arrive with the turn.
+    First in the prompt and identical turn to turn, so they are a cached
+    prefix rather than new input each time. The tools stay, for a narrower
+    search or a library that changed mid-conversation.
+    """
+    if session is None:
+        return ""
+    return (
+        "<install>\n"
+        "What this install has, as list_credentials, search_roles and search_crews "
+        "would return it. You do not need to call them for this.\n"
+        f"credentials: {tools.to_json(tools.list_credentials(session, with_plan=True))}\n"
+        f"roles: {tools.to_json(tools.search_roles(session))}\n"
+        f"crews: {tools.to_json(tools.search_crews(session))}\n"
+        "</install>"
+    )
+
+
+def last_grade(thread: FoundingThread) -> dict | None:
+    """The platform's verdict on the draft as it stands, if it has one.
+
+    A grade of a goal the draft no longer carries says nothing about it."""
+    goal = ((thread.draft_bundle or {}).get("project") or {}).get("goal")
+    grade = thread.goal_grade
+    if grade and goal and grade.get("goal") == goal.strip():
+        return grade
+    return None
+
+
+def render_grade(grade: dict) -> str:
+    lines = [f"Ready: {'yes' if grade.get('ready') else 'no'}. {grade.get('summary', '')}"]
+    for e in grade.get("elements") or []:
+        if e.get("verdict") != "present":
+            lines.append(f"- {e['element']} is {e['verdict']}: {e.get('note', '')}")
+    return "\n".join(lines)
+
+
+def _prompt(thread: FoundingThread, session: Session | None = None) -> str:
     """The turn, with everything the model needs to continue an argument.
 
     The draft goes in whole. It is the object under discussion, the model has
     to be able to quote and revise it, and a summary would have the Founder
     negotiating about a project it can only half see.
     """
-    parts: list[str] = []
+    parts: list[str] = [p for p in (library(session),) if p]
     turns = thread.transcript or []
 
     def said_by(t: dict) -> str:
@@ -148,6 +191,15 @@ def _prompt(thread: FoundingThread) -> str:
             "propose_bundle — sending the whole thing, not a patch — whenever the "
             "chairman's message changes it."
         )
+        grade = last_grade(thread)
+        if grade:
+            parts.append(
+                "<grade-of-current-draft>\n" + render_grade(grade)
+                + "\n</grade-of-current-draft>\n"
+                "The platform graded that draft's goal against the grammar while you "
+                "were last working. Turn what it found missing or weak into this "
+                "round's questions, or fix it in the draft where the answer is already "
+                "settled.")
     return "\n\n".join(parts)
 
 
@@ -209,8 +261,12 @@ def withdraw(thread: FoundingThread) -> dict | None:
     return {"message": taken.get("text") or "", "answers": None}
 
 
-def run_turn(session: Session, thread: FoundingThread) -> dict:
+def run_turn(session: Session, thread: FoundingThread, *, quick: dict | None = None) -> dict:
     """Run the model turn whose message is already the last thing said.
+
+    `quick` is a quick founding's settings (`yaaf.founder.quick`): the turn is
+    told nobody will answer, its draft is held to quick founding's limits, and
+    it is not graded — nobody is left to ask about what a grade finds.
 
     Called on a background thread with a session of its own. Raises
     :class:`~yaaf.core.platform.NoPlatformCredential` or
@@ -223,7 +279,16 @@ def run_turn(session: Session, thread: FoundingThread) -> dict:
     # The draft lives here for the length of the turn. `propose_bundle` is the
     # only thing that writes it, and it is read back once the turn settles, so
     # there is exactly one place a draft can change.
-    state: dict = {"draft": thread.draft_bundle}
+    state: dict = {"draft": thread.draft_bundle,
+                   # A draft whose goal was graded already is not graded again.
+                   "graded_goal": (thread.goal_grade or {}).get("goal")}
+    prompt = _prompt(thread, session)
+    if quick:
+        from yaaf.core.models import Secret
+        from yaaf.founder import quick as quick_founding
+
+        state["quick"] = quick
+        prompt += "\n\n" + quick_founding.instructions(session.get(Secret, quick["billing_id"]))
     before = thread.draft_bundle
     founder_tools = tools.build_server(session, state, env, model, thread.id)
 
@@ -241,16 +306,18 @@ def run_turn(session: Session, thread: FoundingThread) -> dict:
                     model=model,
                     mcp_servers={tools.SERVER: founder_tools.server},
                     allowed_tools=tools.ALLOWED_TOOLS,
+                    effort=founder_session.FOUNDER_EFFORT,
                 )
                 reply = asyncio.run(progress.stoppable(
-                    thread.id, founder_session.run(_prompt(thread), opts,
-                                                   thread_id=thread.id)))
+                    thread.id, founder_session.run(
+                        prompt, opts, thread_id=thread.id)))
             else:
                 from yaaf.founder import loop
 
                 reply = asyncio.run(progress.stoppable(thread.id, loop.run(
-                    _prompt(thread), env=env, model=model, system=system_prompt(),
-                    tools=founder_tools.specs, thread_id=thread.id)))
+                    prompt, env=env, model=model,
+                    system=system_prompt(), tools=founder_tools.specs,
+                    thread_id=thread.id)))
     except founder_session.FounderModelError as exc:
         raise _with_refusal(exc, state) from exc
     finally:
@@ -273,7 +340,10 @@ def run_turn(session: Session, thread: FoundingThread) -> dict:
     thread.turn_started_at = None
     thread.updated_at = utcnow()
     session.flush()
-    return {"reply": reply, "draft_bundle": thread.draft_bundle}
+    return {"reply": reply, "draft_bundle": thread.draft_bundle,
+            # Why the last draft of the turn was refused, if it was — what a
+            # quick founding hands its second attempt.
+            "refused": state.get("last_refusal")}
 
 
 def _with_refusal(exc, state: dict):

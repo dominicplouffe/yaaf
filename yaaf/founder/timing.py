@@ -43,6 +43,10 @@ class Call:
     #: Characters of thinking the model showed. A proxy, not a count: some
     #: providers summarise thinking, and its tokens are inside `output`.
     thinking_chars: int = 0
+    #: Thinking tokens, from the run's closing usage — the CLI shows Opus's
+    #: thinking as empty blocks, so `thinking_chars` reads 0 however long it
+    #: thought. Inside `output`, like the provider counts it.
+    thinking: int = 0
     text_chars: int = 0
     tools: list[str] = field(default_factory=list)
     #: When the call began: the end of whatever came before it.
@@ -51,7 +55,8 @@ class Call:
     def as_dict(self) -> dict:
         return {"seconds": round(self.seconds, 1), "input": self.input,
                 "cache_read": self.cache_read, "cache_write": self.cache_write,
-                "output": self.output, "thinking_chars": self.thinking_chars,
+                "output": self.output, "thinking": self.thinking,
+                "thinking_chars": self.thinking_chars,
                 "text_chars": self.text_chars, "tools": self.tools}
 
 
@@ -84,6 +89,8 @@ class Turn:
     #: message only once it is written.
     _mark: float | None = None
     _open: dict = field(default_factory=dict)
+    #: The run's own output total, when it could not be laid onto the calls.
+    closing: dict | None = None
 
     # ── what the loops report ─────────────────────────────────────────────
 
@@ -126,9 +133,28 @@ class Turn:
         self.calls.append(call)
         self._mark = time.monotonic()
 
-    def result(self, duration_api_ms) -> None:
+    def result(self, duration_api_ms, usage: dict | None = None) -> None:
+        """The CLI's closing account of the run.
+
+        Its usage is the only true output count. Each assistant message
+        carries the usage of the moment the reply *started* — a handful of
+        tokens — so until this was read a 40-second call reported 8 tokens
+        out, and the breakdown could say where the time went but never why.
+        `iterations` is that account per model request, in order; it is laid
+        onto the calls when the two line up, and kept as a total when not.
+        """
         if duration_api_ms:
             self.api_seconds = (self.api_seconds or 0.0) + duration_api_ms / 1000
+        if not isinstance(usage, dict):
+            return
+        rounds = [r for r in usage.get("iterations") or [] if isinstance(r, dict)]
+        if rounds and len(rounds) == len(self.calls):
+            for call, used in zip(self.calls, rounds, strict=True):
+                call.output = int(used.get("output_tokens") or call.output)
+                call.thinking = _thinking(used)
+        else:
+            self.closing = {"output": int(usage.get("output_tokens") or 0),
+                            "thinking": _thinking(usage)}
 
     @contextlib.contextmanager
     def tool(self, name: str):
@@ -161,16 +187,24 @@ class Turn:
         return sum(t.seconds for t in self.tool_runs)
 
     def tokens(self) -> dict:
+        keys = ("input", "cache_read", "cache_write", "output", "thinking", "thinking_chars")
+
         def add(turn: Turn, out: dict) -> dict:
+            mine = dict.fromkeys(keys, 0)
             for c in turn.calls:
-                for k in ("input", "cache_read", "cache_write", "output", "thinking_chars"):
-                    out[k] += getattr(c, k)
+                for k in keys:
+                    mine[k] += getattr(c, k)
+            if turn.closing:
+                # The run's own count beats the opening-moment sum it replaces.
+                mine["output"] = max(mine["output"], turn.closing["output"])
+                mine["thinking"] = max(mine["thinking"], turn.closing["thinking"])
+            for k in keys:
+                out[k] += mine[k]
             for t in turn.tool_runs:
                 if t.inner is not None:
                     add(t.inner, out)
             return out
-        return add(self, dict.fromkeys(
-            ("input", "cache_read", "cache_write", "output", "thinking_chars"), 0))
+        return add(self, dict.fromkeys(keys, 0))
 
     def as_dict(self) -> dict:
         return {
@@ -201,7 +235,8 @@ def line_of(timing: dict) -> str:
     parts.append(f"model {timing.get('model_seconds', 0):.0f}s ({len(calls)} calls, "
                  f"{_k(read)} in [{_k(tokens.get('cache_read', 0))} cached] / "
                  f"{_k(tokens.get('output', 0))} out, "
-                 f"~{_k(tokens.get('thinking_chars', 0) // 4)} thinking) ·")
+                 f"{_k(tokens.get('thinking') or tokens.get('thinking_chars', 0) // 4)} "
+                 "thinking) ·")
     by_tool: dict[str, float] = {}
     for run in timing.get("tools") or []:
         by_tool[run["name"]] = by_tool.get(run["name"], 0.0) + run["seconds"]
@@ -223,12 +258,23 @@ def _usage(call: Call, usage: dict | None) -> None:
     call.output = int(usage.get("output_tokens") or 0)
 
 
+def _thinking(usage: dict) -> int:
+    details = usage.get("output_tokens_details") or {}
+    return int(details.get("thinking_tokens") or 0) if isinstance(details, dict) else 0
+
+
 def _k(n: int) -> str:
     return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
 
 
 def current() -> Turn | None:
     return _current.get()
+
+
+def bind(recorder: Turn) -> None:
+    """Make `recorder` this context's clock — for a task that runs beside a
+    turn (the background grade) and so owns a context of its own."""
+    _current.set(recorder)
 
 
 @contextlib.contextmanager

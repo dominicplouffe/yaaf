@@ -479,6 +479,15 @@ def _settle(client, message: str) -> dict:
 
 def test_the_founder_drafts_on_deepseek_through_its_chat_api(client, monkeypatch):
     _deepseek_founder(client)
+
+    async def grade(goal, *, env, model):
+        # The platform's grade of the accepted draft runs beside the turn; it
+        # is not one of the turn's two requests this test reads.
+        from yaaf.founder.grade import GoalGrade
+
+        return GoalGrade(elements=[], summary="graded")
+
+    monkeypatch.setattr("yaaf.founder.grade.grade_goal", grade)
     sent = _chat_api(monkeypatch, [
         {"content": None, "reasoning_content": "thinking beside the call",
          "tool_calls": [{"id": "c1", "type": "function", "function": {

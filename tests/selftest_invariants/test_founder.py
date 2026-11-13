@@ -56,6 +56,7 @@ def founder(client, monkeypatch):
     progress.clear()
 
     calls: list[dict] = []
+    graded: list[str] = []
     # The FounderTools the turn was built with, captured as it is made, so the
     # stub can call the very tools the CLI would have been offered.
     state: dict = {}
@@ -70,6 +71,12 @@ def founder(client, monkeypatch):
     def script(reply="Explore, because you are still choosing what to build.",
                tool_calls=(), raises=None, blocks_on=None, blocks_after=()):
         async def fake_run(prompt, opts, stderr_sink=None, thread_id=""):
+            if not opts.mcp_servers:
+                # The grader, which the platform runs beside every accepted
+                # draft: a toolless call through this same seam. It answers as
+                # a grader would and is kept off `calls`, which are the turn's.
+                graded.append(prompt)
+                return json.dumps({"elements": [], "summary": "graded"})
             calls.append({"prompt": prompt, "opts": opts, "env": dict(opts.env)})
             # Tools called before the hold, so a test can see what a turn has
             # already put on the page while the rest of it is still working.

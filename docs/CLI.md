@@ -55,6 +55,7 @@ docker compose -f deploy/docker-compose.yml exec api yaaf users list
 | Command | What it does |
 |---|---|
 | `yaaf create-project "BRIEF"` | Describe a project in words and the Founder drafts it. See below. |
+| `yaaf create-project --quick "BRIEF"` | No questions: the Founder takes its own recommendations and the project starts. See below. |
 | `yaaf create-project --from-file SPEC` | Create a project from a spec, like the ones in `examples/` |
 | `yaaf rehearse SPEC` | Run a project spec with scripted agents, for $0. Shows where it would stall and what it would cost. |
 | `yaaf projects` | Every project: status, spend, and what waits on you |
@@ -74,10 +75,10 @@ the dashboard. Say what you want, the way you'd brief someone you just hired:
 yaaf create-project "A weekly digest of what changed in our competitors' pricing"
 ```
 
-The Founder drafts the whole project: goal, mode, team and rules. It takes a few
-minutes and prints each step as it goes. It also asks about anything it had to
-guess. The questions show up as soon as it asks them, while it is still
-drafting, and each one comes with its own answer already picked:
+The Founder drafts the whole project: goal, mode, team and rules, and prints
+each step as it goes. It also asks about anything it had to guess. The
+questions show up as soon as it asks them, usually within half a minute, while
+it is still drafting, and each one comes with its own answer already picked:
 
 - **Enter** keeps the recommended answer.
 - **A letter** picks another option.
@@ -95,18 +96,43 @@ or calls the draft settled. At that point you choose:
   `yaaf create-project --from-file`.
 - **quit.** The conversation is kept.
 
+### Quick: no questions
+
+When the brief is all there is (a job handed over by another agent, or a
+question you just want answered), skip the conversation:
+
+```bash
+yaaf create-project --quick "Research the best printer for home use and give me a short ranked list"
+```
+
+The Founder still works out the questions it would have asked, takes its own
+recommendation on each, and the project is created and started, usually within
+a minute. The command prints the team and every decision it took on your behalf,
+and the CEO gets the same list in its briefing. `--wait` stays until the project
+finishes and prints what it delivered.
+
+A quick project gets no data sources, secrets, email, controlled domains or
+repository, because nobody is there to supply them. One credential pays every
+seat: `--billing NAME`, or else the one your last project paid with, or else the
+only one there is. If the brief needs more than that, use the conversation. The
+dashboard's **Just start it** button and the MCP tool `quick_project` do the same.
+
 The conversation lives on the server. `yaaf create-project` with no brief picks
 up the one you left open, including one you started in the browser. Ctrl-C stops
 the waiting but not the Founder.
 
-**Where the time goes.** A Founder turn takes minutes. Pass `--timing` to see,
-after each turn, how long it took to start, each model call with its tokens and
-the tool it asked for, and each tool's own run, including the goal grade's
-model calls:
+**Where the time goes.** A Founder turn takes about half a minute. Pass
+`--timing` to see, after each turn, how long it took to start, each model call
+and the tool it asked for, the tokens the turn wrote (thinking included), and
+each tool's own run:
 
 ```
-[founder turn 312s: cli start 6s · model 268s (11 calls, 41.0k in [32.0k cached] / 18.2k out, ~9.1k thinking) · grade_goal 27s · rehearse 7s · propose_bundle 1s | slowest calls: 74s/6.1k out→propose_bundle, ...]
+[founder turn 31s: cli start 1s · model 28s (3 calls, 101.9k in [98.8k cached] / 2.7k out, 372 thinking) · propose_bundle 1s · ask 0s | slowest calls: 16s/3 out→mcp__founder__ask, ...]
 ```
+
+The goal is graded against the goal grammar after every draft, by the
+platform, beside the turn rather than inside it. The verdict opens the
+Founder's next turn, and anything it finds missing becomes a question.
 
 The server logs the same line for every turn, including failed ones (logger
 `yaaf.founder`). The thread API keeps the full breakdown on each Founder turn

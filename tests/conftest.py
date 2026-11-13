@@ -268,6 +268,13 @@ def _no_unattributed_writes() -> None:
 
 @pytest.fixture()
 def client(_app):
+    # A Founder turn, and the grade of each draft it accepts, run on threads of
+    # their own and touch the database after the request that started them —
+    # possibly after their test. They must finish before the tables are
+    # emptied: on Postgres the two deadlock.
+    from yaaf.founder.runner import wait_for_idle
+
+    wait_for_idle()
     _empty_every_table()
     _seed_the_chair()
     with TestClient(_app) as test_client:

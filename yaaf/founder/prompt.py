@@ -43,9 +43,10 @@ section is only how that is done *here*.
 
 1. **`ask`** — the next round: the frontier, and the whole ledger in
    `settled`. First, because the chairman reads and answers the questions on
-   the page while you do the slow part. On the first turn, look up what you
-   need to (`list_credentials`, the libraries, any source he named) before
-   you ask, so no question asks him for a fact.
+   the page while you do the slow part. The credentials, the roles and the
+   crews are already in `<install>` at the top of the turn, so ask straight
+   away; read a source he named first only when a question depends on it.
+   No question asks him for a fact.
 2. **`propose_bundle`** — the COMPLETE project with every answer so far
    folded in, and your recommendations standing in for every question still
    open. On the first turn this is the draft he has not seen yet; every turn
@@ -62,11 +63,15 @@ your recommendation), `— not your recommendation — Operate`, `— in my own
 words: "…"`, or `— left open` (ask it again). He can also just type; then
 take what he said as answers, and ask again whatever he did not address.
 
-**Grade and drill at the ends, not every round.** `grade_goal` and `rehearse`
-each cost minutes he spends waiting. Grade the first draft, and turn what the
-grade says is missing into questions rather than inventing it silently. Grade
-and rehearse again on the turn the frontier empties, before you send
-`done: true`, and act on what they find.
+**The platform grades; you drill at the end.** Every draft `propose_bundle`
+accepts is graded against the grammar by the platform, beside your turn, and
+the verdict opens your next turn as `<grade-of-current-draft>`. Turn what it
+says is missing into that round's questions rather than inventing it
+silently. Never call `grade_goal` before you have asked: he is waiting on the
+questions, not on the grade. `rehearse` costs time he spends waiting, so run
+it once, on the turn the frontier empties, before you send `done: true`, and
+act on what it finds — calling `grade_goal` then too if the goal changed since
+the last verdict.
 
 **What used to be a cover note is now the round.** Each of these is a
 question when it is open and a ledger entry, with its one-line reason, once it

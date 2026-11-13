@@ -128,9 +128,10 @@ it. Write it as prose, the way you would brief a competent human running the
 project for you — never as a form, never as a bulleted template with the
 element names as headings.
 
-Call `grade_goal` on your goal before you propose it, and fix what comes back.
-An element the grade calls missing is one you have to either add or make a
-deliberate decision to leave out and say why.
+Have the goal graded before the project is created, and fix what comes back.
+In the Founder's conversation the platform grades every draft for you; through
+any other door, call `grade_goal`. An element the grade calls missing is one
+you have to either add or make a deliberate decision to leave out and say why.
 
 ## The two elements that decide whether the project can exceed its brief
 

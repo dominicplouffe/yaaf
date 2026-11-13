@@ -241,6 +241,9 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) before you open a pull request.
    yaaf create-project "What you want to exist, in your own words"
    ```
 
+   Add `--quick` to skip the Founder's questions: it takes its own
+   recommendations and the project starts in about a minute.
+
    Or start from one of the ready-made specs in `examples/`, in the dashboard or
    with `yaaf create-project --from-file examples/01-your-first-hour.json`.
    See [CLI.md](CLI.md#creating-a-project).

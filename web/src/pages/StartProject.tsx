@@ -105,7 +105,8 @@ export default function StartProject() {
 
       <Why label="Which one?">
         <p>Two ways in, one destination: both end on the same review screen, and nothing
-          exists — or costs anything — until you sign it there.</p>
+          exists — or costs anything — until you sign it there. The one exception is
+          Describe it&apos;s <b>Just start it</b>, which skips the questions and the review.</p>
         <dl>
           <dt>Describe it</dt>
           <dd>
@@ -113,9 +114,12 @@ export default function StartProject() {
             whole project — the goal, the shape, who it hires, what it may spend, the rules it
             runs under — and tells you what it assumed. You argue with it until it is right.
             Choose this if it is your first project, or you know the outcome you want but not
-            the org that gets you there. It costs a few minutes of the Founder&apos;s thinking
-            per draft, on the platform key — never a project&apos;s budget — and ends on the
-            same form, filled in, where you change anything you like before creating it.
+            the org that gets you there. It costs about half a minute of the Founder&apos;s
+            thinking per round, on the platform key — never a project&apos;s budget — and ends
+            on the same form, filled in, where you change anything you like before creating
+            it. When the paragraph is all there is, <b>Just start it</b> skips the questions:
+            the Founder takes its own recommendations and the project starts in about a
+            minute, with no data sources, secrets or email.
           </dd>
           <dt>Fill in the form</dt>
           <dd>

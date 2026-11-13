@@ -56,6 +56,14 @@ _SCRUB_EXACT = (
 #: goal, propose, rehearse), so this is a stop, not a budget.
 MAX_TURNS = 24
 
+#: How hard the Founder thinks before each call. Measured on 2026-11-13 on the
+#: same brief, Opus at the default took 32-38s to put the first questions on
+#: the page and `medium` was no faster; `low` took 14s and asked the same four
+#: questions a chairman would want asked. What it can miss, the platform's
+#: grade of every draft catches and hands to the next round — so depth is
+#: bought where it costs nobody a wait. The grader keeps the default.
+FOUNDER_EFFORT = "low"
+
 
 def on_sdk(model: str) -> bool:
     """Whether a turn on `model` runs on the Claude Code CLI — an Anthropic
@@ -145,7 +153,7 @@ def _classify(exc: BaseException, stderr: str = "") -> FounderModelError:
 
 def options(*, system: str, env: dict[str, str], model: str,
             mcp_servers: dict | None = None, allowed_tools: list[str] | None = None,
-            stderr_sink: list[str] | None = None):
+            stderr_sink: list[str] | None = None, effort: str | None = None):
     """The one place the CLI is configured, for both callers.
 
     Three settings are load-bearing rather than tuning:
@@ -181,6 +189,7 @@ def options(*, system: str, env: dict[str, str], model: str,
         mcp_servers=mcp_servers or {},
         allowed_tools=allowed_tools or [],
         max_turns=MAX_TURNS,
+        effort=effort,
         # Without this the CLI's own explanation is thrown away and every
         # failure classifies as "unknown" — which is the blank answer this
         # module exists to stop, one layer further down.
@@ -253,7 +262,8 @@ async def run(prompt: str, opts, stderr_sink: list[str] | None = None,
                     progress.touch(thread_id)
             elif isinstance(message, ResultMessage):
                 if clock is not None:
-                    clock.result(getattr(message, "duration_api_ms", None))
+                    clock.result(getattr(message, "duration_api_ms", None),
+                                 getattr(message, "usage", None))
                 if getattr(message, "is_error", False):
                     raise _ended_badly(message)
             elif thread_id:
