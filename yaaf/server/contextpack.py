@@ -332,7 +332,10 @@ WORKSPACE_CHAT = (
 #: decides whether the chairman is told about it: every deliverable reaches him.
 WRITING_FOR_THE_READER = (
     "WHO READS IT DECIDES HOW YOU WRITE IT. Your task says who the result is for "
-    "(result_for); if it does not, it is for the team. "
+    "(result_for); if it does not, it is for the team. When you publish a file the "
+    "chairman asked for, or one for a client or the public, say so (artifact_put "
+    "result_for), even with no task: his files are announced to him one by one, and "
+    "the team's reach him together in one roundup. "
     "FOR THE TEAM (the CEO, another agent, the next run): skip the prose. Put the "
     "answer first, in a line someone can lift as it is. Then give the facts, and give "
     "each number with its unit, the time window it covers and its source. State the "

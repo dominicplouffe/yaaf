@@ -2934,7 +2934,7 @@ def _receipt(a: Artifact, reqs: dict) -> dict:
         "satisfies": sorted(reqs[rid].key if rid in reqs else rid
                             for rid in a.requirement_ids or []),
         "checked": checked, "checked_why": why,
-        "opens": a.opens or 0,
+        "opens": a.opens or 0, "result_for": a.reader,
     }
 
 
@@ -3054,7 +3054,7 @@ def project_results(project_id: str, agent_id: str | None = None,
             "name": a.name, "key": a.storage_key, "version": a.version,
             "versions": versions.get(a.name, 1), "size": a.size_bytes,
             # What it found, in its own first lines, and whether he has opened it.
-            "opening": a.opening, "opens": a.opens or 0,
+            "opening": a.opening, "opens": a.opens or 0, "result_for": a.reader,
             "published_at": a.published_at.isoformat(),
             "made_by": ({"id": a.published_by_agent_id,
                          "name": names.get(a.published_by_agent_id, "an agent no longer on it")}

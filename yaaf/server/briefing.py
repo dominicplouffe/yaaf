@@ -75,6 +75,7 @@ from yaaf.core.models import (
     Requirement,
     RequirementEvent,
     RequirementStatus,
+    ResultFor,
     Review,
     ReviewStatus,
     Run,
@@ -619,7 +620,8 @@ def _deliverable_lines(session: Session, project: Project, since, until) -> list
     )]
 
 
-#: How many results the letter lists by name. The rest are counted, not listed:
+#: How many of the TEAM's files the letter lists by name; files written for him
+#: are always all listed. The rest are counted, not listed:
 #: one window held twenty, and a letter that is a file listing is not read.
 DELIVERED_LISTED = 5
 
@@ -656,9 +658,13 @@ def _delivered(session: Session, project: Project, since, until) -> list[dict]:
             # Its own first lines: the letter says what it found, not only
             # what it is called.
             "opening": artifact.opening,
+            # Who it was written for: the letter puts his own first.
+            "for_team": artifact.reader == ResultFor.TEAM,
             "link": (f"{origin}/app/#/projects/{project.id}/deliverables"
                      f"?open={quote(artifact.storage_key, safe='')}") if origin else None,
         })
+    # His own first, then the team's; each newest first (the sort is stable).
+    out.sort(key=lambda item: item["for_team"])
     return out
 
 
@@ -1551,16 +1557,29 @@ def render_text(brief: dict) -> str:
     # the order he acts in, not the order the record was written.
     body = [brief["headline"], ""] + _waiting_lines(brief["waiting"], when) + [""]
     delivered = brief.get("delivered") or []
-    if delivered:
+    yours = [item for item in delivered if not item.get("for_team")]
+    teams = [item for item in delivered if item.get("for_team")]
+
+    def listed(item: dict, opening: bool) -> None:
+        version = f" (v{item['version']})" if item["version"] > 1 else ""
+        body.append(f"  + {item['name']}{version}"
+                    + (f" — {item['link']}" if item.get("link") else ""))
+        if opening and item.get("opening"):
+            body.append(f"    {item['opening']}")
+
+    if yours:
+        # Every one: these were written for him to read.
         body.append("Delivered")
-        for item in delivered[:DELIVERED_LISTED]:
-            version = f" (v{item['version']})" if item["version"] > 1 else ""
-            body.append(f"  + {item['name']}{version}"
-                        + (f" — {item['link']}" if item.get("link") else ""))
-            if item.get("opening"):
-                body.append(f"    {item['opening']}")
-        if len(delivered) > DELIVERED_LISTED:
-            body.append(f"  … and {len(delivered) - DELIVERED_LISTED} more in Deliverables")
+        for item in yours:
+            listed(item, opening=True)
+        body.append("")
+    if teams:
+        files = "1 file" if len(teams) == 1 else f"{len(teams)} files"
+        body.append(f"The team's own files: {files}")
+        for item in teams[:DELIVERED_LISTED]:
+            listed(item, opening=False)
+        if len(teams) > DELIVERED_LISTED:
+            body.append(f"  … and {len(teams) - DELIVERED_LISTED} more in Deliverables")
         body.append("")
     body += [
         f"Window: {brief['window_source']} — {when(brief['since'])} "

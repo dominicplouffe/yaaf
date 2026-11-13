@@ -1462,6 +1462,15 @@ class Artifact(Base):
     # Results — can say what it found, not only what it is called.
     opening: Mapped[str | None] = mapped_column(Text)
     first_opened_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Who it was written for (`ResultFor`), decided at publish: what the writer
+    # said, else its task's reader, else the team. NULL on files published
+    # before this existed, which were each announced on their own.
+    reader: Mapped[str | None] = mapped_column(String(12))
+    # When the chairman was told it exists. A file written for a person is
+    # announced as it lands; the team's files are gathered into one roundup
+    # (`writing.roundup`), so the boardroom says "the team published 14 files"
+    # once instead of fourteen times. Nothing is skipped: every file is named.
+    announced_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class ResultFor(enum.StrEnum):

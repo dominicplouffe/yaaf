@@ -821,7 +821,8 @@ def test_the_morning_letter_names_its_window_the_way_a_person_would(client, monk
 def _publish(client, project: dict, filename: str, content: bytes) -> None:
     _, token = live_token(project["id"], project["ceo_agent_id"])
     response = client.post("/agent/artifacts", headers=bearer(token), json={
-        "filename": filename, "content_base64": b64encode(content).decode()})
+        "filename": filename, "content_base64": b64encode(content).decode(),
+        "result_for": "chairman"})
     assert response.status_code == 200, response.text
 
 

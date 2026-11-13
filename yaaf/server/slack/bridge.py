@@ -41,7 +41,7 @@ import time
 from typing import TYPE_CHECKING
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
@@ -55,6 +55,7 @@ from yaaf.core.models import (
     Message,
     Project,
     ProjectMember,
+    ResultFor,
     Secret,
     utcnow,
 )
@@ -181,6 +182,41 @@ def _artifact_blurb(session: Session, artifact) -> str:
     return f"Deliverable: *{artifact.name}*{version}{serves} · {size}{opening}"
 
 
+def _mirror_roundups(session: Session, project: Project, token: str, channel: str) -> int:
+    """Post each boardroom roundup of the team's files (`writing.roundup`) as
+    one Slack message naming every file, rather than one upload per file.
+
+    Files wait here until the roundup has announced them; the files of one
+    roundup share its `announced_at`, which is what groups them."""
+    from yaaf.core.config import settings
+    from yaaf.core.models import Artifact
+    from yaaf.server import writing
+
+    waiting = list(session.execute(
+        select(Artifact)
+        .where(Artifact.project_id == project.id, Artifact.slack_ts.is_(None),
+               Artifact.reader == ResultFor.TEAM, Artifact.announced_at.is_not(None))
+        .order_by(Artifact.announced_at, Artifact.published_at)
+    ).scalars())
+    groups: dict = {}
+    for artifact in waiting:
+        groups.setdefault(artifact.announced_at, []).append(artifact)
+    origin = (settings().public_base_url or "").rstrip("/")
+    posted = 0
+    for files in groups.values():
+        try:
+            ts = _post_message(token, channel,
+                               writing.roundup_slack_text(session, files, origin))
+        except Exception:
+            log.warning("slack roundup of %d files for %s failed; will retry",
+                        len(files), project.slug, exc_info=True)
+            continue
+        for artifact in files:
+            artifact.slack_ts = ts
+        posted += 1
+    return posted
+
+
 def _mirror_artifacts(session: Session, project: Project,
                       effective: SlackSettings) -> int:
     """Push published deliverables into the boardroom, newest last.
@@ -201,13 +237,16 @@ def _mirror_artifacts(session: Session, project: Project,
     token = effective.bot_token
     if not channel or not token:
         return 0
+    delivered = _mirror_roundups(session, project, token, channel)
+    # One by one: files written for a person, and files from before readers
+    # were recorded. The team's files go out above, in their roundup.
     pending = session.execute(
         select(Artifact)
-        .where(Artifact.project_id == project.id, Artifact.slack_ts.is_(None))
+        .where(Artifact.project_id == project.id, Artifact.slack_ts.is_(None),
+               or_(Artifact.reader.is_(None), Artifact.reader != ResultFor.TEAM))
         .order_by(Artifact.published_at)
         .limit(MIRROR_BATCH)
     ).scalars()
-    delivered = 0
     for artifact in pending:
         blurb = _artifact_blurb(session, artifact)
         try:

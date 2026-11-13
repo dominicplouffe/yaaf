@@ -1256,11 +1256,15 @@ async def t_side_effect_finish(args):
     "artifact_put",
     "Persist a finished deliverable (report, dataset, document) to the platform's "
     "artifact store — the shipped, versioned record the platform serves and audits. "
-    "Write it for the reader its task names (result_for): for the team, the answer "
-    "first, then the facts with their units, windows, sources and caveats, and no "
-    "prose; for the chairman, a client or the public, the bottom line first and one "
-    "screen unless he asked for more. The chairman is told about every file published "
-    "here, and his announcement quotes its opening, so open with the answer. Ship it "
+    "result_for says who reads it: \"chairman\", \"outside\" (a client or the "
+    "public) or \"team\"; leave it out and it is your task's reader, else the team. "
+    "Write it for that reader: for the team, the answer first, then the facts with "
+    "their units, windows, sources and caveats, and no prose; for the chairman, a "
+    "client or the public, the bottom line first and one screen unless he asked for "
+    "more. The chairman is told about every file published here, with its opening "
+    "quoted, so open with the answer: a file for him or for outside is announced to "
+    "him the moment it lands; the team's files reach him together, in one roundup, "
+    "so mark a file he asked for as his even when no task says so. Ship it "
     "here and CITE it — never paste its contents into a channel or the boardroom. "
     "Your /workspace is NOT ephemeral: it persists with the project across runs and is "
     "shared by every agent on it, which makes it the right home for working state and "
@@ -1276,8 +1280,9 @@ async def t_side_effect_finish(args):
     "artifact's uri, key, size and sha256 — cite the uri in evidence, task "
     "completions and messages. The uri is NOT a path in your sandbox: read it back "
     "with artifact_get, never with a file tool.",
-    _schema({"path": str, "filename": str, "content_base64": str, "satisfies": list},
-            optional=("path", "filename", "content_base64", "satisfies")),
+    _schema({"path": str, "filename": str, "content_base64": str, "satisfies": list,
+             "result_for": str},
+            optional=("path", "filename", "content_base64", "satisfies", "result_for")),
 )
 async def t_artifact_put(args):
     path = (args.get("path") or "").strip()
@@ -1312,6 +1317,8 @@ async def t_artifact_put(args):
     payload = {"filename": filename, "content_base64": encoded}
     if isinstance(args.get("satisfies"), list) and args["satisfies"]:
         payload["satisfies"] = [str(k) for k in args["satisfies"]]
+    if args.get("result_for"):
+        payload["result_for"] = str(args["result_for"]).strip().lower()
     return _text(_call("POST", "/agent/artifacts", payload))
 
 

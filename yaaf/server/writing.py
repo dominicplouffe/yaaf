@@ -12,18 +12,25 @@ team's norm. Nothing here refuses anything.
 `opening` is the other half: the first lines of a file, lifted at publish, so
 the announcement of a deliverable can say what it found. A reader who gets the
 answer in the notification only opens the file when he wants more.
+
+`roundup` is how he is told about the team's files. Every published file
+reaches him, but one message per file was ~150 boardroom lines and Slack posts
+a day on a busy project. A file written for a person is still announced the
+moment it lands; the team's files are gathered and named together, once a
+burst of work goes quiet or has waited long enough.
 """
 
 from __future__ import annotations
 
 import re
 import statistics
-from datetime import datetime
+from datetime import datetime, timedelta
+from urllib.parse import quote
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from yaaf.core.models import Agent, Artifact, Project, ResultFor, Run, Task
+from yaaf.core.models import Agent, Artifact, Project, ResultFor, Run, Task, utcnow
 from yaaf.server import plain
 
 #: Files that are prose, read rather than processed.
@@ -39,6 +46,14 @@ OPENING_CHARS = 280
 OUTLIER_RATIO = 2.5
 #: …and only with enough files to call it a habit rather than one long piece.
 OUTLIER_MIN_FILES = 3
+
+#: The team's files are rounded up once the work has gone quiet this long…
+ROUNDUP_QUIET = timedelta(minutes=30)
+#: …or once the oldest has waited this long, so a project that never goes
+#: quiet still reports its work a few times a day rather than never.
+ROUNDUP_LONGEST = timedelta(hours=3)
+#: Only files this recent are looked for: older ones predate the roundup.
+_ROUNDUP_LOOKBACK = timedelta(days=7)
 
 #: Bigger than any prose file worth reading; a file past it is not read here.
 _READ_LIMIT = 4 * 1024 * 1024
@@ -115,6 +130,89 @@ def opening(name: str, data: bytes) -> str | None:
     return cut
 
 
+def deliverable_link(project_id: str, key: str) -> str:
+    """The in-app link that opens a published file's preview."""
+    return f"#/projects/{project_id}/deliverables?open={quote(key, safe='')}"
+
+
+def link_label(name: str) -> str:
+    """A file name made safe inside a Markdown link: a name is any non-path
+    string, so `]` or `*` in it must not end the link."""
+    return "".join("\\" + c if c in "\\`*_[]" else c for c in name)
+
+
+def roundup(session: Session, project: Project, now: datetime | None = None) -> int:
+    """Tell the boardroom about the team's files not yet announced, in one
+    line naming each, when the burst has gone quiet (`ROUNDUP_QUIET`) or the
+    oldest has waited `ROUNDUP_LONGEST`. Returns how many files it named.
+
+    The line is pre-stamped for Slack: the bridge posts the same roundup there
+    with links Slack can open (`slack.bridge._mirror_artifacts`)."""
+    from yaaf.server.notify import SLACK_VIA_DELIVERABLE, boardroom_line
+
+    now = now or utcnow()
+    pending = list(session.execute(
+        select(Artifact).where(Artifact.project_id == project.id,
+                               Artifact.reader == ResultFor.TEAM,
+                               Artifact.announced_at.is_(None),
+                               Artifact.published_at > now - _ROUNDUP_LOOKBACK)
+        .order_by(Artifact.published_at)
+    ).scalars())
+    if not pending:
+        return 0
+    if (now - pending[-1].published_at < ROUNDUP_QUIET
+            and now - pending[0].published_at < ROUNDUP_LONGEST):
+        return 0
+    boardroom_line(session, project.id, roundup_text(session, pending),
+                   slack_ts=SLACK_VIA_DELIVERABLE)
+    for artifact in pending:
+        artifact.announced_at = now
+    return len(pending)
+
+
+def _writers(session: Session, artifacts: list[Artifact]) -> dict[str, str]:
+    ids_ = {a.published_by_agent_id for a in artifacts if a.published_by_agent_id}
+    return dict(session.execute(
+        select(Agent.id, Agent.name).where(Agent.id.in_(ids_))).all()) if ids_ else {}
+
+
+def _headline(session: Session, artifacts: list[Artifact]) -> tuple[str, dict[str, str]]:
+    names = _writers(session, artifacts)
+    counts: dict[str, int] = {}
+    for a in artifacts:
+        who = names.get(a.published_by_agent_id or "", "the platform")
+        counts[who] = counts.get(who, 0) + 1
+    by = ", ".join(f"{who} {n}" for who, n in sorted(counts.items(), key=lambda kv: -kv[1]))
+    files = "1 file" if len(artifacts) == 1 else f"{len(artifacts)} files"
+    return f"The team published {files} for its own use ({by})", names
+
+
+def roundup_text(session: Session, artifacts: list[Artifact]) -> str:
+    """The boardroom's roundup: every file named and linked, with its writer."""
+    head, names = _headline(session, artifacts)
+    lines = [f"{head}:"]
+    for a in artifacts:
+        version = f" (v{a.version})" if a.version > 1 else ""
+        who = names.get(a.published_by_agent_id or "", "")
+        lines.append(f"- [{link_label(a.name)}]({deliverable_link(a.project_id, a.storage_key)})"
+                     f"{version}" + (f" — {who}" if who else ""))
+    return "\n".join(lines)
+
+
+def roundup_slack_text(session: Session, artifacts: list[Artifact], origin: str) -> str:
+    """The same roundup in Slack's own link form, which does not read Markdown."""
+    head, names = _headline(session, artifacts)
+    lines = [f"{head}:"]
+    for a in artifacts:
+        name = a.name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        version = f" (v{a.version})" if a.version > 1 else ""
+        who = names.get(a.published_by_agent_id or "", "")
+        shown = (f"<{origin}/app/{deliverable_link(a.project_id, a.storage_key)}|{name}>"
+                 if origin else name)
+        lines.append(f"• {shown}{version}" + (f" — {who}" if who else ""))
+    return "\n".join(lines)
+
+
 def compose(session: Session, project: Project, since: datetime, until: datetime) -> dict:
     """The writing record for one review window: prose files published, by
     who they were written for, how long they ran, whether a person opened the
@@ -156,7 +254,8 @@ def compose(session: Session, project: Project, since: datetime, until: datetime
             n = None
         if n is None:
             continue
-        reader = reader_of_task.get(task_of_run.get(a.run_id or "")) or ResultFor.TEAM
+        reader = (a.reader or reader_of_task.get(task_of_run.get(a.run_id or ""))
+                  or ResultFor.TEAM)
         files.append({"name": a.name, "words": n, "reader": reader, "opens": a.opens or 0,
                       "by": a.published_by_agent_id})
 

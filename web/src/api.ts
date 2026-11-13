@@ -1292,6 +1292,8 @@ export interface ResultRow {
   opening?: string | null;
   /** How often a person opened it in the app. */
   opens?: number;
+  /** Who it was written for; null on files from before this was recorded. */
+  result_for?: "team" | "chairman" | "outside" | null;
 }
 
 export interface ResultsView {

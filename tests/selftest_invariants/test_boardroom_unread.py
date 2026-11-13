@@ -114,7 +114,8 @@ def test_a_platform_line_counts(client):
     _seen(client, project)
     _, token = live_token(project["id"], project["ceo_agent_id"])
     published = client.post("/agent/artifacts", headers=bearer(token), json={
-        "filename": "memo.md", "content_base64": base64.b64encode(b"# memo").decode()})
+        "filename": "memo.md", "content_base64": base64.b64encode(b"# memo").decode(),
+        "result_for": "chairman"})
     assert published.status_code == 200, published.text
     assert _unread(client, project) == 1
 

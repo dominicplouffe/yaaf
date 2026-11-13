@@ -4155,6 +4155,25 @@ class ArtifactPut(BaseModel):
     # Requirement ids or keys this deliverable claims to satisfy. A claim,
     # not a verdict — met is still only ever written by the platform.
     satisfies: list[str] = Field(default_factory=list, max_length=20)
+    # Who it is written for. Unsaid, it is the task's reader, else the team. It
+    # decides how he is told — a person's file on its own, the team's in the
+    # next roundup — never whether he is told.
+    result_for: Literal["team", "chairman", "outside"] | None = None
+
+
+def _reader_of(session: Session, ctx: RunContext, said: str | None) -> str:
+    """Who a file being published is for: what its writer said, else what its
+    task says, else him when it was made in a conversation with him, else the
+    team — the reader of most of what agents write."""
+    if said:
+        return said
+    task = session.get(Task, ctx.run.task_id) if ctx.run.task_id else session.execute(
+        select(Task).where(Task.claim_run_id == ctx.run.id)).scalars().first()
+    if task is not None and task.result_for:
+        return task.result_for
+    if ctx.run.kind == RunKind.CHAT_SESSION:
+        return ResultFor.CHAIRMAN
+    return ResultFor.TEAM
 
 
 def _artifact_key(ctx: RunContext, ref: str) -> str:
@@ -4235,6 +4254,7 @@ def artifact_put(
         if stamped is not None and stamped.key != policy.PLAN_KEY:
             satisfied.append(stamped)
 
+    reader = _reader_of(session, ctx, body.result_for)
     key = f"projects/{ctx.project.id}/{ctx.run.id}/{filename}"
     uri = store().put_bytes(key, data)
     digest = hashlib.sha256(data).hexdigest()
@@ -4257,6 +4277,8 @@ def artifact_put(
         # What it found, in its own first lines — quoted wherever it is
         # announced, so he gets the answer without having to open it.
         opening=writing.opening(filename, data),
+        reader=reader,
+        announced_at=None if reader == ResultFor.TEAM else utcnow(),
     )
     session.add(row)
     session.flush()
@@ -4269,7 +4291,8 @@ def artifact_put(
         data={"deliverable": {"id": row.id, "name": filename, "version": version,
                               "key": key, "size": len(data),
                               "published_at": row.published_at.isoformat() if row.published_at else None,
-                              "satisfies": [r.key for r in satisfied]}},
+                              "satisfies": [r.key for r in satisfied],
+                              "result_for": reader}},
         attention=Attention.FYI,
     )
     # Slack announces it in the boardroom channel, so the boardroom chat says it
@@ -4277,27 +4300,29 @@ def artifact_put(
     # same channel, and that is this line's Slack delivery. The name links to
     # the file's preview (the Deliverables page's `?open=<key>`, the same link
     # the Overview card uses) so the chairman reads it without hunting for it.
-    from urllib.parse import quote
-
+    #
+    # A file written for the team is not announced on its own: it waits for the
+    # next roundup (`writing.roundup`), which names it with the rest. One line
+    # per file was ~150 a day on a busy project — a record nobody could read.
     from yaaf.server.notify import SLACK_VIA_DELIVERABLE, boardroom_line
 
     size = f"{len(data) / 1024:.0f} KB" if len(data) >= 1024 else f"{len(data)} B"
-    link = f"#/projects/{ctx.project.id}/deliverables?open={quote(key, safe='')}"
-    # A name is any non-path string, so `]` or `*` in it must not end the link.
-    label = "".join("\\" + c if c in "\\`*_[]" else c for c in filename)
-    boardroom_line(
-        session, ctx.project.id,
-        f"Deliverable published: [**{label}**]({link})"
-        + (f" (v{version})" if version > 1 else "")
-        + (f" — {', '.join(r.key for r in satisfied)}" if satisfied else "")
-        + f" · {size}."
-        + (f"\n> {row.opening}" if row.opening else ""),
-        slack_ts=SLACK_VIA_DELIVERABLE,
-    )
+    link = writing.deliverable_link(ctx.project.id, key)
+    label = writing.link_label(filename)
+    if reader != ResultFor.TEAM:
+        boardroom_line(
+            session, ctx.project.id,
+            f"Deliverable published: [**{label}**]({link})"
+            + (f" (v{version})" if version > 1 else "")
+            + (f" — {', '.join(r.key for r in satisfied)}" if satisfied else "")
+            + f" · {size}."
+            + (f"\n> {row.opening}" if row.opening else ""),
+            slack_ts=SLACK_VIA_DELIVERABLE,
+        )
     # The digest is returned at write time so the author can record what it
     # shipped and a later reader can prove the store still holds those bytes.
     return {"uri": uri, "key": key, "size": len(data), "sha256": digest,
-            "artifact_id": row.id, "version": version,
+            "artifact_id": row.id, "version": version, "result_for": reader,
             "satisfies": [r.key for r in satisfied]}
 
 

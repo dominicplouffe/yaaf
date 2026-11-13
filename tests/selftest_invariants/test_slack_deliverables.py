@@ -57,9 +57,12 @@ def _wire_slack(client, project: dict) -> None:
 
 
 def _publish(client, token: str, filename: str, body: bytes = b"the report"):
+    # Written for him: the memo he asked to have pushed. The team's own files
+    # reach Slack in one roundup instead (`test_writing.py`).
     return client.post(
         "/agent/artifacts",
-        json={"filename": filename, "content_base64": base64.b64encode(body).decode()},
+        json={"filename": filename, "content_base64": base64.b64encode(body).decode(),
+              "result_for": "chairman"},
         headers={"Authorization": f"Bearer {token}"},
     )
 

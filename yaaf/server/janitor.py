@@ -82,7 +82,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import asks as ask_lib
-from yaaf.server import briefing, metrics, plain, policy, scorecard, staffing, standing
+from yaaf.server import briefing, metrics, plain, policy, scorecard, staffing, standing, writing
 from yaaf.server.notify import (
     Attention,
     boardroom_line,
@@ -165,6 +165,9 @@ def _janitor_project(session: Session, project: Project) -> None:
     # chairman needs to hear from it, and the morning a model-written status
     # could not be afforded.
     send_daily_brief(session, project)
+    # Also before the gate: files published just before a pause are still
+    # owed their announcement.
+    writing.roundup(session, project)
     if project.status != ProjectStatus.RUNNING:
         # A paused project's CEO can still be waiting on him — an approval
         # filed just before the wall is exactly the one he needs to hear about.

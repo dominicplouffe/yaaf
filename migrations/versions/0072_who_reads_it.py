@@ -5,6 +5,8 @@ It shapes how the result is written, never who is told about it.
 `artifacts.opens` / `first_opened_at` count a person opening a published file,
 which nothing recorded before. `artifacts.opening` is the file's opening
 answer, lifted at publish so its announcements can quote it.
+`artifacts.reader` is who the file was written for, and `announced_at` when the
+chairman was told: a person's files at once, the team's in one roundup.
 
 Revision ID: 0072
 Revises: 0071
@@ -26,11 +28,15 @@ def upgrade() -> None:
                                                  server_default="0"))
     add_column_if_missing("artifacts", sa.Column("first_opened_at", UTCDateTime))
     add_column_if_missing("artifacts", sa.Column("opening", sa.Text))
+    add_column_if_missing("artifacts", sa.Column("reader", sa.String(12)))
+    add_column_if_missing("artifacts", sa.Column("announced_at", UTCDateTime))
 
 
 def downgrade() -> None:
     from alembic import op
 
+    op.drop_column("artifacts", "announced_at")
+    op.drop_column("artifacts", "reader")
     op.drop_column("artifacts", "opening")
     op.drop_column("artifacts", "first_opened_at")
     op.drop_column("artifacts", "opens")
