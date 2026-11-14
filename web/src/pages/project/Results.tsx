@@ -130,7 +130,7 @@ function WhyTrust({ ctx, row, goal }: { ctx: ProjectCtx; row: ResultRow; goal: s
         <h2 id="rs-why-h">Why you can trust {row.name}</h2>
         <Link className="btnlink small" to={open}><Icon name="file" size={13} /> Open file</Link>
       </header>
-      <ol className="rs-trail">
+      <ol className={`rs-trail${sealOf(row.checked) === "word" ? "" : " double-ruled"}`}>
         {checks.map((c, i) => c.kind === "pending" ? (
           // An unsettled claim names what is unsettled ("R-04 not settled yet").
           <Step key={i} mark="open" title={sentence(c.note || c.label)} />

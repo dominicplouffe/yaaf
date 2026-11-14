@@ -16,6 +16,7 @@ import {
 } from "../../ui";
 import { Badge, BarChart, ChartHead } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
+import { MoneyMeter } from "../../ui/signal";
 import { LedgerRow, SpendBars, SpendBreakdown } from "./Runs";
 
 /** The money, on a page of its own.
@@ -49,11 +50,7 @@ export function BudgetCard({ ctx }: { ctx: ProjectCtx }) {
         {fmtUnit(spent, unit)} <span>of {fmtUnit(cap, unit)}</span>
       </div>
       <div className="meter">
-        <div className="track">
-          <div className={`fill${frac >= 1 ? " over" : frac >= warnRatio ? " warn" : ""}`}
-            style={{ width: `${Math.min(frac, 1) * 100}%` }} />
-          <div className="tick" style={{ left: `${warnRatio * 100}%` }} title={`Warns at ${Math.round(warnRatio * 100)}%`} />
-        </div>
+        <MoneyMeter spent={spent} cap={cap} wall={wall} unit={unit} warnRatio={warnRatio} />
         <div className="legend">
           <span>{Math.round(frac * 100)}% used</span>
           <span>

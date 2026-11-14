@@ -1035,9 +1035,11 @@ function BurnupChart({ c, f }: { c: PlanCommitment; f: BurnupFacts }) {
   const marks = mergeMarks([
     { at: now, top: fmtDay(new Date(now).toISOString()), bottom: "today",
       colour: "var(--muted)", weight: 1, dashed: false },
+    // The promised date is the wall on this axis, drawn as the hard-stop
+    // meter draws one: heavy, and ink. Whether it was kept is said in words,
+    // in the sentence above and the label beside it, not by the rule's colour.
     { at: deliverBy, top: fmtDay(c.deliver_by), bottom: "you promised",
-      colour: c.status === "breached" ? "var(--critical)" : "var(--ink-2)",
-      weight: 1.5, dashed: false },
+      colour: "var(--ink)", weight: 4, dashed: false },
     ...(range === null ? [] : [{
       at: offFrame ? cap : range.hi,
       top: fmtSpan(range.lo, range.hi),
@@ -1091,7 +1093,7 @@ function BurnupChart({ c, f }: { c: PlanCommitment; f: BurnupFacts }) {
             <g key={m.bottom}>
               <line x1={px} y1={CT} x2={px} y2={CH - CB} stroke={m.colour}
                 strokeWidth={m.weight} strokeDasharray={m.dashed ? "5 4" : undefined} />
-              <text x={lbl.x} y={CH - CB + 20} fontSize={12} fontWeight={600}
+              <text x={lbl.x} y={CH - CB + 20} fontSize={12} fontWeight={600} fontFamily="var(--mono)"
                 textAnchor={lbl.anchor} fill={m.colour}>{m.top}</text>
               <text x={lbl.x} y={CH - CB + 36} fontSize={12}
                 textAnchor={lbl.anchor} fill="var(--muted)">{m.bottom}</text>
