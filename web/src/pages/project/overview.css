@@ -26,8 +26,11 @@
 .ov-legend { display: inline-flex; gap: 12px; font-size: var(--t-micro); color: var(--muted); }
 .ov-legend span { display: inline-flex; gap: 5px; align-items: center; }
 .ov-axis { position: relative; height: 50px; margin: 0 4px; }
-.ov-axis-bar { position: absolute; left: 0; right: 0; top: 22px; height: 6px; border-radius: 3px; background: var(--sunken); }
-.ov-axis-bar i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--ink-2); }
+/* The hard-stop meter on a date axis (see ui/signal.css): ink on --sunken, and
+   the promised date is the wall — the heavy ink tick. */
+.ov-axis-bar { position: absolute; left: 0; right: 0; top: 22px; height: 6px; border-radius: 1px; background: var(--sunken);
+  box-shadow: inset 0 0 0 1px var(--border); }
+.ov-axis-bar i { position: absolute; inset: 0 auto 0 0; border-radius: 1px; background: var(--ink); }
 .ov-mark { position: absolute; top: 14px; bottom: 6px; width: 0; border-left: 2px solid var(--ink); }
 .ov-mark b { position: absolute; white-space: nowrap; font-size: var(--t-micro); font-weight: 600; transform: translateX(-50%); }
 .ov-mark.now { border-color: var(--accent); top: 12px; }
@@ -36,7 +39,8 @@
 .ov-mark.proj b { top: -14px; color: var(--good); }
 .ov-mark.proj.late { border-color: var(--warning); }
 .ov-mark.proj.late b { color: var(--warning); }
-.ov-mark.promise b { bottom: -18px; right: 0; transform: none; left: auto; }
+.ov-mark.promise { top: 17px; bottom: 7px; border-left-width: 4px; margin-left: -2px; }
+.ov-mark.promise b { bottom: -19px; right: 0; transform: none; left: auto; font-family: var(--mono); }
 .ov-axis-start { position: absolute; left: 0; bottom: -12px; font-size: var(--t-micro); color: var(--muted); }
 .ov-stages { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0; margin-top: 8px; }
 .ov-stage { padding: 0 14px; border-left: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -71,6 +75,9 @@
 .ov-result:hover { border-color: var(--border-strong); text-decoration: none; }
 .ov-result-h { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .ov-result-h b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-result-chk { font-size: var(--t-small); line-height: 1.2; }
+.ov-money { font-family: var(--mono); }
+.ov-money .help { font-family: var(--font); }
 
 @media (max-width: 1100px) {
   .ov-three { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

@@ -39,8 +39,9 @@ button.rs-row.on { background: rgba(var(--accent-rgb), 0.07); box-shadow: inset 
 /* ── why you can trust it ── */
 .rs-why-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3);
   margin-bottom: var(--s4); }
-.rs-why-head h2 { margin: 0; min-width: 0; font-family: var(--font); font-size: var(--t-h3); font-weight: 600;
-  line-height: 1.35; overflow-wrap: anywhere; }
+/* The panel's title names a result, so it speaks in the record's face. */
+.rs-why-head h2 { margin: 0; min-width: 0; font-family: var(--font-display); font-size: var(--t-h2); font-weight: 600;
+  line-height: 1.25; letter-spacing: -0.012em; overflow-wrap: anywhere; }
 .rs-why-head .btnlink { flex: none; }
 
 .rs-trail { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
@@ -56,13 +57,26 @@ button.rs-row.on { background: rgba(var(--accent-rgb), 0.07); box-shadow: inset 
 .rs-mark.open { box-shadow: inset 0 0 0 2px var(--border-strong); }
 .rs-step-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .rs-step-t { font-size: var(--t-body); font-weight: 600; }
+/* Made by / checked by. A step that carries a check is the checker's line and
+   is signed (.signed, in styles.css); its mark keeps its status colour. The
+   maker's step, and one that says nothing checked it, stay upright in ink. */
+.rs-mark.verified + .rs-step-body .rs-step-t,
+.rs-mark.judged + .rs-step-body .rs-step-t { font-family: var(--font-display); font-style: italic;
+  font-size: 18px; line-height: 1.3; color: var(--accent-2); }
+.rs-mark.open + .rs-step-body .rs-step-t { font-weight: 400; }
+/* The shelf's rows name the maker and carry the seal, and stop there: a row
+   is tinted when hovered or picked, and on that ground the dark Seal reads
+   3.7:1. The signature is on the panel beside it, where the ground holds. */
+/* A trail that holds a check closes on the double rule: final, checked. One
+   that holds none is not final, and keeps the dashed line below. */
+.rs-trail:has(.rs-mark.verified, .rs-mark.judged) + .rs-serves { border-top: 0; padding-top: 0; }
 .rs-step-x { font-size: var(--t-small); color: var(--ink-2); overflow-wrap: anywhere; }
 .rs-step .did { margin-top: 2px; }
 
 .rs-serves { margin-top: var(--s4); padding-top: var(--s3); border-top: 1px dashed var(--border-strong);
   font-size: var(--t-small); color: var(--ink-2); }
 .rs-serves ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.rs-serves li .mono { margin-right: 6px; }
+.rs-serves li .mono { margin-right: 6px; white-space: nowrap; }
 .rs-limit { margin: var(--s3) 0 0; font-size: var(--t-small); color: var(--ink-2); }
 
 /* ── nothing published ── */

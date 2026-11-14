@@ -296,7 +296,7 @@ button.quiet-danger:hover:not(:disabled) { background: rgba(var(--critical-rgb),
   padding: 3px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
   color: var(--ink); font-size: var(--t-small); }
 .sp-pick > summary::-webkit-details-marker { display: none; }
-.sp-pick > summary::after { content: "▾"; color: var(--muted); font-size: 11px; }
+.sp-pick > summary::after { content: "▾"; color: var(--muted); font-size: var(--t-micro); }
 .sp-pick > summary b { font-weight: 600; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sp-pick.on > summary { border-color: var(--accent); }
 .sp-pick-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 240px; max-width: 360px;
@@ -319,7 +319,7 @@ button.quiet-danger:hover:not(:disabled) { background: rgba(var(--critical-rgb),
 .sp-chart { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 200px auto;
   column-gap: 8px; position: relative; }
 .sp-y { position: relative; min-width: 36px; }
-.sp-y span { position: absolute; right: 0; transform: translateY(50%); font-size: 11px; color: var(--muted);
+.sp-y span { position: absolute; right: 0; transform: translateY(50%); font-size: var(--t-micro); color: var(--muted);
   font-variant-numeric: tabular-nums; white-space: nowrap; line-height: 1; }
 .sp-plot { position: relative; border-bottom: 1px solid var(--grid); }
 .sp-grid { position: absolute; left: 0; right: 0; height: 1px; background: var(--grid); }
@@ -333,7 +333,7 @@ button.quiet-danger:hover:not(:disabled) { background: rgba(var(--critical-rgb),
   border-radius: 4px 4px 0 0; overflow: hidden; }
 .sp-stack i { display: block; flex-basis: 0; min-height: 0; }
 .sp-x { grid-column: 2; display: flex; padding-top: 6px; }
-.sp-x span { flex: 1 1 0; min-width: 0; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: visible;
+.sp-x span { flex: 1 1 0; min-width: 0; font-size: var(--t-micro); color: var(--muted); white-space: nowrap; overflow: visible;
   text-align: left; }
 .sp-tip { position: absolute; top: 4px; z-index: 10; pointer-events: none;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);

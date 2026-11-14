@@ -5,22 +5,28 @@
    reserved for "this is yours to press". */
 .badge.you { background: var(--accent); color: var(--on-accent); border-color: transparent; }
 
-/* ── money ── */
-.sg-meter { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.sg-bar { position: relative; height: 8px; border-radius: 4px; background: var(--sunken); box-shadow: inset 0 0 0 1px var(--border); }
+/* ── money: the hard-stop meter ──
+   A limit that holds, drawn as one: ink on --sunken, and a heavy ink tick at
+   the wall. The wall is ink, not red — it is a fact about the project, not a
+   fault — and the fill takes a status colour only once spending is one (near
+   the plan, over it, stopped), always beside the figures that say so. The
+   figures are mono, each next to what it is compared with. */
+.sg-meter { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.sg-bar { position: relative; height: 8px; border-radius: 1px; background: var(--sunken); box-shadow: inset 0 0 0 1px var(--border); }
 .sg-meter.compact .sg-bar { height: 6px; }
-.sg-fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--ink-2); min-width: 2px; }
+.sg-fill { position: absolute; inset: 0 auto 0 0; border-radius: 1px; background: var(--ink); min-width: 2px; }
 .sg-fill.near { background: var(--warning); }
 .sg-fill.over { background: var(--serious); }
 .sg-fill.stop { background: var(--critical); }
-.sg-plan { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink); border-radius: 1px; }
-.sg-wall { position: absolute; top: -3px; bottom: -3px; right: 0; width: 3px; background: var(--critical); border-radius: 1px; }
-.sg-labels { position: relative; height: 18px; font-size: var(--t-micro); color: var(--muted); font-variant-numeric: tabular-nums; }
+.sg-plan { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--ink-2); }
+.sg-wall { position: absolute; top: -5px; bottom: -5px; right: 0; width: 4px; background: var(--ink); }
+.sg-meter.compact .sg-wall { top: -4px; bottom: -4px; width: 3px; }
+.sg-labels { position: relative; height: 18px; font-family: var(--mono); font-size: var(--t-micro); color: var(--muted); font-variant-numeric: tabular-nums; }
 .sg-labels > span { position: absolute; top: 0; white-space: nowrap; }
 .sg-labels > span:first-child { left: 0; }
 .sg-labels .sg-at { transform: translateX(-50%); }
-.sg-labels .sg-end { right: 0; color: var(--critical); font-weight: 600; }
-.sg-cap { font-size: var(--t-micro); color: var(--muted); font-variant-numeric: tabular-nums; }
+.sg-labels .sg-end { right: 0; color: var(--ink); font-weight: 600; }
+.sg-cap { font-family: var(--mono); font-size: var(--t-micro); color: var(--muted); font-variant-numeric: tabular-nums; }
 .sg-cap b { color: var(--ink); font-weight: 600; }
 
 /* ── the path ── */
