@@ -1073,7 +1073,10 @@ def create_project(
             choices = ("c", "s", "w", "q") if draft else ("s", "q")
             menu = ("[c]reate it, [s]ay something, [w]rite the draft to a file, or [q]uit"
                     if draft else "[s]ay something, or [q]uit")
-            pick = typer.prompt(f"\n{menu}", default=choices[0],
+            # click's own prompt, because the Choice is click's: typer runs on a
+            # click it carries inside itself, and its prompt asserts on a type
+            # from the other one.
+            pick = click.prompt(f"\n{menu}", default=choices[0],
                                 type=click.Choice(choices, case_sensitive=False))
             if pick == "q":
                 typer.echo("The conversation is kept; `yaaf create-project` picks it back up.")
