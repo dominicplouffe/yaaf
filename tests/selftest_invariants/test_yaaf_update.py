@@ -94,8 +94,26 @@ def _push(dev: Path, files: dict[str, str], message: str) -> str:
 
 def test_nothing_to_bring_in_is_nothing_done(run):
     result, did, home = run()
-    assert result.exit_code == 0 and "up to date" in result.output
+    assert result.exit_code == 0 and "up to date with main" in result.output
     assert did == [] and not (home / "backups").exists()
+    assert "!" not in result.output, "following main is nothing to warn about"
+
+
+def test_a_checkout_on_another_branch_is_told_main_moved_on(repos, run):
+    """A box left on a feature branch said "up to date" for days while main
+    moved 27 commits ahead. Up to date with what, and what it is missing."""
+    dev, install = repos
+    _git(dev, "push", "-q", "origin", "HEAD:side")
+    _git(install, "fetch", "-q")
+    _git(install, "checkout", "-q", "-b", "side", "--track", "origin/side")
+    _push(dev, {"yaaf/a.py": "b\n"}, "one")
+    _push(dev, {"yaaf/a.py": "c\n"}, "two")
+    result, did, _ = run()
+    assert result.exit_code == 0, result.output
+    assert "up to date with side" in result.output
+    assert "follows side, not main — main has 2 commits" in result.output
+    assert "checkout main" in result.output
+    assert did == [], "a warning, not a branch switch made on the user's behalf"
 
 
 def test_an_update_backs_up_first_and_rebuilds_only_what_changed(repos, run):

@@ -83,6 +83,25 @@ def incoming(repo: Path) -> tuple[str, str, list[str]]:
     return here, there, _out(repo, "log", "--oneline", "HEAD..@{u}").splitlines()
 
 
+def following(repo: Path) -> tuple[str, str | None]:
+    """(the branch this checkout follows, a warning or None). The warning is
+    said when that branch is not the remote's main one: "up to date" then only
+    means up to date with that branch, which can sit still while main moves
+    on. Asked after the fetch, so the count is today's."""
+    upstream = _out(repo, "rev-parse", "--abbrev-ref", "@{u}")
+    remote, branch = upstream.split("/", 1)
+    head = _git(repo, "rev-parse", "--abbrev-ref", f"{remote}/HEAD")
+    main = head.stdout.strip() if head.returncode == 0 else f"{remote}/main"
+    if upstream == main or _git(repo, "rev-parse", "--verify", "--quiet", main).returncode:
+        return branch, None
+    short = main.split("/", 1)[1]
+    ahead = int(_out(repo, "rev-list", "--count", f"HEAD..{main}"))
+    lag = (f"{short} has {ahead} commit{'s' if ahead != 1 else ''} this checkout does not"
+           if ahead else f"{short} has nothing this checkout lacks")
+    return branch, (f"this checkout follows {branch}, not {short} — {lag}. To follow "
+                    f"{short}: git -C {repo} checkout {short}, then yaaf update again.")
+
+
 def changed_files(repo: Path, here: str, there: str) -> list[str]:
     return _out(repo, "diff", "--name-only", here, there).splitlines()
 
@@ -263,8 +282,11 @@ def update(
                 raise Stop(said)
             typer.echo(f"! {said}")
         here, there, commits = incoming(REPO)
+        branch, warning = following(REPO)
+        if warning:
+            typer.echo(f"! {warning}")
         if not commits:
-            ok(f"yaaf is up to date ({here[:8]})")
+            ok(f"yaaf is up to date with {branch} ({here[:8]})")
             return
         typer.echo(f"{len(commits)} change{'s' if len(commits) != 1 else ''} to bring in:")
         for line in commits[:15]:
