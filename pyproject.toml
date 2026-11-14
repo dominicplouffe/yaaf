@@ -94,6 +94,9 @@ include = ["yaaf*"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# The brand handoff keeps the snippets it was applied from, as reference. They
+# are fragments (an ICONS dict without the names it keys on), not modules.
+extend-exclude = ["docs/brand"]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM"]

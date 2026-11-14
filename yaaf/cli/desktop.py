@@ -514,7 +514,10 @@ def _entry(name: str, comment: str, exec_line: str, *, extra: str = "") -> str:
 def planned_files() -> dict[Path, str]:
     """Every file install writes, with what it writes there."""
     apps = data_home() / "applications"
-    icon = Path(__file__).resolve().parents[2] / "web" / "public" / "favicon.svg"
+    # Not the web favicon: that one flips with the browser's colour scheme in
+    # CSS, which an icon theme's renderer has no reason to honour.
+    icon = (Path(__file__).resolve().parents[2] / "docs" / "brand" / "tray"
+            / "hicolor-app-yaaf.svg")
     files: dict[Path, str] = {
         apps / "yaaf.desktop": _entry(
             "yaaf", "Your agent company: the dashboard", _exec("desktop", "launch", "dashboard"),
