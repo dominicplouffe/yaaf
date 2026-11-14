@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ApiError, post } from "../api";
 import { useMe } from "../me";
 import { Btn } from "../ui/kit";
+import { Wordmark } from "../Wordmark";
 
 /** The first thing anyone sees.
  *
@@ -48,8 +49,8 @@ export default function Login() {
   return (
     <div className="center-page">
       <form className="card login-card" onSubmit={submit}>
-        <h1>
-          y<span style={{ color: "var(--accent)" }}>aa</span>f
+        <h1 aria-label="yaaf">
+          <Wordmark height={44} />
         </h1>
         <p className="subtitle" style={{ marginBottom: "var(--s5)" }}>
           Hire a team of agents, give them a budget and a deadline, and read what they did

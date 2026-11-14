@@ -2954,7 +2954,7 @@ def _checks(events: list[TaskEvent], satisfied: list,
     out: list[dict] = []
     for e in events:
         if e.to_status == TaskStatus.DONE and e.actor == "checker":
-            out.append({"kind": "platform", "label": "verified by YAAF",
+            out.append({"kind": "platform", "label": "verified by yaaf",
                         "note": "the platform ran the task's own check and it passed"})
         elif e.from_status == TaskStatus.REVIEW and e.to_status == TaskStatus.DONE \
                 and e.actor.startswith("agent:"):
@@ -2964,7 +2964,7 @@ def _checks(events: list[TaskEvent], satisfied: list,
                         "note": note[:400] if note else None})
     checked, why = _checked(satisfied)
     if checked == "verified" and not any(c["kind"] == "platform" for c in out):
-        out.append({"kind": "platform", "label": "verified by YAAF", "note": why})
+        out.append({"kind": "platform", "label": "verified by yaaf", "note": why})
     elif checked == "judged":
         out.append({"kind": "judged", "label": "met by judgement", "note": why})
     elif checked == "pending":
