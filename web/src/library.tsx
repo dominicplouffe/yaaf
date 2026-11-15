@@ -54,6 +54,7 @@ export const CAN_DO: Record<string, string> = {
   web: "reads the web",
   files: "reads and writes files",
   bash: "runs commands",
+  data_processing: "runs code on data",
 };
 
 export function canDoWords(tools: string[]): string {

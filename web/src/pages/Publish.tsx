@@ -56,6 +56,34 @@ function WithBlanks({ text }: { text: string }) {
   );
 }
 
+type Input = NonNullable<Draft["version"]["inputs"]>[number];
+
+/** The blanks' questions, by hand: what the Founder would have written when it
+    cannot be asked. */
+function BlankEditor({ inputs, onChange }: { inputs: Input[]; onChange: (inputs: Input[]) => void }) {
+  function set(i: number, patch: Partial<Input>) {
+    onChange(inputs.map((input, n) => (n === i ? { ...input, ...patch } : input)));
+  }
+  return (
+    <div className="field">
+      <div className="help">Each blank needs a question a stranger can answer, and an example that is not yours.</div>
+      {inputs.map((input, i) => (
+        <div key={i} className="pills">
+          <input aria-label="Blank name" value={input.id} placeholder="business_name"
+            onChange={(e) => set(i, { id: e.target.value.replace(/[^a-z0-9_]/g, "") })} />
+          <input aria-label="Question" value={input.question} placeholder="What is the business called?"
+            onChange={(e) => set(i, { question: e.target.value })} />
+          <input aria-label="Example" value={String(input.example ?? "")} placeholder="Northwind Outfitters"
+            onChange={(e) => set(i, { example: e.target.value })} />
+          <button className="small" onClick={() => onChange(inputs.filter((_, n) => n !== i))}>Remove</button>
+        </div>
+      ))}
+      <button className="small" onClick={() => onChange([...inputs,
+        { id: "", question: "", type: "text", example: "", required: true }])}>Add a blank</button>
+    </div>
+  );
+}
+
 const STATE_WORDS: Record<string, string> = {
   submitted: "In review", changes_requested: "Changes requested", published: "Published", closed: "Closed",
 };
@@ -77,6 +105,7 @@ export default function Publish() {
   const [submitted, setSubmitted] = useState<Publication | null>(null);
   const [history, setHistory] = useState<Publication[]>([]);
   const [showChanges, setShowChanges] = useState(false);
+  const [editingGoal, setEditingGoal] = useState(false);
   const polling = useRef<number | null>(null);
 
   useEffect(() => {
@@ -98,7 +127,7 @@ export default function Publish() {
           setChanges(made.changes);
           setLeaks(made.leaks);
         } catch (e) {
-          setError(`The Founder could not prepare it: ${(e as Error).message}. You can still edit it below.`);
+          setError(`The Founder could not prepare it: ${(e as Error).message.replace(/\.$/, "")}. You can edit it below.`);
         }
         setPhase("ready");
       } catch (e) {
@@ -195,7 +224,28 @@ export default function Publish() {
               <input id="pub-summary" value={listing.summary} maxLength={160}
                 onChange={(e) => setDraft({ ...draft!, listing: { ...draft!.listing, summary: e.target.value } })} />
             </label>
-            {final.version.bundle && <WithBlanks text={final.version.bundle.project.goal} />}
+            {final.version.bundle && (editingGoal ? (
+              <label className="field" htmlFor="pub-goal">The goal. Write a blank as {"{{name}}"}, and add its question below.
+                <textarea id="pub-goal" rows={12} value={draft!.version.bundle!.project.goal}
+                  onChange={(e) => {
+                    const copy: Draft = JSON.parse(JSON.stringify(draft));
+                    copy.version.bundle!.project.goal = e.target.value;
+                    setDraft(copy);
+                  }} />
+              </label>
+            ) : <WithBlanks text={final.version.bundle.project.goal} />)}
+            {final.version.bundle && (
+              <button className="small" onClick={() => setEditingGoal(!editingGoal)}>
+                {editingGoal ? "Done editing" : "Edit the goal"}
+              </button>
+            )}
+            {editingGoal && (
+              <BlankEditor inputs={draft!.version.inputs ?? []} onChange={(inputs) => {
+                const copy: Draft = JSON.parse(JSON.stringify(draft));
+                copy.version.inputs = inputs;
+                setDraft(copy);
+              }} />
+            )}
             {(final.version.inputs ?? []).length > 0 && (
               <p className="help">Asks whoever installs it: {(final.version.inputs ?? []).map((i) => i.question).join(" · ")}</p>
             )}
@@ -239,8 +289,8 @@ export default function Publish() {
           {leaks.length > 0 && (
             <div className="error">
               Still yours, so it will not be sent:{" "}
-              {leaks.map((l) => `${l.what} (in ${l.where})`).join("; ")}. Edit the name or summary above, or
-              ask the Founder again by reloading this page.
+              {leaks.map((l) => `${l.what} (in ${l.where})`).join("; ")}. Edit it above, or ask the Founder
+              again by reloading this page. yaaf checks again when you submit.
             </div>
           )}
 
@@ -259,7 +309,9 @@ export default function Publish() {
                 <p className="help">Signed in as {github.login}. It will be published as @{github.login}/{final.slug}.{" "}
                   <button className="small" onClick={async () => { await del("/admin/publish/github"); setGithub({ ...github, connected: false, login: null }); }}>
                     Sign out</button></p>
-                <button className="primary" disabled={phase === "submitting" || leaks.length > 0}
+                {/* Not disabled by the leak list: it is from the last check, and an
+                    edit may have fixed it. The server checks again either way. */}
+                <button className="primary" disabled={phase === "submitting"}
                   onClick={submit}>{phase === "submitting" ? "Sending…" : "Submit for review"}</button>
               </>
             )}
