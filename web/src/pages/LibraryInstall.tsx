@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { ApiError, get, post, ProjectBundle } from "../api";
-import { canDoWords } from "../library";
+import { canDoWords, ReceiptSummary } from "../library";
 import { useMe } from "../me";
 
 interface Preview {
@@ -209,8 +209,8 @@ export default function LibraryInstall() {
       {preview.receipt && (
         <section className="card">
           <h2>When the publisher ran it</h2>
+          <ReceiptSummary receipt={preview.receipt} />
           <p className="help">From yaaf&apos;s receipt on the publisher&apos;s install, as they reported it.</p>
-          <pre className="prompt">{JSON.stringify(preview.receipt, null, 2)}</pre>
         </section>
       )}
 

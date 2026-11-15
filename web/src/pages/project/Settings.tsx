@@ -1,4 +1,5 @@
 import { FallbackCard } from "../../fallback";
+import { OutcomeOffer } from "../../library";
 import { CredentialPicker, PlanMeter, ProviderCredentials } from "../../llmCredentials";
 import { useProviders } from "../../providers";
 import { PageHead, plainStatus } from "../../ui/kit";
@@ -1708,6 +1709,7 @@ export default function Settings({
           <Link className="btnlink" to={`/publish?project=${projectId}`}>Publish to the marketplace</Link>
         </div>
       </div>
+      <OutcomeOffer projectId={projectId} />
 
       </Section>
 

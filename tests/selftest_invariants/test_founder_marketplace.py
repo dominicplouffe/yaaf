@@ -86,3 +86,42 @@ def test_a_marketplace_skeptic_counts_as_the_challenge_seat(client, founder, reg
     start(client, "ship it")
     result = _tool_payload(next(c for c in calls if c.get("tool") == "propose_bundle"))
     assert not any("challenge" in p for p in result.get("problems", [])), result
+
+
+# ── a role the Founder writes ─────────────────────────────────────────────────
+
+LEGAL = {"slug": "contract-reviewer", "name": "Contract Reviewer", "category": "challenge",
+         "domains": ["legal"], "description": "Reads contracts for risk before anyone signs.",
+         "system_prompt": "You read each contract clause by clause and flag what shifts risk.",
+         "effort": "high", "tool_permissions": {"files": True}, "secret_scopes": []}
+
+
+def _with_new_role(role):
+    return {**PROJECT, "teams": [{"role_slug": role["slug"], "name": "Review",
+                                  "employees": ["Ines"], "lead": "Ines"}]}
+
+
+def test_a_role_the_founder_writes_waits_for_the_chairman(client, founder):
+    founder(tool_calls=[("propose_bundle", {"project": _with_new_role(LEGAL), "new_roles": [LEGAL]})])
+    thread = start(client, "review my contracts")
+    draft = thread["draft_bundle"]
+    assert draft["roles"][0]["drafted"] is True
+    assert "contract-reviewer" not in _library(client)
+    created = client.post("/admin/projects", headers=ADMIN, json={**draft["project"], "chairman_email": None})
+    assert created.status_code == 200, created.text
+    role = _library(client)["contract-reviewer"]
+    assert role["source"] is None and role["domains"] == ["legal"]
+
+
+@pytest.mark.parametrize("change, said", [
+    ({"tool_permissions": {"egress_unrestricted": True}}, "cannot grant itself"),
+    ({"slug": "worker"}, "slug is taken"),
+    ({"system_prompt": "You review {{client_name}}'s contracts carefully, clause by clause."}, "no blanks"),
+    ({"category": "vibes"}, "category is one of"),
+])
+def test_a_role_the_founder_writes_is_held_to_the_rules(client, founder, change, said):
+    role = {**LEGAL, **change}
+    calls = founder(tool_calls=[("propose_bundle", {"project": _with_new_role(role), "new_roles": [role]})])
+    start(client, "review my contracts")
+    refused = _tool_payload(next(c for c in calls if c.get("tool") == "propose_bundle"))
+    assert refused["ok"] is False and said in " ".join(refused["problems"]), refused

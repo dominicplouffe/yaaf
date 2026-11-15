@@ -243,6 +243,10 @@ WITHHELD = {
         "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
     "GET /admin/publish/publications":
         "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
+    "GET /admin/publish/projects/{project_id}/outcome":
+        "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
+    "POST /admin/publish/projects/{project_id}/outcome":
+        "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
     "GET /admin/library/updates":
         "maintenance of the install-wide library for the Roles page; a project client "
         "neither installs nor updates it.",

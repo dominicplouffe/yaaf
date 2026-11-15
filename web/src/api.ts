@@ -1560,6 +1560,8 @@ export interface BundleRole {
   /** Set when the role came from a library listing: the server fetches that
       listing and refuses the project if this role is not what it holds. */
   provenance?: { source: string; source_version?: number | null; source_index?: string | null };
+  /** Written by the Founder for this project because nothing existing fit. */
+  drafted?: boolean;
 }
 
 /** What a library listing says a project needs from whoever installs it. */

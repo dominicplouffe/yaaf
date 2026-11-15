@@ -345,3 +345,28 @@ def sha256(raw: bytes) -> str:
 
 def host_of(url: str) -> str:
     return urlparse(url).hostname or ""
+
+
+# ── telling a listing how it went ──────────────────────────────────────────────
+
+
+def outcome_report(session: Session, project: Project) -> dict | None:
+    """What a project started from a listing can tell that listing: numbers
+    from its receipt, and nothing else. No name, no goal, no domain."""
+    from yaaf.server.receipt import receipt
+
+    listing = library.listing_of(project)
+    if not listing:
+        return None
+    r = receipt(session, project)
+    p, cost, verified = r["project"], r["cost"], r["verified"]
+    req, ev = verified["requirements"], verified["evidence"]
+    return {
+        "listing": listing["id"], "version": listing.get("version"),
+        "finished": p["status"] == "completed", "status": p["status"], "mode": p["mode"],
+        "days": p["days"], "teams": p["teams"], "seats": p["seats"],
+        "usd": round(float(cost["usd"]), 2) if p.get("billing_mode") == "api_key" else None,
+        "runs": cost["runs"],
+        "requirements_met": req["met"], "requirements": req["met"] + req["open"] + req["cut"],
+        "claims_verified": ev["verified"], "claims": ev["external"],
+    }

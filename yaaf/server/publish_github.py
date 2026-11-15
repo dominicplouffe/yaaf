@@ -162,3 +162,10 @@ def review_state(token: str | None, repo: str, number: int) -> dict:
     if asked and asked[-1] is reviews[-1]:
         return {"state": "changes_requested", "note": asked[-1].get("body") or None}
     return {"state": "submitted", "note": None}
+
+
+def open_issue(token: str, repo: str, *, title: str, body: str) -> str:
+    status, issue = _request("POST", f"{API}/repos/{repo}/issues", token=token,
+                             json={"title": title, "body": body})
+    issue = _ok(status, issue, "open the report")
+    return str(issue["html_url"])

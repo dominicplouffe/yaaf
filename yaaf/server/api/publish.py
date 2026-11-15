@@ -282,6 +282,54 @@ def submit(body: SubmitIn, session: Session = Depends(db)) -> dict:
     return _row(row)
 
 
+@router.get("/projects/{project_id}/outcome", dependencies=[authority.CHAIR])
+def outcome_preview(project_id: str, session: Session = Depends(db)) -> dict:
+    """Whether to offer "tell the marketplace how it went", and exactly what
+    would be sent. Offered once, for a project started from a listing that
+    has run."""
+    project = _require_project(session, project_id)
+    report = publish.outcome_report(session, project)
+    listing = library.listing_of(project) or {}
+    reported = listing.get("outcome_url")
+    return {"offer": bool(report and report["runs"] and not reported),
+            "reported": reported, "report": report}
+
+
+@router.post("/projects/{project_id}/outcome", dependencies=[authority.CHAIR])
+def outcome_send(project_id: str, session: Session = Depends(db)) -> dict:
+    """Send the report, as an issue on the registry, signed in as the chairman.
+    Refused if it would carry anything of theirs, and sent once."""
+    project = _require_project(session, project_id)
+    report = publish.outcome_report(session, project)
+    if report is None:
+        raise HTTPException(status_code=422, detail="this project did not start from a listing")
+    listing = dict(library.listing_of(project) or {})
+    if listing.get("outcome_url"):
+        raise HTTPException(status_code=409, detail="you already told this listing how it went")
+    found = publish.leaks(report, publish.project_private(session, project))
+    if found:
+        raise HTTPException(status_code=422, detail="; ".join(f"{f['what']} is in {f['where']}" for f in found))
+    target = publish_target()
+    token = _token(session)
+    if not token:
+        raise HTTPException(status_code=409, detail="sign in with GitHub first")
+    body = ("A yaaf install ran this listing and reports what its receipt says. Numbers only.\n\n"
+            "```json\n" + json.dumps(report, indent=1) + "\n```\n")
+    try:
+        url = publish_github.open_issue(token, target["repo"],
+                                        title=f"Outcome: {report['listing']} v{report['version']}",
+                                        body=body)
+    except publish_github.GitHubError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.text) from None
+    listing["outcome_url"] = url
+    project.integrations = {**(project.integrations or {}), "listing": listing}
+    from yaaf.server.api.admin import _audit
+
+    _audit(session, project.id, "publish.outcome", "project", project.id,
+           {"listing": report["listing"], "url": url})
+    return {"reported": url}
+
+
 def _row(row: Publication) -> dict:
     return {"id": row.id, "kind": row.kind, "listing_id": row.listing_id, "version": row.version,
             "state": row.state, "review_note": row.review_note, "pr_url": row.pr_url,

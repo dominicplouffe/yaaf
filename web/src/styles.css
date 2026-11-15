@@ -3749,3 +3749,6 @@ button.gchip.tool-count:hover { border-color: var(--muted); color: var(--ink); }
 .adopt-ask { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
 ul.plain { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
 .badge.danger { color: var(--critical); border-color: currentColor; }
+.receipt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 0; }
+.receipt-grid dt { font-size: 12px; color: var(--muted); }
+.receipt-grid dd { margin: 0; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }

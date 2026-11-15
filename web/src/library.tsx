@@ -202,3 +202,71 @@ export function Marketplace({ kind, title }: { kind?: "role" | "project"; title?
     </div>
   );
 }
+
+/** A receipt, as numbers a stranger can read: what it cost and what yaaf
+    verified. Reported by the publisher's own install. */
+export function ReceiptSummary({ receipt }: { receipt: Record<string, unknown> }) {
+  const p = (receipt.project ?? {}) as { days?: number; teams?: number; seats?: number;
+                                         billing_mode?: string; status?: string };
+  const c = (receipt.cost ?? {}) as { usd?: number; runs?: number };
+  const v = (receipt.verified ?? {}) as { requirements?: { met: number; open: number; cut: number };
+                                          evidence?: { verified: number; external: number } };
+  const req = v.requirements;
+  const accepted = req ? req.met + req.open + req.cut : 0;
+  return (
+    <dl className="receipt-grid">
+      <div><dt>Ran for</dt><dd>{p.days ?? "?"} {p.days === 1 ? "day" : "days"}</dd></div>
+      <div><dt>Cost</dt><dd>{p.billing_mode === "api_key" && c.usd !== undefined ? `$${c.usd.toFixed(2)}` : "on a plan"}</dd></div>
+      {req && <div><dt>Requirements met</dt><dd>{req.met} of {accepted}</dd></div>}
+      {v.evidence && <div><dt>Claims verified</dt><dd>{v.evidence.verified} of {v.evidence.external}</dd></div>}
+      <div><dt>Team</dt><dd>{p.teams ?? "?"} teams · {p.seats ?? "?"} seats</dd></div>
+      {p.status && <div><dt>Finished</dt><dd>{p.status === "completed" ? "yes" : "not yet"}</dd></div>}
+    </dl>
+  );
+}
+
+interface OutcomeState {
+  offer: boolean;
+  reported: string | null;
+  report: Record<string, number | string | boolean | null> | null;
+}
+
+/** "Tell the marketplace how it went": offered once on a project started
+    from a listing, showing exactly the numbers that would be sent. */
+export function OutcomeOffer({ projectId }: { projectId: string }) {
+  const [state, setState] = useState<OutcomeState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    get<OutcomeState>(`/admin/publish/projects/${projectId}/outcome`).then(setState).catch(() => {});
+  }, [projectId]);
+  if (!state?.report) return null;
+  const r = state.report;
+  if (state.reported) {
+    return (
+      <p className="help">
+        You told {String(r.listing)} how it went.{" "}
+        <a href={state.reported} target="_blank" rel="noreferrer">Your report</a>
+      </p>
+    );
+  }
+  if (!state.offer) return null;
+  return (
+    <div className="card">
+      <b>Tell {String(r.listing)} how it went?</b>
+      <p className="help">
+        Sent once, as numbers only: {String(r.days)} days, {r.usd !== null ? `$${String(r.usd)}, ` : ""}
+        {String(r.runs)} runs, {String(r.requirements_met)} of {String(r.requirements)} requirements met,
+        finished: {r.finished ? "yes" : "no"}. No name, goal or domain. It helps the next person choose.
+      </p>
+      {error && <div className="error">{error}</div>}
+      <button className="small" onClick={async () => {
+        try {
+          const sent = await post<{ reported: string }>(`/admin/publish/projects/${projectId}/outcome`);
+          setState({ ...state, offer: false, reported: sent.reported });
+        } catch (e) {
+          setError((e as Error).message);
+        }
+      }}>Send it</button>
+    </div>
+  );
+}

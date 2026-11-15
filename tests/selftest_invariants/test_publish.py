@@ -64,7 +64,11 @@ def market(tmp_path, monkeypatch):
         calls.append(("review", number))
         return {"state": "changes_requested", "note": "Say what the WordPress key is for."}
 
-    for name, fn in [("start_device", start_device), ("poll_device", poll_device),
+    def open_issue(token, repo, *, title, body):
+        calls.append(("issue", repo, title, body))
+        return "https://github.com/owner/yaaf-marketplace/issues/3"
+
+    for name, fn in [("open_issue", open_issue), ("start_device", start_device), ("poll_device", poll_device),
                      ("login_of", login_of), ("next_version", next_version), ("submit", submit),
                      ("review_state", review_state)]:
         monkeypatch.setattr(publish_github, name, fn)
@@ -351,3 +355,34 @@ def test_yaaf_publish_from_a_terminal(client, market, monkeypatch, tmp_path):
     assert out.exit_code == 0, out.output
     assert "@rae/blog-desk v1" in out.output
     assert project["id"]
+
+
+
+# ── telling a listing how it went ──────────────────────────────────────────────
+
+def test_an_outcome_is_numbers_only_and_sent_once(client, market):
+    from tests.conftest import AUTONOMY_PRESETS
+
+    seed_role(client, "ceo", is_ceo=True)
+    seed_role(client, "writer")
+    client.post("/admin/users", json={"email": "chair@example.com", "display_name": "Chair"}, headers=ADMIN)
+    r = client.post("/admin/projects", headers=ADMIN, json={
+        "slug": "northwind-notes", "name": "Northwind Notes Desk", "goal": "Write posts for Northwind Notes readers.",
+        "chairman_email": "chair@example.com", "ceo_role_slug": "ceo",
+        "constitution": AUTONOMY_PRESETS["supervised"], "controlled_domains": ["northwind.example"],
+        "teams": [{"role_slug": "writer", "name": "Words", "employees": ["Ann"]}],
+        "listing": {"id": "@rae/blog-desk", "version": 2, "source": "x", "needs": {}}})
+    project_id = r.json()["id"]
+    preview = client.get(f"/admin/publish/projects/{project_id}/outcome", headers=ADMIN).json()
+    report = json.dumps(preview["report"])
+    assert preview["report"]["listing"] == "@rae/blog-desk"
+    for private in ("Northwind", "northwind.example", "chair@example.com", "Write posts"):
+        assert private not in report
+
+    _sign_in(client)
+    sent = client.post(f"/admin/publish/projects/{project_id}/outcome", headers=ADMIN)
+    assert sent.status_code == 200, sent.text
+    _, repo, title, body = next(c for c in market if c[0] == "issue")
+    assert title == "Outcome: @rae/blog-desk v2" and "Northwind" not in body
+    again = client.post(f"/admin/publish/projects/{project_id}/outcome", headers=ADMIN)
+    assert again.status_code == 409

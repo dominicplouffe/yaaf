@@ -172,6 +172,60 @@ def resolve_marketplace(entries: list) -> tuple[list[dict], list[str]]:
     return list(seen.values()), problems
 
 
+#: A drafted role may not grant itself these: the chairman grants them on
+#: purpose, on the Roles page, never as a side effect of accepting a draft.
+_DRAFT_WITHHELD = ("egress_unrestricted",)
+
+
+def drafted_roles(entries: list, session: Session, *, taken: set) -> tuple[list[dict], list[str]]:
+    """Roles the Founder wrote for this draft, checked the way POST /admin/roles
+    would check them, and marked as drafted so the review screen says so."""
+    from pydantic import ValidationError
+
+    from yaaf.server import library
+    from yaaf.server.api.admin import ROLE_CATEGORIES, RoleIn, domain_refusal
+
+    out: list[dict] = []
+    problems: list[str] = []
+    for entry in entries or []:
+        if isinstance(entry, str):
+            try:
+                entry = json.loads(entry)
+            except ValueError:
+                problems.append("new_roles: each entry is a role object")
+                continue
+        if not isinstance(entry, dict):
+            problems.append("new_roles: each entry is a role object")
+            continue
+        entry = {k: v for k, v in entry.items() if k not in ("provenance", "model", "harness")}
+        try:
+            role = RoleIn.model_validate(entry).model_dump()
+        except ValidationError as exc:
+            problems += [f"new role {entry.get('slug')}: {'.'.join(map(str, e['loc']))}: {e['msg']}"
+                         for e in exc.errors()[:3]]
+            continue
+        if role["category"] not in ROLE_CATEGORIES:
+            problems.append(f"new role {role['slug']}: category is one of {', '.join(ROLE_CATEGORIES)}")
+        if problem := domain_refusal(role["domains"]):
+            problems.append(f"new role {role['slug']}: {problem}")
+        withheld = [t for t in _DRAFT_WITHHELD if (role.get("tool_permissions") or {}).get(t)]
+        if withheld:
+            problems.append(f"new role {role['slug']}: a drafted role cannot grant itself "
+                            f"{', '.join(withheld)}; the chairman grants that on the Roles page")
+        if library.blanks_in(role):
+            problems.append(f"new role {role['slug']}: a role has no blanks")
+        if role["slug"] in taken or session.execute(
+                select(Role).where(Role.slug == role["slug"])).scalar_one_or_none():
+            problems.append(f"new role {role['slug']}: that slug is taken; this install or the "
+                            "marketplace already has it. Hire that one, or pick another slug")
+        role.pop("model", None)
+        role.pop("harness", None)
+        role["drafted"] = True
+        out.append(role)
+        taken.add(role["slug"])
+    return out, problems
+
+
 def _carried_model(project: dict, slug: str | None) -> str | None:
     from yaaf.runtimes.catalog import DEFAULT_MODEL
 
@@ -379,6 +433,15 @@ PROPOSE_SCHEMA = {
             "required": ["slug", "name", "goal", "mode", "teams"],
         },
         "tempo": {"type": "string", "enum": list(TEMPO_PRESETS)},
+        "new_roles": {
+            "type": "array",
+            "description": "roles you wrote because neither search_roles nor "
+                           "search_marketplace has anybody for part of the work. Each is a "
+                           "whole role: slug, name, category, description, system_prompt, "
+                           "effort, tool_permissions, secret_scopes. Generic: one job, no "
+                           "customer's name in it, and only the tools that job needs. "
+                           "Installed only when the chairman creates the project.",
+            "items": {"type": "object"}},
         "marketplace": {
             "type": "array",
             "description": "listings from search_marketplace this draft hires from: a role "
@@ -644,6 +707,10 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         # caller's object is not this tool's to change.
         project = dict(project)
         carried, market_problems = resolve_marketplace(args.get("marketplace") or [])
+        drafted, draft_problems = drafted_roles(args.get("new_roles") or [], session,
+                                                taken={r.get("slug") for r in carried})
+        carried += drafted
+        market_problems += draft_problems
         if market_problems:
             state["last_refusal"] = market_problems
             return ok({"ok": False, "problems": market_problems,

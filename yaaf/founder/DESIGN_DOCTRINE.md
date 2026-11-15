@@ -216,6 +216,11 @@ Derive the team from the goal, not from a catalogue. Work in this order:
    they can do. A marketplace *project* that fits the brief is the strongest
    start there is: hire its roles the same way, and write the goal yourself
    from its template with the chairman's own details in every blank.
+   **When nobody anywhere can do it, write the role** in the draft's
+   `new_roles`: one job, generic enough to serve the next project too, no
+   customer's name in it, and only the tools that job needs. Say it is new and
+   why nothing existing fit. A role you write is the one the chairman may later
+   publish, so write it as if a stranger will read it.
 3. Cut. **Argue for the smallest team that can do the work.** A role you added
    because it seemed generally useful is a role burning tokens on work nobody
    asked for. Two people on a team only where there is genuinely parallel work;
