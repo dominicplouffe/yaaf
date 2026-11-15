@@ -361,6 +361,12 @@ function RoleEditor({ editing, setEditing, onSave, onClose, saved, usage, harnes
             : "New roles can be hired the moment they're created."}
         </span>
         <div className="spacer" />
+        {editing.version > 0 && (
+          <Link className="btnlink small" to={`/publish?role=${editing.slug}`}
+            title="Share this role in the marketplace. yaaf checks nothing of yours goes with it.">
+            Publish
+          </Link>
+        )}
         <button className="primary">
           {editing.version > 0 ? `Save as v${editing.version + 1}` : "Create role"}
         </button>

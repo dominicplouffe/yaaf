@@ -986,6 +986,11 @@ class ProjectCreate(BaseModel):
     # else is installed alongside and the teams are pointed at it. A role that
     # says it came from a listing is checked against that listing first.
     roles: list[dict] = Field(default_factory=list)
+    # The library listing this project starts from ({id, version, source,
+    # needs}). Kept on the project so its start can be refused while a key or
+    # a data source the listing requires is missing, and so its setup
+    # checklist can name exactly what that is.
+    listing: dict | None = None
 
 
 def _hire_role_version(session: Session, slug: str) -> RoleVersion:
@@ -1016,6 +1021,23 @@ def _latest_role_version(session: Session, slug: str) -> RoleVersion:
         .order_by(RoleVersion.version.desc())
         .limit(1)
     ).scalar_one()
+
+
+def _refuse_without_listing_needs(session: Session, project: Project) -> None:
+    """A project started from a library listing does not start without what
+    the listing says it requires: a run that began would fail on the first
+    call that needs the key, after spending the claim. 409, because the
+    project is fine and its setup is not finished."""
+    from yaaf.server import library
+
+    missing = library.missing_needs(session, project)
+    if missing:
+        listing = library.listing_of(project) or {}
+        raise HTTPException(status_code=409, detail={
+            "code": "listing_needs", "missing": missing,
+            "text": (f"this project, from {listing.get('id')}, still needs "
+                     + "; ".join(f"{m['label']} ({m['name']})" for m in missing)
+                     + ". Add it under Settings, then start it.")})
 
 
 def _refuse_without_mailbox(project: Project) -> None:
@@ -1714,7 +1736,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         controlled_domains=body.controlled_domains,
         github_repo=body.github_repo,
         needs_mail=body.needs_mail,
-        integrations=_without_mail(body.integrations),
+        integrations=_with_listing(_without_mail(body.integrations), body.listing),
         deadline=deadline,
         deadline_source=deadline_source,
         topology=topology,
@@ -2069,6 +2091,16 @@ def export_project(project_id: str, include_values: bool = False,
         "roles": list(roles.values()),
         "secrets": secret_out,
     }
+
+
+def _with_listing(integrations: dict | None, listing: dict | None) -> dict | None:
+    """Keep the listing a project starts from, cleaned to what start needs."""
+    from yaaf.server import library
+
+    kept = library.clean_listing(listing)
+    if kept is None:
+        return integrations
+    return {**(integrations or {}), "listing": kept}
 
 
 def _without_mail(integrations: dict | None) -> dict | None:
@@ -3733,6 +3765,7 @@ def start_project(project_id: str, session: Session = Depends(db)) -> dict:
     # the alternative is a start that succeeds and a first run that does not.
     refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
     _refuse_without_mailbox(project)
+    _refuse_without_listing_needs(session, project)
     project.status = ProjectStatus.RUNNING
     project.status_reason = None
     # A Deliver or Operate project starts owing a plan. The chairman's words

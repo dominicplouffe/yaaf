@@ -342,6 +342,8 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
         carried = [r for r in spec["roles"] if isinstance(r, dict) and r.get("slug") in hired]
         if carried:
             body["roles"] = carried
+    if body is not spec and isinstance(spec.get("listing"), dict) and "listing" not in body:
+        body["listing"] = {**spec["listing"], "needs": spec.get("needs")}
 
     problems = founder_tools.validate({"project": body})
     if problems:

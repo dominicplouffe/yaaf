@@ -1691,6 +1691,23 @@ export default function Settings({
           <button onClick={downloadSetup}>Download setup file</button>
         </div>
       </div>
+      <h2>Share it with everyone</h2>
+      <div className="card">
+        <Lede>
+          Publish this project to the marketplace, so other people can start from the team that worked.
+        </Lede>
+        <Why>
+          <p>
+            yaaf leaves out your keys, email, repository, domains and private addresses. The Founder
+            turns your details into blanks the next person fills in, and asks only what it cannot
+            decide. Nothing of yours is sent: the server checks first. A moderator reads it before
+            anyone can install it.
+          </p>
+        </Why>
+        <div className="actions">
+          <Link className="btnlink" to={`/publish?project=${projectId}`}>Publish to the marketplace</Link>
+        </div>
+      </div>
 
       </Section>
 

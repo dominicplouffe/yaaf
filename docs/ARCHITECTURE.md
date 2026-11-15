@@ -83,6 +83,17 @@ update that grants a new tool or key needs the chairman's yes to that
 (`repin` with `consent`). The Founder can search a source and name a listing
 in its draft; only the chairman's Create installs it.
 
+Publishing goes the other way (`yaaf/server/publish.py`). A project or role
+becomes a listing from the plain design export, never the backup with values:
+the chairman's account, repo and private addresses are left out, keys and data
+sources become declared needs. The Founder turns the rest of the publisher's
+specifics into `{{blanks}}` (`yaaf/founder/publish.py`). Before anything
+leaves, the server compares the listing with every value it knows is the
+publisher's, every key's value included, and refuses to send it while one
+remains. The person signs in to GitHub with a device code; yaaf opens the pull
+request against the registry, and a moderator's merge publishes it. The
+GitHub token is the person's, stored like a secret and never given to a run.
+
 ### Data sources
 
 A data source is an MCP server the chairman connects. Its address and token

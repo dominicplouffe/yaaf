@@ -563,6 +563,8 @@ def _project_from(client: httpx.Client, spec) -> dict:
         carried = [r for r in spec.get("roles") or [] if r.get("slug") in hired]
         if carried:
             project["roles"] = carried
+        if isinstance(spec.get("listing"), dict):
+            project["listing"] = {**spec["listing"], "needs": spec.get("needs")}
         wanted = project.pop("billing_secret_name", None)
         others = project.pop("credential_names", None) or {}
         backup = project.pop("fallback_credential_name", None)
@@ -2246,7 +2248,7 @@ def install(
             return
         draft = _json_or_die(client.post("/admin/library/draft", json=body))
     answers = _ask_blanks(draft.get("inputs") or [], given)
-    filled = fill_blanks({k: v for k, v in draft.items() if k not in ("inputs", "needs")}, answers)
+    filled = fill_blanks({k: v for k, v in draft.items() if k != "inputs"}, answers)
     left = blanks_in(filled["project"])
     if left:
         typer.echo("still blank: " + ", ".join(sorted(left)), err=True)
@@ -2262,6 +2264,140 @@ def install(
         _create_from_file(out)
     else:
         typer.echo(f"create it with: yaaf create-project --from-file {out}")
+
+
+def _project_id(client: httpx.Client, slug: str) -> str:
+    for project in _json_or_die(client.get("/observe/projects")):
+        if project.get("slug") == slug or project.get("id") == slug:
+            return project["id"]
+    typer.echo(f"no project {slug!r} that you can see", err=True)
+    raise typer.Exit(1)
+
+
+def _github_sign_in(client: httpx.Client) -> str:
+    status = _json_or_die(client.get("/admin/publish/github"))
+    if status.get("connected"):
+        return status["login"]
+    if not status.get("ready"):
+        typer.echo(f"cannot publish from here: {status.get('why')}", err=True)
+        raise typer.Exit(1)
+    started = _json_or_die(client.post("/admin/publish/github/start"))
+    typer.echo(f"Sign in with GitHub: open {started['verification_uri']} and enter {started['user_code']}")
+    import time as _time
+
+    deadline = _time.monotonic() + started.get("expires_in", 900)
+    interval = started.get("interval", 5)
+    while _time.monotonic() < deadline:
+        _time.sleep(interval)
+        polled = _json_or_die(client.post("/admin/publish/github/poll",
+                                          json={"device_code": started["device_code"]}))
+        if polled["state"] == "done":
+            typer.echo(f"signed in as {polled['login']}")
+            return polled["login"]
+        if polled["state"] == "slow_down":
+            interval += 5
+        elif polled["state"] in ("expired", "denied"):
+            typer.echo(f"sign-in {polled['state']}", err=True)
+            raise typer.Exit(1)
+    typer.echo("sign-in timed out", err=True)
+    raise typer.Exit(1)
+
+
+def _show_listing(draft: dict) -> None:
+    listing, version = draft["listing"], draft["version"]
+    typer.echo(f"\n{listing.get('name')}  ({draft.get('slug')}, {listing.get('kind')})")
+    typer.echo(f"  {listing.get('summary') or '(no summary yet)'}")
+    if version.get("kind") == "project":
+        typer.echo("\n" + version["bundle"]["project"].get("goal", ""))
+    for blank in version.get("inputs") or []:
+        typer.echo(f"  asks: {blank['question']} (e.g. {blank.get('example')})")
+    for key in version["needs"].get("keys") or []:
+        typer.echo(f"  needs: {key.get('label')} ({key['name']})" + ("" if key.get("required") else ", optional"))
+
+
+@app.command()
+def publish(
+    kind: str = typer.Argument(..., help="project or role"),
+    slug: str = typer.Argument(..., help="The project or role to publish"),
+    yes: bool = typer.Option(False, "--yes", help="Take the Founder's answer to every question"),
+    save: Path = typer.Option(None, "--save", help="Write the prepared listing here and stop, to edit it"),
+    from_file: Path = typer.Option(None, "--from", help="Submit a listing written with --save"),
+    no_founder: bool = typer.Option(False, "--no-founder", help="Skip the Founder; submit the draft as written"),
+) -> None:
+    """Publish a project or role to the marketplace.
+
+    yaaf leaves out everything that is yours, the Founder turns your details
+    into blanks and asks only what it cannot decide, and the server refuses to
+    send anything it still finds of yours. Then it signs you in to GitHub once
+    and opens the pull request for you."""
+    from yaaf.founder.publish import answer as apply_answer
+
+    if kind not in ("project", "role"):
+        typer.echo("publish a project or a role", err=True)
+        raise typer.Exit(2)
+    with _client() as client:
+        target = {"project_id": _project_id(client, slug)} if kind == "project" else {"role_slug": slug}
+        base = (f"/admin/publish/projects/{target['project_id']}" if kind == "project"
+                else f"/admin/publish/roles/{slug}")
+        if from_file:
+            draft = json.loads(from_file.read_text())
+        else:
+            prepared = _json_or_die(client.post(f"{base}/draft", json={}))
+            draft = prepared["draft"]
+            if not no_founder:
+                typer.echo("The Founder is making it reusable…")
+                result = _json_or_die(client.post(f"{base}/generalize", json={"draft": draft}))
+                draft = result["draft"]
+                for change in result.get("changes") or []:
+                    typer.echo(f"  replaced: {change}")
+                for question in result.get("questions") or []:
+                    pick = question["recommend"]
+                    if not yes and _interactive():
+                        said = typer.prompt(
+                            f"{question['about']!r}: {question['why']} keep or blank?",
+                            default=pick)
+                        pick = "blank" if said.strip().lower().startswith("b") else "keep"
+                    draft = apply_answer(draft, question, pick)
+        _show_listing(draft)
+        if save:
+            save.write_text(json.dumps(draft, indent=2))
+            typer.echo(f"\nwrote {save}; submit it with: yaaf publish {kind} {slug} --from {save}")
+            return
+        if not yes and _interactive() and not typer.confirm("\nSubmit this for review?", default=True):
+            raise typer.Exit(0)
+        _github_sign_in(client)
+        response = client.post("/admin/publish/submit", json={**target, "draft": draft})
+        if response.status_code == 422:
+            detail = response.json().get("detail")
+            typer.echo("not sent:", err=True)
+            for line in (detail.get("problems", []) + [f"{leak['what']} is in {leak['where']}"
+                                                      for leak in detail.get("leaks", [])]
+                         if isinstance(detail, dict) else [str(detail)]):
+                typer.echo(f"  {line}", err=True)
+            typer.echo("fix it with --save, edit the file, then --from", err=True)
+            raise typer.Exit(1)
+        row = _json_or_die(response)
+        typer.echo(f"submitted {row['listing_id']} v{row['version']}: {row['pr_url']}")
+        typer.echo("a moderator reads it next; `yaaf publications` shows where it stands")
+
+
+@app.command()
+def publications(slug: str = typer.Argument(..., help="A project or a role")) -> None:
+    """What you submitted from here, and what the moderators last said."""
+    with _client() as client:
+        rows = None
+        for project in _json_or_die(client.get("/observe/projects")):
+            if project.get("slug") == slug:
+                rows = _json_or_die(client.get("/admin/publish/publications",
+                                               params={"project_id": project["id"]}))
+        if rows is None:
+            rows = _json_or_die(client.get("/admin/publish/publications", params={"role_slug": slug}))
+    if not rows:
+        typer.echo("nothing submitted")
+    for row in rows:
+        typer.echo(f"{row['listing_id']} v{row['version']}: {row['state']}  {row['pr_url']}")
+        if row.get("review_note"):
+            typer.echo(f"  moderator: {row['review_note']}")
 
 
 # ── who sits on a project, and the box's people ────────────────────────────────

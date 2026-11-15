@@ -1104,6 +1104,9 @@ export default function NewProject() {
     const carried = (bundle?.roles ?? []).filter((r) => hired.has(r.slug));
     return {
           ...(carried.length ? { roles: carried } : {}),
+          // Started from a library listing: the server keeps what it needs, and
+          // will not start the project while a required key is missing.
+          ...(bundle?.listing ? { listing: { ...bundle.listing, needs: bundle.needs } } : {}),
           slug: slug.trim(),
           name: name.trim(),
           goal: goal.trim(),

@@ -939,6 +939,36 @@ class RoleVersion(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
+class Publication(Base):
+    """A project or role this install submitted to a library source.
+
+    One row per submitted version: what was sent (its listing id and the
+    sha256 of the version file), where the pull request is, and what the
+    moderators last said. The listing itself lives in the registry; this is
+    only so the chairman can see where it stands without leaving yaaf.
+    """
+
+    __tablename__ = "publications"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16))  # project | role
+    project_id: Mapped[str | None] = mapped_column(String(40))
+    role_slug: Mapped[str | None] = mapped_column(String(64))
+    listing_id: Mapped[str] = mapped_column(String(200))
+    version: Mapped[int] = mapped_column(Integer)
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    repo: Mapped[str] = mapped_column(String(200))
+    pr_number: Mapped[int | None] = mapped_column(Integer)
+    pr_url: Mapped[str | None] = mapped_column(String(500))
+    # submitted | changes_requested | published | closed
+    state: Mapped[str] = mapped_column(String(24), default="submitted")
+    # The latest moderator note asking for changes, verbatim.
+    review_note: Mapped[str | None] = mapped_column(Text)
+    submitted_by: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
 class Crew(Base):
     """A named job with a team already on it.
 

@@ -276,6 +276,8 @@ Covered in [PROVIDERS.md](PROVIDERS.md).
 | `yaaf library search [WORDS] [--kind role\|project]` | Search the marketplace and any other library source this install reads |
 | `yaaf install @handle/slug` | Install a role from the marketplace, beside any role of the same name and never over it. For a project, asks its blanks (`--answer id=value` in a script) and writes a setup file; `--create` creates it too |
 | `yaaf library updates` | Roles installed from a source: newer versions, and any the source removed |
+| `yaaf publish project SLUG` / `publish role SLUG` | Publish to the marketplace: yaaf leaves out what is yours, the Founder turns your details into blanks, you sign in to GitHub once, and the pull request opens for you. `--save FILE` to edit first, `--from FILE` to send it |
+| `yaaf publications SLUG` | What you submitted, and what the moderators last said |
 | `yaaf save-seed DIR` / `seed DIR` | Export roles and projects as specs; load them onto an empty install |
 | `yaaf set-secret` | Store an encrypted project secret |
 | `yaaf settings` | Show the install-wide settings |

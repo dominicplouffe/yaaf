@@ -223,6 +223,26 @@ WITHHELD = {
         "every project.",
     "GET /admin/roles/{slug}": "`catalog` serves what a drafting client needs of it.",
     "POST /admin/crews": "the crew library is shared the same way the role library is.",
+    "POST /admin/publish/projects/{project_id}/draft":
+        "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
+    "POST /admin/publish/projects/{project_id}/generalize":
+        "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
+    "POST /admin/publish/roles/{slug}/draft":
+        "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
+    "POST /admin/publish/roles/{slug}/generalize":
+        "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
+    "GET /admin/publish/github":
+        "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
+    "POST /admin/publish/github/start":
+        "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
+    "POST /admin/publish/github/poll":
+        "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
+    "DELETE /admin/publish/github":
+        "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
+    "POST /admin/publish/submit":
+        "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
+    "GET /admin/publish/publications":
+        "publishing puts a design in public under a person's name, signed in to GitHub as them; a person does that, in the dashboard or the CLI.",
     "GET /admin/library/updates":
         "maintenance of the install-wide library for the Roles page; a project client "
         "neither installs nor updates it.",

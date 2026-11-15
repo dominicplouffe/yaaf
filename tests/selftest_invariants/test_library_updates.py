@@ -113,3 +113,55 @@ def test_a_role_edited_here_stays_one_click(client):
     seed_role(client, "worker", tool_permissions={"bash": True})
     team = project["teams"][0]
     assert client.post(f"/admin/teams/{team['id']}/repin", headers=ADMIN).status_code == 200
+
+
+# ── a project from a listing does not start without what it needs ─────────────
+
+NEEDS = {"keys": [{"name": "wordpress", "label": "WordPress application password", "roles": ["writer"],
+                   "required": True},
+                  {"name": "analytics", "label": "Analytics token", "roles": ["writer"], "required": False}],
+         "data_sources": [], "mailbox": False, "github_repo": False}
+
+
+def _from_listing(client):
+    from tests.conftest import AUTONOMY_PRESETS
+
+    seed_role(client, "ceo", is_ceo=True)
+    seed_role(client, "writer", secret_scopes=["wordpress", "analytics"])
+    client.post("/admin/users", json={"email": "chair@example.com", "display_name": "Chair"}, headers=ADMIN)
+    r = client.post("/admin/projects", headers=ADMIN, json={
+        "slug": "from-listing", "name": "From a listing", "goal": "Write posts real readers answer.",
+        "chairman_email": "chair@example.com", "ceo_role_slug": "ceo",
+        "constitution": AUTONOMY_PRESETS["supervised"],
+        "integrations": {"runtime": "mock"},
+        "teams": [{"role_slug": "writer", "name": "Words", "employees": ["Ann"]}],
+        "listing": {"id": "@rae/blog-desk", "version": 2, "source": "/x/index.json", "needs": NEEDS,
+                    "smuggled": "ignored"}})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def test_a_project_from_a_listing_does_not_start_without_its_required_key(client):
+    project_id = _from_listing(client)
+    refused = client.post(f"/admin/projects/{project_id}/start", headers=ADMIN)
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["missing"] == [
+        {"kind": "key", "name": "wordpress", "label": "WordPress application password", "help": None}]
+    setup = client.get(f"/observe/projects/{project_id}/setup", headers=ADMIN)
+    assert setup.status_code == 200, setup.text
+    step = next(s for s in setup.json()["steps"] if s["key"] == "secrets")
+    assert step["required"] and "WordPress application password" in step["detail"]
+
+    client.post("/admin/secrets", headers=ADMIN, json={
+        "project_id": project_id, "name": "wordpress", "value": "admin:abcd efgh", "role_scopes": ["writer"]})
+    assert client.post(f"/admin/projects/{project_id}/start", headers=ADMIN).status_code == 200
+
+
+def test_only_the_listings_name_and_needs_are_kept(client):
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Project
+
+    project_id = _from_listing(client)
+    with db_session() as session:
+        kept = session.get(Project, project_id).integrations["listing"]
+    assert set(kept) == {"id", "version", "source", "needs"}

@@ -447,3 +447,55 @@ def fill_blanks(value, answers: dict[str, str]):
     if isinstance(value, list):
         return [fill_blanks(v, answers) for v in value]
     return value
+
+
+# ── what a project from a listing still needs ──────────────────────────────────
+
+
+def listing_of(project) -> dict | None:
+    """The listing a project was started from, as stored at creation."""
+    value = (project.integrations or {}).get("listing")
+    return value if isinstance(value, dict) else None
+
+
+def missing_needs(session: Session, project) -> list[dict]:
+    """The keys and data sources a project's listing marks required and the
+    project does not have yet, each named the way the listing names it."""
+    from yaaf.core.models import Secret
+
+    listing = listing_of(project)
+    needs = (listing or {}).get("needs") or {}
+    held = {name for name in session.execute(
+        select(Secret.name).where(Secret.project_id == project.id)).scalars()}
+    sources = {s.get("name") for s in (project.integrations or {}).get("mcp_servers") or []}
+    out = []
+    for key in needs.get("keys") or []:
+        if isinstance(key, dict) and key.get("required") and key.get("name") not in held:
+            out.append({"kind": "key", "name": key.get("name"), "label": key.get("label") or key.get("name"),
+                        "help": key.get("help")})
+    for source in needs.get("data_sources") or []:
+        if isinstance(source, dict) and source.get("required") and source.get("name") not in sources:
+            out.append({"kind": "data_source", "name": source.get("name"),
+                        "label": source.get("serves") or source.get("name"), "help": None})
+    return out
+
+
+def clean_listing(value: dict | None) -> dict | None:
+    """What a project keeps of the listing it came from: which one, and what
+    it needs. Nothing else a client sends is stored."""
+    if not isinstance(value, dict) or not isinstance(value.get("id"), str):
+        return None
+    needs = value.get("needs") if isinstance(value.get("needs"), dict) else {}
+    return {
+        "id": value["id"][:200],
+        "version": value.get("version") if isinstance(value.get("version"), int) else None,
+        "source": str(value.get("source") or "")[:500] or None,
+        "needs": {
+            "keys": [{k: key.get(k) for k in ("name", "label", "format", "help", "required", "roles")}
+                     for key in needs.get("keys") or [] if isinstance(key, dict)][:20],
+            "data_sources": [{k: src.get(k) for k in ("name", "serves", "address", "tools", "required")}
+                             for src in needs.get("data_sources") or [] if isinstance(src, dict)][:20],
+            "mailbox": bool(needs.get("mailbox")),
+            "github_repo": bool(needs.get("github_repo")),
+        },
+    }

@@ -62,11 +62,23 @@ BY_KEY = {s.key: s for s in (*STEPS, EMAIL)}
 def steps_for(project: Project) -> tuple[Step, ...]:
     """This project's steps, in order. The email step sits right after the key:
     when it is required, it is the second thing standing between a new project
-    and its first run."""
+    and its first run. A project started from a library listing that requires
+    keys or data sources has those steps required too: it cannot start without
+    them (yaaf.server.api.admin._refuse_without_listing_needs)."""
+    from yaaf.server import library
+
+    needs = ((library.listing_of(project) or {}).get("needs") or {})
+    steps = list(STEPS)
+    if any(k.get("required") for k in needs.get("keys") or [] if isinstance(k, dict)):
+        steps = [Step(s.key, s.label, s.section, required=True) if s.key == "secrets" else s
+                 for s in steps]
+    if any(d.get("required") for d in needs.get("data_sources") or [] if isinstance(d, dict)):
+        steps = [Step(s.key, s.label, s.section, required=True) if s.key == "sources" else s
+                 for s in steps]
     if not (project.needs_mail or (project.integrations or {}).get("mail")):
-        return STEPS
+        return tuple(steps)
     email = Step(EMAIL.key, EMAIL.label, EMAIL.section, required=bool(project.needs_mail))
-    return (STEPS[0], email, *STEPS[1:])
+    return (steps[0], email, *steps[1:])
 
 
 def _state(project: Project) -> dict:
@@ -91,6 +103,14 @@ def _done(session: Session, project: Project, step: Step) -> tuple[bool, str]:
             return True, (f"{orders} standing order{'s' if orders != 1 else ''} under the goal."
                           if orders else "The goal is confirmed.")
         return False, "Add the standing orders every agent reads under the goal."
+    if step.key in ("sources", "secrets"):
+        from yaaf.server import library
+
+        kind = "data_source" if step.key == "sources" else "key"
+        missing = [m for m in library.missing_needs(session, project) if m["kind"] == kind]
+        if missing:
+            return False, ("Its listing needs " + ", ".join(m["label"] for m in missing)
+                           + " before it can start.")
     if step.key == "sources":
         sources = integrations.get("mcp_servers") or []
         if sources:

@@ -396,7 +396,7 @@ def _secrets_mark(session: Session, project: Project, role_version) -> str:
             select(Secret).where(or_(Secret.project_id == project.id,
                                      Secret.project_id.is_(None)))
         ).scalars()
-        if s.kind != "billing" and role.slug in (s.role_scopes or [])
+        if s.kind not in ("billing", "publish") and role.slug in (s.role_scopes or [])
     )
     return hashlib.sha256("\n".join(granted).encode()).hexdigest()[:16]
 

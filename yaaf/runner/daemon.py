@@ -721,11 +721,13 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
     held_by_sources = owned_secret_names(project)
     env: dict = {}
     for secret in candidates:
-        if secret.kind in ("billing", "mailbox"):
+        if secret.kind in ("billing", "mailbox", "publish"):
             continue  # belt and suspenders: the API refuses grants on billing
             # secrets, but even a hand-edited DB row must not leak the model
             # credential into a role's env. The mailbox login likewise: the
-            # platform sends the CEO's email, so no sandbox ever needs it.
+            # platform sends the CEO's email, so no sandbox ever needs it. A
+            # person's GitHub sign-in for publishing (yaaf.server.publish_github)
+            # is theirs, and no agent publishes in their name.
         if secret.project_id == project.id and secret.name in held_by_sources:
             continue
         if not secret.role_scopes or role.slug not in secret.role_scopes:
