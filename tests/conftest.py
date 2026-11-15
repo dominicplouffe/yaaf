@@ -21,6 +21,9 @@ os.environ.setdefault("YAAF_SANDBOX_MODE", "subprocess")
 # half is what made the suite pass on a laptop without Docker and fail on one
 # with it: same commit, same command, and nothing on screen to say why.
 os.environ.setdefault("YAAF_ALLOW_HOST_SUCCESS_TESTS", "1")
+# The suite never reaches the marketplace. A test that wants a library source
+# builds one on disk and points this at it (tests/selftest_invariants/test_library_*).
+os.environ.setdefault("YAAF_LIBRARY_SOURCES", "")
 os.environ.setdefault("YAAF_MASTER_KEY", "kkP1p6Rt0DZ2rWv1w5Zq3o8y6bT4uY9cQ1eS7gJ0aXk=")
 os.environ.setdefault("YAAF_WORKSPACES_ROOT", tempfile.mkdtemp(prefix="yaaf-test-ws-"))
 os.environ.setdefault("YAAF_ARTIFACTS_ROOT", tempfile.mkdtemp(prefix="yaaf-test-art-"))

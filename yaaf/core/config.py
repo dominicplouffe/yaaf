@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = DEFAULT_PORT
 
+    # Library sources: registry indexes whose roles and projects can be hired
+    # here (yaaf.server.library), comma-separated. The yaaf marketplace by
+    # default; empty turns the feature off and the library is this install's
+    # own. A path or file:// URL reads a registry from disk.
+    library_sources: str = "https://yaaf.dplouffe.ca/marketplace/index.json"
+
     # Runner
     worker_name: str = "worker-1"
     # Which stack on this box owns the containers we launch. Every sandbox and

@@ -1096,7 +1096,14 @@ export default function NewProject() {
       assembled for the rehearsal would be a rehearsal of a different
       project, which is worse than no rehearsal at all. */
   function projectBody(chosenCeo: string) {
+    // Role definitions travel with a setup file and go to the server with the
+    // project, which installs them: identical ones are reused, others are
+    // added beside the library's own and never over them, and one that claims
+    // a library listing is checked against it.
+    const hired = new Set([chosenCeo, ...teams.map((t) => t.role_slug)]);
+    const carried = (bundle?.roles ?? []).filter((r) => hired.has(r.slug));
     return {
+          ...(carried.length ? { roles: carried } : {}),
           slug: slug.trim(),
           name: name.trim(),
           goal: goal.trim(),
@@ -1258,16 +1265,6 @@ export default function NewProject() {
             "(or deploy/update_single_server.sh), then reload this page — or pick roles this " +
             "install already has.",
         );
-      }
-      // Role definitions travel with a setup file — seed any the library
-      // lacks before the server resolves slugs. Re-check against a fresh
-      // list so a retried submit never stamps duplicate versions.
-      if (newBundleRoles.length) {
-        const library = await get<RoleSummary[]>("/admin/roles");
-        for (const role of newBundleRoles) {
-          if (!library.some((r) => r.slug === role.slug)) await post("/admin/roles", role);
-        }
-        setRoles(await get<RoleSummary[]>("/admin/roles"));
       }
       // The file's choice wins when one was loaded — its teams were designed
       // around that CEO — otherwise the chairman's.

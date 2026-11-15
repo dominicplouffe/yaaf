@@ -1543,6 +1543,29 @@ export interface BundleRole {
   harness?: string | null;
   tool_permissions: Record<string, unknown>;
   secret_scopes: string[];
+  /** Set when the role came from a library listing: the server fetches that
+      listing and refuses the project if this role is not what it holds. */
+  provenance?: { source: string; source_version?: number | null; source_index?: string | null };
+}
+
+/** What a library listing says a project needs from whoever installs it. */
+export interface ListingNeeds {
+  keys: { name: string; label: string; format?: string; file?: boolean; roles: string[];
+          required: boolean; help?: string }[];
+  data_sources: { name: string; serves: string; address: string; auth: string; access: string;
+                  tools: string[]; roles: string[]; required: boolean }[];
+  mailbox: boolean;
+  github_repo: boolean;
+}
+
+/** A blank in a project listing, asked of whoever installs it. */
+export interface ListingInput {
+  id: string;
+  question: string;
+  type: "text" | "url" | "domain" | "number" | "money" | "choice" | "list";
+  choices?: string[];
+  example: unknown;
+  required: boolean;
 }
 
 /** A project setup file (GET /admin/projects/{id}/export). The `project`
@@ -1607,6 +1630,12 @@ export interface ProjectBundle {
     solo: boolean;
   };
   roles: BundleRole[];
+  /** Present on a draft made from a library listing (POST /admin/library/draft). */
+  listing?: { id: string; version: number; source: string; content_sha256: string;
+              name?: string; summary?: string };
+  needs?: ListingNeeds;
+  inputs?: ListingInput[];
+  receipt?: Record<string, unknown>;
   secrets: {
     name: string;
     role_scopes: string[];

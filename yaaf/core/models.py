@@ -902,6 +902,13 @@ class Role(Base):
     category: Mapped[str | None] = mapped_column(String(32))
     # Which worlds it knows: ["markets", "data"]. A filter, never a folder.
     domains: Mapped[list] = mapped_column(JSONVariant, default=list)
+    # Where it came from, when it came from a library source: the listing id
+    # ("@rae/ads-strategist") and the index that served it. NULL is a role
+    # written or seeded on this install. A role from a source is only ever
+    # updated by that source; two roles that share a slug but not a source
+    # never become versions of each other (yaaf.server.library).
+    source: Mapped[str | None] = mapped_column(String(200))
+    source_index: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -923,6 +930,12 @@ class RoleVersion(Base):
     # {"bash": true, "web": true, "github": false}
     tool_permissions: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     secret_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
+    # For a version installed from a library source: which listing version it
+    # is, and the sha256 of the file that was checked against the index before
+    # it was installed. Lets an update say exactly what moved, and lets anyone
+    # re-check a version against the registry later.
+    source_version: Mapped[int | None] = mapped_column(Integer)
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

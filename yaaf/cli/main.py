@@ -531,6 +531,12 @@ def _create_from_file(spec_file: Path, start_now: bool = False) -> None:
         project = _project_from(client, spec)
         response = client.post("/admin/projects", json=project)
         if response.status_code < 400:
+            for installed in response.json().get("roles_installed") or []:
+                if installed.get("renamed_from"):
+                    typer.echo(f"role {installed['renamed_from']} from the setup file differs from "
+                               f"this install's, so it was added as {installed['slug']}", err=True)
+                elif installed.get("action") == "created":
+                    typer.echo(f"added role {installed['slug']} from the setup file", err=True)
             _after_creating(client, response.json()["id"], project,
                             spec if isinstance(spec, dict) else {},
                             ask=_interactive(), start_now=start_now, err=True)
@@ -549,11 +555,14 @@ def _project_from(client: httpx.Client, spec) -> dict:
         # Sent bare, the server read a setup file as a project with no slug
         # and answered with a page of validation.
         project = dict(spec.get("project") or {})
-        known = {r["slug"] for r in _json_or_die(client.get("/admin/roles"))}
-        for role in spec.get("roles") or []:
-            if role.get("slug") and role["slug"] not in known:
-                _json_or_die(client.post("/admin/roles", json=role))
-                typer.echo(f"added role {role['slug']} from the setup file")
+        # The roles travel with the project and the server installs them:
+        # identical ones are reused, others go beside the library's own under
+        # a new name and never over them (yaaf.server.library).
+        hired = {project.get("ceo_role_slug") or "ceo"} | {
+            t.get("role_slug") for t in project.get("teams") or [] if isinstance(t, dict)}
+        carried = [r for r in spec.get("roles") or [] if r.get("slug") in hired]
+        if carried:
+            project["roles"] = carried
         wanted = project.pop("billing_secret_name", None)
         others = project.pop("credential_names", None) or {}
         backup = project.pop("fallback_credential_name", None)
