@@ -215,6 +215,21 @@ def fetch_version(source: str, listing_id: str, version: int | None = None) -> F
                                "source_version": wanted, "content_sha256": digest})
 
 
+def listing_status(role: Role) -> dict | None:
+    """What the source says about an installed role today: its status, why,
+    and its latest version. None for a role written here, a source this
+    install no longer reads, or one that cannot be reached — an unreachable
+    registry degrades to "no news", never to a refusal."""
+    if not role.source or not role.source_index or role.source_index not in configured_sources():
+        return None
+    try:
+        listing = find_listing(role.source_index, role.source)
+    except LibraryRefusal:
+        return None
+    return {"status": listing.get("status") or "active", "reason": listing.get("status_reason"),
+            "latest": listing.get("latest"), "tier": listing.get("tier") or "community"}
+
+
 # ── installing ─────────────────────────────────────────────────────────────────
 
 

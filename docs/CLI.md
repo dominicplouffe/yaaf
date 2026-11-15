@@ -273,6 +273,9 @@ Covered in [PROVIDERS.md](PROVIDERS.md).
 | Command | What it does |
 |---|---|
 | `yaaf seed-roles roles/` / `seed-crews crews/` | Load the role library and ready-made teams. `--only-missing` skips ones you have. |
+| `yaaf library search [WORDS] [--kind role\|project]` | Search the marketplace and any other library source this install reads |
+| `yaaf install @handle/slug` | Install a role from the marketplace, beside any role of the same name and never over it. For a project, asks its blanks (`--answer id=value` in a script) and writes a setup file; `--create` creates it too |
+| `yaaf library updates` | Roles installed from a source: newer versions, and any the source removed |
 | `yaaf save-seed DIR` / `seed DIR` | Export roles and projects as specs; load them onto an empty install |
 | `yaaf set-secret` | Store an encrypted project secret |
 | `yaaf settings` | Show the install-wide settings |

@@ -988,6 +988,24 @@ class ProjectCreate(BaseModel):
     roles: list[dict] = Field(default_factory=list)
 
 
+def _hire_role_version(session: Session, slug: str) -> RoleVersion:
+    """The version a new team or CEO is hired on — refused for a role whose
+    listing its source has removed. Teams already running keep it until the
+    chairman decides; nobody new is hired onto it."""
+    version = _latest_role_version(session, slug)
+    role = session.get(Role, version.role_id)
+    if role is not None and role.source:
+        from yaaf.server import library
+
+        status = library.listing_status(role)
+        if status and status["status"] == "removed":
+            raise HTTPException(status_code=409, detail=(
+                f"'{slug}' was removed from {role.source}: "
+                f"{status.get('reason') or 'no reason given'}. It cannot be hired again; teams "
+                "already running it keep it until you decide."))
+    return version
+
+
 def _latest_role_version(session: Session, slug: str) -> RoleVersion:
     role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
     if role is None:
@@ -1676,7 +1694,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         if deadline <= utcnow():
             raise HTTPException(status_code=422, detail="the deadline is already past")
 
-    ceo_role_version = _latest_role_version(session, body.ceo_role_slug)
+    ceo_role_version = _hire_role_version(session, body.ceo_role_slug)
 
     # The org shape as a recorded fact: solo (one brain), ceo_team (flat —
     # every employee is a one-person team the CEO talks to directly), or
@@ -1738,7 +1756,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
 
     team_out = []
     for spec in body.teams:
-        role_version = _latest_role_version(session, spec.role_slug)
+        role_version = _hire_role_version(session, spec.role_slug)
         lift_model, lift_effort = _craft_lift(session, spec.role_slug, role_version, doc)
         team = Team(
             id=ids.new_id(ids.TEAM),
@@ -2425,7 +2443,7 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
         raise HTTPException(status_code=422, detail="a team needs at least one employee")
     project = _get_project(session, project_id)
     _check_team_people(body)
-    role_version = _latest_role_version(session, body.role_slug)
+    role_version = _hire_role_version(session, body.role_slug)
     # A team hired later is hired on the same terms as one hired at birth. It
     # used to drop the per-employee settings on the floor — the TeamSpec
     # carried them, this route ignored them — so a team added on Tuesday came
@@ -3190,12 +3208,35 @@ def start_data_source_oauth(project_id: str, name: str, request: Request,
             "note": "Complete the sign-in in the opened tab, then test the source."}
 
 
+class RepinIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Yes to the new tools and keys the version grants, which the refusal named.
+    consent: bool = False
+
+
+def _grows(current: RoleVersion, latest: RoleVersion) -> list[str]:
+    """What a newer version can do that the pinned one could not."""
+    had = {k for k, v in (current.tool_permissions or {}).items() if v is True}
+    has = {k for k, v in (latest.tool_permissions or {}).items() if v is True}
+    keys = set(latest.secret_scopes or []) - set(current.secret_scopes or [])
+    return sorted(has - had) + [f"the {k} key" for k in sorted(keys)]
+
+
 @router.post("/teams/{team_id}/repin", dependencies=[authority.STEER])
-def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
+def repin_team(team_id: str, body: RepinIn | None = None,
+               session: Session = Depends(db)) -> dict:
     """Adopt the latest version of the team's role. Teams pin their role
     version at creation so an edited prompt never changes running agents
     behind the chairman's back; this is the chairman explicitly adopting it —
-    the golden evals are the gate on the edit itself."""
+    the golden evals are the gate on the edit itself.
+
+    For a role from a library source, a version that can do more than the
+    pinned one — a tool or a key it did not have — is refused (409) until the
+    call says `consent: true`: the
+    update that adds one line to send mail elsewhere is the one that arrives
+    after fifteen clean versions, so a bigger grant is never a side effect of
+    pressing Adopt."""
     team = session.get(Team, team_id)
     if team is None:
         raise HTTPException(status_code=404, detail="unknown team")
@@ -3204,6 +3245,15 @@ def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
     latest = _latest_role_version(session, role.slug)
     if latest.id == team.role_version_id:
         return {"team_id": team.id, "changed": False, "version": latest.version}
+    # Asked of a role from a library source, whose next version a stranger
+    # wrote. A role edited on this install was edited by the person adopting
+    # it, and stays one click.
+    grows = _grows(current, latest) if role.source else []
+    if grows and not (body and body.consent):
+        raise HTTPException(status_code=409, detail={
+            "code": "consent_required", "grows": grows,
+            "text": (f"v{latest.version} of {role.name} can do more than v{current.version}: "
+                     f"{', '.join(grows)}. Adopt it only if this team should have that.")})
     team.role_version_id = latest.id
     session.flush()
     # The new version may name a harness — or withhold a grant — its seats'
@@ -3211,7 +3261,8 @@ def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
     refuse_unrunnable_seats(session, session.get(Project, team.project_id), list(
         session.execute(select(Agent).where(Agent.team_id == team.id)).scalars()))
     _audit(session, team.project_id, "team.repin", "team", team.id,
-           {"role": role.slug, "from_version": current.version, "to_version": latest.version})
+           {"role": role.slug, "from_version": current.version, "to_version": latest.version,
+            **({"granted": grows} if grows else {})})
     return {"team_id": team.id, "changed": True, "version": latest.version}
 
 

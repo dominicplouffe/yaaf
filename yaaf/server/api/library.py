@@ -83,6 +83,32 @@ def preview(source: str, id: str, version: int | None = None) -> dict:
     }
 
 
+@router.get("/updates", dependencies=[authority.SIGNED_IN])
+def updates(session: Session = Depends(db)) -> dict:
+    """Every role installed from a source, beside what that source says now:
+    a newer version to install, or a removal and its reason."""
+    from sqlalchemy import select
+
+    from yaaf.core.models import Role, RoleVersion
+
+    out = []
+    for role in session.execute(select(Role).where(Role.source.is_not(None))
+                                .order_by(Role.slug)).scalars():
+        installed = session.execute(
+            select(RoleVersion.source_version).where(RoleVersion.role_id == role.id)
+            .order_by(RoleVersion.version.desc()).limit(1)).scalar_one_or_none()
+        status = library.listing_status(role)
+        out.append({"slug": role.slug, "name": role.name, "source": role.source,
+                    "source_index": role.source_index, "installed_version": installed,
+                    "latest_version": (status or {}).get("latest"),
+                    "status": (status or {}).get("status"),
+                    "reason": (status or {}).get("reason"),
+                    "update": bool(status and status.get("latest") and installed
+                                   and status["latest"] > installed
+                                   and status.get("status") != "removed")})
+    return {"roles": out}
+
+
 class InstallIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
+import { AdoptButton } from "../../library";
 import { Link, useNavigate } from "react-router-dom";
 import {
   AgendaView,
@@ -671,12 +672,8 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
           {badge(check)}
           <span className="grow">{check.detail}</span>
           {check.action?.kind === "repin" && !check.acked_at ? (
-            <button className="small" onClick={async () => {
-              if (check.action?.kind !== "repin") return;
-              await post(`/admin/teams/${check.action.team_id}/repin`, {});
-              reloadHealth();
-              reloadOrg();
-            }}>adopt the latest role version</button>
+            <AdoptButton teamId={check.action.team_id} label="adopt the latest role version"
+              onDone={() => { reloadHealth(); reloadOrg(); }} />
           ) : check.action?.kind === "hire" && !check.acked_at ? (
             <button className="small" onClick={() => hire(check)}>
               {check.action.label}

@@ -1,5 +1,6 @@
 import { RefObject, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { installHref, LibraryUpdate, Marketplace } from "../library";
 import { get, post, RoleSummary } from "../api";
 import { modelLabel, ModelsInfo, useModels } from "../providers";
 import { CATEGORIES, DOMAINS, canDo, depthOf, effortWord, needsOf, purposeOf } from "../roles";
@@ -94,6 +95,11 @@ function RoleRow({ role, open, onOpen }: {
         {/* The one permission whose blast radius is the whole internet reads
             as a warning, not a chip. */}
         {openWeb && <span className="chip warn">Open web</span>}
+        {role.source && (
+          <span className="chip" title={`Installed from ${role.source} v${role.source_version ?? "?"}. It changes only when that listing does.`}>
+            {role.source}
+          </span>
+        )}
         {needsOf(role.secret_scopes ?? []).map((n) => (
           <span className="chip warn" key={n.scope} title={`Needs ${n.words}`}>{n.short}</span>
         ))}
@@ -371,7 +377,15 @@ export default function Roles() {
   const [domain, setDomain] = useState("all");
   const [saved, setSaved] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
+  const tab = params.get("tab");
   const formRef = useRef<HTMLFormElement>(null);
+  // Roles installed from a library source, beside what that source says now.
+  const [updates, setUpdates] = useState<(LibraryUpdate & { source_index?: string })[]>([]);
+  useEffect(() => {
+    get<{ roles: (LibraryUpdate & { source_index?: string })[] }>("/admin/library/updates")
+      .then((r) => setUpdates(r.roles)).catch(() => {});
+  }, []);
+  const sourceOf = (u: { source_index?: string }) => u.source_index ?? "";
 
   // The harnesses a seat may run on, from the registry rather than a list
   // written into this page — the next one arrives without editing it.
@@ -506,6 +520,12 @@ export default function Roles() {
     <>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
         <h1>Role library</h1>
+        <div className="pills" role="tablist" aria-label="Which library">
+          <button role="tab" aria-selected={tab !== "marketplace"} className={tab !== "marketplace" ? "active" : ""}
+            onClick={() => { params.delete("tab"); setParams(params); }}>This install</button>
+          <button role="tab" aria-selected={tab === "marketplace"} className={tab === "marketplace" ? "active" : ""}
+            onClick={() => { params.set("tab", "marketplace"); setParams(params); }}>Marketplace</button>
+        </div>
         <div className="spacer" />
         <button
           className="small primary"
@@ -534,6 +554,17 @@ export default function Roles() {
         </Why>
       </div>
       {error && <div className="error">{error}</div>}
+
+      {tab === "marketplace" ? <Marketplace kind="role" /> : <>
+      {updates.filter((u) => u.update || u.status === "removed").map((u) => (
+        <div key={u.slug} className={u.status === "removed" ? "error" : "notice-box"}>
+          {u.status === "removed"
+            ? <><b>{u.name}</b> was removed from {u.source}: {u.reason}. Teams running it keep it until you
+                stand them down; nobody new can be hired onto it.</>
+            : <><b>{u.name}</b>: v{u.latest_version} is out (you have v{u.installed_version}).{" "}
+                <Link to={installHref(sourceOf(u), u.source, u.latest_version)}>See what changed</Link></>}
+        </div>
+      ))}
 
       <div className="hire-tools">
         <div className="hire-search">
@@ -591,6 +622,7 @@ export default function Roles() {
           ))}
         </div>
       )}
+      </>}
     </>
   );
 }

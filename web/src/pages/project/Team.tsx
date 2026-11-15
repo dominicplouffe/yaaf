@@ -1,4 +1,5 @@
 import { ReactNode, useState } from "react";
+import { AdoptButton, SourceNote } from "../../library";
 import { Link, useSearchParams } from "react-router-dom";
 import { OrgView, post, SeatWork } from "../../api";
 import { useDesk } from "../../desk";
@@ -180,18 +181,14 @@ function TeamHead({ ctx, team, onRepinned, compact }: {
           ? <span className="help" title={team.role_slug ?? undefined}>{team.role_name} v{team.role_version}</span>
           : <span className="chip" title={team.role_slug ?? undefined}>{team.role_name} v{team.role_version}</span>
         )}
+        <SourceNote source={team.role_source} status={team.role_source_status} />
         {behind && steer && (
-          <button className="small" title="A newer version of this role exists. Live teams never change silently — adopting is your call, and the CEO is told."
-            onClick={async () => {
-              const result = await post<{ changed: boolean; version: number }>(`/admin/teams/${team.id}/repin`, {});
-              onRepinned(result.changed
-                ? `${team.name} now runs ${team.role_name ?? team.role_slug} v${result.version}, from its next run.`
-                : `${team.name} is already on the latest role version (v${result.version}).`);
+          <AdoptButton teamId={team.id} label={`Adopt v${team.role_latest_version}`}
+            onDone={(said) => {
+              onRepinned(`${team.name}: ${said}`);
               ctx.reloadOrg();
               ctx.reloadHealth();
-            }}>
-            Adopt v{team.role_latest_version}
-          </button>
+            }} />
         )}
       </div>
       <div className="team-sub">

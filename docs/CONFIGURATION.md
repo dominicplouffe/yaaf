@@ -47,6 +47,7 @@ start `yaaf-server` and `yaaf-runner` from.
 | `YAAF_API_BASE_URL` | `http://localhost:24247` | How the runner and sandboxes reach the server. Change it if you change the port. |
 | `YAAF_PUBLIC_BASE_URL` | *(none)* | The https address people use, like `https://yaaf.example.com`. Needed for claude.ai, OAuth data sources, and secure cookies. |
 | `YAAF_MCP_REDIRECT_HOSTS` | `claude.ai,claude.com,localhost,127.0.0.1` | Hosts an MCP client may return to after sign-in. Widen with care. |
+| `YAAF_LIBRARY_SOURCES` | `https://yaaf.dplouffe.ca/marketplace/index.json` | Where roles and projects can be hired from besides this install's own library, comma-separated. Empty turns it off. A path or `file://` URL reads a registry from disk, for a private one. |
 
 ### The master key
 

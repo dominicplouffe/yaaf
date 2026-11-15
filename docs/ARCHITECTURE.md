@@ -70,6 +70,19 @@ It also runs background threads:
   replies. A reply wakes the CEO only after passing the checks in
   `yaaf/server/mail/inbound.py`.
 
+### Library sources
+
+The roles a project hires come from the install's own library, or from a
+**library source**: a registry index such as the yaaf marketplace
+(`YAAF_LIBRARY_SOURCES`; empty is off). `yaaf/server/library.py` reads it, and
+holds three rules every install path goes through: a file whose sha256 differs
+from its index entry is refused, a removed listing is refused, and a role is
+never installed over a role of the same slug from another source. It goes in
+beside it under a new name. Roles record their source and version, and an
+update that grants a new tool or key needs the chairman's yes to that
+(`repin` with `consent`). The Founder can search a source and name a listing
+in its draft; only the chairman's Create installs it.
+
 ### Data sources
 
 A data source is an MCP server the chairman connects. Its address and token

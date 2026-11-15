@@ -1,8 +1,9 @@
 """What the Founder can do besides talk.
 
-Eight tools, and the split between them is deliberate. Four are *lookups*
+Nine tools, and the split between them is deliberate. Five are *lookups*:
 over things this install already has (the role library, the crew library, the
-credentials, the outside world). Two are *judgement* delegated to something
+credentials), over the library sources it reads (the marketplace), and over
+the outside world. Two are *judgement* delegated to something
 that judges better than a single pass of prose can — the goal grade and the
 fire drill. One, `propose_bundle`, is the deliverable. And one, `ask`, is the
 interview: the questions still open, each with the Founder's answer already
@@ -44,10 +45,10 @@ FETCH_TIMEOUT_S = 20.0
 #: has to name.
 SERVER = "founder"
 
-TOOL_NAMES = ("search_roles", "search_crews", "read_source",
+TOOL_NAMES = ("search_roles", "search_crews", "search_marketplace", "read_source",
               "grade_goal", "list_credentials", "propose_bundle", "rehearse", "ask")
 
-#: What the CLI is allowed to run. Only these eight — no Bash, no file writes,
+#: What the CLI is allowed to run. Only these nine — no Bash, no file writes,
 #: no web tools of its own. The Founder drafts a project and asks about it; it
 #: does not act on the world, and the one tool that touches the outside
 #: (`read_source`) reads and labels what it reads as data.
@@ -117,6 +118,67 @@ def search_crews(session: Session, *, query: str | None = None) -> dict:
         out = [c for c in out
                if needle in c["name"].lower() or needle in (c["outcome"] or "").lower()]
     return {"crews": out, "count": len(out)}
+
+
+def search_marketplace(session: Session, *, query: str | None = None,
+                       kind: str | None = None) -> dict:
+    """Roles and whole projects other people published, from the library
+    sources this install reads. Never installs anything: a hire from here goes
+    in the draft as `marketplace`, and only the chairman's Create installs it."""
+    from yaaf.server import library
+
+    found = library.search(session, query=query, kind=kind, limit=12)
+    keep = ("id", "kind", "name", "summary", "category", "domains", "tier", "latest",
+            "installs", "can_do", "needs_credentials", "required_credentials",
+            "data_sources", "inputs", "roles", "has_receipt", "source", "installed_as")
+    return {
+        "results": [{k: r.get(k) for k in keep} for r in found["results"]],
+        "count": found["count"],
+        "sources": found["sources"],
+        "note": ("Prefer a role this install already has (search_roles). Hire from here only "
+                 "for work nobody on this install can do, and tell the chairman which seats "
+                 "come from the marketplace and who published them."),
+    }
+
+
+def resolve_marketplace(entries: list) -> tuple[list[dict], list[str]]:
+    """The role definitions a draft's `marketplace` entries bring, each marked
+    with the listing it came from — or the problems that stop them."""
+    from yaaf.server import library
+
+    carried: list[dict] = []
+    problems: list[str] = []
+    for entry in entries or []:
+        if not isinstance(entry, dict) or not entry.get("id") or not entry.get("source"):
+            problems.append("marketplace: each entry needs the `id` and `source` "
+                            "search_marketplace gave")
+            continue
+        try:
+            fetched = library.fetch_version(str(entry["source"]), str(entry["id"]),
+                                            entry.get("version"))
+        except library.LibraryRefusal as exc:
+            problems.append(f"marketplace {entry.get('id')}: {exc.text}")
+            continue
+        if fetched.body.get("kind") == "role":
+            role = dict(fetched.body.get("role") or {})
+            role["provenance"] = {k: fetched.provenance[k]
+                                  for k in ("source", "source_version", "source_index")}
+            carried.append(role)
+        else:
+            carried.extend(library.draft_from_project(fetched).get("roles") or [])
+    seen: dict[str, dict] = {}
+    for role in carried:
+        seen.setdefault(role.get("slug"), role)
+    return list(seen.values()), problems
+
+
+def _carried_model(project: dict, slug: str | None) -> str | None:
+    from yaaf.runtimes.catalog import DEFAULT_MODEL
+
+    for role in project.get("roles") or []:
+        if isinstance(role, dict) and role.get("slug") == slug:
+            return role.get("model") or DEFAULT_MODEL
+    return None
 
 
 def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
@@ -290,8 +352,9 @@ PROPOSE_SCHEMA = {
                     "properties": {
                         "name": {"type": "string", "description": "the team's name"},
                         "role_slug": {"type": "string",
-                                      "description": "a slug from search_roles — every seat "
-                                                     "on the team holds this one role"},
+                                      "description": "a slug from search_roles, or the slug of "
+                                                     "a role a `marketplace` entry brings — "
+                                                     "every seat on the team holds this one role"},
                         "employees": {"type": "array", "items": {"type": "string"},
                                       "description": "the seats' names, plain strings"},
                         "lead": {"type": "string",
@@ -316,6 +379,14 @@ PROPOSE_SCHEMA = {
             "required": ["slug", "name", "goal", "mode", "teams"],
         },
         "tempo": {"type": "string", "enum": list(TEMPO_PRESETS)},
+        "marketplace": {
+            "type": "array",
+            "description": "listings from search_marketplace this draft hires from: a role "
+                           "listing brings that role; a project listing brings all its roles. "
+                           "Nothing is installed until the chairman creates the project.",
+            "items": {"type": "object", "properties": {
+                "id": {"type": "string"}, "source": {"type": "string"},
+                "version": {"type": "integer"}}, "required": ["id", "source"]}},
         "notes": {"type": "string"},
     },
     "required": ["project"],
@@ -427,7 +498,7 @@ class FounderTools(NamedTuple):
 
 def build_server(session: Session, state: dict, env: dict[str, str],
                  model: str, thread_id: str = "") -> FounderTools:
-    """The eight tools, as an in-process MCP server the CLI can call.
+    """The nine tools, as an in-process MCP server the CLI can call.
 
     `state` is the one mutable thing here — the draft, and the round of
     questions. `propose_bundle` writes the first and `ask` the second, and the
@@ -485,6 +556,17 @@ def build_server(session: Session, state: dict, env: dict[str, str],
     async def _search_crews(args):
         return await step("search_crews",
                           lambda: search_crews(session, query=args.get("query")))
+
+    @tool("search_marketplace", "Search the marketplace — roles and whole projects other "
+          "people published, from the library sources this install reads. Use it when "
+          "search_roles has nobody for part of the work, or to find a proven project to start "
+          "from. Each result says what it can do, which keys it needs and its blanks. Hire "
+          "one by naming it in propose_bundle's `marketplace`; nothing installs until the "
+          "chairman creates the project.",
+          {"query": str, "kind": str})
+    async def _search_marketplace(args):
+        return await step("search_marketplace", lambda: search_marketplace(
+            session, query=args.get("query"), kind=args.get("kind")))
 
     @tool("read_source", "Fetch a URL the chairman pointed you at, so the goal can "
           "be written against what is actually there. Returns page text, truncated. "
@@ -561,6 +643,15 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         # A copy: what follows stamps the tempo and the payer into it, and the
         # caller's object is not this tool's to change.
         project = dict(project)
+        carried, market_problems = resolve_marketplace(args.get("marketplace") or [])
+        if market_problems:
+            state["last_refusal"] = market_problems
+            return ok({"ok": False, "problems": market_problems,
+                       "hint": "fix these and call propose_bundle again"})
+        if carried:
+            project["roles"] = carried
+        else:
+            project.pop("roles", None)
         quick = state.get("quick")
         if quick:
             # Who pays a quick project was decided before the turn began.
@@ -631,8 +722,9 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         finally:
             progress.finish_step(thread_id)
 
-    built = [_timed(fn) for fn in (_search_roles, _search_crews, _read_source, _grade_goal,
-                                   _list_credentials, _propose_bundle, _rehearse, _ask)]
+    built = [_timed(fn) for fn in (_search_roles, _search_crews, _search_marketplace,
+                                   _read_source, _grade_goal, _list_credentials,
+                                   _propose_bundle, _rehearse, _ask)]
     from yaaf.founder.loop import schema
 
     return FounderTools(
@@ -768,7 +860,9 @@ def as_bundle(project: dict) -> dict:
             "ceo_name": "CEO",
             **project,
         },
-        "roles": [],
+        # Marketplace hires, marked with their listings. The project carries
+        # them too, because POST /admin/projects installs them at Create.
+        "roles": list(project.get("roles") or []),
         "secrets": [],
     }
 
@@ -842,12 +936,14 @@ def seat_payment_problems(project: dict, session: Session, billing_provider: str
     context = model_policy.context(session, provider=primary)
     paid = sorted({primary, *(project.get("credentials") or {})})
     seats = [("the CEO", project.get("ceo_model_override")
-              or _role_model(session, project.get("ceo_role_slug")))]
+              or _role_model(session, project.get("ceo_role_slug"))
+              or _carried_model(project, project.get("ceo_role_slug")))]
     for team in project.get("teams") or []:
         overrides = team.get("model_overrides") or {}
         for person in team.get("employees") or []:
             seats.append((f"{person} ({team.get('name')})",
-                          overrides.get(person) or _role_model(session, team.get("role_slug"))))
+                          overrides.get(person) or _role_model(session, team.get("role_slug"))
+                          or _carried_model(project, team.get("role_slug"))))
     problems = []
     for who, ref in seats:
         if not ref:
@@ -1088,6 +1184,9 @@ def roster_problems(project: dict, session=None) -> list[str]:
             role.category
             for role in db.execute(select(Role).where(Role.slug.in_(slugs))).scalars()
         }
+    # A marketplace hire is not in the library until Create installs it.
+    categories |= {r.get("category") for r in project.get("roles") or []
+                   if isinstance(r, dict) and r.get("slug") in slugs}
     if "challenge" in categories:
         return []
     return [

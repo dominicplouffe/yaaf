@@ -223,6 +223,9 @@ WITHHELD = {
         "every project.",
     "GET /admin/roles/{slug}": "`catalog` serves what a drafting client needs of it.",
     "POST /admin/crews": "the crew library is shared the same way the role library is.",
+    "GET /admin/library/updates":
+        "maintenance of the install-wide library for the Roles page; a project client "
+        "neither installs nor updates it.",
     "POST /admin/library/install":
         "installing writes the install-wide role library. A client brings a listing's roles "
         "only inside the project that hires them, where create_project checks each against "

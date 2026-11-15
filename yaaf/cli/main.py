@@ -2133,6 +2133,137 @@ def audit_evidence(evidence_id: str, ok: bool = typer.Option(..., "--ok/--bad"),
                           json={"ok": ok, "note": note}))
 
 
+# ── the marketplace and other library sources ─────────────────────────────────
+
+library_app = typer.Typer(no_args_is_help=True,
+                          help="Roles and projects from the library sources this install reads.")
+app.add_typer(library_app, name="library")
+
+
+def _source_for(client: httpx.Client, listing_id: str, source: str | None) -> str:
+    """The source that lists `listing_id`: the one given, or the first that has it."""
+    if source:
+        return source
+    found = _json_or_die(client.get("/admin/library/search", params={"q": listing_id, "limit": 100}))
+    for row in found["results"]:
+        if row["id"] == listing_id:
+            return row["source"]
+    unreachable = [s["url"] for s in found["sources"] if not s.get("ok")]
+    typer.echo(f"{listing_id} is in none of this install's library sources"
+               + (f" (unreachable: {', '.join(unreachable)})" if unreachable else ""), err=True)
+    raise typer.Exit(1)
+
+
+@library_app.command("search")
+def library_search(
+    query: str = typer.Argument("", help="Words to look for"),
+    kind: str = typer.Option(None, "--kind", help="role or project"),
+) -> None:
+    """Search the marketplace and any other library source this install reads."""
+    with _client() as client:
+        found = _json_or_die(client.get("/admin/library/search",
+                                        params={k: v for k, v in {"q": query, "kind": kind}.items() if v}))
+    for source in found["sources"]:
+        if not source.get("ok"):
+            typer.echo(f"! {source['url']}: {source.get('error')}", err=True)
+    if not found["results"]:
+        typer.echo("nothing found")
+        return
+    for row in found["results"]:
+        mark = f"  [installed as {row['installed_as']}]" if row.get("installed_as") else ""
+        needs = f"  needs: {', '.join(row['needs_credentials'])}" if row["needs_credentials"] else ""
+        typer.echo(f"{row['id']}  {row['kind']} v{row['latest']}  {row['tier']}{mark}")
+        typer.echo(f"    {row['summary']}")
+        typer.echo(f"    can do: {', '.join(row['can_do']) or 'reply only'}{needs}")
+
+
+@library_app.command("updates")
+def library_updates() -> None:
+    """Roles installed from a source, and what that source says of each now."""
+    with _client() as client:
+        rows = _json_or_die(client.get("/admin/library/updates"))["roles"]
+    if not rows:
+        typer.echo("no roles from a library source")
+    for row in rows:
+        if row["status"] == "removed":
+            said = f"REMOVED: {row['reason']}"
+        elif row["update"]:
+            said = (f"v{row['latest_version']} available (you have v{row['installed_version']}): "
+                    f"yaaf install {row['source']} --version {row['latest_version']}")
+        elif row["status"] is None:
+            said = "source unreachable"
+        else:
+            said = "up to date"
+        typer.echo(f"{row['slug']}  ({row['source']})  {said}")
+
+
+def _ask_blanks(inputs: list[dict], given: dict[str, str]) -> dict[str, str]:
+    answers = dict(given)
+    for blank in inputs:
+        if blank["id"] in answers:
+            continue
+        if not _interactive():
+            typer.echo(f"no answer for {{{{{blank['id']}}}}} ({blank['question']}); pass "
+                       f"--answer {blank['id']}=...", err=True)
+            raise typer.Exit(2)
+        answers[blank["id"]] = typer.prompt(f"{blank['question']} (e.g. {blank.get('example')})")
+    return answers
+
+
+@app.command()
+def install(
+    listing_id: str = typer.Argument(..., help="@handle/slug, from `yaaf library search`"),
+    source: str = typer.Option(None, "--source", help="Which library source; default: the one that lists it"),
+    version: int = typer.Option(None, "--version", help="A version other than the latest"),
+    answer: list[str] = typer.Option([], "--answer", help="A project's blank, as id=value (repeatable)"),
+    create: bool = typer.Option(False, "--create", help="A project: create it once the blanks are filled"),
+) -> None:
+    """Install a role from the marketplace, or start a project from one.
+
+    A role is checked against its listing and added to the library, beside any
+    role of the same name and never over it. A project asks for its blanks and
+    is written as a setup file, ready for `yaaf create-project --from-file`
+    (or created now with --create)."""
+    from yaaf.server.library import blanks_in, fill_blanks
+
+    given = dict(a.split("=", 1) for a in answer if "=" in a)
+    with _client() as client:
+        where = _source_for(client, listing_id, source)
+        body = {"source": where, "id": listing_id, **({"version": version} if version else {})}
+        preview = _json_or_die(client.get("/admin/library/preview",
+                                          params={k: v for k, v in body.items()}))
+        kind = preview["listing"]["kind"]
+        for role in preview["roles"]:
+            typer.echo(f"{role['name']} ({role['slug']}): can do "
+                       f"{', '.join(role['tools']) or 'reply only'}"
+                       + (f"; receives {', '.join(role['secret_scopes'])}" if role["secret_scopes"] else ""))
+        if kind == "role":
+            result = _json_or_die(client.post("/admin/library/install", json=body))
+            said = {"created": "installed", "updated": "updated to", "reused": "already have"}
+            typer.echo(f"{said.get(result['action'], result['action'])} {result['slug']} "
+                       f"v{result['version']} from {listing_id} v{result['listing_version']}"
+                       + (f" (your own {result['renamed_from']} is untouched)" if result["renamed_from"] else ""))
+            return
+        draft = _json_or_die(client.post("/admin/library/draft", json=body))
+    answers = _ask_blanks(draft.get("inputs") or [], given)
+    filled = fill_blanks({k: v for k, v in draft.items() if k not in ("inputs", "needs")}, answers)
+    left = blanks_in(filled["project"])
+    if left:
+        typer.echo("still blank: " + ", ".join(sorted(left)), err=True)
+        raise typer.Exit(2)
+    for key in (draft.get("needs") or {}).get("keys") or []:
+        typer.echo(f"needs {key['label']} ({key['name']})"
+                   + ("" if key.get("required") else ", optional")
+                   + (f": {key['help']}" if key.get("help") else ""), err=True)
+    out = Path(f"{filled['project'].get('slug') or 'project'}-setup.json")
+    out.write_text(json.dumps(filled, indent=2))
+    typer.echo(f"wrote {out}")
+    if create:
+        _create_from_file(out)
+    else:
+        typer.echo(f"create it with: yaaf create-project --from-file {out}")
+
+
 # ── who sits on a project, and the box's people ────────────────────────────────
 
 members = typer.Typer(no_args_is_help=True,

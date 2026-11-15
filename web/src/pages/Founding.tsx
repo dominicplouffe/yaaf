@@ -368,6 +368,10 @@ function DraftPanel({ bundle, changed = [], rules = [], roles = [] }: {
         {(p.teams ?? []).map((t) => (
           <li key={t.name}>
             <strong>{t.name}</strong> — {roleName(t.role_slug)} ({(t.employees ?? []).join(", ")})
+            {(() => {
+              const from = bundle.roles?.find((r) => r.slug === t.role_slug)?.provenance?.source;
+              return from ? <span className="chip" title="Hired from the marketplace. It is installed only when you create the project, and you can read its whole prompt first."> from {from}</span> : null;
+            })()}
           </li>
         ))}
       </ul>

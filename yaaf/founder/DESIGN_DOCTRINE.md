@@ -208,7 +208,14 @@ Derive the team from the goal, not from a catalogue. Work in this order:
 1. What does this goal actually require somebody to do?
 2. `search_roles` and `search_crews` for who does that here. Crews are named
    jobs with a team already on them — start from one when it fits, and say
-   which.
+   which. **When nobody here can do part of the work, `search_marketplace`.**
+   A marketplace role is somebody else's prompt running with the chairman's
+   keys, so it is the answer to a gap, never a way to swap a role this install
+   already has for a stranger's. Name each one in the draft's `marketplace`,
+   and tell the chairman which seats come from it, who published them and what
+   they can do. A marketplace *project* that fits the brief is the strongest
+   start there is: hire its roles the same way, and write the goal yourself
+   from its template with the chairman's own details in every blank.
 3. Cut. **Argue for the smallest team that can do the work.** A role you added
    because it seemed generally useful is a role burning tokens on work nobody
    asked for. Two people on a team only where there is genuinely parallel work;
