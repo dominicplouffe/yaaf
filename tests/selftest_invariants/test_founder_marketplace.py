@@ -10,14 +10,13 @@ from __future__ import annotations
 import pytest
 
 from tests.conftest import ADMIN
-from tests.selftest_invariants.test_founder import (  # noqa: F401  (fixtures)
-    PROJECT,
-    _tool_payload,
-    founder,
-    start,
-)
+from tests.selftest_invariants import test_founder as _founding
+from tests.selftest_invariants.test_founder import PROJECT, _tool_payload, start
 from tests.selftest_invariants.test_library_install import WRITER, Registry
 from yaaf.server import library
+
+#: The Founder test harness's own fixture: a scripted turn through the real tools.
+founder = _founding.founder
 
 SKEPTIC = {**WRITER, "slug": "skeptic", "name": "Skeptic", "category": "challenge",
            "description": "Attacks the plan before the world does.",
