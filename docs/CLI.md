@@ -32,6 +32,7 @@ docker compose -f deploy/docker-compose.yml exec api yaaf users list
 |---|---|
 | `yaaf setup` | Set up a native install step by step: checks, account, service, key, Founder. Safe to re-run. |
 | `yaaf up --host` | Start server, runner and dashboard in one go. `--no-isolation` for development only. |
+| `yaaf open` | Open the dashboard in your browser, on the configured address (`YAAF_API`, else `YAAF_API_PORT`). `yaaf open inbox` opens one screen; `--print` only prints the address. |
 | `yaaf update` | Back up, pull, rebuild what changed, restart. `--check` shows what would change. |
 | `yaaf doctor` | Check the whole install and say how to fix what's wrong. |
 | `yaaf backup` | Database, master key and artifacts in one file. `--workspaces` adds working folders. |
