@@ -368,6 +368,14 @@ function DraftPanel({ bundle, changed = [], rules = [], roles = [] }: {
         {(p.teams ?? []).map((t) => (
           <li key={t.name}>
             <strong>{t.name}</strong> — {roleName(t.role_slug)} ({(t.employees ?? []).join(", ")})
+            {(() => {
+              const carried = bundle.roles?.find((r) => r.slug === t.role_slug);
+              if (carried?.drafted) {
+                return <span className="chip warn" title="Nothing in your library or the marketplace did this job, so the Founder wrote this role. It is added to your library when you create the project; read its prompt on the next screen."> new role</span>;
+              }
+              const from = carried?.provenance?.source;
+              return from ? <span className="chip" title="Hired from the marketplace. It is installed only when you create the project, and you can read its whole prompt first."> from {from}</span> : null;
+            })()}
           </li>
         ))}
       </ul>

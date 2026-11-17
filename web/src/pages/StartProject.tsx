@@ -15,6 +15,7 @@
 // the other without losing the choice you already made.
 
 import { useEffect, useState } from "react";
+import { Marketplace } from "../library";
 import { Link, useNavigate } from "react-router-dom";
 import { get } from "../api";
 import { Why } from "./NewProject";
@@ -140,7 +141,12 @@ export default function StartProject() {
       <p className="startalt">
         Have a setup file?{" "}
         <Link to="/projects/new/form?start=file">Load it into the form</Link>
+        {" · "}Or start from a project someone already ran:
       </p>
+      <details className="startalt">
+        <summary>Browse projects in the marketplace</summary>
+        <Marketplace kind="project" />
+      </details>
 
       {status && !keyed && (
         <div className="help startnote">

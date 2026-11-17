@@ -70,6 +70,30 @@ It also runs background threads:
   replies. A reply wakes the CEO only after passing the checks in
   `yaaf/server/mail/inbound.py`.
 
+### Library sources
+
+The roles a project hires come from the install's own library, or from a
+**library source**: a registry index such as the yaaf marketplace
+(`YAAF_LIBRARY_SOURCES`; empty is off). `yaaf/server/library.py` reads it, and
+holds three rules every install path goes through: a file whose sha256 differs
+from its index entry is refused, a removed listing is refused, and a role is
+never installed over a role of the same slug from another source. It goes in
+beside it under a new name. Roles record their source and version, and an
+update that grants a new tool or key needs the chairman's yes to that
+(`repin` with `consent`). The Founder can search a source and name a listing
+in its draft; only the chairman's Create installs it.
+
+Publishing goes the other way (`yaaf/server/publish.py`). A project or role
+becomes a listing from the plain design export, never the backup with values:
+the chairman's account, repo and private addresses are left out, keys and data
+sources become declared needs. The Founder turns the rest of the publisher's
+specifics into `{{blanks}}` (`yaaf/founder/publish.py`). Before anything
+leaves, the server compares the listing with every value it knows is the
+publisher's, every key's value included, and refuses to send it while one
+remains. The person signs in to GitHub with a device code; yaaf opens the pull
+request against the registry, and a moderator's merge publishes it. The
+GitHub token is the person's, stored like a secret and never given to a run.
+
 ### Data sources
 
 A data source is an MCP server the chairman connects. Its address and token

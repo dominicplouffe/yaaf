@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import secrets as pysecrets
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
@@ -461,7 +462,23 @@ ROLE_CATEGORIES = (
     "challenge",    # tries to prove it wrong before the world does
     "growth",       # finds buyers, and keeps them
 )
+#: The domains the library ships with, offered first in the pickers. Not a
+#: closed list: a role from a library source may know a world this install has
+#: never filed anything under ("legal", "healthcare"), and refusing it would
+#: refuse the role. A domain is any short slug; a typo files a role under a
+#: domain of its own, which the picker shows, rather than losing it.
 ROLE_DOMAINS = ("general", "markets", "data", "games", "education")
+_DOMAIN_PATTERN = re.compile(r"^[a-z0-9-]{2,32}$")
+
+
+def domain_refusal(domains: list[str]) -> str | None:
+    bad = sorted(d for d in domains if not isinstance(d, str) or not _DOMAIN_PATTERN.match(d))
+    if bad:
+        return (f"domain {', '.join(map(str, bad))} is not a short lowercase slug — "
+                f"for example {', '.join(ROLE_DOMAINS)}")
+    if len(domains) > 6:
+        return "a role knows at most six domains"
+    return None
 
 #: How hard the model thinks, in yaaf's words whatever the vendor
 #: (yaaf.runtimes.catalog.EFFORTS). A closed set, so a typo is worth a 422
@@ -491,6 +508,36 @@ class RoleIn(BaseModel):
 
 @router.post("/roles", dependencies=[authority.INSTANCE_ADMIN])
 def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
+    """Create a role, or stamp a new version of one written on this install.
+
+    A role that came from a library source is refused here (409): it is only
+    ever updated by its source, so an edit made on this install would be
+    overwritten by the next update or would silently fork it. Save it under a
+    new slug to keep a changed copy."""
+    existing = session.execute(select(Role).where(Role.slug == body.slug)).scalar_one_or_none()
+    if existing is not None and existing.source:
+        raise HTTPException(status_code=409, detail=(
+            f"'{body.slug}' came from {existing.source}, so it changes only when that "
+            f"listing does. Save your version under a new slug to keep a copy of your own."))
+    return stamp_role(session, body)
+
+
+@dataclass(frozen=True)
+class Provenance:
+    """Where a role version being stamped came from (yaaf.server.library)."""
+    source: str
+    source_index: str | None
+    source_version: int | None
+    content_sha256: str | None
+
+
+def stamp_role(session: Session, body: RoleIn, provenance: Provenance | None = None) -> dict:
+    """Validate a role definition and write it as a new role or a new version.
+
+    The one door into the library: the Roles page, `seed-roles`, a setup file
+    and a library install all come through here, so every rule below holds
+    for every way a role arrives. Whether a matching slug may be versioned at
+    all is the caller's decision (create_role, library.install_role)."""
     # Roles never own MCP servers. A server line frozen into a role template
     # follows every project that pins the role — the ghost that broke a live
     # project which had never heard of the source it "declared". Data sources
@@ -507,13 +554,8 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
             detail=f"category must be one of {', '.join(ROLE_CATEGORIES)} — "
                    f"or absent, which files the role under Uncategorised",
         )
-    unknown_domains = sorted(set(body.domains) - set(ROLE_DOMAINS))
-    if unknown_domains:
-        raise HTTPException(
-            status_code=422,
-            detail=f"unknown domain {', '.join(unknown_domains)} — "
-                   f"pick from {', '.join(ROLE_DOMAINS)}",
-        )
+    if problem := domain_refusal(body.domains):
+        raise HTTPException(status_code=422, detail=problem)
     # A role whose grants its harness cannot honour, or whose model it cannot
     # serve, is refused here — at the version, before any project pins it. A
     # role naming a class is bound to no model yet: only what holds wherever
@@ -538,6 +580,8 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
             id=ids.new_id(ids.ROLE), slug=body.slug, name=body.name,
             is_ceo_role=body.is_ceo_role,
             category=body.category, domains=body.domains,
+            source=provenance.source if provenance else None,
+            source_index=provenance.source_index if provenance else None,
         )
         session.add(role)
         session.flush()
@@ -566,9 +610,13 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
         harness=body.harness,
         tool_permissions=body.tool_permissions,
         secret_scopes=body.secret_scopes,
+        source_version=provenance.source_version if provenance else None,
+        content_sha256=provenance.content_sha256 if provenance else None,
     )
     session.add(row)
-    return {"role_id": role.id, "role_version_id": row.id, "version": version}
+    session.flush()
+    return {"role_id": role.id, "role_version_id": row.id, "version": version,
+            "slug": role.slug}
 
 
 class AdoptClassIn(BaseModel):
@@ -643,6 +691,8 @@ def get_role(slug: str, session: Session = Depends(db)) -> dict:
         "harness": latest.harness,
         "tool_permissions": latest.tool_permissions,
         "secret_scopes": latest.secret_scopes,
+        "source": role.source,
+        "source_version": latest.source_version,
     }
 
 
@@ -674,12 +724,8 @@ def update_role_taxonomy(
             status_code=422,
             detail=f"category must be one of {', '.join(ROLE_CATEGORIES)}")
     if body.domains is not None:
-        unknown = sorted(set(body.domains) - set(ROLE_DOMAINS))
-        if unknown:
-            raise HTTPException(
-                status_code=422,
-                detail=f"unknown domain {', '.join(unknown)} — "
-                       f"pick from {', '.join(ROLE_DOMAINS)}")
+        if problem := domain_refusal(body.domains):
+            raise HTTPException(status_code=422, detail=problem)
         role.domains = body.domains
     if body.name is not None:
         role.name = body.name
@@ -747,6 +793,10 @@ def list_roles(session: Session = Depends(db)) -> list[dict]:
                 # choosing time so a missing key stops being something the
                 # chairman discovers from a run that already failed.
                 "secret_scopes": (latest.secret_scopes or []) if latest else [],
+                # Where it came from: a listing id, or null for a role written
+                # on this install.
+                "source": role.source,
+                "source_version": latest.source_version if latest else None,
                 "usage": usage,
             }
         )
@@ -779,12 +829,8 @@ def create_crew(body: CrewIn, session: Session = Depends(db)) -> dict:
     """Upsert a crew by slug. Unlike a role there are no versions: a crew is
     read once, at hiring time, and copied into the project's own teams — so
     editing one can never reach a project that already started."""
-    unknown_domains = sorted(set(body.domains) - set(ROLE_DOMAINS))
-    if unknown_domains:
-        raise HTTPException(
-            status_code=422,
-            detail=f"unknown domain {', '.join(unknown_domains)} — "
-                   f"pick from {', '.join(ROLE_DOMAINS)}")
+    if problem := domain_refusal(body.domains):
+        raise HTTPException(status_code=422, detail=problem)
     crew = session.execute(
         select(Crew).where(Crew.slug == body.slug)).scalar_one_or_none()
     if crew is None:
@@ -933,6 +979,36 @@ class ProjectCreate(BaseModel):
     # {"kind": "external", "url"/"note": ...} for a fact the world imposes;
     # {"kind": "chairman", "note": why} for a target he wants.
     deadline_source: dict | None = None
+    # Role definitions the spec carries (a setup file's `roles`, a Founder
+    # draft's marketplace hires). Installed here, by yaaf.server.library, so a
+    # carried role never silently becomes the install's own role of the same
+    # slug, and never overwrites it: identical content is reused, anything
+    # else is installed alongside and the teams are pointed at it. A role that
+    # says it came from a listing is checked against that listing first.
+    roles: list[dict] = Field(default_factory=list)
+    # The library listing this project starts from ({id, version, source,
+    # needs}). Kept on the project so its start can be refused while a key or
+    # a data source the listing requires is missing, and so its setup
+    # checklist can name exactly what that is.
+    listing: dict | None = None
+
+
+def _hire_role_version(session: Session, slug: str) -> RoleVersion:
+    """The version a new team or CEO is hired on — refused for a role whose
+    listing its source has removed. Teams already running keep it until the
+    chairman decides; nobody new is hired onto it."""
+    version = _latest_role_version(session, slug)
+    role = session.get(Role, version.role_id)
+    if role is not None and role.source:
+        from yaaf.server import library
+
+        status = library.listing_status(role)
+        if status and status["status"] == "removed":
+            raise HTTPException(status_code=409, detail=(
+                f"'{slug}' was removed from {role.source}: "
+                f"{status.get('reason') or 'no reason given'}. It cannot be hired again; teams "
+                "already running it keep it until you decide."))
+    return version
 
 
 def _latest_role_version(session: Session, slug: str) -> RoleVersion:
@@ -945,6 +1021,23 @@ def _latest_role_version(session: Session, slug: str) -> RoleVersion:
         .order_by(RoleVersion.version.desc())
         .limit(1)
     ).scalar_one()
+
+
+def _refuse_without_listing_needs(session: Session, project: Project) -> None:
+    """A project started from a library listing does not start without what
+    the listing says it requires: a run that began would fail on the first
+    call that needs the key, after spending the claim. 409, because the
+    project is fine and its setup is not finished."""
+    from yaaf.server import library
+
+    missing = library.missing_needs(session, project)
+    if missing:
+        listing = library.listing_of(project) or {}
+        raise HTTPException(status_code=409, detail={
+            "code": "listing_needs", "missing": missing,
+            "text": (f"this project, from {listing.get('id')}, still needs "
+                     + "; ".join(f"{m['label']} ({m['name']})" for m in missing)
+                     + ". Add it under Settings, then start it.")})
 
 
 def _refuse_without_mailbox(project: Project) -> None:
@@ -1498,6 +1591,59 @@ def _founding_chairman(session: Session, named: str | None) -> User:
     return chairman
 
 
+def _install_carried_roles(session: Session, body: ProjectCreate) -> list[dict]:
+    """Put the roles a spec carries in the library and point its teams at them.
+
+    Refused before anything is written: a blank the installer never filled, a
+    role whose claimed listing does not hold it, and — for anyone but an
+    instance admin — a role the library does not already have, because the
+    library is the whole install's."""
+    from yaaf.server import library
+
+    left = sorted(library.blanks_in(body.model_dump(mode="json", exclude={"roles"})))
+    if left:
+        raise HTTPException(status_code=422, detail=(
+            "this project still has blanks to fill in: "
+            + ", ".join("{{" + b + "}}" for b in left)))
+    if not body.roles:
+        return []
+    actor = session.get(User, acting.user_id()) if acting.user_id() else None
+    installed: list[dict] = []
+    renames: dict[str, str] = {}
+    for definition in body.roles:
+        if not isinstance(definition, dict):
+            raise HTTPException(status_code=422, detail="roles: each entry is a role definition")
+        try:
+            provenance = library.verify_carried(definition)
+            existing = session.execute(
+                select(Role).where(Role.slug == definition.get("slug"))).scalar_one_or_none()
+            latest = (session.execute(select(RoleVersion).where(RoleVersion.role_id == existing.id)
+                                      .order_by(RoleVersion.version.desc()).limit(1)).scalar_one_or_none()
+                      if existing else None)
+            changes_library = latest is None or not library.same_content(latest, definition)
+            if changes_library and not (actor and actor.is_admin):
+                raise HTTPException(status_code=403, detail=(
+                    f"this project brings the role '{definition.get('slug')}', which the library "
+                    "does not have yet. Only an instance admin can add roles; ask one to create "
+                    "the project, or to install the role first."))
+            result = library.install_role(
+                session, {k: v for k, v in definition.items() if k != "provenance"}, provenance)
+        except library.LibraryRefusal as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.text) from None
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=(
+                f"role {definition.get('slug')}: "
+                + "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors()[:3]))
+            ) from None
+        if result["renamed_from"]:
+            renames[result["renamed_from"]] = result["slug"]
+        installed.append(result)
+    for spec in body.teams:
+        spec.role_slug = renames.get(spec.role_slug, spec.role_slug)
+    body.ceo_role_slug = renames.get(body.ceo_role_slug, body.ceo_role_slug)
+    return installed
+
+
 @router.post("/projects", dependencies=[authority.SIGNED_IN])
 def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     from yaaf.core.llm_credentials import assigned_credential
@@ -1507,6 +1653,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         raise HTTPException(status_code=422,
                             detail="billing mode must match the selected credential")
     chairman = _founding_chairman(session, body.chairman_email)
+    installed_roles = _install_carried_roles(session, body)
     body.name = body.name.strip() or name_from_goal(body.goal)
     if session.execute(select(Project).where(Project.slug == body.slug)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="project slug already exists")
@@ -1569,7 +1716,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         if deadline <= utcnow():
             raise HTTPException(status_code=422, detail="the deadline is already past")
 
-    ceo_role_version = _latest_role_version(session, body.ceo_role_slug)
+    ceo_role_version = _hire_role_version(session, body.ceo_role_slug)
 
     # The org shape as a recorded fact: solo (one brain), ceo_team (flat —
     # every employee is a one-person team the CEO talks to directly), or
@@ -1589,7 +1736,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         controlled_domains=body.controlled_domains,
         github_repo=body.github_repo,
         needs_mail=body.needs_mail,
-        integrations=_without_mail(body.integrations),
+        integrations=_with_listing(_without_mail(body.integrations), body.listing),
         deadline=deadline,
         deadline_source=deadline_source,
         topology=topology,
@@ -1631,7 +1778,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
 
     team_out = []
     for spec in body.teams:
-        role_version = _latest_role_version(session, spec.role_slug)
+        role_version = _hire_role_version(session, spec.role_slug)
         lift_model, lift_effort = _craft_lift(session, spec.role_slug, role_version, doc)
         team = Team(
             id=ids.new_id(ids.TEAM),
@@ -1670,7 +1817,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         if body.solo:
             ceo.team_id = team.id
             agents.append(ceo)
-        team_out.append({"id": team.id, "name": team.name,
+        team_out.append({"id": team.id, "name": team.name, "role_slug": spec.role_slug,
                          "agents": [{"id": a.id, "name": a.name} for a in agents]})
     for provider_name, credential_id in body.credentials.items():
         attach_provider_credential(session, project, provider_name, credential_id)
@@ -1697,8 +1844,10 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
                                            for row in slack["channels"]],
                 "deferred": [row["key"] for row in slack.get("deferred", [])]})
 
-    _audit(session, project.id, "project.create", "project", project.id)
+    _audit(session, project.id, "project.create", "project", project.id,
+           {"roles_installed": installed_roles} if installed_roles else None)
     return {"id": project.id, "ceo_agent_id": ceo.id, "teams": team_out,
+            "roles_installed": installed_roles,
             "constitution": doc.model_dump(), "status": project.status,
             "slack": slack,
             "webhooks": {
@@ -1942,6 +2091,16 @@ def export_project(project_id: str, include_values: bool = False,
         "roles": list(roles.values()),
         "secrets": secret_out,
     }
+
+
+def _with_listing(integrations: dict | None, listing: dict | None) -> dict | None:
+    """Keep the listing a project starts from, cleaned to what start needs."""
+    from yaaf.server import library
+
+    kept = library.clean_listing(listing)
+    if kept is None:
+        return integrations
+    return {**(integrations or {}), "listing": kept}
 
 
 def _without_mail(integrations: dict | None) -> dict | None:
@@ -2316,7 +2475,7 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
         raise HTTPException(status_code=422, detail="a team needs at least one employee")
     project = _get_project(session, project_id)
     _check_team_people(body)
-    role_version = _latest_role_version(session, body.role_slug)
+    role_version = _hire_role_version(session, body.role_slug)
     # A team hired later is hired on the same terms as one hired at birth. It
     # used to drop the per-employee settings on the floor — the TeamSpec
     # carried them, this route ignored them — so a team added on Tuesday came
@@ -3081,12 +3240,35 @@ def start_data_source_oauth(project_id: str, name: str, request: Request,
             "note": "Complete the sign-in in the opened tab, then test the source."}
 
 
+class RepinIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Yes to the new tools and keys the version grants, which the refusal named.
+    consent: bool = False
+
+
+def _grows(current: RoleVersion, latest: RoleVersion) -> list[str]:
+    """What a newer version can do that the pinned one could not."""
+    had = {k for k, v in (current.tool_permissions or {}).items() if v is True}
+    has = {k for k, v in (latest.tool_permissions or {}).items() if v is True}
+    keys = set(latest.secret_scopes or []) - set(current.secret_scopes or [])
+    return sorted(has - had) + [f"the {k} key" for k in sorted(keys)]
+
+
 @router.post("/teams/{team_id}/repin", dependencies=[authority.STEER])
-def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
+def repin_team(team_id: str, body: RepinIn | None = None,
+               session: Session = Depends(db)) -> dict:
     """Adopt the latest version of the team's role. Teams pin their role
     version at creation so an edited prompt never changes running agents
     behind the chairman's back; this is the chairman explicitly adopting it —
-    the golden evals are the gate on the edit itself."""
+    the golden evals are the gate on the edit itself.
+
+    For a role from a library source, a version that can do more than the
+    pinned one — a tool or a key it did not have — is refused (409) until the
+    call says `consent: true`: the
+    update that adds one line to send mail elsewhere is the one that arrives
+    after fifteen clean versions, so a bigger grant is never a side effect of
+    pressing Adopt."""
     team = session.get(Team, team_id)
     if team is None:
         raise HTTPException(status_code=404, detail="unknown team")
@@ -3095,6 +3277,15 @@ def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
     latest = _latest_role_version(session, role.slug)
     if latest.id == team.role_version_id:
         return {"team_id": team.id, "changed": False, "version": latest.version}
+    # Asked of a role from a library source, whose next version a stranger
+    # wrote. A role edited on this install was edited by the person adopting
+    # it, and stays one click.
+    grows = _grows(current, latest) if role.source else []
+    if grows and not (body and body.consent):
+        raise HTTPException(status_code=409, detail={
+            "code": "consent_required", "grows": grows,
+            "text": (f"v{latest.version} of {role.name} can do more than v{current.version}: "
+                     f"{', '.join(grows)}. Adopt it only if this team should have that.")})
     team.role_version_id = latest.id
     session.flush()
     # The new version may name a harness — or withhold a grant — its seats'
@@ -3102,7 +3293,8 @@ def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
     refuse_unrunnable_seats(session, session.get(Project, team.project_id), list(
         session.execute(select(Agent).where(Agent.team_id == team.id)).scalars()))
     _audit(session, team.project_id, "team.repin", "team", team.id,
-           {"role": role.slug, "from_version": current.version, "to_version": latest.version})
+           {"role": role.slug, "from_version": current.version, "to_version": latest.version,
+            **({"granted": grows} if grows else {})})
     return {"team_id": team.id, "changed": True, "version": latest.version}
 
 
@@ -3573,6 +3765,7 @@ def start_project(project_id: str, session: Session = Depends(db)) -> dict:
     # the alternative is a start that succeeds and a first run that does not.
     refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
     _refuse_without_mailbox(project)
+    _refuse_without_listing_needs(session, project)
     project.status = ProjectStatus.RUNNING
     project.status_reason = None
     # A Deliver or Operate project starts owing a plan. The chairman's words

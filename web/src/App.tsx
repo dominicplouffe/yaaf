@@ -13,6 +13,8 @@ import Founding from "./pages/Founding";
 import NewProject from "./pages/NewProject";
 import StartProject from "./pages/StartProject";
 import ProjectPage from "./pages/Project";
+import LibraryInstall from "./pages/LibraryInstall";
+import Publish from "./pages/Publish";
 import Roles from "./pages/Roles";
 import Settings from "./pages/Settings";
 import { Btn } from "./ui/kit";
@@ -92,6 +94,8 @@ function Gate() {
           <Route path="/projects/found" element={<Navigate to="/projects/new/describe" replace />} />
           <Route path="/projects/:projectId/*" element={<ProjectRoute />} />
           <Route path="/roles" element={<Shell><Roles /></Shell>} />
+          <Route path="/library/install" element={<Shell><LibraryInstall /></Shell>} />
+          <Route path="/publish" element={<Shell><Publish /></Shell>} />
           <Route path="/settings" element={<Shell><Settings /></Shell>} />
           <Route path="*" element={<Navigate to="/home" replace />} />
         </Routes>

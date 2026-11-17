@@ -1921,6 +1921,11 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
                 "reason": ((row.detail or {}).get("reason") or "")[:600] or None,
                 "recent": at >= hire_cut}
 
+    from yaaf.server import library
+
+    def _source_status(role: Role | None) -> dict | None:
+        return library.listing_status(role) if role is not None and role.source else None
+
     teams = []
     for team in session.execute(select(Team).where(Team.project_id == project.id)).scalars():
         members = policy.team_agents(session, team.id)
@@ -1950,6 +1955,11 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
                 # The library's newest, so the reader can see "behind" without
                 # cross-referencing the health card.
                 "role_latest_version": latest.version if latest else None,
+                # Where the role came from, and what its source says of it
+                # now — so a role its marketplace removed is on the card of
+                # every team running it, with the reason.
+                "role_source": role.source if role else None,
+                "role_source_status": _source_status(role),
                 "lead_agent_id": lead.id if lead else None,
                 # The staffing half of the card. `running` is derived rather
                 # than stored: a team is stood down by standing its people

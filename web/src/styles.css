@@ -3769,6 +3769,34 @@ button.gchip.tool-count:hover { border-color: var(--muted); color: var(--ink); }
   .set-row.mail-rcpt > .set-row-val { grid-column: 1; grid-row: 2; }
 }
 
+/* ── the marketplace (library.tsx, pages/LibraryInstall.tsx) ─────────────── */
+.market { display: grid; gap: 10px; margin-top: 8px; }
+.market input[type="search"] { max-width: 520px; }
+.market-list { display: grid; gap: 8px; }
+.market-row { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--border);
+  border-radius: var(--radius); color: inherit; text-decoration: none; }
+.market-row:hover, .market-row:focus-visible { border-color: var(--accent); }
+.market-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.listing-page { display: grid; gap: 14px; max-width: 860px; }
+.listing-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+.listing-head h1 { margin: 0; }
+.listing-details { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+.listing-details dt { font-weight: 600; }
+.listing-details dd { margin: 0; }
+.listing-goal { white-space: pre-wrap; line-height: 1.6; }
+.listing-goal .blank, .blank { background: var(--warning); color: var(--page); padding: 0 6px; border-radius: 4px;
+  font-size: 0.9em; white-space: nowrap; }
+.listing-role { display: grid; gap: 4px; padding: 8px 0; border-top: 1px solid var(--border); }
+.listing-role:first-of-type { border-top: 0; }
+.prompt { white-space: pre-wrap; max-height: 320px; overflow: auto; font-size: 12.5px; line-height: 1.55;
+  padding: 10px 12px; border-radius: var(--radius-sm); background: var(--sunken); }
+.warn-text { color: var(--warning); }
+.adopt-ask { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+ul.plain { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.badge.danger { color: var(--critical); border-color: currentColor; }
+.receipt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 0; }
+.receipt-grid dt { font-size: 12px; color: var(--muted); }
+.receipt-grid dd { margin: 0; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
 /* Motion is information here, never decoration, so a reader who asked for
    less of it loses nothing: every animation and transition lands at once. */
 @media (prefers-reduced-motion: reduce) {

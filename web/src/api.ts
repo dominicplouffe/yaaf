@@ -6,9 +6,13 @@
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** The response body, for a refusal that carries more than words (a 409
+      naming exactly what an Adopt would grant). */
+  data: unknown;
+  constructor(status: number, message: string, data: unknown = null) {
     super(message);
     this.status = status;
+    this.data = data;
   }
 }
 
@@ -29,6 +33,8 @@ function errorText(data: unknown, status: number): string {
     if (lines.length) return lines.join("; ");
   }
   if (typeof detail === "string" && detail) return detail;
+  const said = (detail as { text?: unknown } | null)?.text;
+  if (typeof said === "string" && said) return said;
   const error = (data as { error?: unknown })?.error;
   if (typeof error === "string" && error) return error;
   return `HTTP ${status}`;
@@ -69,7 +75,7 @@ export async function api<T = unknown>(
   }
   if (!response.ok) {
     if (response.status === 401) signedOut(path);
-    throw new ApiError(response.status, errorText(data, response.status));
+    throw new ApiError(response.status, errorText(data, response.status), data);
   }
   return data as T;
 }
@@ -1355,6 +1361,11 @@ export interface OrgView {
     role_name: string | null;
     role_version: number | null;
     role_latest_version: number | null;
+    /** The listing the role came from, when it came from a library source. */
+    role_source?: string | null;
+    /** What that source says of it now; null when it cannot be reached. */
+    role_source_status?: { status: string; reason: string | null; latest: number | null;
+                           tier: string } | null;
     lead_agent_id: string | null;
     /** Derived, never stored: a team is stood down by standing its people
         down, so "is this team working" is a question about its members. */
@@ -1498,6 +1509,9 @@ export interface RoleSummary {
   description: string;
   tools: string[];
   secret_scopes: string[];
+  /** The listing it was installed from; null for a role written on this install. */
+  source?: string | null;
+  source_version?: number | null;
   usage: RoleUsage[];
 }
 
@@ -1543,6 +1557,31 @@ export interface BundleRole {
   harness?: string | null;
   tool_permissions: Record<string, unknown>;
   secret_scopes: string[];
+  /** Set when the role came from a library listing: the server fetches that
+      listing and refuses the project if this role is not what it holds. */
+  provenance?: { source: string; source_version?: number | null; source_index?: string | null };
+  /** Written by the Founder for this project because nothing existing fit. */
+  drafted?: boolean;
+}
+
+/** What a library listing says a project needs from whoever installs it. */
+export interface ListingNeeds {
+  keys: { name: string; label: string; format?: string; file?: boolean; roles: string[];
+          required: boolean; help?: string }[];
+  data_sources: { name: string; serves: string; address: string; auth: string; access: string;
+                  tools: string[]; roles: string[]; required: boolean }[];
+  mailbox: boolean;
+  github_repo: boolean;
+}
+
+/** A blank in a project listing, asked of whoever installs it. */
+export interface ListingInput {
+  id: string;
+  question: string;
+  type: "text" | "url" | "domain" | "number" | "money" | "choice" | "list";
+  choices?: string[];
+  example: unknown;
+  required: boolean;
 }
 
 /** A project setup file (GET /admin/projects/{id}/export). The `project`
@@ -1607,6 +1646,12 @@ export interface ProjectBundle {
     solo: boolean;
   };
   roles: BundleRole[];
+  /** Present on a draft made from a library listing (POST /admin/library/draft). */
+  listing?: { id: string; version: number; source: string; content_sha256: string;
+              name?: string; summary?: string };
+  needs?: ListingNeeds;
+  inputs?: ListingInput[];
+  receipt?: Record<string, unknown>;
   secrets: {
     name: string;
     role_scopes: string[];

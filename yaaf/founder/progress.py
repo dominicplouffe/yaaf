@@ -41,6 +41,7 @@ STALL_SECONDS = 300.0
 LABELS = {
     "search_roles": "Reading the role library",
     "search_crews": "Reading the crew library",
+    "search_marketplace": "Searching the marketplace",
     "read_source": "Reading a source you pointed me at",
     "grade_goal": "Grading the goal against the grammar",
     "list_credentials": "Checking what can pay for this project",

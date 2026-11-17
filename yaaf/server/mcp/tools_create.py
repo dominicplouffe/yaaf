@@ -26,6 +26,7 @@ Two narrowings this scope enforces that the HTTP surface cannot:
 
 from __future__ import annotations
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from yaaf.core import llm_credentials
@@ -70,15 +71,27 @@ MAX_DRILL_DAYS = 90
         "provider's lineup and every catalog model with whether it can be metered. "
         "`harnesses` lists what can drive a seat's model; name one in a team's "
         "`harness_overrides` only when the chairman asks for it — absent, a seat runs on "
-        "its credential's default."
+        "its credential's default. `marketplace` searches the library sources this install "
+        "reads (roles and whole projects other people published); `listing` with an `id` "
+        "and `source` returns one listing whole — its prompts, what it needs, and for a "
+        "project a draft spec with `{{blanks}}` to fill from the chairman's answers before "
+        "`create_project`. Prefer a role this install already has; hire from the "
+        "marketplace for work nobody here can do, and say so."
     ),
     input_schema={
         "type": "object",
         "properties": {
             "what": {"type": "string",
                      "enum": ["roles", "crews", "credentials", "models", "harnesses",
-                              "providers"]},
+                              "providers", "marketplace", "listing"]},
             "query": {"type": "string"},
+            "kind": {"type": "string", "enum": ["role", "project"],
+                     "description": "marketplace only: roles or whole projects"},
+            "id": {"type": "string",
+                   "description": "listing only: the listing id from a marketplace search, "
+                                  "e.g. @rae/ads-audit"},
+            "source": {"type": "string",
+                       "description": "listing only: the `source` a marketplace search gave"},
             "category": {"type": "string",
                          "enum": ["leadership", "research", "build", "content",
                                   "challenge", "growth"]},
@@ -106,6 +119,27 @@ def catalog(principal: Principal, session: Session, arguments: dict) -> dict:
         payload = list_models(session)
     elif what == "crews":
         payload = founder_tools.search_crews(session, query=arguments.get("query"))
+    elif what == "marketplace":
+        from yaaf.server import library
+
+        payload = library.search(session, query=arguments.get("query"),
+                                 kind=arguments.get("kind"), category=arguments.get("category"),
+                                 domain=arguments.get("domain"), limit=15)
+    elif what == "listing":
+        from yaaf.server import library
+        from yaaf.server.api import library as library_api
+
+        if not arguments.get("id") or not arguments.get("source"):
+            raise ToolRefusal("`listing` needs the `id` and `source` a marketplace search gave")
+        try:
+            payload = library_api.preview(str(arguments["source"]), str(arguments["id"]))
+            if payload["listing"].get("kind") == "project":
+                payload["draft"] = library.draft_from_project(
+                    library.fetch_version(str(arguments["source"]), str(arguments["id"])))
+        except library.LibraryRefusal as exc:
+            raise ToolRefusal(exc.text) from None
+        except HTTPException as exc:
+            raise ToolRefusal(str(exc.detail)) from None
     else:
         payload = founder_tools.search_roles(
             session, query=arguments.get("query"), category=arguments.get("category"),
@@ -299,6 +333,17 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
     # Overwritten, never read: `POST /admin/projects` accepts any chairman, and
     # a model must not be able to create a project chaired by somebody else.
     body = {**body, "chairman_email": user.email}
+    # A bundle's role definitions travel with the project, and the server
+    # installs them (yaaf.server.library): never over a role of the same name,
+    # and a role claiming a library listing is checked against it.
+    if body is not spec and isinstance(spec.get("roles"), list) and "roles" not in body:
+        hired = {body.get("ceo_role_slug") or "ceo"} | {
+            t.get("role_slug") for t in body.get("teams") or [] if isinstance(t, dict)}
+        carried = [r for r in spec["roles"] if isinstance(r, dict) and r.get("slug") in hired]
+        if carried:
+            body["roles"] = carried
+    if body is not spec and isinstance(spec.get("listing"), dict) and "listing" not in body:
+        body["listing"] = {**spec["listing"], "needs": spec.get("needs")}
 
     problems = founder_tools.validate({"project": body})
     if problems:
