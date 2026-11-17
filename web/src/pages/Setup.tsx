@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError, get, post, SetupInfo } from "../api";
 import { useMe } from "../me";
 import { Btn } from "../ui/kit";
+import { Wordmark } from "../Wordmark";
 
 /** The server's rule, said before it is broken rather than after. */
 const MIN_PASSWORD = 12;
@@ -104,8 +105,8 @@ export default function Setup() {
   return (
     <div className="center-page">
       <form className="card login-card" onSubmit={submit}>
-        <h1>
-          y<span style={{ color: "var(--accent)" }}>aa</span>f
+        <h1 aria-label="yaaf">
+          <Wordmark height={44} />
         </h1>
         {problem ? (
           <>

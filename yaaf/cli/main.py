@@ -35,9 +35,16 @@ def _register_spend() -> None:
 
 
 def _api_base() -> str:
+    """Where yaaf answers: YAAF_API when it names an address, else this machine
+    on the port the server is configured with (YAAF_API_PORT, as `yaaf up
+    --port` sets it), else the default port."""
     from yaaf.core.config import DEFAULT_PORT
 
-    return os.environ.get("YAAF_API", f"http://localhost:{DEFAULT_PORT}").rstrip("/")
+    explicit = os.environ.get("YAAF_API")
+    if explicit:
+        return explicit.rstrip("/")
+    port = os.environ.get("YAAF_API_PORT") or DEFAULT_PORT
+    return f"http://localhost:{port}"
 
 
 def _credentials_path() -> Path:
@@ -159,6 +166,59 @@ def _resolve_project(client: httpx.Client, ref: str) -> str:
             return project["id"]
     typer.echo(f"no project with slug {ref!r}")
     raise typer.Exit(1)
+
+
+# ── the dashboard ──────────────────────────────────────────────────────────────
+
+
+def _open_in_browser(url: str) -> bool:
+    """The dashboard the way this desktop opens it (a window of its own where
+    the browser can make one, as the app menu does), else whatever the
+    platform's default browser is. False when there is no browser to ask."""
+    import shutil
+    import sys
+    import webbrowser
+
+    if sys.platform.startswith("linux") and (shutil.which("xdg-open")
+                                             or shutil.which("omarchy-launch-webapp")):
+        from yaaf.cli.desktop import _detach, browser_command
+
+        try:
+            _detach(browser_command(url))
+            return True
+        except OSError:
+            pass
+    try:
+        return webbrowser.open(url)
+    except webbrowser.Error:
+        return False
+
+
+@app.command("open")
+def open_dashboard(
+    screen: str = typer.Argument("", help="a dashboard screen, e.g. inbox or "
+                                          "projects/SLUG; the home screen without one"),
+    print_only: bool = typer.Option(False, "--print",
+                                    help="print the address instead of opening it"),
+) -> None:
+    """Open the dashboard in your browser, at the address this CLI talks to
+    (YAAF_API, else localhost on YAAF_API_PORT, else the default port).
+
+    Says so in one line when nothing answers there, rather than opening a tab
+    onto a connection error."""
+    from yaaf.cli.desk import screen_url
+
+    base = _api_base()
+    url = screen_url(base, screen) if screen.strip("/") else f"{base}/app/"
+    if print_only:
+        typer.echo(url)
+        return
+    with _Client(base_url=base, timeout=5) as client:
+        client.get("/healthz")  # an unreachable server exits here, in one line
+    if _open_in_browser(url):
+        typer.echo(f"Opened {url}")
+    else:
+        typer.echo(f"No browser to open it with here. The dashboard is at {url}")
 
 
 # ── the receipt ─────────────────────────────────────────────────────────────────
@@ -1084,7 +1144,10 @@ def create_project(
             choices = ("c", "s", "w", "q") if draft else ("s", "q")
             menu = ("[c]reate it, [s]ay something, [w]rite the draft to a file, or [q]uit"
                     if draft else "[s]ay something, or [q]uit")
-            pick = typer.prompt(f"\n{menu}", default=choices[0],
+            # click's own prompt, because the Choice is click's: typer runs on a
+            # click it carries inside itself, and its prompt asserts on a type
+            # from the other one.
+            pick = click.prompt(f"\n{menu}", default=choices[0],
                                 type=click.Choice(choices, case_sensitive=False))
             if pick == "q":
                 typer.echo("The conversation is kept; `yaaf create-project` picks it back up.")
@@ -2604,7 +2667,7 @@ _register_up()
 #: Where each command sits in `yaaf --help`, in the order somebody new reaches
 #: for them. The help used to be sixty commands in the order they were written.
 PANELS = {
-    "Get started": ("setup", "up", "update", "login", "logout", "whoami", "doctor", "rehearse",
+    "Get started": ("setup", "up", "open_dashboard", "update", "login", "logout", "whoami", "doctor", "rehearse",
                     "create_project", "projects", "status"),
     "Run a project": ("start", "pause", "stop", "configure", "amend"),
     "Decide": ("desk", "signal", "say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",

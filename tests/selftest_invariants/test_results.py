@@ -92,7 +92,7 @@ def test_a_test_the_platform_ran_reads_verified_by_yaaf(client):
     _settle(req["requirement_id"])
     row = _results(client, project)["results"][0]
     assert row["checked"] == "platform"
-    assert row["checks"][0]["label"] == "verified by YAAF"
+    assert row["checks"][0]["label"] == "verified by yaaf"
 
 
 def test_one_persons_results(client):

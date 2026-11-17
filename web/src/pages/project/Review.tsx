@@ -944,7 +944,7 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
             />
           </div>
           {data.history.map((r) => (
-            <div className="card" key={r.id} style={{ padding: "10px 14px", marginBottom: 8 }}>
+            <div className={`card${r.closed_at ? " double-ruled" : ""}`} key={r.id} style={{ padding: "10px 14px", marginBottom: 8 }}>
               <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
                 <b>#{r.number}</b>
                 <span className="help">

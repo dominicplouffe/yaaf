@@ -91,7 +91,7 @@ function ModeStrip({ dash, reload }: { dash: Dashboard; reload: () => void }) {
   if (dash.mode === "deliver" && dash.status === "completed") {
     // Completing is automatic only because it can be taken back.
     return (
-      <div className="strip good">
+      <div className="strip good double-ruled">
         <div className="grow">
           <b>Delivered.</b>
           <div className="sb">
@@ -380,6 +380,12 @@ function LatestResults({ ctx }: { ctx: ProjectCtx }) {
               <span className="ov-result-h"><Icon name="file" size={15} /><b>{r.name}</b></span>
               <span className="help">{r.made_by ? `${r.made_by.name} · ` : ""}{fmtDate(r.published_at)}</span>
               <Seal level={sealOf(r.checked)} />
+              {(() => {
+                const by = r.checks.find((c) => c.kind === r.checked);
+                return by && by.kind !== "pending"
+                  ? <span className="signed ov-result-chk">{by.label.charAt(0).toUpperCase() + by.label.slice(1)}</span>
+                  : null;
+              })()}
             </Link>
           ))}
         </div>

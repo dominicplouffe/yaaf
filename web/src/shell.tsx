@@ -7,6 +7,7 @@ import { CommandPalette, Cheatsheet, useShortcuts } from "./palette";
 import { OfferHost } from "./precedent";
 import { ProjectSwitcher, statusWord as statusWordOf } from "./projectSwitcher";
 import { UndoHost } from "./undo";
+import { Wordmark } from "./Wordmark";
 import { firstName, useProjectFrame } from "./projectCtx";
 import { DETAIL_TABS, PROJECT_PAGES, placeOf, SETTINGS_PAGE } from "./nav";
 import { lastDetailsTab, placeAt, usePins, useRememberPlaces } from "./shortcuts";
@@ -392,7 +393,7 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className={`app${navOpen ? " nav-open" : ""}`}>
       <aside className="side" aria-label="Main navigation">
         <div className="sb-top">
-          <Link to="/home" className="brand" title={`Build ${__BUILD_TIME__}`}>y<span>aa</span>f</Link>
+          <Link to="/home" className="brand" aria-label="yaaf" title={`Build ${__BUILD_TIME__}`}><Wordmark height={24} /></Link>
           <span className="grow" />
           <Link to="/projects/new" className="sb-icon" title="New project" aria-label="New project">
             <Icon name="plus" size={16} strokeWidth={2.2} />

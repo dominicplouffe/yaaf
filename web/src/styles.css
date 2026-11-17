@@ -1,4 +1,13 @@
 /* yaaf — the design system.
+   The palette is the brand's (docs/brand/reference/colors.md): registrar's ink
+   on registry paper in light, neutral Carbon in dark — never navy, and no
+   gradients. Two names carry a rule of their own. --accent is Registrar Blue
+   and means "you can act on this": links, selection, the focus ring. Primary
+   buttons are not blue; they are ink. --accent-2 is the Seal, and it is the
+   checker's signature and nothing else: the italic a in the wordmark, and the
+   line naming whoever checked a result. It is never a status ("verified" is
+   --good), never an error (--critical), never a button, never decoration. A
+   new use of --accent-2 that is not somebody signing for a check is a bug.
    Tokens are semantic: a rule names --surface, never a hex, which is what lets
    one stylesheet be read twice — once dark, once light. Status colours are
    reserved and always ship with an icon or a word, never colour alone. The
@@ -6,11 +15,16 @@
    never cycled, so filtering a chart never repaints the series that remain.
    Every step here was checked rather than chosen: each clears 4.5:1 against its
    own ground, and the five chart slots clear the colour-vision separation test
-   at every adjacent pair in both themes. */
+   at every adjacent pair in both themes. Three light inks sit a shade under
+   the brand's own values (--muted, --warning, --critical): a ground includes
+   what a pointer puts on it, and on a hovered sidebar row the brand's hexes
+   read 4.48, 4.33 and 4.23:1. The measured ratios are in
+   docs/brand/reference/colors.md; `yaaf theme sync` may repaint the tokens
+   yaaf/core/desktop_theme.py names, and holds itself to the same floor. */
 
 :root {
-  --font: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --font: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Brygada 1918", Georgia, "Times New Roman", serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
 
   /* 12px is the floor. Nothing in the product is set smaller. */
@@ -27,50 +41,50 @@
   --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px; --s5: 20px;
   --s6: 24px; --s7: 32px; --s8: 40px; --s9: 56px;
 
-  --radius: 10px;
-  --radius-sm: 7px;
-  --radius-lg: 14px;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --radius-lg: 12px;
 
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --fast: 120ms;
 
   color-scheme: dark;
 
-  --page: #141312;
-  --surface: #1c1b19;
-  --surface-2: #232120;
-  --sunken: #121110;
-  --ink: #f5f3ee;
-  --ink-2: #b5b1a6;
-  --muted: #9d998e;
-  --grid: #2e2c28;
-  --border: #2e2c28;
-  --border-strong: #413e38;
+  --page: #121316;
+  --surface: #1b1c20;
+  --surface-2: #222328;
+  --sunken: #0e0f11;
+  --ink: #ecece7;
+  --ink-2: #b4b6bc;
+  --muted: #9a9da6;
+  --grid: #26272c;
+  --border: #2c2d33;
+  --border-strong: #3a3b42;
 
-  --accent: #8ca0f0;
-  --accent-rgb: 140, 160, 240;
-  --on-accent: #14161f;
-  --on-accent-rgb: 20, 22, 31;
-  --accent-2: #c96e48;
-  --accent2-rgb: 201, 110, 72;
+  --accent: #8fa4f0;
+  --accent-rgb: 143, 164, 240;
+  --on-accent: #121316;
+  --on-accent-rgb: 18, 19, 22;
+  --accent-2: #ee4259;
+  --accent2-rgb: 238, 66, 89;
 
   --good: #4fc48c;      --good-rgb: 79, 196, 140;
   --warning: #e0ac36;   --warning-rgb: 224, 172, 54;
-  --serious: #f09055;   --serious-rgb: 240, 144, 85;
-  --critical: #f0736b;  --critical-rgb: 240, 115, 107;
-  --on-critical: #14161f;
+  --serious: #f09a55;   --serious-rgb: 240, 154, 85;
+  --critical: #f0835f;  --critical-rgb: 240, 131, 95;
+  --on-critical: #121316;
 
-  --hover: rgba(255, 255, 255, 0.035);
-  --hover-strong: rgba(255, 255, 255, 0.06);
+  --hover: rgba(255, 255, 255, 0.04);
+  --hover-strong: rgba(255, 255, 255, 0.07);
   --stripe: rgba(255, 255, 255, 0.018);
   --scrim: rgba(0, 0, 0, 0.6);
   --e1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --e2: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 20px rgba(0, 0, 0, 0.35);
   --e3: 0 18px 48px rgba(0, 0, 0, 0.5);
 
-  --c1: #6884ea; --c2: #c96e48; --c3: #1e96a8; --c4: #a98120; --c5: #a570db;
+  --c1: #637fee; --c2: #ee4259; --c3: #3db8c4; --c4: #d9a53a; --c5: #d78fef;
   --json-str: #9fd39f; --json-num: #e5b467; --json-bool: #e59a6f;
-  --check-a: #1f1f1e; --check-b: #171716;
+  --check-a: #1b1c20; --check-b: #17181b;
 }
 
 /* Light is a redefinition of the same names, not a second stylesheet. Follow
@@ -79,81 +93,81 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     color-scheme: light;
-  --page: #faf9f5;
+  --page: #f4f4f1;
   --surface: #ffffff;
-  --surface-2: #f7f5ef;
-  --sunken: #f2f0ea;
-  --ink: #1a1917;
-  --ink-2: #56534b;
-  --muted: #666258;
-  --grid: #e5e2d9;
-  --border: #e5e2d9;
-  --border-strong: #d0ccc0;
+  --surface-2: #f9f9f7;
+  --sunken: #eaeae5;
+  --ink: #161a2e;
+  --ink-2: #4a4f60;
+  --muted: #5d616f;
+  --grid: #e4e4df;
+  --border: #dadad4;
+  --border-strong: #bfc0bb;
 
-  --accent: #3355cc;
-  --accent-rgb: 51, 85, 204;
+  --accent: #2c46a6;
+  --accent-rgb: 44, 70, 166;
   --on-accent: #ffffff;
   --on-accent-rgb: 255, 255, 255;
-  --accent-2: #c2643e;
-  --accent2-rgb: 194, 100, 62;
+  --accent-2: #b8203a;
+  --accent2-rgb: 184, 32, 58;
 
-  --good: #0e6442;      --good-rgb: 14, 100, 66;
-  --warning: #7a4f00;   --warning-rgb: 122, 79, 0;
-  --serious: #a64118;   --serious-rgb: 166, 65, 24;
-  --critical: #b3261e;  --critical-rgb: 179, 38, 30;
+  --good: #1d6b45;      --good-rgb: 29, 107, 69;
+  --warning: #865800;   --warning-rgb: 134, 88, 0;
+  --serious: #9c4a12;   --serious-rgb: 156, 74, 18;
+  --critical: #ab3d19;  --critical-rgb: 171, 61, 25;
   --on-critical: #ffffff;
 
-  --hover: rgba(26, 25, 23, 0.035);
-  --hover-strong: rgba(26, 25, 23, 0.06);
-  --stripe: rgba(26, 25, 23, 0.018);
-  --scrim: rgba(26, 25, 23, 0.4);
-  --e1: 0 1px 2px rgba(26, 25, 23, 0.06), 0 1px 1px rgba(26, 25, 23, 0.04);
-  --e2: 0 2px 4px rgba(26, 25, 23, 0.05), 0 8px 20px rgba(26, 25, 23, 0.07);
-  --e3: 0 18px 48px rgba(26, 25, 23, 0.16);
+  --hover: rgba(22, 26, 46, 0.035);
+  --hover-strong: rgba(22, 26, 46, 0.06);
+  --stripe: rgba(22, 26, 46, 0.018);
+  --scrim: rgba(22, 26, 46, 0.4);
+  --e1: 0 1px 2px rgba(22, 26, 46, 0.06), 0 1px 1px rgba(22, 26, 46, 0.04);
+  --e2: 0 2px 4px rgba(22, 26, 46, 0.05), 0 8px 20px rgba(22, 26, 46, 0.07);
+  --e3: 0 18px 48px rgba(22, 26, 46, 0.16);
 
-  --c1: #3355cc; --c2: #c2643e; --c3: #00a0b0; --c4: #a07a00; --c5: #8e4ec6;
+  --c1: #2c46a6; --c2: #b8203a; --c3: #00818f; --c4: #9a6b00; --c5: #ae6ecf;
   --json-str: #1c6b3a; --json-num: #8a5a00; --json-bool: #a64118;
-  --check-a: #eceae2; --check-b: #f6f4ee;
+  --check-a: #eaeae5; --check-b: #f4f4f1;
   }
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --page: #faf9f5;
+  --page: #f4f4f1;
   --surface: #ffffff;
-  --surface-2: #f7f5ef;
-  --sunken: #f2f0ea;
-  --ink: #1a1917;
-  --ink-2: #56534b;
-  --muted: #666258;
-  --grid: #e5e2d9;
-  --border: #e5e2d9;
-  --border-strong: #d0ccc0;
+  --surface-2: #f9f9f7;
+  --sunken: #eaeae5;
+  --ink: #161a2e;
+  --ink-2: #4a4f60;
+  --muted: #5d616f;
+  --grid: #e4e4df;
+  --border: #dadad4;
+  --border-strong: #bfc0bb;
 
-  --accent: #3355cc;
-  --accent-rgb: 51, 85, 204;
+  --accent: #2c46a6;
+  --accent-rgb: 44, 70, 166;
   --on-accent: #ffffff;
   --on-accent-rgb: 255, 255, 255;
-  --accent-2: #c2643e;
-  --accent2-rgb: 194, 100, 62;
+  --accent-2: #b8203a;
+  --accent2-rgb: 184, 32, 58;
 
-  --good: #0e6442;      --good-rgb: 14, 100, 66;
-  --warning: #7a4f00;   --warning-rgb: 122, 79, 0;
-  --serious: #a64118;   --serious-rgb: 166, 65, 24;
-  --critical: #b3261e;  --critical-rgb: 179, 38, 30;
+  --good: #1d6b45;      --good-rgb: 29, 107, 69;
+  --warning: #865800;   --warning-rgb: 134, 88, 0;
+  --serious: #9c4a12;   --serious-rgb: 156, 74, 18;
+  --critical: #ab3d19;  --critical-rgb: 171, 61, 25;
   --on-critical: #ffffff;
 
-  --hover: rgba(26, 25, 23, 0.035);
-  --hover-strong: rgba(26, 25, 23, 0.06);
-  --stripe: rgba(26, 25, 23, 0.018);
-  --scrim: rgba(26, 25, 23, 0.4);
-  --e1: 0 1px 2px rgba(26, 25, 23, 0.06), 0 1px 1px rgba(26, 25, 23, 0.04);
-  --e2: 0 2px 4px rgba(26, 25, 23, 0.05), 0 8px 20px rgba(26, 25, 23, 0.07);
-  --e3: 0 18px 48px rgba(26, 25, 23, 0.16);
+  --hover: rgba(22, 26, 46, 0.035);
+  --hover-strong: rgba(22, 26, 46, 0.06);
+  --stripe: rgba(22, 26, 46, 0.018);
+  --scrim: rgba(22, 26, 46, 0.4);
+  --e1: 0 1px 2px rgba(22, 26, 46, 0.06), 0 1px 1px rgba(22, 26, 46, 0.04);
+  --e2: 0 2px 4px rgba(22, 26, 46, 0.05), 0 8px 20px rgba(22, 26, 46, 0.07);
+  --e3: 0 18px 48px rgba(22, 26, 46, 0.16);
 
-  --c1: #3355cc; --c2: #c2643e; --c3: #00a0b0; --c4: #a07a00; --c5: #8e4ec6;
+  --c1: #2c46a6; --c2: #b8203a; --c3: #00818f; --c4: #9a6b00; --c5: #ae6ecf;
   --json-str: #1c6b3a; --json-num: #8a5a00; --json-bool: #a64118;
-  --check-a: #eceae2; --check-b: #f6f4ee;
+  --check-a: #eaeae5; --check-b: #f4f4f1;
 }
 
 * { box-sizing: border-box; }
@@ -179,9 +193,36 @@ a:hover { text-decoration: underline; }
   border-radius: var(--radius-sm);
 }
 
-/* Monospace is for identifiers and code. It is not for timestamps, money,
-   labels or counts — that habit is most of why the product read as a console. */
+/* Monospace is for identifiers, code, and the figures a reader checks one
+   against another: money, counts, times. A number set in it is a receipt line.
+   Labels and sentences never are — that habit is what made the product read
+   as a console — so the list below names figures, not containers of prose. */
 code, .mono { font-family: var(--mono); font-size: max(0.92em, var(--t-micro)); }
+td.num, .mrow .num, .bc-num, .kpi-v, .kpi-row b, .barrow .bv, .psum b,
+.bcol-n, .step-secs, .plan-window .num, .plan-compact .plan-mini-label b {
+  font-family: var(--mono); font-variant-numeric: tabular-nums; }
+/* A requirement's key (R-01) is one word. Broken across a line it reads as two. */
+.goal-chain .mono, a.mono { white-space: nowrap; }
+
+/* ── the record's devices ──
+   Two marks from the brand that each mean one thing, so each has one class.
+
+   .signed is the checker's signature: the line naming who, or what, checked a
+   result. It is the only place the Seal appears outside the wordmark. The
+   maker beside it stays upright in ink, and the check's status mark keeps its
+   status colour — the signature says who, the mark says how it went.
+
+   .double-rule is the bookkeeper's "final, checked": it closes an evidence
+   trail that holds a check, a delivery that was signed off, a review that was
+   closed. It is never a divider. Something still open ends on a plain rule. */
+.signed { font-family: var(--font-display); font-style: italic; font-weight: 600; color: var(--accent-2); }
+.double-rule, .double-ruled::after {
+  display: block; box-sizing: border-box; height: 6px; width: 100%; margin: var(--s4) 0 0; padding: 0;
+  border: solid var(--ink); border-width: 2px 0; background: none;
+  transform-origin: left center; animation: rule-draw 200ms var(--ease);
+}
+.double-ruled::after { content: ""; }
+@keyframes rule-draw { from { transform: scaleX(0); } }
 
 /* ── the frame: a sidebar you can learn the product from ──
    The whole map sits on the left edge: the places that span projects, the
@@ -200,10 +241,9 @@ kbd {
   background: var(--sunken); border-right: 1px solid var(--border); z-index: 30;
 }
 .sb-top { display: flex; align-items: center; gap: 2px; padding: 16px 12px 8px 18px; }
-.brand { font-family: var(--font-display); font-weight: 400; font-size: 25px; line-height: 1;
-  letter-spacing: 0.3px; color: var(--ink); }
+/* The wordmark is artwork (Wordmark.tsx), never the word typed in a font. */
+.brand { display: block; color: var(--ink); line-height: 1; }
 .brand:hover { text-decoration: none; }
-.brand span { color: var(--accent); }
 .sb-icon {
   display: inline-grid; place-items: center; width: 30px; height: 30px; min-height: 30px;
   padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink-2);
@@ -363,8 +403,8 @@ kbd {
    It marked every section, verdict and empty state too, and a voice used for
    everything stops saying "you are here". Sections speak in the sans, at
    weight rather than size. */
-h1 { font-family: var(--font-display); font-weight: 400; font-size: var(--t-display);
-  line-height: 1.1; margin: 0 0 var(--s1); letter-spacing: 0.01em; }
+h1 { font-family: var(--font-display); font-weight: 600; font-size: var(--t-display);
+  line-height: 1.1; margin: 0 0 var(--s1); letter-spacing: -0.012em; }
 h2 { font-family: var(--font); font-weight: 600; font-size: var(--t-h3);
   line-height: 1.3; margin: var(--s6) 0 var(--s3); color: var(--ink); }
 h3 { font-size: var(--t-h3); font-weight: 600; line-height: 1.35; margin: var(--s5) 0 var(--s2); }
@@ -385,20 +425,9 @@ h3 { font-size: var(--t-h3); font-weight: 600; line-height: 1.35; margin: var(--
 .tile .sub { font-size: var(--t-micro); color: var(--ink-2); line-height: 1.4; margin-top: 2px; }
 
 /* ── budget meter (single-value meter: track + fill + threshold tick) ── */
-.meter { margin: 6px 0 2px; }
-.meter .track {
-  position: relative; height: 10px; border-radius: 5px; background: var(--surface-2);
-  overflow: hidden;
-}
-.meter .fill {
-  position: absolute; inset: 0 auto 0 0; border-radius: 5px 0 0 5px;
-  background: var(--accent); min-width: 2px;
-}
-.meter .fill.over { background: var(--critical); }
-.meter .fill.warn { background: var(--warning); }
-.meter .tick {
-  position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--muted);
-}
+/* The bar itself is the one hard-stop meter (ui/signal.tsx): this is its
+   place on the budget card, and the line of words under it. */
+.meter { margin: 10px 0 2px; }
 .meter .legend { display: flex; justify-content: space-between; font-size: 12px;
   color: var(--ink-2); margin-top: 4px; }
 
@@ -496,8 +525,10 @@ button {
    reset painted every disabled button --surface on hover and left a primary's
    --on-accent label on it, white on white, with nothing to click. */
 button:where(:not(:disabled)):hover { background: var(--hover); border-color: var(--muted); }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-button.primary:where(:not(:disabled)):hover { background: var(--accent); filter: brightness(1.08); }
+/* A primary action is ink, as the maker's mark is. Blue is kept for what you
+   follow or select, so a page never has two kinds of blue thing to press. */
+button.primary { background: var(--ink); border-color: var(--ink); color: var(--page); }
+button.primary:where(:not(:disabled)):hover { background: var(--ink); opacity: 0.88; }
 /* Destructive work is outlined, never filled, and never wordless: a filled red
    square with no label is the most dangerous control in the product and it
    looked like a decoration. */
@@ -523,9 +554,12 @@ button.eye { display: inline-flex; align-items: center; padding: 6px 8px; color:
 button.eye:hover { color: var(--ink); }
 
 
+/* A refusal is said at once and stands still: no entrance, no shake. The
+   rules do not perform. */
 .error {
   background: rgba(var(--critical-rgb), 0.12); border: 1px solid var(--critical);
   border-radius: 6px; padding: 8px 12px; margin: 12px 0; font-size: 13px;
+  animation: none; transition: none;
 }
 .notice-box {
   background: rgba(var(--accent-rgb), 0.1); border: 1px solid var(--accent);
@@ -696,6 +730,8 @@ pre.block {
 .spacer { flex: 1; }
 .center-page { display: grid; place-items: center; min-height: 100vh; }
 .login-card { width: 380px; }
+/* One x-height of clear space under the wordmark, and none borrowed above. */
+.login-card h1 { margin: 0 0 var(--s5); }
 .pill-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
 .help { font-size: 12px; color: var(--muted); }
 
@@ -758,11 +794,14 @@ pre.block {
 .chip.accent { color: var(--accent); border-color: rgba(var(--accent-rgb), 0.4); background: rgba(var(--accent-rgb), 0.1); }
 
 
+/* The hard-stop meter at row size: ink on --sunken. Its fill turns a status
+   colour only once it is one (near, over), and the figures sit beside it. */
 .mini-meter {
-  width: 88px; height: 5px; border-radius: 3px; background: var(--surface-2);
+  width: 88px; height: 5px; border-radius: 1px; background: var(--sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
   position: relative; display: inline-block; vertical-align: middle; margin-right: 6px;
 }
-.mini-meter i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--accent); }
+.mini-meter i { position: absolute; inset: 0 auto 0 0; border-radius: 1px; background: var(--ink); }
 .mini-meter.warn i { background: var(--warning); }
 .mini-meter.over i { background: var(--critical); }
 .asof { font-size: var(--t-micro); color: var(--muted); }
@@ -900,7 +939,7 @@ pre.block {
 .zonetog:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .zonetog .caret {
   display: inline-block; font-size: var(--t-micro); color: var(--muted); flex: none;
-  transition: transform 0.12s;
+  transition: transform var(--fast) var(--ease);
 }
 .zonetog .caret.open { transform: rotate(90deg); }
 /* The zone's mono-uppercase treatment is for the heading, not for a chip
@@ -924,7 +963,7 @@ pre.block {
 @media (max-width: 700px) {
   .prow .help, .prow .mini-meter { display: none; }
 }
-.card.clickable { cursor: pointer; transition: border-color 0.12s; }
+.card.clickable { cursor: pointer; transition: border-color var(--fast) var(--ease); }
 .card.clickable:hover { border-color: var(--accent); }
 .role-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr));
@@ -1054,7 +1093,7 @@ tr.subtask td:first-child { padding-left: 28px; color: var(--ink-2); }
   padding: 7px 12px; text-align: left; color: var(--ink-2);
 }
 .fdir-row:hover { background: var(--hover-strong); }
-.fdir-row .caret { font-size: var(--t-micro); color: var(--muted); transition: transform 0.12s; }
+.fdir-row .caret { font-size: var(--t-micro); color: var(--muted); transition: transform var(--fast) var(--ease); }
 .fdir-row .caret.open { transform: rotate(90deg); }
 .fdir-row .fdir-name { font-weight: 600; font-size: 13px; color: var(--ink); }
 .fdir-row .cnt { font-size: var(--t-micro); color: var(--muted);
@@ -1110,7 +1149,7 @@ tr.subtask td:first-child { padding-left: 28px; color: var(--ink-2); }
 .fmore { padding: 8px 12px; border-bottom: 1px solid var(--grid); }
 /* The rows answer the last question asked, not yet the one in the box. Dim
    rather than blank: what was there stays readable until the answer lands. */
-.fbrowse.settling { opacity: 0.55; transition: opacity 0.15s 0.1s; }
+.fbrowse.settling { opacity: 0.55; transition: opacity var(--fast) var(--ease) 0.1s; }
 
 /* A phone is where the "did today's report land?" question gets asked. Size
    and type go first — the name, the state and the time are the answer. */
@@ -1210,7 +1249,7 @@ table.csv .rownum {
   font: inherit; color: var(--ink-2);
 }
 .j-tog:hover { border-color: transparent; background: var(--hover-strong); }
-.j-tog .caret { font-size: var(--t-micro); color: var(--muted); transition: transform 0.12s; }
+.j-tog .caret { font-size: var(--t-micro); color: var(--muted); transition: transform var(--fast) var(--ease); }
 .j-tog .caret.open { transform: rotate(90deg); }
 .j-leaf { display: flex; gap: 6px; padding-left: 15px; }
 .j-key { color: var(--accent); }
@@ -1727,7 +1766,7 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .adot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted);
   flex: none; display: inline-block; }
 .adot.consequence { background: var(--warning); }
-.adot.deadline { background: var(--accent-2); }
+.adot.deadline { background: var(--serious); }
 .adot.meeting { background: var(--accent); }
 /* A projection is arithmetic, not a promise anybody made — hollow, so the eye
    does not read it as a commitment. */
@@ -1749,7 +1788,7 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   color: var(--muted); white-space: nowrap;
 }
 .atone.consequence { color: var(--warning); }
-.atone.deadline { color: var(--accent-2); }
+.atone.deadline { color: var(--serious); }
 .atone.meeting { color: var(--accent); }
 .anote { margin: 8px 0 0; }
 
@@ -1911,7 +1950,7 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .question-options { display: flex; flex-direction: column; gap: 6px; }
 .option { display: flex; align-items: flex-start; gap: 9px; padding: 7px 10px;
   border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--surface-2); cursor: pointer; transition: border-color 0.12s; }
+  background: var(--surface-2); cursor: pointer; transition: border-color var(--fast) var(--ease); }
 .option:hover { border-color: var(--grid); }
 .option.on { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.07); }
 .option input[type="radio"] { width: 15px; height: 15px; min-height: 0; padding: 0;
@@ -1992,7 +2031,7 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   display: flex; flex-direction: column; gap: 10px; text-align: left;
   font: inherit; padding: 18px 20px; border-radius: var(--radius);
   background: var(--surface); border: 1px solid var(--border); color: var(--ink);
-  transition: border-color 0.12s;
+  transition: border-color var(--fast) var(--ease);
 }
 .startcard:hover { border-color: var(--accent); }
 /* The recommended card is marked once, with a word — the border does not do
@@ -2118,8 +2157,13 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .plan-window { margin: 4px 0 6px; }
 .plan-window .plan-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-2); }
 .plan-window .num { font-variant-numeric: tabular-nums; }
-.plan-window .track { position: relative; height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; margin: 3px 0 2px; }
-.plan-window .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px 0 0 4px; background: var(--accent); min-width: 2px; }
+/* A subscription window ends at a wall the provider holds, so it is drawn as
+   one: the heavy ink tick at the end of the track. */
+.plan-window .track { position: relative; height: 8px; border-radius: 1px; background: var(--sunken);
+  box-shadow: inset 0 0 0 1px var(--border); margin: 5px 0 4px; }
+.plan-window .track::after, .plan-compact .mini-meter::after { content: ""; position: absolute; right: 0;
+  top: -3px; bottom: -3px; width: 3px; background: var(--ink); }
+.plan-window .fill { position: absolute; inset: 0 auto 0 0; border-radius: 1px; background: var(--ink); min-width: 2px; }
 .plan-window .fill.warn { background: var(--warning); }
 .plan-window .fill.over { background: var(--critical); }
 .plan-window .foot { font-size: var(--t-micro); color: var(--muted); }
@@ -2438,8 +2482,8 @@ button.textblock { flex-direction: column; align-items: stretch; }
 }
 .btnlink:hover { text-decoration: none; background: var(--surface-2); }
 .btnlink.small { min-height: 30px; padding: 4px 11px; font-size: var(--t-micro); }
-.btnlink.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.btnlink.primary:hover { filter: brightness(1.07); }
+.btnlink.primary { background: var(--ink); border-color: var(--ink); color: var(--page); }
+.btnlink.primary:hover { background: var(--ink); opacity: 0.88; }
 .qchip {
   display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 3px 11px;
   border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
@@ -2897,7 +2941,7 @@ pre.trace { max-height: 360px; overflow: auto; width: 100%; font-size: 12px; }
   border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px;
   padding-left: 8px; padding-right: 8px;
 }
-.split > .split-caret.primary { border-left-color: color-mix(in srgb, var(--on-accent) 35%, transparent); }
+.split > .split-caret.primary { border-left-color: color-mix(in srgb, var(--page) 35%, transparent); }
 .split > .split-caret[aria-expanded="true"] svg { transform: rotate(180deg); }
 .split-menu {
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 240px;
@@ -3551,7 +3595,8 @@ table.accessmap tr:hover td.hot { background: rgba(var(--accent-rgb), 0.06); }
 .savebar-what { flex: 1 1 280px; min-width: 0; font-size: var(--t-small); }
 .savebar button { background: transparent; color: var(--page); border-color: rgba(128, 128, 128, 0.5); }
 .savebar button:hover { background: rgba(128, 128, 128, 0.15); border-color: rgba(128, 128, 128, 0.7); }
-.savebar button.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+/* The bar is already ink, so its primary is the inverse: paper on ink. */
+.savebar button.primary { background: var(--page); color: var(--ink); border-color: transparent; }
 
 /* Data sources: one state per source, in words, with its fix beside it. */
 .srow { display: grid; grid-template-columns: 170px minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 18px;
@@ -3591,7 +3636,7 @@ button.gchip.tool-count:hover { border-color: var(--muted); color: var(--ink); }
 .tname { all: unset; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; min-width: 0;
   overflow-wrap: anywhere; }
 .tname:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.tname .caret { font-size: var(--t-micro); color: var(--muted); transition: transform 0.12s; }
+.tname .caret { font-size: var(--t-micro); color: var(--muted); transition: transform var(--fast) var(--ease); }
 .tname .caret.open { transform: rotate(90deg); }
 .tdesc { margin: 0; font-size: var(--t-small); color: var(--ink-2); display: -webkit-box;
   -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -3752,3 +3797,11 @@ ul.plain { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
 .receipt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 0; }
 .receipt-grid dt { font-size: 12px; color: var(--muted); }
 .receipt-grid dd { margin: 0; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Motion is information here, never decoration, so a reader who asked for
+   less of it loses nothing: every animation and transition lands at once. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important; scroll-behavior: auto !important;
+  }
+}
