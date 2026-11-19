@@ -16,6 +16,7 @@ end says how the counting is done and where the week boundary falls.
 
 | Release | Week | Changes | In one line |
 |---|---|---|---|
+| **0.7.0** | 12-18 Nov 2026 | 9 | The dashboard opens from the command line, a quick project starts from one brief, and yaaf has a new look |
 | **0.6.0** | 5-11 Nov 2026 | 21 | Each data source tool needs your permission, projects get mailboxes, and yaaf runs on your own desktop |
 | **0.5.0** | 29 Oct – 4 Nov 2026 | 23 | One honest meter for what a run costs, and runs that stop being cut short |
 | **0.4.0** | 22–28 Oct 2026 | 34 | Any model provider, one provider chosen for the install, and an inbox whose buttons do something |
@@ -25,6 +26,30 @@ end says how the counting is done and where the week boundary falls.
 | **0.1.0** | none | none | The starting point: the last commit before 1 October 2026 |
 
 Releases are listed newest first.
+
+## [0.7.0] - 2026-11-18
+
+**No, nothing needs you.** Upgrade as usual. The upgrade applies two database changes by itself. Both of them add columns only, and no stored row needs a new value. You do not edit a file, set a value or learn a new form of a command. Two new things wait for you when you want them: `yaaf open` and `yaaf create-project --quick`.
+
+**The count.** This release has 9 changes. The script scripts/count_changes.sh in the repository derives that count. The 9 counted pull requests and commits are linked below.
+
+### Changed
+
+- **The whole app has a new look.** There is a new wordmark, a new icon set, a new favicon and new tray icons. The typefaces are Public Sans and Brygada 1918. Both of them ship inside the app, so the app fetches no font from another site while you use it. The web app shows the new look once the update rebuilds it. The desktop icon changes on your next `yaaf setup`, and the old icon still works until then. ([#125](https://github.com/dominicplouffe/yaaf/pull/125))
+- **Each result says how it was checked, and the plan chart draws the promised date in heavy ink.** In the latest results list on the project overview, a result now shows the label of its check beside it, when the app knows that check. The label is the check's own name. "Verified by yaaf" means the platform ran the task's own check and it passed. "Read by Dana" means that person read the result before it reached you. "Met by judgement" means no script can check the result, so a person judged it met. A result whose check is not settled yet shows the mark and no label. The promised date on the plan chart is a heavy ink line now, not a color-coded one. The words above it still say whether it was kept. Settled cards and trails take a double rule. The budget card uses the shared money meter, with the wall on it. ([#126](https://github.com/dominicplouffe/yaaf/pull/126))
+- **The team's published files reach you in one roundup, and your own files reach you one by one.** Before, every published file made its own boardroom line and its own Slack post. On a busy project that was about 150 lines a day. A file now records who it was written for. Your files, and the files for a client or the public, are announced the moment they land, as before. The team's files arrive together once the work is quiet for 30 minutes, or after 3 hours at most. ([461ceec](https://github.com/dominicplouffe/yaaf/commit/461ceec64a966eaadacb93b18b13f5cd3c2297ea))
+- **The CEO is told that a conversation spends no runs.** The text the CEO reads now says that only work wakes count. It says that talking to the chairman spends none of them, and that a run which changes nothing is given back. Your CEO stops treating a boardroom exchange as spending. ([8c6b00b](https://github.com/dominicplouffe/yaaf/commit/8c6b00b8986ac0f38761c9c26ff3aa36d89a238d))
+- **The screenshots in the guides now show the current app.** The documentation gains 36 before-and-after screens of the new look. The ten screenshots of the app are made again from the current build. The product itself does not change in this one. ([#127](https://github.com/dominicplouffe/yaaf/pull/127))
+
+### Added
+
+- **`yaaf open` opens the dashboard from the command line.** The command reads the address from `YAAF_API`, else from `localhost` on `YAAF_API_PORT`, else from the default port. It asks the server first, so it stops with one line, "Is the server running?", and does not open a page that cannot load. On a Linux desktop with an app window it opens one, else it uses the default browser. `yaaf open inbox` opens one screen, and `yaaf open --print` prints the address only. ([#130](https://github.com/dominicplouffe/yaaf/pull/130))
+- **A quick project starts from one brief, and the Founder asks its first question in seconds.** `yaaf create-project --quick "BRIEF"` founds a project with no interview. `--billing` names the credential that pays, and `--wait` stays until the project runs. The web app has the same thing as "Just start it". You reach it from **New project**, by choosing **Describe it**. The button is on the screen that opens, headed "Describe it, and yaaf drafts it". The button shows only before your first turn of the interview. The agent tools have `quick_project` and `quick_project_status`. A quick project gets no data sources, secrets, email, domains or repository. One credential pays every seat. The interview is faster too. The author measured the speed. The first question comes at about 16 seconds, not 84 to 97. A turn comes at about 30 seconds, not 160 to 180. No file in the repository records these times. ([a584dfb](https://github.com/dominicplouffe/yaaf/commit/a584dfbd533af8a9be41696b20549deab376e7ac))
+- **Every task now says who its result is for, and yaaf counts the times you open a published file.** A task declares the team, you, or a client. The writer uses that to shape the result, and it never changes who is told. yaaf counts the opens of each file and keeps the first time. Each announcement quotes the file's own opening paragraph, so you read the answer before you open the file. The review page shows how long each reader's files run, and which of your files you opened. No word cap applies to a file. ([8a446e3](https://github.com/dominicplouffe/yaaf/commit/8a446e3859eaa95fbc47ae204fdf9d775f6aff69))
+
+### Fixed
+
+- **`yaaf create-project` gets past its own menu again.** After the draft, the menu offered `[c]reate it`, `[s]ay something` and `[q]uit`. That prompt stopped the command on current versions. It now calls the prompt directly, in four lines. ([#128](https://github.com/dominicplouffe/yaaf/pull/128))
 
 ## [0.6.0] - 2026-11-11
 
@@ -699,6 +724,11 @@ are not in this file.
 
 ## Notes on method
 
+**This project rewrote five earlier sections.** The 0.1.1, 0.2.0, 0.3.0, 0.4.0 and 0.5.0 sections
+were rewritten in ASD-STE100 Simplified Technical English on 13 November 2026. The rewrite is commit
+856e0ee at 2026-11-14T00:11Z, which is the evening of 13 November in Eastern time. No count,
+version, tag, link or fact changed. The 0.6.0 section already had that form and did not change.
+
 **The week.** Seven days, Thursday to Wednesday, counted from Thursday 1 October 2026: 1–7 October,
 8–14 October, and so on. Each release is dated by the last day of its week. The cut is made in UTC,
 because the public timestamps of a merge are UTC. Those timestamps are the merge time of the pull
@@ -719,17 +749,19 @@ week, and changelog or version-bump commits made by this project.
 count from `git log --first-parent` alone. It needs no token, no network and no API quota. It
 classifies each entry as a pull request or a direct commit from the commit message of that entry. It
 prints the version chain, with the counted PR numbers and commit SHAs under each week. Anybody can
-re-run it against a clone and get the same numbers. The count was also checked one time against the
-list of merged pull requests in GitHub. For each of the five weeks, the PR numbers of the script are
-the same PR numbers that GitHub records as merged into `main`. Every entry that the script reports as
-a direct commit returns no associated pull request from GitHub.
+re-run it against a clone and get the same numbers. The count was also checked against the list of
+merged pull requests in GitHub. For each of the six weeks, the PR numbers in the script are the PR
+numbers that GitHub records as merged into `main`, with one exception. The week that ended 11
+November has one more merged pull request than the script lists. PR #121 published this project's
+own changelog, so the rule counts it as zero. Every entry that the script reports as a direct commit
+returns no associated pull request from GitHub.
 
 **Two changes move a week depending on the time zone, and no version moves.** PR #52 was merged at
 2026-10-15T01:02Z and PR #81 at 2026-10-29T00:04Z. Read in the chairman's Eastern time they land in
-the previous week, which would make the weekly counts 4, 12, 6, 35 and 22 instead of 4, 11, 7, 34 and
-23. Under either cut every week except the first is still six or more, so the version chain is
-identical: 0.1.1, 0.2.0, 0.3.0, 0.4.0, 0.5.0. The 1–7 October week has the same four changes under
-both.
+the previous week, which would make the weekly counts 4, 12, 6, 35, 22 and 21 instead of 4, 11, 7,
+34, 23 and 21. Under either cut every week except the first is still six or more, so the version
+chain is identical: 0.1.1, 0.2.0, 0.3.0, 0.4.0, 0.5.0, 0.6.0. The 1–7 October week has the same four
+changes under both.
 
 **One entry per change.** Every counted change appears exactly once above, under exactly one kind, so
 a week's count can be checked by counting the entries in its section. Where one change would fit two
@@ -738,26 +770,30 @@ week, both entries are kept and each describes what that change did when it land
 of the week stays visible. The token conversion of #81 was replaced by #82, and the seat editor had
 three passes in #76, #77 and #80. The last of them states the behaviour you end up with.
 
-**Database changes.** The commit that carries this file also sets the version string in
-`pyproject.toml` and `yaaf/__init__.py` to the newest tag it publishes, 0.6.0, so an installed
-package reports the same version as the release it came from. Every release from 0.2.0 on adds
-database migrations. `deploy/update_single_server.sh` applies them on a server and `yaaf up` applies
-them on a desktop install. An install driven by hand needs `alembic upgrade head`. No migration in
-these five weeks deletes rows when it is applied. Six of them rewrite rows that are already there.
-This is what each one does to your rows. 0046 lower-cases the stored user emails, because sign-in now
-matches on them exactly. It also gives every existing project's chairman the membership row that
-creation writes today (0.2.0). 0048 stamps existing members as having read the boardroom up to the
-upgrade, so the new badge does not count your history (0.3.0). 0054 fills in `secrets.updated_at`
-from `created_at` where it was empty (0.4.0). 0055 renames the stored harness names to `yaaf_loop`.
-It also pins the CLI that an OpenAI or Google API key used to drive, so no seat changes engine on
-deploy (0.4.0). 0063 moves a cut obligation back to the cycle it was cut in and re-says the old cycle
-scorecards (0.5.0). 0064 re-counts the "Met since last" figure frozen in each meeting (0.5.0).
+**Database changes.** `pyproject.toml` and `yaaf/__init__.py` declare the version string, so an
+installed package reports the same version as the release it came from. From 0.6.0 on, the commit
+that carries a release's changelog section sets both files to that release's version. PR #124 is the
+commit that added the 0.6.0 section, and it set both files to `0.6.0`. Every release from 0.2.0 on
+adds database migrations. `deploy/update_single_server.sh` applies them on a server and `yaaf up`
+applies them on a desktop install. An install driven by hand needs `alembic upgrade head`. No
+migration in these six weeks deletes rows when it is applied. Seven of them rewrite rows that are
+already there. This is what each one does to your rows. 0046 lower-cases the stored user emails,
+because sign-in now matches on them exactly. It also gives every existing project's chairman the
+membership row that creation writes today (0.2.0). 0048 stamps existing members as having read the
+boardroom up to the upgrade, so the new badge does not count your history (0.3.0). 0054 fills in
+`secrets.updated_at` from `created_at` where it was empty (0.4.0). 0055 renames the stored harness
+names to `yaaf_loop`. It also pins the CLI that an OpenAI or Google API key used to drive, so no
+seat changes engine on deploy (0.4.0). 0063 moves a cut obligation back to the cycle it was cut in
+and re-says the old cycle scorecards (0.5.0). 0064 re-counts the "Met since last" figure frozen in
+each meeting (0.5.0). 0071 expires the pending one-call grants that a denied tool can no longer let
+through (0.6.0).
 
 **The words.** Every entry is written in ASD-STE100 Simplified Technical English. The sentences are
 short and each one carries one idea. The voice is active. There is no semicolon and no contraction.
 An interface label quoted in backticks keeps its exact spelling, because it is a name and not prose.
 `Couldn't` in the 0.4.0 section is a former label of that kind, and it stays.
 
+[0.7.0]: https://github.com/dominicplouffe/yaaf/releases/tag/v0.7.0
 [0.6.0]: https://github.com/dominicplouffe/yaaf/releases/tag/v0.6.0
 [0.5.0]: https://github.com/dominicplouffe/yaaf/releases/tag/v0.5.0
 [0.4.0]: https://github.com/dominicplouffe/yaaf/releases/tag/v0.4.0
