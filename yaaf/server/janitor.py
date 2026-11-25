@@ -3183,11 +3183,19 @@ def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> Non
     if started:
         return
 
+    # Once per stall, not once per window. Re-arming every `stall_hours`
+    # turned one week-long silence into twenty-seven identical alarms in the
+    # chairman's brief, each saying the same thing as the first. A stall is
+    # over when a run starts; until then, the one notice stands.
+    last_run = session.execute(
+        select(func.max(Run.created_at)).where(Run.project_id == project.id,
+                                               Run.kind.not_in(TALK_RUN_KINDS))
+    ).scalar_one()
     already = session.execute(
         select(func.count(Notice.id)).where(
             Notice.project_id == project.id,
             Notice.kind == NoticeKind.STALLED,
-            Notice.created_at >= since,
+            *([Notice.created_at >= last_run] if last_run is not None else []),
         )
     ).scalar_one()
     if already:

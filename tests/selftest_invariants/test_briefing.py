@@ -995,3 +995,31 @@ def test_the_flag_the_ceo_reads_dates_its_window_by_the_same_rule(client):
     assert f"runs {window} and closed no work" in summary
     assert "in 14 days" not in summary
     assert starts
+
+
+def test_repeated_notices_are_one_line_that_says_why(client):
+    """A week-long stall printed twenty-seven identical lines of "the project
+    had work and started nothing for hours" under Worth your eye, and not one
+    of them said why. Repeats of a kind are one line with a count and a span;
+    a stall carries the dispatcher's own reading from the newest notice."""
+    from yaaf.core import ids
+    from yaaf.core.models import Notice, NoticeKind
+
+    project = make_project(client, slug="stall-repeats")
+    with db_session() as session:
+        # A first read composes from the project's birth; make that a day ago.
+        session.get(Project, project["id"]).created_at = utcnow() - timedelta(days=1)
+        for hours in (9, 5, 1):
+            session.add(Notice(
+                id=ids.new_id(ids.NOTICE), project_id=project["id"],
+                agent_id=project["ceo_agent_id"], kind=NoticeKind.STALLED,
+                created_at=utcnow() - timedelta(hours=hours),
+                body="This project has started no run in 4h and still has work open. "
+                     f"The platform's own reading: Lead is paused and holds the work ({hours}h). "
+                     "Do not guess at a different cause."))
+
+    lines = [x for x in brief(client, project)["lines"] if x["kind"] == "notice_stalled"]
+    assert len(lines) == 1, lines
+    assert lines[0]["count"] == 3
+    assert "3 times" in lines[0]["text"]
+    assert lines[0]["note"] == "why: Lead is paused and holds the work (1h)."

@@ -474,7 +474,12 @@ def test_the_watchdog_speaks_when_a_project_goes_quiet_with_work_open(client):
         # a second opinion on why the project is quiet is how it invents one.
         assert "is paused and holds the work" in stalls[0].body
 
-    # Told once per window, not once per fifteen seconds.
+    # Told once per stall, not once per fifteen seconds — and not once per
+    # window either: a stall that outlives `stall_hours` is the same stall.
+    with db_session() as session:
+        janitor.janitor_once(session)
+        session.query(Notice).filter_by(kind=NoticeKind.STALLED).one().created_at = \
+            utcnow() - timedelta(hours=30)
     with db_session() as session:
         janitor.janitor_once(session)
     with db_session() as session:
