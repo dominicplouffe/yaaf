@@ -252,7 +252,10 @@ def _runs(cons: ConstitutionDoc, runs: list, now: datetime) -> dict:
     today = day_start(now)
     days = [today - timedelta(days=RUN_DAYS - 1 - i) for i in range(RUN_DAYS)]
     index = {d: i for i, d in enumerate(days)}
-    out = [{"day": d.date().isoformat(), "finished": 0, "refunded": 0, "failed": 0}
+    # Counted runs are the ones the daily limit counts (metered, work lane),
+    # split by how they ended; given-back runs and message reads are kept
+    # apart so a bar of this chart can never pass the limit it is drawn under.
+    out = [{"day": d.date().isoformat(), "finished": 0, "failed": 0, "given_back": 0, "reads": 0}
            for d in days]
     durations: list[float] = []
     timed_out = 0
@@ -261,16 +264,18 @@ def _runs(cons: ConstitutionDoc, runs: list, now: datetime) -> dict:
             continue
         i = index.get(day_start(r.created_at))
         if i is not None:
-            if r.status in DEAD_STATUSES:
-                out[i]["failed"] += 1
-            elif r.status == RunStatus.DONE:
-                out[i]["finished" if r.metered else "refunded"] += 1
+            if r.kind in INBOX_RUN_KINDS:
+                out[i]["reads"] += 1
+            elif not r.metered:
+                out[i]["given_back"] += 1
+            else:
+                out[i]["failed" if r.status in DEAD_STATUSES else "finished"] += 1
         if r.started_at and r.finished_at and r.status in (RunStatus.DONE, *DEAD_STATUSES):
             seconds = (r.finished_at - r.started_at).total_seconds()
             durations.append(seconds)
             if seconds >= cons.run_timeout_s * 0.98:
                 timed_out += 1
-    ended = sum(d["finished"] + d["refunded"] + d["failed"] for d in out)
+    ended = sum(d["finished"] + d["failed"] for d in out)
     failed = sum(d["failed"] for d in out)
     return {
         "days": out,
@@ -313,15 +318,9 @@ def _spend(session: Session, project: Project, cons: ConstitutionDoc, now: datet
     }
 
 
-def _plan(session: Session, project: Project, readable: set[str], now: datetime,
-          runs: list) -> dict | None:
-    """The subscription behind this project, if it is one with a meter.
-
-    Projects are named only when the reader can open them: a co-chair of this
-    project has no business learning what else the install runs, so the rest
-    are summed into one share. Matched by token fingerprint, the identity the
-    meter itself is filed under — several credential rows can be one plan.
-    """
+def plan_print(session: Session, project: Project) -> tuple[str, str] | None:
+    """(fingerprint, token) of the metered Claude plan paying this project, or
+    None when it pays some other way. The meter is filed under the fingerprint."""
     from yaaf.core import plan_usage
     from yaaf.core.crypto import decrypt
     from yaaf.runtimes.providers import DEFAULT_PROVIDER, PROVIDERS
@@ -338,7 +337,25 @@ def _plan(session: Session, project: Project, readable: set[str], now: datetime,
         token = decrypt(secret.ciphertext)
     except Exception:
         return None
-    mine = plan_usage.fingerprint(token)
+    return plan_usage.fingerprint(token), token
+
+
+def _plan(session: Session, project: Project, readable: set[str], now: datetime,
+          runs: list) -> dict | None:
+    """The subscription behind this project, if it is one with a meter.
+
+    Projects are named only when the reader can open them: a co-chair of this
+    project has no business learning what else the install runs, so the rest
+    are summed into one share. Matched by token fingerprint, the identity the
+    meter itself is filed under — several credential rows can be one plan.
+    """
+    from yaaf.core import plan_usage
+    from yaaf.core.crypto import decrypt
+
+    found = plan_print(session, project)
+    if found is None:
+        return None
+    mine, token = found
     reading = plan_usage.stored(session, token)
 
     # Every project paying with the same plan, found by fingerprint. Decrypting

@@ -459,12 +459,13 @@ export function LimitGrid({ vitals, base }: { vitals: VitalsView; base: string }
 
 /** The last seven days by outcome against the daily limit. A failed run
     still spends the allowance, which is why the count drains faster than the
-    work moves; a refunded one changed nothing and was given back. */
+    work moves. Only counted runs are solid; a given-back run or a message
+    read is an outline above, so no bar can pass the limit it is drawn under. */
 export function RunsWeek({ vitals, base }: { vitals: VitalsView; base: string }) {
   const r = vitals.runs;
   const cap = vitals.today.wall;
   const W = 600, H = 132, floor = 108, top = 10, left = 28;
-  const totals = r.days.map((d) => d.finished + d.failed + d.refunded);
+  const totals = r.days.map((d) => d.finished + d.failed + d.given_back + d.reads);
   // Scaled to the week's own runs, so a quiet week still has bars; the daily
   // limit is drawn only when it is within reach of them, and named otherwise.
   const peak = Math.max(...totals, 1);
@@ -493,7 +494,8 @@ export function RunsWeek({ vitals, base }: { vitals: VitalsView; base: string })
         {r.days.map((d, i) => {
           const x = left + i * slot + (slot - bw) / 2;
           let cur = floor;
-          const parts: [number, string][] = [[d.finished, "vt-ok"], [d.failed, "vt-bad"], [d.refunded, "vt-muted"]];
+          const parts: [number, string][] = [[d.finished, "vt-ok"], [d.failed, "vt-bad"]];
+          const extra = d.given_back + d.reads;
           return (
             <g key={d.day}>
               {parts.map(([v, cls]) => {
@@ -501,6 +503,11 @@ export function RunsWeek({ vitals, base }: { vitals: VitalsView; base: string })
                 const h = y(v); cur -= h;
                 return <rect key={cls} className={cls} x={x} y={cur} width={bw} height={Math.max(h - 1, 1)} rx={1.5} />;
               })}
+              {extra > 0 && (
+                <rect className="vt-extra" x={x + 0.5} y={cur - y(extra)} width={bw - 1} height={Math.max(y(extra) - 1, 1)} rx={1.5}>
+                  <title>{`${d.given_back} given back, ${d.reads} message reads: not counted`}</title>
+                </rect>
+              )}
               <text x={x + bw / 2} y={H - 4} textAnchor="middle" className={i === r.days.length - 1 ? "vt-now" : ""}>
                 {new Date(`${d.day}T12:00:00Z`).toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" })}
               </text>
@@ -510,7 +517,7 @@ export function RunsWeek({ vitals, base }: { vitals: VitalsView; base: string })
       </svg>
       <div className="vt-legend">
         <span><i className="vt-ok" />Finished</span><span><i className="vt-bad" />Failed</span>
-        <span><i className="vt-muted" />Given back (changed nothing)</span>
+        <span><i className="vt-extra-key" />Given back or message read: not counted</span>
         <span className="grow" />
         {!showCap && <span>daily limit {cap}, well above this week</span>}
         <span>{r.at_once === 1 ? "1 run at a time" : `${r.at_once} at once`} · typical {minutes(r.p50_s)} · slowest 5% {minutes(r.p95_s)} · stops at {minutes(r.timeout_s)}</span>

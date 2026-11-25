@@ -948,6 +948,21 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
+@router.get("/projects/{project_id}/runs/day", dependencies=[authority.READ])
+def project_run_day(project_id: str, session: Session = Depends(db)) -> dict:
+    """The Runs page: every run started in the limit's day (00:00 UTC), each in
+    one lane — counted, given back, message read, check, chat — with who, why
+    it woke, how today compares with the usual, and what went wrong. See
+    `yaaf.server.runs_day`."""
+    from yaaf.server.runs_day import run_day
+    from yaaf.server.vitals import plan_print
+
+    project = _project(session, project_id)
+    found = plan_print(session, project)
+    return run_day(session, project, effective(session, project.id),
+                   plan_print=found[0] if found else None)
+
+
 @router.get("/projects/{project_id}/vitals", dependencies=[authority.READ])
 def project_vitals(project_id: str, session: Session = Depends(db)) -> dict:
     """The project home's charts: runs today by hour, which limits held the

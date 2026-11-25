@@ -162,9 +162,13 @@ const ENDED_EARLY: Record<string, string> = { ...FAULTS, ...DELIBERATE };
 /** The day's run outcomes. A third of runs ending early is the single loudest
     signal that something is in the way, and it used to be a grey aside. */
 export function runHealth(runs: RunRow[]) {
-  const today = new Date().toDateString();
+  // The limit's day, 00:00 UTC, not the reader's midnight: a "today" that
+  // started at a different hour from the limit's was how one project read 29
+  // runs on one screen and 40 of 40 on the next.
+  const now = new Date();
+  const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const todays = runs.filter(
-    (r) => r.started_at && new Date(r.started_at).toDateString() === today,
+    (r) => r.started_at && new Date(r.started_at).getTime() >= dayStart,
   );
   const clean = todays.filter((r) => r.status === "done").length;
   // The resident chat session is presence, not work — the project bar has
