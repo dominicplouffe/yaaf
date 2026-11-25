@@ -2729,6 +2729,29 @@ class PlanReading(Base):
     seen_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
+class PlanReadingHistory(Base):
+    """Every plan reading, kept for a month — the meter's past.
+
+    `PlanReading` holds only the latest answer, which is all a lease needs to
+    decide whether a plan is shut. It cannot say how full the five-hour window
+    got overnight, or whether a neighbour emptied it, because each reading
+    overwrites the last. A chairman whose project looked broken at 3 am had no
+    way to learn that the shared plan had been at 100% at the time. One row per
+    harvested reading, the two windows that decide whether runs start, pruned
+    past `plan_usage.HISTORY_DAYS`.
+    """
+
+    __tablename__ = "plan_reading_history"
+    __table_args__ = (Index("ix_plan_history_print_at", "token_fingerprint", "at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    token_fingerprint: Mapped[str] = mapped_column(String(64))
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    five_hour: Mapped[float | None] = mapped_column(Float)
+    seven_day: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[str | None] = mapped_column(String(24))
+
+
 class McpClient(Base):
     """A model client that speaks MCP on the chairman's behalf.
 

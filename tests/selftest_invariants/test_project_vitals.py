@@ -126,8 +126,10 @@ def test_a_plan_refusal_is_not_counted_as_an_ordinary_failure_only(client):
     plan_row = next(r for r in body["limits"]["rows"] if r["key"] == "plan")
     assert plan_row["hours"][-1] == 1
     today = body["runs"]["days"][-1]
-    assert today == {"day": today["day"], "finished": 1, "refunded": 1, "failed": 2}
-    assert body["runs"]["failure_share"] == 0.5
+    # Counted runs split by how they ended; the given-back one is apart, so
+    # the bar drawn under the daily limit holds only what the limit counts.
+    assert today == {"day": today["day"], "finished": 1, "failed": 2, "given_back": 1, "reads": 0}
+    assert body["runs"]["failure_share"] == round(2 / 3, 3)
 
 
 def test_spend_is_by_day_in_the_budget_s_unit_with_a_projection(client):

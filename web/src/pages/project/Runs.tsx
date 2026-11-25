@@ -2,7 +2,8 @@ import { CSSProperties, Fragment, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Dashboard, get, getText, RunRow, SpendReport } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
-import { AsOf, downloadCsv, ExportCsv, fmtAgo, fmtUnit, runHealth, spentOf } from "../../ui";
+import { AsOf, downloadCsv, ExportCsv, fmtAgo, fmtUnit, spentOf } from "../../ui";
+import RunDay from "./RunDay";
 
 export interface LedgerRow {
   id: string;
@@ -198,12 +199,45 @@ export function SpendBreakdown({ projectId, usdMode }: { projectId: string; usdM
   );
 }
 
+/** One run's trace and context, fetched when its row is opened on the day page. */
+function RunDetail({ runId, hasTrace, hasContext }: { runId: string; hasTrace: boolean; hasContext: boolean }) {
+  const [trace, setTrace] = useState<string | null>(null);
+  const [context, setContext] = useState<string | null>(null);
+  useEffect(() => {
+    if (hasTrace) getText(`/observe/runs/${runId}/trace`).then(setTrace, (e) => setTrace(`⚠ ${(e as Error).message}`));
+    if (hasContext) getText(`/observe/runs/${runId}/context`).then(setContext, (e) => setContext(`⚠ ${(e as Error).message}`));
+  }, [runId, hasTrace, hasContext]);
+  const block: CSSProperties = { maxHeight: 320, overflow: "auto", margin: 0 };
+  return (
+    <>
+      {hasTrace && <><div className="label">Trace</div><pre className="block mono" style={block}>{trace ?? "loading…"}</pre></>}
+      {hasContext && <div style={{ marginTop: 8 }}>{context === null
+        ? <pre className="block mono" style={block}>loading…</pre> : <ContextView text={context} />}</div>}
+    </>
+  );
+}
+
+/** The day page by default; the plain list for a link that narrows to one
+    run or one person (the record's "View run", a person's page), and for
+    earlier days. */
 export default function Runs({ projectId, dash }: { projectId: string; dash: Dashboard }) {
+  const [params] = useSearchParams();
+  if (params.get("agent") || params.get("run") || params.get("all")) {
+    return <RunList projectId={projectId} dash={dash} />;
+  }
+  return (
+    <RunDay projectId={projectId}
+      detail={(id, hasTrace, hasContext) => <RunDetail runId={id} hasTrace={hasTrace} hasContext={hasContext} />} />
+  );
+}
+
+function RunList({ projectId, dash }: { projectId: string; dash: Dashboard }) {
   // One person's runs (from their page) or one run (from "View run" on a
   // line of the record), narrowed by the server rather than filtered here.
   const [params, setParams] = useSearchParams();
   const onlyAgent = params.get("agent");
   const onlyRun = params.get("run");
+  const everything = params.get("all");
   const narrowed = new URLSearchParams({ limit: "50" });
   if (onlyAgent) narrowed.set("agent_id", onlyAgent);
   if (onlyRun) narrowed.set("run_id", onlyRun);
@@ -255,11 +289,6 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
 
   if (error && !runs) return <div className="error">{error}</div>;
 
-  const usdMode = dash.billing_mode === "api_key";
-  const health = runHealth(runs ?? []);
-  const todayRuns = health.todays;
-  const todayUsd = health.usd;
-  const todayTokens = health.tokens;
   const weekAgo = Date.now() - 7 * 86_400_000;
   const storms = (runs ?? []).filter(
     (r) =>
@@ -274,46 +303,8 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
         Every model call, why it woke, and what it cost.
       </p>
 
-      {/* Outcomes before receipts. "12 failures" in the same weight as
-          everything else is not a report — a run that ended early was paid for
-          and produced nothing, and the reasons are what tell you what to fix. */}
-      <div className="tiles" style={{ marginTop: 0 }}>
-        <div className="tile">
-          <div className="label">Runs today</div>
-          <div className="value">{todayRuns.length}</div>
-          <div className="sub">
-            {usdMode || todayUsd > 0
-              ? `$${todayUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-              : `${fmtUnit(todayTokens, "tokens")} tokens`}{" "}
-            spent
-          </div>
-        </div>
-        <div className="tile">
-          <div className="label">Finished cleanly</div>
-          <div className="value">{health.clean}</div>
-          <div className="sub">
-            {todayRuns.length > 0 ? `${Math.round((health.clean / todayRuns.length) * 100)}%` : "—"}
-          </div>
-        </div>
-        <div className={`tile${health.ratio >= 0.2 ? " alert" : ""}`}>
-          <div className="label">Ended early</div>
-          <div className="value">{health.early.length}</div>
-          <div className="sub">
-            {health.byReason.length > 0
-              ? health.byReason.map((r) => `${r.count} ${r.phrase}`).join(" · ")
-              : "none"}
-          </div>
-        </div>
-        <div className="tile">
-          <div className="label">Still running</div>
-          <div className="value">{health.running}</div>
-          <div className="sub">
-            {dash.runs.queued > 0 ? `${dash.runs.queued} queued behind them` : "nothing queued"}
-            {dash.chat_live && " · chat session resident"}
-          </div>
-        </div>
-      </div>
-
+      {/* The day's count lives on the day page, counted the limit's way; a
+          second "runs today" here, counted another way, is what disagreed. */}
       {/* Money over time has a page of its own now, beside the budget it is
           spending against; this one stays about the runs themselves. */}
       <p className="help" style={{ margin: "12px 0 16px" }}>
@@ -372,6 +363,12 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
         </div>
       )}
 
+      {everything && !onlyAgent && !onlyRun && (
+        <div className="notice-box" style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+          <span className="grow">Every run, newest first, across days.</span>
+          <button className="small" onClick={() => setParams({}, { replace: true })}>Back to today</button>
+        </div>
+      )}
       {(onlyAgent || onlyRun) && (
         <div className="notice-box" style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
           <span className="grow">

@@ -540,7 +540,8 @@ export interface VitalsView {
     rows: { key: string; label: string; means: string; hours: number[] }[];
   };
   runs: {
-    days: { day: string; finished: number; refunded: number; failed: number }[];
+    /** finished + failed are the runs the daily limit counted; the other two never count. */
+    days: { day: string; finished: number; failed: number; given_back: number; reads: number }[];
     failure_share: number | null;
     p50_s: number | null; p95_s: number | null; timeout_s: number; timed_out: number; at_once: number;
   };
@@ -562,6 +563,37 @@ export interface VitalsView {
     open_asks: number; ask_cap: number; approvals_expired_30d: number; asks_lapsed_30d: number;
     reply_hours_median: number | null; overruns_unanswered: number;
   };
+}
+
+/** GET /observe/projects/{id}/runs/day — the Runs page. Every run started in
+    the limit's day, each in one lane; see yaaf/server/runs_day.py. */
+export interface RunDayView {
+  as_of: string;
+  timezone: string;
+  day: { starts_at: string; ends_at: string };
+  limit: { wall: number; counted: number; reached_at: string | null; queued: number; at_once: number;
+    reads: number; reads_cap: number };
+  started: { total: number; counted: number; given_back: number; reads: number; checks: number; chat: number };
+  verdict: string;
+  story: { text: string; strong: boolean }[];
+  families: Record<string, { label: string; means: string }>;
+  who: { agent_id: string; name: string; role: string; status: string; kind: string; counted: number;
+    reasons: Record<string, number>; usual: number; days_since_run: number | null }[];
+  by_reason: Record<string, number>;
+  usual: { counted: number; by_reason: Record<string, number>; given_back: number };
+  days: { day: string; counted: number }[];
+  limit_days: number;
+  problems: {
+    given_back: { count: number; tokens: number; by_agent: Record<string, number>; why: Record<string, number> };
+    ended_early: { count: number; causes: { label: string; count: number; agents: Record<string, number>; detail: string; retried_ok: boolean }[] };
+    plan_refused: { count: number; peak_five_hour: number | null; metered: boolean };
+    timeouts: { count: number; timeout_s: number; longest_s: number | null; longest_by: string | null; typical_s: number | null };
+  };
+  pauses: { at: string; action: string }[];
+  runs: { id: string; agent_id: string | null; agent: string; lane: "counted" | "given_back" | "read" | "check" | "chat";
+    reason: string | null; why: string; result: string; tone: "ok" | "bad" | "given" | "running"; cause: string | null;
+    created_at: string; started_at: string | null; finished_at: string | null; seconds: number | null; tokens: number;
+    has_trace: boolean; has_context: boolean }[];
 }
 
 export interface MemoryUsage {

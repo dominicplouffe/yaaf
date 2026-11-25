@@ -70,6 +70,25 @@ WINDOW_LABELS = {
 }
 
 
+#: How long every reading is kept (PlanReadingHistory). A month covers the
+#: weekly window four times over.
+HISTORY_DAYS = 30
+
+
+def history(session, digest: str, since: datetime) -> list[dict]:
+    """The readings filed for one plan since `since`, oldest first."""
+    from sqlalchemy import select
+
+    from yaaf.core.models import PlanReadingHistory
+
+    rows = session.execute(
+        select(PlanReadingHistory).where(PlanReadingHistory.token_fingerprint == digest,
+                                         PlanReadingHistory.at >= since)
+        .order_by(PlanReadingHistory.at)).scalars()
+    return [{"at": r.at.isoformat(), "five_hour": r.five_hour, "seven_day": r.seven_day,
+             "status": r.status} for r in rows]
+
+
 def fingerprint(token: str) -> str:
     """The identity of a token, without the token.
 
@@ -167,6 +186,24 @@ def record(session, token: str, plan: dict) -> None:
     row.windows = windows
     row.status = plan.get("status")
     row.seen_at = utcnow()
+    # And the past, so a screen can say how full the plan got, not only how
+    # full it is now. Pruned here rather than by a sweep: whatever writes the
+    # history is already holding the session, and a month is plenty to tell a
+    # bad night from a habit.
+    from datetime import timedelta
+
+    from sqlalchemy import delete
+
+    from yaaf.core.models import PlanReadingHistory
+
+    shares = {w["key"]: w["utilization"] for w in windows}
+    session.add(PlanReadingHistory(token_fingerprint=row.token_fingerprint, at=row.seen_at,
+                                   five_hour=shares.get("five_hour"),
+                                   seven_day=shares.get("seven_day"),
+                                   status=row.status))
+    session.execute(delete(PlanReadingHistory).where(
+        PlanReadingHistory.token_fingerprint == row.token_fingerprint,
+        PlanReadingHistory.at < row.seen_at - timedelta(days=HISTORY_DAYS)))
 
 
 def stored(session, token: str) -> dict | None:
