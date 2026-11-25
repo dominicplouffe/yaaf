@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
-import { Dashboard, post, ProjectHealth } from "../api";
+import { Dashboard, post } from "../api";
 import { InboxExplainer, RaiseInboxReads } from "../inbox";
 import { firstName, ProjectCtx, useProjectFrame } from "../projectCtx";
 import { clip, statusBrief } from "../ui";
@@ -48,23 +48,25 @@ function LifecycleConfirm({
 
   return (
     <div className="card" style={{ margin: "12px 0" }}>
-      <strong>{action === "pause" ? "Pause this project?" : "Stop this project — permanently?"}</strong>
+      <strong>{action === "pause" ? "Pause the team?" : `Stop ${projectName} for good?`}</strong>
       <p className="help" style={{ margin: "4px 0 8px" }}>
         {action === "pause"
-          ? "Running work finishes; nothing new starts until you resume. The reason is recorded and disclosed to the CEO."
-          : "Stop is TERMINAL — the project can never run again. The record stays readable."}
+          ? "Your team finishes what it's doing and starts nothing new until you resume. Nothing is lost, and you can resume any time."
+          : "Your team stops working right away, and this project can't be restarted. Your results, files and history stay here to read."}
       </p>
       <input
         autoFocus
         value={reason}
-        placeholder={`Reason to ${action} — recorded, the CEO reads it`}
+        aria-label={action === "pause" ? "Why are you pausing?" : "Why are you stopping it?"}
+        placeholder={action === "pause" ? "Why are you pausing? Your CEO will see this." : "Why are you stopping it? Your CEO will see this."}
         onChange={(e) => setReason(e.target.value)}
       />
       {action === "stop" && (
         <input
           style={{ marginTop: 8 }}
           value={typed}
-          placeholder={`Type the project's name to confirm: ${projectName}`}
+          aria-label={`Type ${projectName} to confirm`}
+          placeholder={`Type ${projectName} to confirm`}
           onChange={(e) => setTyped(e.target.value)}
         />
       )}
@@ -84,9 +86,9 @@ function LifecycleConfirm({
             }
           }}
         >
-          {action === "pause" ? "⏸ Pause project" : "■ Stop forever"}
+          {action === "pause" ? "Pause team" : "Stop project"}
         </button>
-        <button onClick={onCancel}>Cancel</button>
+        <button onClick={onCancel}>{action === "pause" ? "Cancel" : "Keep working"}</button>
       </div>
     </div>
   );
@@ -98,57 +100,6 @@ function LifecycleConfirm({
 function goalLead(goal: string): string {
   const firstSentence = goal.split(/(?<=\.)\s/)[0] ?? goal;
   return clip(firstSentence.replace(/\s+/g, " ").trim(), 120);
-}
-
-// A warning is not a failure, and the setup badge must not say it is. It used
-// to count every check that was not "ok" and paint the total in critical red:
-// a project whose five warnings were all "a newer role version exists, adopt
-// it when ready" read as "5 to fix", identical to five hard outages, with
-// nothing in the badge to tell them apart and nothing actually to fix. The API
-// already draws the line — `ok` is false only on a real failure — so the badge
-// respects it, and names the thing rather than counting it. "5 role updates"
-// tells you what you are looking at; "5 to fix" tells you that you are late.
-/** Take the reader to Setup & health and mark it, so the badge is a way to the
-    list rather than a word to wonder about. It sits at the foot of the
-    Overview, which is the only page that draws this badge. */
-function showHealth() {
-  const card = document.getElementById("setup-health");
-  if (!card) return;
-  card.scrollIntoView({ behavior: "smooth", block: "center" });
-  card.classList.remove("flash");
-  void card.offsetWidth; // restart the animation on a second click
-  card.classList.add("flash");
-}
-
-/** The header's verdict on Setup & health, in the card's own two words.
-
-    It used to say "3 to review", "1 activity notice", "2 role updates" — a
-    vocabulary of its own that the card below never used — looked clickable,
-    and linked to the page it was already on. Nobody could tell what it
-    counted, where the items were, or whether any of them mattered. Now it
-    says which of two things it is counting: problems (red, something is
-    broken) or suggestions (amber, advice), and it goes to the list. Advice
-    the reader has put away no longer counts. */
-function setupBadge(health: ProjectHealth | null) {
-  if (!health) return <span className="help">checking…</span>;
-  const problems = health.checks.filter((c) => c.status === "fail");
-  const advice = health.checks.filter((c) => c.status === "warn" && !c.acked_at);
-  if (!problems.length && !advice.length) {
-    return <span className="badge good">healthy</span>;
-  }
-  const shown = problems.length ? problems : advice;
-  const n = shown.length;
-  const word = problems.length ? "problem" : "suggestion";
-  return (
-    <button
-      type="button"
-      className={`badge ${problems.length ? "critical" : "warn"}`}
-      title={`${shown.map((c) => c.detail).join("\n\n")}\n\nClick to see them in Setup & health.`}
-      onClick={showHealth}
-    >
-      {n} {word}{n === 1 ? "" : "s"}
-    </button>
-  );
 }
 
 /** Said once, under the header, to anybody who may read this project but not
@@ -270,9 +221,9 @@ function ReviewBanner({ projectId, number }: { projectId: string; number: number
     <div className="strip" style={{ marginTop: 0, marginBottom: "var(--s4)" }}>
       <Icon name="meeting" size={18} />
       <div className="grow">
-        <strong>Your status meeting with the CEO is open.</strong>
+        <strong>Your status meeting with your CEO is open.</strong>
         <div className="sb">
-          The platform's numbers What was done since the last one, where the project stands, what the CEO will do next and what it asks of you.</div>
+          What got done since the last one, where the project stands, what happens next, and what your CEO needs from you.</div>
       </div>
       <NavLink to={`/projects/${projectId}/details/reviews`}>
         <Btn kind="primary">Open meeting #{number}</Btn>
@@ -367,7 +318,7 @@ export default function ProjectPage() {
       <Routes>
         <Route index element={
           <Overview ctx={ctx} onPause={() => setConfirming("pause")} onStop={() => setConfirming("stop")}
-            setupBadge={setupBadge(ctx.health)} goalLead={goalLead(dash.goal)} />
+            goalLead={goalLead(dash.goal)} />
         } />
         <Route path="team" element={<TeamPage ctx={ctx} />} />
         <Route path="team/:agentId" element={<Member ctx={ctx} />} />
