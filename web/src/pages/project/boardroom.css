@@ -144,6 +144,15 @@
 }
 @media (max-width: 640px) {
   .cr { height: calc(100dvh - 96px); }
+  /* One line of header and one swipeable line of suggestions, so the phone
+     shows the conversation rather than the furniture around it. */
+  .cr-bar { flex-wrap: nowrap; padding: 8px 12px; gap: 8px; }
+  .cr-who span, .cr-hide-sm { display: none; }
+  .cr-pres { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .quick.cr-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 calc(-1 * var(--s3)); padding: 0 var(--s3); }
+  .quick.cr-chips::-webkit-scrollbar { display: none; }
+  .cr-chips .qchip { flex: none; }
+  .cr-strip { padding: 8px 12px; }
   .cr-col { padding-left: var(--s3); padding-right: var(--s3); }
   .cr-q { margin-left: 0; }
   .cr-me { max-width: 88%; }
