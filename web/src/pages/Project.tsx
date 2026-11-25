@@ -289,10 +289,11 @@ export default function ProjectPage() {
           go to the Overview to learn the project ran out of runs at 01:22. */}
       {/* The chat says this itself, in its presence and the one strip above
           the conversation — a second box about the same wait was noise. */}
-      {/* On the project home the status line draws this wait — the gate, the
-          count, the time it opens — so the box would be its second telling.
-          The inbox lane keeps it there: its buttons are the cure. */}
-      {sub !== "chat" && (!onOverview || dash.activity.blocked_by === "inbox_runs") && (
+      {/* The box is up only when something is being lost (the server's
+          `banner`). On the project home the status line already draws an
+          ordinary wait, so there the box shows only for the cost it adds:
+          ready work held up by the day's limit. */}
+      {sub !== "chat" && (!onOverview || dash.activity.brief.chip === "work waiting") && (
         <StatusBriefBox dash={dash} projectId={projectId} reload={ctx.reload} />
       )}
       <PinSuggestion projectId={projectId} />
