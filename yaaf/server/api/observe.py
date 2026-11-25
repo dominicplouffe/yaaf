@@ -943,6 +943,21 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
+@router.get("/projects/{project_id}/vitals", dependencies=[authority.READ])
+def project_vitals(project_id: str, session: Session = Depends(db)) -> dict:
+    """The project home's charts: runs today by hour, which limits held the
+    project over the last fortnight, runs by outcome, spend by day, the shared
+    plan's windows, and the chairman's own waits. Read-only — see
+    `yaaf.server.vitals` for what each series counts and why."""
+    from yaaf.server.vitals import vitals
+
+    project = _project(session, project_id)
+    reader = authority.acting_person(session)
+    readable = ({p.id for p in authority.reachable(session, reader.id, reader.is_admin)}
+                if reader is not None else set())
+    return vitals(session, project, effective(session, project.id), readable)
+
+
 #: The drift between what a self-reporting harness bills and what yaaf's
 #: catalog prices the same tokens at, past which the checklist says so; the
 #: priced spend it must have seen first, so a few small runs cannot raise it;

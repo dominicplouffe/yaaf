@@ -520,6 +520,46 @@ export interface MemoryScopeUsage {
   curator?: string | null;
 }
 
+/** GET /observe/projects/{id}/vitals — the project home's charts. Every series
+    is read from rows the dispatcher, ledger and plan meter already wrote; see
+    yaaf/server/vitals.py for what each one counts. */
+export interface VitalsView {
+  as_of: string;
+  today: {
+    starts_at: string; resets_at: string; current_hour: number;
+    /** Work runs per clock hour since the 00:00 UTC refill; queued runs land on the current hour. */
+    hours: number[];
+    used: number; daily_cap: number; wall: number; reserved: number; hourly_cap: number;
+  };
+  limits: {
+    days: string[];
+    rows: { key: string; label: string; means: string; hours: number[] }[];
+  };
+  runs: {
+    days: { day: string; finished: number; refunded: number; failed: number }[];
+    failure_share: number | null;
+    p50_s: number | null; p95_s: number | null; timeout_s: number; timed_out: number; at_once: number;
+  };
+  /** Results published per UTC day, the same fortnight as `limits`. */
+  published: { days: string[]; counts: number[] };
+  spend: {
+    unit: "usd" | "tokens"; month: string; days: number[];
+    spent: number; cap: number; warn_at: number; pauses_at: number; projected: number;
+  };
+  plan: {
+    available: boolean; status: string | null; fetched_at: string | null;
+    windows: { key: string; label?: string; utilization: number | null; resets_at: string | null; expired?: boolean }[];
+    projects: { project_id: string; name: string; tokens: number; share: number; this: boolean }[];
+    /** Projects on the same plan the reader cannot open: summed, never named. */
+    others: { count: number; tokens: number; share: number };
+    refused_7d: number;
+  } | null;
+  you: {
+    open_asks: number; ask_cap: number; approvals_expired_30d: number; asks_lapsed_30d: number;
+    reply_hours_median: number | null; overruns_unanswered: number;
+  };
+}
+
 export interface MemoryUsage {
   warn_ratio: number;
   scopes: MemoryScopeUsage[];

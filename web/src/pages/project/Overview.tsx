@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   AgendaView,
   ChannelRow,
@@ -9,32 +9,35 @@ import {
   post,
   requirementName,
   ResultsView,
+  VitalsView,
 } from "../../api";
 import { ProjectBrief } from "../../briefing";
 import { FailoverBanner } from "../../fallback";
 import Agenda from "../../agenda";
-import { itemsFor, needsYou, needsYouCount, useDesk, WARN_VERDICTS } from "../../desk";
+import { Item, itemsFor, needsYou, needsYouCount, useDesk } from "../../desk";
 import { fmtSince, fmtWhen, usePoll } from "../../hooks";
-import Markdown from "../../Markdown";
 import { firstName, ProjectCtx } from "../../projectCtx";
 import {
   AsOf,
   budgetOf,
   clip,
-  clipMarkdown,
   earlyRunSentence,
-  fmtSoon,
   fmtUnit,
   fmtWhenShort,
   NotedButton,
   paceDate,
   runHealth,
 } from "../../ui";
-import { Avatar, Verdict } from "../../ui/kit";
+import { Verdict } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
 import { chairmanDecides, deliveryVerdict, flagPlain, fmtDate, fmtRoll } from "../../ui/project";
-import { MoneyMeter, NodeState, PathNode, requirementNode, Seal, sealOf, verdictBadge } from "../../ui/signal";
+import { MoneyMeter, NodeState, PathNode, requirementNode, verdictBadge } from "../../ui/signal";
 import "./overview.css";
+import "./vitals.css";
+import {
+  LimitGrid, MemoryCard, ModePanel, ModePill, resumesAt, RunsTile, RunsWeek, SharedPlan, SpendTile, StatusLine, TimeVisual,
+  WeekTimeline, YouPanel,
+} from "./vitals";
 import { DecisionCard } from "../Inbox";
 import { ProjectSetup } from "../../projectSetup";
 
@@ -204,35 +207,6 @@ function topBanner(ctx: ProjectCtx, early: ReturnType<typeof runHealth>): ReactN
   if (dash.mode === "operate" && dash.cycle?.due_at && dash.cycle.capacity && !dash.cycle.capacity.feasible) {
     return <ModeStrip ctx={ctx} />;
   }
-  if (dash.drought_active) {
-    return (
-      <div className="strip serious">
-        <div className="grow">
-          <b>Your team's work hasn't been checked from outside in a while.</b>
-          <div className="sb">
-            Your rules ask for outside proof that the work is real. Work keeps going, but new work that
-            can only be checked by the team itself waits until something is confirmed.
-          </div>
-        </div>
-        <Link to={`${base}/details/activity/evidence`}>See what's been checked →</Link>
-      </div>
-    );
-  }
-  if (early.early.length > 0 && early.ratio >= 0.2) {
-    return (
-      <div className="strip serious">
-        <div className="grow">
-          <b>{earlyRunSentence(early)}</b>
-          <div className="sb">
-            {early.faults.length === 0
-              ? "Each one was stopped on purpose, so nothing points at a fault, but they still cost money."
-              : "That's more than usual, so something may be in the way: a broken data source, a wrong key, or work your team can't do."}
-          </div>
-        </div>
-        <Link to={`${base}/details/activity/runs`}>See what happened →</Link>
-      </div>
-    );
-  }
   return null;
 }
 
@@ -245,7 +219,7 @@ const GOAL_WORD: Record<NodeState, string> = {
 /** Goals, delivery and spending: one number each, and each opens the page
     with the whole story. The stage axis, requirement keys and legend this
     replaced are Details › Roadmap's to draw. */
-function ProgressRow({ ctx, verdicts }: { ctx: ProjectCtx; verdicts: Set<string> }) {
+function ProgressRow({ ctx, verdicts, vitals }: { ctx: ProjectCtx; verdicts: Set<string>; vitals: VitalsView | null }) {
   const { dash, plan, projectId, hypotheses } = ctx;
   const base = `/projects/${projectId}`;
   const ceo = firstName(ctx.ceoName);
@@ -334,6 +308,7 @@ function ProgressRow({ ctx, verdicts }: { ctx: ProjectCtx; verdicts: Set<string>
     <Link className="ov-tile" to={`${base}/details/roadmap`}>
       <span className="ov-tile-l">{label} <Icon name="arrow" size={13} /></span>
       <span className="ov-tile-v">{value} {pill && <span className={`badge ${toneOf}`}>{pill}</span>}</span>
+      <TimeVisual dash={dash} plan={plan} />
       <span className="ov-tile-s">{sub.charAt(0).toUpperCase() + sub.slice(1)}</span>
     </Link>
   );
@@ -345,7 +320,7 @@ function ProgressRow({ ctx, verdicts }: { ctx: ProjectCtx; verdicts: Set<string>
     : spent > cap ? `Over budget, so ${ceo} owes you an explanation. Your team pauses at ${fmtUnit(wall, unit)}.`
       : pace ? `At this pace you'll reach your budget ${fmtWhenShort(pace.toISOString())}.`
         : `On pace to stay within budget. Your team pauses at ${fmtUnit(wall, unit)}.`;
-  const spending = (
+  const spending = vitals ? <SpendTile vitals={vitals} base={base} /> : (
     <Link className="ov-tile" to={`${base}/details/spend`}>
       <span className="ov-tile-l">Spending <Icon name="arrow" size={13} /></span>
       <span className="ov-tile-v">{fmtUnit(spent, unit)} <small>of {fmtUnit(cap, unit)} this month</small></span>
@@ -354,18 +329,21 @@ function ProgressRow({ ctx, verdicts }: { ctx: ProjectCtx; verdicts: Set<string>
     </Link>
   );
 
-  return <section className="ov-tiles" aria-label="Progress">{goals}{delivery}{spending}</section>;
+  return (
+    <section className={`ov-tiles${vitals ? " vt-four" : ""}`} aria-label="Progress">
+      {delivery}{vitals && <RunsTile vitals={vitals} base={base} />}{spending}{goals}
+    </section>
+  );
 }
 
 /** What changed since the reader last looked: the CEO's latest note first,
     then what the platform made it bring you, then the briefing's lines, then
     what the CEO is handling without you — folded, because you can't act on it. */
-function WhatsNew({ ctx, news, watch }: { ctx: ProjectCtx; news: ReactNode[]; watch: ReactNode[] }) {
+function WhatsNew({ ctx, watch }: { ctx: ProjectCtx; watch: ReactNode[] }) {
   const { projectId } = ctx;
-  const navigate = useNavigate();
   const ceo = firstName(ctx.ceoName);
   const { data } = usePoll(() => get<ProjectBrief>(`/observe/projects/${projectId}/briefing`), 60000, [projectId]);
-  const lines = (data?.lines ?? []).filter((l) => l.group === "attention" || l.group === "moved").slice(0, 4);
+  const lines = (data?.lines ?? []).filter((l) => l.group === "attention" || l.group === "moved").slice(0, 3);
 
   const [channelId, setChannelId] = useState<string | null>(null);
   useEffect(() => {
@@ -382,7 +360,6 @@ function WhatsNew({ ctx, news, watch }: { ctx: ProjectCtx; news: ReactNode[]; wa
   // question: that is a decision card at the top of this page already.
   const asking = new Set(ctx.asks.filter((a) => a.status === "open").map((a) => a.asked_in_message_id));
   const last = [...(tail ?? [])].reverse().find((m) => !!m.from_agent && !asking.has(m.id));
-  const chat = (draft?: string) => navigate(`/projects/${projectId}/chat`, draft ? { state: { draft } } : undefined);
 
   return (
     <section className="card ov-card">
@@ -390,53 +367,37 @@ function WhatsNew({ ctx, news, watch }: { ctx: ProjectCtx; news: ReactNode[]; wa
         <h3>What's new</h3>
         {data && <span className="help">since {fmtSince(data.since)}</span>}
         <span className="grow" />
-        <Link className="card-link" to={`/projects/${projectId}/details/activity`}>All activity <Icon name="arrow" size={13} /></Link>
+        <Link className="card-link" to={`/projects/${projectId}/details/activity`}>All <Icon name="arrow" size={13} /></Link>
       </div>
-      {last ? (
-        <div className="ov-note">
-          <div className="ceo-last">
-            <Avatar name={ctx.ceoName} team="leadership" />
-            <div className="ceo-body">
-              <div className="ov-note-h"><b>{ceo}</b> <span className="help">{fmtWhen(last.at)}</span></div>
-              <Markdown>{clipMarkdown(last.body, 420)}</Markdown>
-            </div>
-          </div>
-          <div className="quick">
-            <button className="qchip" onClick={() => chat()}><Icon name="reply" size={13} /> Reply</button>
-            <button className="qchip" onClick={() => chat("What changed since we last talked, and what's next?")}>What changed?</button>
-            <button className="qchip" onClick={() => chat("What is the biggest risk to the delivery date right now?")}>Biggest risk?</button>
-          </div>
-        </div>
-      ) : (tail ?? []).some((m) => !!m.from_agent) ? (
-        // Everything it said lately is a question already drawn above, as a
-        // decision; "hasn't said anything" would be false under that card.
-        <p className="help">{ceo}'s latest message is the question above, under Needs you.</p>
-      ) : tail ? (
-        <p className="help">
-          {ceo} hasn't written yet. <Link to={`/projects/${projectId}/chat`}>Tell {ceo} what matters most to you.</Link>
-        </p>
-      ) : null}
-      {news.length > 0 && <div className="ov-news">{news}</div>}
-      {!data ? <p className="help">Loading…</p> : lines.length ? (
-        <ul className="ov-since">
-          {lines.map((l, i) => (
-            <li key={`${l.kind}-${i}`} className={`tone-${l.tone}`}>
-              {l.tone === "good" ? <Icon name="check" size={14} />
-                : l.tone === "bad" ? <Icon name="alert" size={14} /> : <i className="ov-dot" aria-hidden="true" />}
-              <span>{l.text}</span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="help">Nothing new since your last visit.</p>
-      )}
-      {watch.length > 0 && (
-        <details className="ov-handling">
-          <summary>{ceo} is handling · {watch.length}</summary>
-          <p className="help">No action needed. They're here so nothing happens without you seeing it.</p>
-          <div className="wbox">{watch}</div>
-        </details>
-      )}
+      <ul className="vt-list">
+        {last && (
+          <li>
+            <span className="vt-who">{ceo}</span>
+            <Link to={`/projects/${projectId}/chat`}>{clip(last.body.replace(/[#*_`>]/g, "").replace(/\s+/g, " "), 160)}</Link>
+            <span className="vt-when">{fmtWhenShort(last.at)}</span>
+          </li>
+        )}
+        {lines.map((l, i) => (
+          <li key={`${l.kind}-${i}`}>
+            <span className="vt-who">{l.tone === "bad" ? <Icon name="alert" size={13} /> : l.tone === "good" ? <Icon name="check" size={13} /> : "·"}</span>
+            <span>{l.text.charAt(0).toUpperCase() + l.text.slice(1)}</span>
+            <span />
+          </li>
+        ))}
+        {watch.length > 0 && (
+          <li>
+            <span className="vt-who">{ceo}</span>
+            <details className="ov-handling" style={{ margin: 0, border: 0, padding: 0 }}>
+              <summary style={{ padding: 0 }}>Handling {watch.length} on its own</summary>
+              <div className="wbox">{watch}</div>
+            </details>
+            <span />
+          </li>
+        )}
+        {!last && !lines.length && !watch.length && (
+          <li><span className="vt-who" /><span className="help">{data ? `Nothing new. Tell ${ceo} what matters most to you.` : "Loading…"}</span><span /></li>
+        )}
+      </ul>
     </section>
   );
 }
@@ -458,21 +419,16 @@ function LatestResults({ ctx }: { ctx: ProjectCtx }) {
         <Link className="card-link" to={`/projects/${projectId}/results`}>See all <Icon name="arrow" size={13} /></Link>
       </div>
       {data.results.length ? (
-        <ul className="ov-results">
+        <ul className="vt-list">
           {data.results.slice(0, 3).map((r) => {
             const by = r.checks.find((c) => c.kind === r.checked);
+            const checked = !!by && by.kind !== "pending";
             return (
               <li key={r.key}>
-                <Link className="ov-result" to={`/projects/${projectId}/results`}>
-                  <Icon name="file" size={16} />
-                  <span className="ov-result-t">
-                    <b>{r.name}</b>
-                    <span className="help">{r.made_by ? `${r.made_by.name} · ` : ""}{fmtDate(r.published_at)}</span>
-                    {by && by.kind !== "pending"
-                      ? <span className="ov-result-chk">{by.label.charAt(0).toUpperCase() + by.label.slice(1)}</span>
-                      : <Seal level={sealOf(r.checked)} />}
-                  </span>
-                </Link>
+                <span className="vt-who">{r.made_by ? firstName(r.made_by.name) : ""}</span>
+                <Link to={`/projects/${projectId}/results`}>{r.name}
+                  <span className="help"> · {fmtDate(r.published_at)}</span></Link>
+                <span className={`vt-chip${checked ? " good" : ""}`} title={by?.label}>{checked ? "Checked" : "Not checked"}</span>
               </li>
             );
           })}
@@ -487,6 +443,54 @@ function LatestResults({ ctx }: { ctx: ProjectCtx }) {
   );
 }
 
+/** One row of Needs your OK, as the approved mockup draws it: what it is,
+    the plan in a line, how long until it goes ahead on its own, and the two
+    buttons. A decision's full case opens under its row. */
+function OkRow({ title, plan, fuse, actions, children }: {
+  title: ReactNode; plan?: ReactNode; fuse?: { share: number | null; text: string }; actions: ReactNode; children?: ReactNode;
+}) {
+  return (
+    <li className="vt-row">
+      <div className="vt-row-main">
+        <span className="vt-row-t">{title}</span>
+        <span className="vt-row-a">{actions}</span>
+        {plan && <span className="vt-row-p">{plan}</span>}
+        {fuse && (
+          <span className="vt-fuse">
+            {fuse.share !== null && <span className="vt-mini"><span className="warn" style={{ width: `${Math.round(fuse.share * 100)}%` }} /></span>}
+            {fuse.text}
+          </span>
+        )}
+      </div>
+      {children}
+    </li>
+  );
+}
+
+const WEEK_MS = 7 * 86_400_000;
+
+function DecisionRow({ item, base, card }: { item: Item; base: string; card: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const lead = item.approval?.recommendation ?? item.ask?.recommendation ?? null;
+  const left = item.at - Date.now();
+  const fuse = item.clocked && left > 0
+    ? { share: Math.min(1, Math.max(0.04, 1 - left / WEEK_MS)), text: `decides itself ${fmtWhenShort(new Date(item.at).toISOString())}` }
+    : { share: null, text: "waits for you" };
+  return (
+    <OkRow
+      title={item.title}
+      plan={lead ? <>CEO recommends: {clip(lead, 150)}</> : item.consequence}
+      fuse={fuse}
+      actions={<>
+        <button className="small primary" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? "Close" : "Decide"}</button>
+        <Link className="btnlink small" to={`${base}/chat`}>Talk</Link>
+      </>}
+    >
+      {open && <div className="card ov-dcard">{card}</div>}
+    </OkRow>
+  );
+}
+
 /** What this project needs from you, as whole decision cards — the same
     cards and the same list (`desk.mine`, the Inbox's Decide) as the Inbox.
     It embedded the Inbox's two panes once, which put one decision in a
@@ -495,38 +499,52 @@ function LatestResults({ ctx }: { ctx: ProjectCtx }) {
     most: past that the Inbox, which sorts and filters them, is the place. */
 const SHOWN_HERE = 3;
 
-function ProjectDecisions({ projectId, desk }: { projectId: string; desk: ReturnType<typeof useDesk> }) {
+function ProjectDecisions({ projectId, desk, rows, vitals }: {
+  projectId: string; desk: ReturnType<typeof useDesk>; rows: ReactNode[]; vitals: VitalsView | null;
+}) {
+  const base = `/projects/${projectId}`;
   const decisions = desk.mine.filter((i) => i.project.id === projectId);
   const inbox = `/inbox?project=${encodeURIComponent(projectId)}`;
   if (!desk.data) return null;
-  if (!decisions.length) {
-    return (
-      <div className="ov-clear">
-        <span className="ov-clear-ic"><Icon name="check" size={18} strokeWidth={2.4} /></span>
-        <span className="grow">
-          <b>You're all caught up.</b>
-          <span className="help">Your team is working. Anything that needs you will show up here.</span>
-        </span>
-        <Link className="card-link" to={`${inbox}&tab=ack`}>See updates <Icon name="arrow" size={13} /></Link>
-      </div>
-    );
-  }
+  // Two groups under one panel. Only a decision is counted and given a fuse:
+  // a flag or a meeting goes ahead without you, and a count that included
+  // them would say something was waiting on you when nothing was.
   return (
-    <section className="ov-decisions" aria-labelledby="ov-needs">
-      <div className="ov-dec-h">
-        <h2 id="ov-needs">Needs you</h2>
-        <span className="count warn" aria-label={`${decisions.length} decision${decisions.length === 1 ? "" : "s"}`}>{decisions.length}</span>
-        <span className="help">Most urgent first</span>
+    <section className="card ov-card vt-ok-panel" aria-labelledby="ov-needs" style={{ marginTop: "var(--s4)" }}>
+      <div className="card-h">
+        <h3 id="ov-needs">Needs your OK</h3>
+        {decisions.length > 0 && <span className="count warn">{decisions.length}</span>}
+        <span className="help">{decisions.length ? "Most urgent first" : "Nothing to decide"}</span>
         <span className="grow" />
         {decisions.length > SHOWN_HERE && (
-          <Link className="card-link" to={inbox}>See all {decisions.length} decisions <Icon name="arrow" size={13} /></Link>
+          <Link className="card-link" to={inbox}>See all {decisions.length} <Icon name="arrow" size={13} /></Link>
         )}
       </div>
-      {decisions.slice(0, SHOWN_HERE).map((item) => (
-        <div className="card ov-dcard" key={item.key}>
-          <DecisionCard item={item} desk={desk} inProject />
+      <div className={vitals ? "vt-needs" : undefined}>
+        <div className="vt-main">
+          {decisions.length ? (
+            <ul className="vt-rows" aria-label="To decide">
+              {decisions.slice(0, SHOWN_HERE).map((item) => (
+                <DecisionRow key={item.key} item={item} base={base}
+                  card={<DecisionCard item={item} desk={desk} inProject />} />
+              ))}
+            </ul>
+          ) : (
+            <div className="ov-clear" style={{ marginTop: 0 }}>
+              <span className="ov-clear-ic"><Icon name="check" size={18} strokeWidth={2.4} /></span>
+              <span className="grow"><b>You're all caught up.</b>
+                <span className="help">Anything you need to decide will show up here.</span></span>
+            </div>
+          )}
+          {rows.length > 0 && (
+            <>
+              <span className="vt-k vt-group">To note · goes ahead unless you say otherwise</span>
+              <ul className="vt-rows" aria-label="To note">{rows}</ul>
+            </>
+          )}
         </div>
-      ))}
+        {vitals && <YouPanel vitals={vitals} />}
+      </div>
     </section>
   );
 }
@@ -556,11 +574,9 @@ function validZone(zone: string): boolean {
 
 /** The calendar, as a list: what happens next. The full strip is one press
     away rather than half a screen of the first page. */
-function ComingUp({ projectId }: { projectId: string }) {
+function ComingUp({ projectId, vitals, pausedUntil }: { projectId: string; vitals: VitalsView | null; pausedUntil: string | null }) {
   const [full, setFull] = useState(false);
   const { data } = usePoll(() => get<AgendaView>(`/observe/projects/${projectId}/agenda?days=14`), 60000);
-  const now = Date.now();
-  const events = (data?.events ?? []).filter((e) => new Date(e.at).getTime() >= now - 3_600_000).slice(0, 4);
   // Times are said in the project's zone, the one the health line uses too —
   // and the zone is named only when it is not the reader's own, which is the
   // only time the name tells them anything.
@@ -569,29 +585,15 @@ function ComingUp({ projectId }: { projectId: string }) {
   return (
     <section className="card ov-card">
       <div className="card-h">
-        <h3>Coming up</h3>
+        <h3>This week</h3>
         {zone && zone !== mine && <span className="help">Times in {zone.replace(/_/g, " ")}</span>}
         <span className="grow" />
         <button className="card-link" onClick={() => setFull(!full)} aria-expanded={full}>
           {full ? "Hide calendar" : "Full calendar"}
         </button>
       </div>
-      {full ? <Agenda projectId={projectId} /> : events.length ? (
-        <ul className="agenda-list">
-          {events.map((e, i) => (
-            <li key={`${e.at}-${i}`} className={`ag-${e.tone}`}>
-              <span className="ag-when">
-                <b>{new Date(e.at).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: zone })}</b>
-                <span>{new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: zone })}</span>
-              </span>
-              <i className="ag-dot" />
-              <span className="ag-what">{e.label}{e.detail && <span className="help"> — {clip(e.detail, 90)}</span>}</span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="help">{data ? (data.notes[0] ?? "Nothing is scheduled in the next two weeks.") : "Loading…"}</p>
-      )}
+      {full ? <Agenda projectId={projectId} /> : data ? <WeekTimeline agenda={data} vitals={vitals} pausedUntil={pausedUntil} />
+        : <p className="help">Loading…</p>}
     </section>
   );
 }
@@ -606,26 +608,39 @@ function ComingUp({ projectId }: { projectId: string }) {
     true forever and was read on the first day. Dismissed rows stay on the
     card, dimmed, with a way back; a problem has no such button. `id` is the
     target the header's setup link scrolls to. */
-function HealthLine({ ctx }: { ctx: ProjectCtx }) {
+function HealthLine({ ctx, setupLeft, onSetup }: { ctx: ProjectCtx; setupLeft: number; onSetup: () => void }) {
   const { projectId, health: data, reloadHealth, reloadOrg } = ctx;
   const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!data) return null;
   const isOpen = (c: HealthCheck) => c.status === "fail" || (c.status === "warn" && !c.acked_at);
-  const open = data.checks.filter(isOpen);
-  const putAway = data.checks.filter((c) => c.status === "warn" && c.acked_at);
-  if (!open.length && !show) {
+  // "Out of runs" and its kin are the status line's to say, with the gate
+  // drawn and the time it opens; as a setup check it was the third telling.
+  const checks = data.checks.filter((c) => c.key !== "activity" || c.status === "fail");
+  const open = checks.filter(isOpen);
+  const putAway = checks.filter((c) => c.status === "warn" && c.acked_at);
+  if (!show) {
+    const ok = checks.filter((c) => c.status === "ok").length;
     return (
-      <div className="health-line" id="setup-health">
-        <span className="good"><Icon name="check" size={15} strokeWidth={2.2} /></span>
-        <b>Everything is set up.</b>
-        <span className="help">
-          {putAway.length
-            ? `${putAway.length} suggestion${putAway.length === 1 ? "" : "s"} dismissed.`
-            : `All ${data.checks.length} checks pass.`}
-        </span>
+      <div className="vt-setup" id="setup-health">
+        <span className="vt-k" style={{ margin: 0 }}>Setup</span>
+        {ok > 0 && <span className="vt-tag good">{ok} OK</span>}
+        {setupLeft > 0 && (
+          <span><span className="vt-tag warn">To do</span>
+            <button className="linkish" onClick={onSetup}>Finish setting up · {setupLeft} step{setupLeft === 1 ? "" : "s"}</button></span>
+        )}
+        {open.slice(0, 3).map((c) => (
+          <span key={c.key}>
+            <span className={`vt-tag ${c.status === "fail" ? "bad" : "warn"}`}>{c.status === "fail" ? "Fix" : "Suggestion"}</span>
+            {clip(c.detail, 90)}
+            {WHERE_TO[whereOf(c)] && <> · <Link to={WHERE_TO[whereOf(c)][2] ? WHERE_TO[whereOf(c)][0]
+              : `/projects/${projectId}${WHERE_TO[whereOf(c)][0]}`}>{WHERE_TO[whereOf(c)][1]}</Link></>}
+          </span>
+        ))}
+        {open.length > 3 && <span className="help">+{open.length - 3} more</span>}
+        {!open.length && putAway.length > 0 && <span className="help">{putAway.length} dismissed</span>}
         <span className="grow" />
-        <button className="small" onClick={() => setShow(true)}>See checks</button>
+        <button className="small" onClick={() => setShow(true)}>See all checks</button>
       </div>
     );
   }
@@ -685,7 +700,7 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
   // Problems, then suggestions, then what passes, then what was put away.
   const rank = (c: HealthCheck) =>
     c.status === "fail" ? 0 : c.status === "warn" ? (c.acked_at ? 3 : 1) : 2;
-  const rows = [...data.checks].sort((a, b) => rank(a) - rank(b));
+  const rows = [...checks].sort((a, b) => rank(a) - rank(b));
   const badge = (c: HealthCheck) => (
     <span className={`badge ${c.status === "fail" ? "critical" : c.status === "ok" ? "good" : c.acked_at ? "" : "warn"}`}>
       {c.status === "fail" ? "Needs fixing" : c.status === "warn" ? (c.acked_at ? "Dismissed" : "Suggestion") : "OK"}
@@ -696,7 +711,7 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
       <div className="card-h">
         <h3>Setup checks</h3>
         <span className="grow" />
-        {!open.length && <button className="small" onClick={() => setShow(false)}>Hide</button>}
+        <button className="small" onClick={() => setShow(false)}>Hide</button>
       </div>
       {open.length > 0 && (
         <p className="help" style={{ margin: "0 0 8px" }}>
@@ -807,6 +822,8 @@ export default function Overview({
   };
   const { data: flagsView, reload: reloadFlags } = usePoll(
     () => get<FlagsView>(`/observe/projects/${projectId}/flags`), 15000);
+  const { data: vitals } = usePoll(
+    () => get<VitalsView>(`/observe/projects/${projectId}/vitals`), 30000, [projectId]);
 
   // The same rows the Inbox and the sidebar badge count, for this project. A
   // paused project is not counted there (pausing is a state, not a request),
@@ -829,27 +846,19 @@ export default function Overview({
   // not block, it does not expire, and it proceeds on that proposal whether or
   // not you answer — so it reads beside the CEO's last word, never under the
   // heading that says a decision is waiting on you.
-  const news: ReactNode[] = [];
+  const notes: ReactNode[] = [];
   for (const f of rawFlags.filter((f) => f.status === "raised" && !f.acknowledged_at)) {
-    const plain = flagPlain(f.kind);
-    news.push(
-      <div className="flag" key={f.id}>
-        <div className="flag-t"><Icon name="flag" size={14} /> <b>{plain.title}</b></div>
-        <div className="help">
-          {ceo}'s plan: {f.proposal ? clip(f.proposal, 200) : "not written yet"}. This goes ahead unless
-          you say otherwise.
-        </div>
-        <div className="flag-a">
-          <NotedButton
-            primary={false}
-            onSubmit={async (note) => {
-              await post(`/admin/flags/${f.id}/ack`, { note });
-              reloadFlags();
-            }}
-          />
-          <Link to={`${base}/chat`}>Talk it through →</Link>
-        </div>
-      </div>,
+    notes.push(
+      <OkRow key={f.id} title={flagPlain(f.kind).title}
+        plan={<>{ceo}'s plan: {f.proposal ? clip(f.proposal, 160) : "not written yet"}</>}
+        fuse={{ share: null, text: "no deadline" }}
+        actions={<>
+          <NotedButton primary={false} onSubmit={async (note) => {
+            await post(`/admin/flags/${f.id}/ack`, { note });
+            reloadFlags();
+          }} />
+          <Link className="btnlink small" to={`${base}/chat`}>Talk</Link>
+        </>} />,
     );
   }
 
@@ -899,29 +908,39 @@ export default function Overview({
       </div>,
     );
   }
-  // A full memory is an outage that looks like nothing: writes are refused,
-  // runs die on the refusal cap, and the only symptom is a climbing bill.
-  for (const m of dash.memory?.scopes ?? []) {
-    if (m.live < m.cap * (dash.memory?.warn_ratio ?? 0.85)) continue;
-    const full = m.live >= m.cap;
-    watch.push(
-      <div className="wrow" key={`memory:${m.scope}:${m.team_id ?? ""}`}>
-        <span className={`badge ${full ? "serious" : "warn"}`}>Notes {m.live} of {m.cap}</span>
-        <div className="grow">
-          {m.name} {full ? "is full, so new notes there are refused" : "is nearly full"} until{" "}
-          {m.scope === "project" ? ceo : (m.curator ?? "a team lead")} tidies it up.
-        </div>
-        <Link to={`${base}/details/activity/memory`}>See what it keeps →</Link>
-      </div>,
-    );
-  }
+  // A full memory is an outage that looks like nothing: writes are refused and
+  // the only symptom is a climbing bill. It has its own card with a bar per
+  // scope now (MemoryCard), so it is not a line under "handling" as well.
 
   const verdicts = new Set((deskProject?.awaiting_you.verdicts ?? []).map((v) => v.key));
   const setupLeft = ctx.setup?.open ? ctx.setup.steps.filter((st) => st.state === "todo").length : 0;
-  const quietWait = dash.status === "running" && !dash.activity.brief.banner && dash.activity.brief.clears_at
-    ? dash.activity.brief : null;
   const settingUp = unpaid || (!!dash.mail_start_refusal && dash.status !== "running");
+  const verdict = deskProject?.status_line?.verdict;
+  const fix = verdict && verdict !== "capped" && FIX_AT[verdict]
+    ? <Link to={`${base}${FIX_AT[verdict][0]}`}>{FIX_AT[verdict][1]} →</Link> : undefined;
   const banner = settingUp ? null : topBanner(ctx, health);
+  // The things that used to be banners and are really asks of the chairman:
+  // a meeting to hold, work nobody outside has checked, runs dying early.
+  const rows: ReactNode[] = [];
+  if (ctx.reviews?.open) {
+    rows.push(<OkRow key="meeting" title={`Your status meeting #${ctx.reviews.open.number} is open`}
+      plan={`What got done, where it stands, what's next, and what ${ceo} needs from you.`}
+      actions={<Link className="btnlink small primary" to={`${base}/details/reviews`}>Open meeting</Link>} />);
+  }
+  rows.push(...notes);
+  if (dash.drought_active) {
+    rows.push(<OkRow key="drought" title="Nothing has been checked from outside in a while"
+      plan="Work goes on, but new work only the team can check waits until something outside confirms it."
+      actions={<Link className="btnlink small" to={`${base}/details/activity/evidence`}>See checks</Link>} />);
+  }
+  if (health.early.length > 0 && health.ratio >= 0.2) {
+    rows.push(<OkRow key="early" title={earlyRunSentence(health)}
+      plan={health.faults.length === 0 ? "Each was stopped on purpose, but they still cost runs."
+        : "More than usual: a data source, a key, or work the team can't do may be in the way."}
+      actions={<Link className="btnlink small" to={`${base}/details/activity/runs`}>See runs</Link>} />);
+  }
+  const pausedUntil = dash.status === "running" && ["daily_runs", "governance_reserve", "pacing", "inbox_runs"]
+    .includes(dash.activity.blocked_by ?? "") ? resumesAt(dash, vitals) : null;
 
   return (
     <>
@@ -930,24 +949,8 @@ export default function Overview({
           <div className="grow">
             <h1 className="ov-title">
               {dash.name} {verdictBadge(deskProject ?? { status: dash.status, unpaid },
-                deskProject ? needsYouCount(deskProject) : 0)}
+                deskProject ? needsYouCount(deskProject) : 0)} <ModePill dash={dash} plan={ctx.plan} />
             </h1>
-            {deskProject?.status_line && (
-              // The sentence Home, the CLI and Claude's desk all say about this
-              // project, with the one page that changes it.
-              <p className={`ov-status${WARN_VERDICTS.includes(deskProject.status_line.verdict) ? " warn" : ""}`}>
-                {deskProject.status_line.sentence}
-                {FIX_AT[deskProject.status_line.verdict] && (
-                  <> <Link to={`${base}${FIX_AT[deskProject.status_line.verdict][0]}`}>
-                    {FIX_AT[deskProject.status_line.verdict][1]}</Link></>
-                )}
-              </p>
-            )}
-            {quietWait && (
-              <p className="help ov-wait" title={quietWait.detail}>
-                Back to work {fmtSoon(quietWait.clears_at!)}. {quietWait.headline}
-              </p>
-            )}
           </div>
           <div className="ov-acts">
             {dash.can_steer !== false && dash.status !== "running" && dash.status !== "stopped" && (
@@ -989,11 +992,6 @@ export default function Overview({
             <p style={{ whiteSpace: "pre-wrap", margin: "6px 0 0" }}>{dash.goal}</p>
           </div>
         )}
-        {setupLeft > 0 && !settingUp && (
-          <button className="linkish ov-setup-chip" onClick={() => setShowSetup(!showSetup)} aria-expanded={showSetup}>
-            Finish setting up · {setupLeft} step{setupLeft === 1 ? "" : "s"} left
-          </button>
-        )}
       </header>
 
       {/* Setup leads only when it is the reason nothing can run. Otherwise it
@@ -1001,25 +999,31 @@ export default function Overview({
           six-step checklist above the decisions was configuration outranking
           state. When setup is the reason, it is the one banner. */}
       {(settingUp || showSetup) && <ProjectSetup ctx={ctx} />}
+      {!settingUp && <StatusLine dash={dash} vitals={vitals} fix={fix} />}
       {banner}
 
       {/* The project's home is what it needs from you first: this project's
           decisions, whole, from the one list the Inbox decides from. */}
-      <ProjectDecisions projectId={projectId} desk={desk} />
+      <ProjectDecisions projectId={projectId} desk={desk} rows={rows} vitals={vitals} />
 
-      <ProgressRow ctx={ctx} verdicts={verdicts} />
+      <ProgressRow ctx={ctx} verdicts={verdicts} vitals={vitals} />
 
       <div className="ov-grid">
         <div className="ov-col">
-          <WhatsNew ctx={ctx} news={news} watch={watch} />
+          <ModePanel dash={dash} plan={ctx.plan} hypotheses={ctx.hypotheses} base={base} vitals={vitals} />
+          {vitals && <LimitGrid vitals={vitals} base={base} />}
+          {vitals && <RunsWeek vitals={vitals} base={base} />}
+          <ComingUp projectId={projectId} vitals={vitals} pausedUntil={pausedUntil} />
         </div>
         <aside className="ov-col">
-          <ComingUp projectId={projectId} />
+          {vitals && <SharedPlan vitals={vitals} />}
+          <MemoryCard dash={dash} base={base} />
+          <WhatsNew ctx={ctx} watch={watch} />
           <LatestResults ctx={ctx} />
         </aside>
       </div>
 
-      <HealthLine ctx={ctx} />
+      <HealthLine ctx={ctx} setupLeft={settingUp ? 0 : setupLeft} onSetup={() => setShowSetup(!showSetup)} />
       <AsOf at={ctx.asOf} error={ctx.error} />
     </>
   );

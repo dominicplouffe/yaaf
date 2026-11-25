@@ -68,6 +68,7 @@ def test_every_read_tool_stays_inside_the_default_budget(client):
         ("project", {"project": SLUG, "view": "health"}),
         ("project", {"project": SLUG, "view": "setup"}),
         ("project", {"project": SLUG, "view": "agenda"}),
+        ("project", {"project": SLUG, "view": "vitals"}),
         ("plan", {"project": SLUG}),
         ("spend", {"project": SLUG}),
         ("spend_across", {}),

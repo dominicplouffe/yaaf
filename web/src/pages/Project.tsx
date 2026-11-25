@@ -289,14 +289,20 @@ export default function ProjectPage() {
           go to the Overview to learn the project ran out of runs at 01:22. */}
       {/* The chat says this itself, in its presence and the one strip above
           the conversation — a second box about the same wait was noise. */}
-      {sub !== "chat" && <StatusBriefBox dash={dash} projectId={projectId} reload={ctx.reload} />}
+      {/* On the project home the status line draws this wait — the gate, the
+          count, the time it opens — so the box would be its second telling.
+          The inbox lane keeps it there: its buttons are the cure. */}
+      {sub !== "chat" && (!onOverview || dash.activity.blocked_by === "inbox_runs") && (
+        <StatusBriefBox dash={dash} projectId={projectId} reload={ctx.reload} />
+      )}
       <PinSuggestion projectId={projectId} />
       {ctx.error && (
         <div className="error">
           Not refreshing — {ctx.error}. The numbers below are the last that landed.
         </div>
       )}
-      {ctx.reviews?.open && (onOverview || onRoadmap) && (
+      {/* On the project home the meeting is a row under Needs your OK. */}
+      {ctx.reviews?.open && onRoadmap && (
         <ReviewBanner projectId={projectId} number={ctx.reviews.open.number} />
       )}
 
