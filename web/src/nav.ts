@@ -20,7 +20,7 @@ export const PROJECT_PAGES: { path: string; label: string; icon: IconName; key: 
 export const DETAIL_TABS: { path: string; label: string; icon: IconName; key: string; words: string }[] = [
   { path: "roadmap", label: "Roadmap", icon: "flag", key: "m", words: "plan requirements" },
   { path: "tasks", label: "Tasks", icon: "kanban", key: "k", words: "board work bets" },
-  { path: "deliverables", label: "Deliverables", icon: "folder", key: "f", words: "files drafts working" },
+  { path: "deliverables", label: "Deliverables", icon: "folder", key: "f", words: "files published shelf" },
   { path: "spend", label: "Spend", icon: "wallet", key: "s", words: "money budget cost" },
   { path: "reviews", label: "Status", icon: "meeting", key: "v",
     words: "status meeting review" },

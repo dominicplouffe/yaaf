@@ -122,7 +122,7 @@ SELF_ACTING_NOTICES = {
     NoticeKind.CYCLE_ROLLED: ("the cycle rolled",
                               "unfinished scope carried forward"),
     NoticeKind.EXPLORE_DEADLINE: ("the deadline you set has passed", None),
-    NoticeKind.STALLED: ("the project had work and started nothing for hours", None),
+    NoticeKind.STALLED: ("work was waiting and no run started for hours", None),
     NoticeKind.MEMORY_FULL: ("a memory scope hit its cap and is refusing writes", None),
     NoticeKind.REVENUE: ("money came in", "booked by a signed webhook"),
 }
@@ -937,6 +937,12 @@ def _self_acting_lines(session: Session, project: Project, since, until) -> list
             note="two agents were talking without moving any task",
         ))
 
+    # One line per kind, not per notice. A week-long stall raised a notice
+    # every few hours and the brief printed twenty-seven identical lines of
+    # "the project had work and started nothing for hours", none of which
+    # said why. Repeats are counted, the span is named, and a stall carries
+    # the dispatcher's own reading from the newest one.
+    by_kind: dict[str, list[Notice]] = {}
     for notice in session.execute(
         select(Notice).where(
             Notice.project_id == project.id,
@@ -945,13 +951,38 @@ def _self_acting_lines(session: Session, project: Project, since, until) -> list
             Notice.kind.in_(list(SELF_ACTING_NOTICES)),
         ).order_by(Notice.created_at)
     ).scalars():
-        tone = "good" if notice.kind in (
+        by_kind.setdefault(notice.kind, []).append(notice)
+    tz: str | None = None
+    for kind, notices in by_kind.items():
+        tone = "good" if kind in (
             NoticeKind.COMMITMENT_RECOVERED, NoticeKind.COMMITMENT_MET,
             NoticeKind.REVENUE,
         ) else "bad"
-        text, note = SELF_ACTING_NOTICES[notice.kind]
-        lines.append(_line(f"notice_{notice.kind}", text, tone=tone, note=note))
+        text, note = SELF_ACTING_NOTICES[kind]
+        if kind == NoticeKind.STALLED:
+            note = _stall_reason(notices[-1].body) or note
+        n = len(notices)
+        if n > 1 and tz is None:
+            try:
+                tz = effective(session, project.id).timezone
+            except LookupError:
+                tz = "UTC"
+        if n > 1:
+            first, last = notices[0].created_at, notices[-1].created_at
+            text += f" ({n} times, {chairman_time(first, tz)} → {chairman_time(last, tz)})"
+        lines.append(_line(f"notice_{kind}", text, tone=tone, note=note,
+                           count=n if n > 1 else None))
     return lines
+
+
+def _stall_reason(body: str | None) -> str | None:
+    """The dispatcher's sentence out of a stall notice — the why, which the
+    notice carries verbatim and the brief used to drop."""
+    marker = "The platform's own reading: "
+    if not body or marker not in body:
+        return None
+    reason = body.split(marker, 1)[1].split(" Do not guess", 1)[0].strip()
+    return f"why: {reason}" if reason else None
 
 
 #: How many changed rules the line names. A label is a phrase, not an id, so

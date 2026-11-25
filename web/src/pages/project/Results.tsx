@@ -19,8 +19,8 @@ import "./results.css";
     is the published shelf only: one row per deliverable, each with its seal
     (Verified, Judged, Agent's word — never merged into a score), and beside it
     why that seal was earned, in the platform's words. A judgement is never
-    shown as a verification. Drafts and working files stay in Details ›
-    Deliverables. */
+    shown as a verification. The agents' working files are not shown in the
+    web app at all: they are the agents' scratch pad, not the work. */
 
 /** Strongest first: what the platform ran, then who read it, then a
     judgement, then a claim that has not settled. */
@@ -225,8 +225,8 @@ function NothingPublished({ ctx }: { ctx: ProjectCtx }) {
         <Icon name="file" size={16} />
         <div>
           <p><b>Delivered, no file published.</b></p>
-          <p>Drafts and working files are in{" "}
-            <Link to={`/projects/${ctx.projectId}/details/deliverables?state=all`}>Details › Deliverables</Link>.</p>
+          <p>The requirements were met by checks the platform ran, not by a file a team
+            published.</p>
         </div>
       </div>
     );
@@ -268,8 +268,7 @@ export default function Results({ ctx }: { ctx: ProjectCtx }) {
   return (
     <>
       <PageHead title="Results" lede={<>
-        What the team published, newest first. Drafts are in{" "}
-        <Link to={`/projects/${projectId}/details/deliverables?state=all`}>Details › Deliverables</Link>.
+        What the team published, newest first, and how each piece was checked.
       </>} />
       {error && <div className="error">{error}</div>}
       {!data ? <Skeleton rows={5} /> : rows.length === 0 ? <NothingPublished ctx={ctx} /> : (

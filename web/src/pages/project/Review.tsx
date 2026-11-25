@@ -1,7 +1,7 @@
 import { type ReactNode, useState } from "react";
 import {
   CycleObligation, Decision, get, PlanMark, post, requirementName, RequirementMeta, ReviewNumbers,
-  ReviewRecord,
+  ReviewBoard, ReviewRecord,
   ReviewReport, ReviewRow, ReviewsView,
 } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
@@ -393,51 +393,172 @@ function RecordSection({ record, mode }: { record: ReviewRecord | null; mode: st
   );
 }
 
-/** The CEO's status report, in the order a meeting is held: what the period
-    bought, what did not go to plan, what is next, the ask. The list of what
-    was done is the platform's and sits above this; the CEO explains it. */
-function ReportSections({ report }: { report: ReviewReport }) {
-  const head = (title: string) => (
+/** A tone in a word and a mark, never colour alone (styles.css). */
+const TONE: Record<string, { mark: string; color: string; word: string }> = {
+  ok: { mark: "✓", color: "var(--good)", word: "on plan" },
+  warn: { mark: "▲", color: "var(--warning)", word: "watch" },
+  bad: { mark: "✕", color: "var(--critical)", word: "off plan" },
+  neutral: { mark: "·", color: "var(--muted)", word: "" },
+};
+
+/** The meeting's verdict in one chip: On track, Watch or Off track, from the
+    platform's scorecard — the same rows the reader sees under it. */
+function StatusChip({ status }: { status: ReviewBoard["status"] }) {
+  const cls = { ok: "ok", warn: "warn", bad: "critical" }[status.tone];
+  return (
+    <span className={`chip ${cls}`} title={status.why.join("\n") || "Every row is on plan."}
+      style={{ fontWeight: 600 }}>
+      {TONE[status.tone].mark} {status.label}
+    </span>
+  );
+}
+
+/** Where it stands: plan against actual, one row per thing the project owes.
+    Recurring work is one row ("15 of 16 done"), not fifteen. The platform's,
+    at zero tokens; every key it rolls up is in the full record below. */
+function Scorecard({ board }: { board: ReviewBoard }) {
+  if (board.scorecard.length === 0) return null;
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+        <b style={{ fontSize: 13 }}>Where it stands — plan against actual</b>
+        <Source kind="record" />
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ marginTop: 8, width: "100%" }}>
+          <thead>
+            <tr><th style={{ width: "46%" }}>What</th><th>Plan</th><th>Actual</th><th /></tr>
+          </thead>
+          <tbody>
+            {board.scorecard.map((row, i) => {
+              const t = TONE[row.tone] ?? TONE.neutral;
+              return (
+                <tr key={i}>
+                  <td title={row.keys?.join(", ")}>
+                    {clip(row.what, 110)}
+                    {row.note && (row.tone === "ok" || row.tone === "neutral") && (
+                      <span className="help"> · {row.note}</span>)}
+                  </td>
+                  <td className="help" style={{ whiteSpace: "nowrap" }}>{row.plan}</td>
+                  <td style={{ fontVariantNumeric: "tabular-nums" }}>
+                    {row.actual}
+                    {(row.tone === "warn" || row.tone === "bad") && row.note && (
+                      <div className="help" style={{ color: t.color }}>{row.note}</div>)}
+                    {row.detail && <div className="help">{row.detail}</div>}
+                  </td>
+                  <td style={{ color: t.color, fontWeight: 600, whiteSpace: "nowrap" }}
+                    title={t.word}>
+                    {t.mark}{t.word && <span className="sr-only"> {t.word}</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** What the platform saw go off plan: cuts grouped by reason, obligations
+    missed, spot-checks failed. Listed under the CEO's explanation, so the
+    explanation can be read against the facts it is explaining. */
+function Misses({ misses }: { misses: ReviewBoard["misses"] }) {
+  if (misses.length === 0) {
+    return <p className="help" style={{ margin: "6px 0 0" }}>
+      The record shows nothing off plan this period.</p>;
+  }
+  return (
+    <ul style={{ margin: "6px 0 0", paddingLeft: 18, display: "flex", flexDirection: "column",
+      gap: 4, maxWidth: "80ch" }}>
+      {misses.map((m, i) => (
+        <li key={i} title={m.keys.join(", ")}>
+          {clip(m.what, 140)}
+          {m.why && <span className="help"> — {clip(m.why, 160)}</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** "Published: a, b, c and 8 more" — the shelf in one line, the list in the
+    full record. */
+function Published({ h }: { h: ReviewBoard["highlights"] }) {
+  if (h.published === 0) return null;
+  const more = h.published - h.top.length;
+  return (
+    <p className="help" style={{ margin: "6px 0 0", maxWidth: "80ch" }}>
+      Published: {h.top.map((d, i) => (
+        <span key={d.file} title={d.file}>{i > 0 ? ", " : ""}<span style={{ color: "var(--ink)" }}>
+          {d.name}</span></span>))}
+      {more > 0 ? ` and ${more} more` : ""}.
+    </p>
+  );
+}
+
+/** The CEO's status report, in the order a board update is read: what the
+    period bought, what did not go to plan (its explanation, then the
+    platform's list of what went off plan), last meeting's plan graded, what
+    is next. The scorecard above is the platform's; the CEO explains it. */
+function ReportSections({ report, board, lastPlan }: {
+  report: ReviewReport | null; board: ReviewBoard; lastPlan: ReactNode;
+}) {
+  const head = (title: string, ...kinds: ("ceo" | "record")[]) => (
     <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-      <b style={{ fontSize: 13 }}>{title}</b><Source kind="ceo" />
+      <b style={{ fontSize: 13 }}>{title}</b>{kinds.map((k) => <Source key={k} kind={k} />)}
     </div>
   );
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 12 }}>
+      {report && (
+        <div>
+          {head("What it bought us", "ceo")}
+          <p style={{ marginTop: 6, whiteSpace: "pre-wrap", maxWidth: "70ch" }}>{report.done}</p>
+          <Published h={board.highlights} />
+        </div>
+      )}
+      {!report && board.highlights.published > 0 && (
+        <div>{head("Published", "record")}<Published h={board.highlights} /></div>
+      )}
       <div>
-        {head("What it bought us")}
-        <p style={{ marginTop: 6, whiteSpace: "pre-wrap", maxWidth: "70ch" }}>{report.done}</p>
+        {report ? head("What did not go to plan, and why", "ceo", "record")
+          : head("What did not go to plan", "record")}
+        {report && (
+          <>
+            <p style={{ marginTop: 6, whiteSpace: "pre-wrap", maxWidth: "70ch" }}>
+              {report.variance.what}
+            </p>
+            <p className="help" style={{ marginTop: 4, maxWidth: "70ch" }}>
+              Largest cause: {report.variance.largest_cause}
+            </p>
+          </>
+        )}
+        <Misses misses={board.misses} />
       </div>
-      <div>
-        {head("What did not go to plan, and why")}
-        <p style={{ marginTop: 6, whiteSpace: "pre-wrap", maxWidth: "70ch" }}>
-          {report.variance.what}
-        </p>
-        <p className="help" style={{ marginTop: 4, maxWidth: "70ch" }}>
-          Largest cause: {report.variance.largest_cause}
-        </p>
-      </div>
-      <div>
-        {head("Next period — what it will do")}
-        <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, display: "flex",
-          flexDirection: "column", gap: 6 }}>
-          {report.next.map((item, i) => (
-            <li key={i} style={{ display: "flex", gap: 10, alignItems: "baseline",
-              flexWrap: "wrap", padding: "6px 10px", background: "var(--sunken)",
-              borderRadius: "var(--radius-sm)" }}>
-              <span style={{ flex: 1, minWidth: 200 }}>{item.what}</span>
-              <span className="help" style={{ fontFamily: "var(--mono)" }}>
-                {item.serves}
-              </span>
-              {item.by && <span className="help">by {fmtDate(item.by)}</span>}
-            </li>
-          ))}
-        </ul>
-        <p className="help" style={{ margin: "8px 0 0", borderLeft: "3px solid var(--accent)",
-          padding: "2px 10px", maxWidth: "70ch" }}>
-          How this moves the goal: {report.goal_effect}
-        </p>
-      </div>
+      {lastPlan}
+      {report && (
+        <div>
+          {head("Next period — what it will do", "ceo")}
+          <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, display: "flex",
+            flexDirection: "column", gap: 6 }}>
+            {report.next.map((item, i) => (
+              <li key={i} style={{ display: "flex", gap: 10, alignItems: "baseline",
+                flexWrap: "wrap", padding: "6px 10px", background: "var(--sunken)",
+                borderRadius: "var(--radius-sm)" }}>
+                <span style={{ flex: 1, minWidth: 200 }}>{item.what}</span>
+                <span className="help" style={{ fontFamily: "var(--mono)" }}>
+                  {item.serves}
+                </span>
+                {item.by && <span className="help">by {fmtDate(item.by)}</span>}
+              </li>
+            ))}
+          </ul>
+          <p className="help" style={{ margin: "8px 0 0", borderLeft: "3px solid var(--accent)",
+            padding: "2px 10px", maxWidth: "70ch" }}>
+            How this moves the goal: {report.goal_effect}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -734,6 +855,13 @@ function NumbersTiles({ n, mode, record, requirements }: {
   );
 }
 
+function fmtTokens(n: number): string {
+  for (const [size, suffix] of [[1e9, "B"], [1e6, "M"], [1e3, "k"]] as const) {
+    if (n >= size) return `${(n / size).toFixed(1).replace(/\.0$/, "")}${suffix}`;
+  }
+  return String(Math.round(n));
+}
+
 function BudgetTile({ n }: { n: ReviewNumbers }) {
   return (
     <div className="tile">
@@ -742,7 +870,10 @@ function BudgetTile({ n }: { n: ReviewNumbers }) {
         {Math.round((n.budget.spent_mtd / Math.max(n.budget.cap, 1)) * 100)}<small>% of plan</small>
       </div>
       <div className="sub">
-        {n.budget.spent_mtd.toLocaleString()} of {n.budget.cap.toLocaleString()} {n.budget.unit}
+        {/* Tokens, whatever the billing unit: the meeting speaks one currency. */}
+        {n.budget.unit === "tokens"
+          ? `${fmtTokens(n.budget.spent_mtd)} of ${fmtTokens(n.budget.cap)} tokens`
+          : n.budget.tokens_mtd != null ? `${fmtTokens(n.budget.tokens_mtd)} tokens` : "this month"}
       </div>
     </div>
   );
@@ -810,7 +941,10 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
         <div className="card" style={{ padding: "14px 18px", marginBottom: 18 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
             <h2 style={{ margin: 0 }}>Status meeting #{open.number}</h2>
-            <span className="help">opened {fmtWhen(open.opened_at)}</span>
+            {open.record && (
+              <span className="help">{fmtDate(open.record.since)} → {fmtDate(open.record.until)}</span>
+            )}
+            <StatusChip status={open.board.status} />
             <span className="sp" style={{ flex: 1 }} />
             <NoteAction label="Close the meeting" className="small primary"
               placeholder="Closing note (optional) — 'no change' is a decision too"
@@ -821,47 +955,26 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
               }} />
           </div>
 
-          {/* One sentence in words before any number: a reader who does not
-              live in the project knows where it stands by the second line. */}
+          {/* The bottom line first, in words: a board member knows where it
+              stands by the second line, and every number under it is plan
+              against actual. The record used to open here as five equal
+              columns of counts — "30 made true", "11 published" — that
+              counted one daily post three ways; it is the appendix now. */}
           <p style={{ fontFamily: "var(--font-display)", fontSize: 22, lineHeight: 1.3,
             margin: "10px 0 14px", maxWidth: "60ch" }}>
             {open.headline}
           </p>
 
-          <div style={{ marginBottom: 16 }}>
-            <RecordSection record={open.record} mode={ctx.dash.mode} />
+          <div style={{ marginBottom: 18 }}>
+            <Scorecard board={open.board} />
           </div>
 
-          {open.numbers.prior?.plan && open.numbers.prior.plan.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <PlanVsActual plan={open.numbers.prior.plan} outcomes={open.report?.last_plan} />
-            </div>
-          )}
-
-          {open.numbers.prior && open.numbers.prior.decisions.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <b style={{ fontSize: 13 }}>
-                Last meeting's decisions, beside what they bought
-              </b>
-              <div className="help">
-                {open.numbers.prior.bought.met_since} requirement(s) met since ·
-                pace {open.numbers.prior.bought.pace_then ?? "—"} →
-                {" "}{open.numbers.prior.bought.pace_now}/wk
-              </div>
-              <DecisionList decisions={open.numbers.prior.decisions} />
-            </div>
-          )}
-
-          {/* The recommendation first, the reasoning behind a fold.
-              These two arrived the other way round: six paragraphs of a CEO
-              explaining itself, with the one line saying what it wanted to do
-              in small grey type underneath. A reader looking for "what do you
-              want from me" had to read all of it to find out the answer was
-              "nothing". */}
-          {open.report ? (
-            <ReportSections report={open.report} />
-          ) : (
-          <div style={{ marginBottom: 12 }}>
+          {/* The CEO's report, then the platform's list of what went off
+              plan under its explanation. The recommendation is never buried
+              under the reasoning: six paragraphs of a CEO explaining itself
+              once sat above the one line saying it wanted nothing. */}
+          {!open.report && (
+          <div style={{ marginBottom: 16 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
               <b style={{ fontSize: 13 }}>What your CEO says it will do</b><Source kind="ceo" />
             </div>
@@ -887,6 +1000,24 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
             )}
           </div>
           )}
+          <ReportSections report={open.report} board={open.board} lastPlan={
+            open.numbers.prior?.plan && open.numbers.prior.plan.length > 0
+              ? <PlanVsActual plan={open.numbers.prior.plan} outcomes={open.report?.last_plan} />
+              : null} />
+
+          {open.numbers.prior && open.numbers.prior.decisions.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <b style={{ fontSize: 13 }}>
+                Last meeting's decisions, beside what they bought
+              </b>
+              <div className="help">
+                {open.numbers.prior.bought.met_since} requirement(s) met since ·
+                pace {open.numbers.prior.bought.pace_then ?? "—"} →
+                {" "}{open.numbers.prior.bought.pace_now}/wk
+              </div>
+              <DecisionList decisions={open.numbers.prior.decisions} />
+            </div>
+          )}
 
           {open.decisions.length > 0 && (
             <div style={{ marginBottom: 12 }}>
@@ -903,11 +1034,22 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
           <AskSection open={open} selfRunning={selfRunning} requirements={requirements ?? []}
             unit={unit} onChanged={reload} />
 
-          {/* The forecast's inputs, last. They opened the meeting for a year
-              and a reader who did not live in the project could not say
-              what "11 a week · 0.4 weeks at this rate" meant for him. */}
+          {/* The appendix: everything the scorecard rolled up, by key, and
+              the forecast's inputs. All of it is here; none of it leads. */}
           <details style={{ marginTop: 16 }}>
-            <summary style={{ fontSize: 13, fontWeight: 600 }}>The numbers behind this</summary>
+            <summary style={{ fontSize: 13, fontWeight: 600 }}>
+              The full record
+              <span className="help" style={{ fontWeight: 400 }}>
+                {open.record
+                  ? ` — ${open.record.requirements_met.length} requirements made true, `
+                    + `${open.record.requirements_cut.length} cut, `
+                    + `${open.record.deliverables.length} published, and the numbers`
+                  : " — the numbers frozen at open"}
+              </span>
+            </summary>
+            <div style={{ marginTop: 10 }}>
+              <RecordSection record={open.record} mode={ctx.dash.mode} />
+            </div>
             <NumbersTiles n={open.numbers} mode={ctx.dash.mode} record={open.record}
               requirements={requirements ?? []} />
           </details>
@@ -947,6 +1089,7 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
             <div className={`card${r.closed_at ? " double-ruled" : ""}`} key={r.id} style={{ padding: "10px 14px", marginBottom: 8 }}>
               <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
                 <b>#{r.number}</b>
+                <StatusChip status={r.board.status} />
                 <span className="help">
                   {fmtWhen(r.opened_at)} → {r.closed_at ? fmtWhen(r.closed_at) : "—"}
                 </span>

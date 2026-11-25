@@ -74,7 +74,8 @@ interface BrowseView {
   published_total: number;
   today_total: number;
   matched: number;
-  states: Record<"all" | "published" | "working", number>;
+  /** The shelf counts only itself: it never walks the workspace. */
+  states: Partial<Record<"all" | "published" | "working", number>>;
   types: [string, number][];
   days: DayFolder[];
   // How many working files the index had to leave out to hold the rest. A
@@ -931,16 +932,12 @@ const WINDOWS = [
   { key: "all", label: "All time", days: -1 },
 ] as const;
 
-const STATES = [
-  { key: "all", label: "All" },
-  { key: "published", label: "Published" },
-  { key: "working", label: "Working" },
-] as const;
-
-/** What the page opens on. What was published is what was delivered, and it
-    is what someone arriving here came to see; the agents' working files are
-    one press away, under All or Working, and that choice is in the URL. */
-const DEFAULT_STATE = "published";
+/** The only list the web app shows. The agents' working files — fifty
+    thousand on a busy project, against eighty-four deliverables — are their
+    scratch pad, not the work, and are not shown here or anywhere else in the
+    app. Asking for published files alone is also what lets the server skip
+    the workspace walk entirely (`file_index.build(working=False)`). */
+const STATE = "published";
 
 // Even one open folder can hold a thousand rows. The server sends a screenful
 // of them (150) and the reader asks for the rest this many at a time; the
@@ -1082,7 +1079,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
   const searchRef = useRef<HTMLInputElement>(null);
 
   const query = params.get("q") ?? "";
-  const state = (STATES.find((s) => s.key === params.get("state"))?.key ?? DEFAULT_STATE);
+  const state = STATE;
   const type = params.get("type") ?? "";
   const since = (WINDOWS.find((w) => w.key === params.get("since"))?.key ?? "all");
   const asked = useSettled(query, 250);
@@ -1127,7 +1124,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
   const filters = useMemo(() => {
     const p = new URLSearchParams({ tz: TZ, sort: sort.by, desc: String(sort.desc) });
     if (asked.trim()) p.set("q", asked);
-    if (state !== "all") p.set("state", state);
+    p.set("state", state);
     if (type) p.set("type", type);
     if (since !== "all") p.set("since", since);
     return p.toString();
@@ -1159,7 +1156,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
     [view, projectId],
   );
 
-  const filtering = query.trim() !== "" || state !== DEFAULT_STATE || type !== "" || since !== "all";
+  const filtering = query.trim() !== "" || type !== "" || since !== "all";
   const total = view?.total ?? 0;
   const matched = view?.matched ?? 0;
 
@@ -1243,18 +1240,6 @@ export default function Deliverables({ projectId }: { projectId: string }) {
     const find = (asked: string) =>
       get<{ entry: FileRow }>(`${base}/entry?${asked}&id=${encodeURIComponent(wanted)}`);
     find(filters)
-      .then((found) => {
-        // The list opens on Published, and a link can name a working file —
-        // ⌘K finds them, and a pin can hold one. Widen to All for it, or the
-        // reader steps through a list that does not hold the file it is
-        // showing and closes onto it. Asked again, so → finds its neighbour.
-        if (found.entry.state !== "working" || next.has("state")) return found;
-        next.set("state", "all");
-        setParams(next, { replace: true });
-        const all = new URLSearchParams(filters);
-        all.delete("state");
-        return find(all.toString());
-      })
       .then((found) => openEntry(toEntry(found.entry, projectId)))
       .catch((e: Error) =>
         setPreviewError(e instanceof ApiError && e.status === 404
@@ -1272,11 +1257,10 @@ export default function Deliverables({ projectId }: { projectId: string }) {
       );
       downloadCsv(
         "deliverables.csv",
-        ["File", "Folder", "State", "Type", "Size (bytes)", "Landed"],
+        ["File", "Version", "Type", "Size (bytes)", "Published"],
         page.rows.map((r) => [
           r.name,
-          r.dir,
-          r.state === "published" ? "Published" : "Still being worked on",
+          r.version,
           r.ext ? `.${r.ext}` : "",
           r.size,
           r.at ?? "",
@@ -1286,8 +1270,6 @@ export default function Deliverables({ projectId }: { projectId: string }) {
       setPreviewError(`Export: ${(e as Error).message}`);
     }
   }
-
-  const dropped = view?.working_dropped ?? 0;
 
   const sortBtn = (by: SortKey, label: string, cls: string) => (
     <button
@@ -1307,10 +1289,8 @@ export default function Deliverables({ projectId }: { projectId: string }) {
   return (
     <>
       <p className="subtitle">
-        Every file the project has, filed by the day it landed. It opens on <b>Published</b>: what
-        the client gets — explicitly published by a team, hashed and receipted. <b>Working</b> is
-        the agents' shared scratch pad, and <b>All</b> puts both in one list, so today is one
-        screen rather than two.
+        Every file the team has published, filed by the day it landed — hashed, receipted, and
+        with each earlier version under it.
       </p>
       {error && !view && <div className="error">{error}</div>}
       {previewError && <div className="error">{previewError}</div>}
@@ -1320,10 +1300,9 @@ export default function Deliverables({ projectId }: { projectId: string }) {
       ) : total === 0 ? (
         <div className="wbox">
           <div className="wrow">
-            <span className="badge">nothing yet</span>
+            <span className="badge">nothing published yet</span>
             <div className="grow help">
-              No files. A deliverable appears the moment a team publishes one — drafts included,
-              so you can read the work as it takes shape instead of waiting for the end.
+              Nothing published yet. A deliverable appears here the moment a team publishes one.
             </div>
           </div>
         </div>
@@ -1339,18 +1318,6 @@ export default function Deliverables({ projectId }: { projectId: string }) {
                 placeholder={`Search ${fmtCount(total)} files — name or folder  ( / )`}
                 aria-label="Search files"
               />
-            </div>
-            <div className="viewtog" role="group" aria-label="Published or working">
-              {STATES.map((s) => (
-                <button
-                  key={s.key}
-                  className={state === s.key ? "on" : ""}
-                  aria-pressed={state === s.key}
-                  onClick={() => setParam("state", s.key, DEFAULT_STATE)}
-                >
-                  {s.label} <span className="n">{fmtCount(view.states[s.key])}</span>
-                </button>
-              ))}
             </div>
             <select
               className="ftypepick"
@@ -1387,8 +1354,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
               </button>
             ))}
             <span className="help">
-              {fmtCount(matched)} of {fmtCount(total)} files ·{" "}
-              {fmtCount(view.published_total)} published
+              {fmtCount(matched)} of {fmtCount(total)} published files
             </span>
             {/* What this reader does with a list is take it away. Export was
                 built one table at a time, which is why the record screens had
@@ -1404,31 +1370,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
             )}
           </div>
 
-          {dropped > 0 && (
-            <div className="notice-box">
-              This project has more working files than one screen can hold. Showing the{" "}
-              {fmtCount(view.working_kept)} most recently changed;{" "}
-              {fmtCount(dropped)}{view.walk_stopped ? "+" : ""} older ones are not listed.
-              Published deliverables are all here.
-            </div>
-          )}
-
-          {matched === 0 && state === "published" && view.published_total === 0 ? (
-            // Where the page opens before the first publish. "No matches —
-            // clear the filters" would send the reader back here.
-            <div className="wbox">
-              <div className="wrow">
-                <span className="badge">nothing published yet</span>
-                <div className="grow help">
-                  A deliverable lands here the moment a team publishes one. Until then,{" "}
-                  <button className="linkish" onClick={() => setParam("state", "all", DEFAULT_STATE)}>
-                    see all {fmtCount(total)} files
-                  </button>{" "}
-                  the agents are working on.
-                </div>
-              </div>
-            </div>
-          ) : matched === 0 ? (
+          {matched === 0 ? (
             <div className="wbox">
               <div className="wrow">
                 <span className="badge">no matches</span>
@@ -1440,9 +1382,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
                   >
                     Clear them
                   </button>
-                  {view.published_total > 0 &&
-                    ` to see the ${fmtCount(view.published_total)} published ${view.published_total === 1 ? "file" : "files"}`}
-                  .
+                  {` to see all ${fmtCount(total)}`}.
                 </div>
               </div>
             </div>

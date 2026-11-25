@@ -941,3 +941,107 @@ def test_the_report_is_held_to_the_boardroom_s_plain_english(client):
     refused = client.post("/agent/review_report", json=body, headers=bearer(token))
     assert refused.status_code == 422
     assert "In `variance.largest_cause`" in refused.json()["error"]
+
+
+# ── the board: status, plan against actual, by exception ──────────────────────
+
+
+def _daily(day: str, weekday: str, what: str) -> str:
+    return f"Before 18:00 America/Toronto on {weekday} 2026-11-{day} {what}: details"
+
+
+def _board_record() -> tuple[dict, dict]:
+    """Shaped like the meeting that prompted this: one daily post and one
+    daily digest, each a dated one-off requirement, plus the cycle's two
+    standing obligations and one post cut because he published it himself."""
+    met = []
+    for i in range(10, 25):
+        met.append({"key": f"R-{i}a", "statement": _daily(str(i), "Tuesday",
+                    f"a WordPress draft dated 2026-11-{i} exists on the site"), "how": "verified"})
+        met.append({"key": f"R-{i}b", "statement": _daily(str(i), "Monday",
+                    "a research digest for Thursday lands"), "how": "verified"})
+    cut = [{"key": "R-102", "statement": _daily("17", "Tuesday",
+            "a WordPress draft dated 2026-11-17 exists on the site"),
+            "reason": "he published that post himself"}]
+    cycle = {"ordinal": 8, "status": "completed", "accepted": 4, "met": 4, "carried": 0,
+             "missed": 0, "cut": 4, "met_keys": ["R-10", "R-71"], "carried_keys": [],
+             "missed_keys": [], "cut_keys": ["R-100", "R-101", "R-102", "R-104"],
+             "standing": [
+                 {"key": "R-10", "name": "x", "title": "Next day's research shortlist",
+                  "verdict": "honoured"},
+                 {"key": "R-71", "name": "y", "title": "Tomorrow's post on the site",
+                  "verdict": "honoured"}]}
+    record = {"requirements_met": met, "requirements_cut": cut,
+              "standing_honoured": [{"key": "R-10", "statement": "s"},
+                                    {"key": "R-71", "statement": "t"}],
+              "deliverables": [{"name": f"2026-11-{d}-post-{d}.md", "version": 1,
+                                "requirements": []} for d in range(10, 21)],
+              "spot_checks": {"considered": 0}, "runs": {"total": 40, "dead": 1},
+              "cycle": cycle, "tokens": 31_400_000}
+    numbers = {"as_of": "2026-11-24T19:47:00+00:00",
+               "budget": {"unit": "USD", "spent_mtd": 96.0, "cap": 100.0, "usd_mtd": 96.0,
+                          "tokens_mtd": 144_000_000}}
+    return numbers, record
+
+
+def test_recurring_work_is_one_scorecard_row_not_thirty():
+    """Thirty dated requirements were one daily post and one daily digest.
+    The scorecard says so in two rows, with the deadline moved out of the
+    name and the cut counted against the plan it was cut from."""
+    from yaaf.server import review_record
+
+    numbers, record = _board_record()
+    rows = review_record.board("operate", numbers, record)["scorecard"]
+    posts = next(r for r in rows if "WordPress draft" in r["what"])
+    digests = next(r for r in rows if "research digest" in r["what"])
+    assert posts["actual"] == "15 done, 1 cut" and posts["plan"] == "16 due, each by 18:00"
+    assert digests["actual"] == "15 done"
+    assert "2026-11" not in posts["what"] and "Before 18:00" not in posts["what"]
+    assert not any(r["what"] == "One-off requirements" for r in rows), "nothing was one-off"
+
+
+def test_the_board_speaks_tokens_and_watches_the_pace_of_spend():
+    """96% of plan with a fifth of the month left is a watch, not 'on track' —
+    and the meeting says it in tokens, whatever the billing unit."""
+    from yaaf.server import review_record
+
+    numbers, record = _board_record()
+    board = review_record.board("operate", numbers, record)
+    spend = next(r for r in board["scorecard"] if r["what"] == "Tokens")
+    assert spend["actual"] == "144M this month · 96% of plan"
+    assert spend["tone"] == "warn"
+    assert spend["detail"] == "31.4M since the last meeting"
+    assert "$" not in str(board) and "USD" not in str(board)
+    assert board["status"]["label"] == "Watch"
+    assert board["status"]["why"] == ["Tokens: 96% used with 21% of the month left"]
+
+
+def test_cuts_are_misses_with_reasons_and_leave_the_headline():
+    """"R-100, R-101, R-102, R-104 cut" in the first sentence named four
+    things the chairman could not look up. A cut is listed under what did not
+    go to plan, by name and reason, and the headline stops saying the cycle's
+    obligations twice."""
+    from yaaf.server import review_record
+
+    numbers, record = _board_record()
+    misses = review_record.board("operate", numbers, record)["misses"]
+    assert misses == [{"what": "Cut: A WordPress draft dated 2026-11-17 exists on the site",
+                       "why": "he published that post himself", "keys": ["R-102"]}]
+    line = review_record.headline("operate", numbers, record)
+    assert "R-10" not in line, line
+    assert "standing obligations honoured" not in line, line
+    assert line.startswith("Cycle 8: Next day's research shortlist: done;"), line
+
+
+def test_a_board_needs_no_record_and_is_on_the_meeting_view(client):
+    """Like the headline, the board is composed on read from frozen facts, so
+    a meeting from before the record still gets a status and a spend row."""
+    project = deliver_project(client, slug="boarded")
+    review = open_review(project)
+    view = _open_view(client, project)
+    assert view["board"]["status"]["label"] in ("On track", "Watch", "Off track")
+    assert any(r["what"] == "Tokens" for r in view["board"]["scorecard"])
+    with db_session() as session:
+        session.get(Review, review["id"]).record = None
+    board = _open_view(client, project)["board"]
+    assert board["misses"] == [] and board["highlights"]["published"] == 0
