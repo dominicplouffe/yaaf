@@ -1711,6 +1711,18 @@ def _talk_backstop(session: Session, agent: Agent) -> bool:
     return failed >= TALK_FAILURES_IN_WINDOW
 
 
+def talk_held(session: Session, project: Project) -> bool:
+    """Whether the chairman's next boardroom message would go unanswered for
+    now: no live chat session to answer it, and the queued lane held by its
+    backstop. The one honest "can't reply" — every run allowance, pacing and
+    the wake ceiling are the work's brakes, and the talk lane passes them all,
+    so the project's activity banner says nothing about whether he is heard."""
+    if chat_session_live(session, project):
+        return False
+    ceo = policy.ceo_of(session, project.id)
+    return ceo is not None and _talk_backstop(session, ceo)
+
+
 def _talk_busy(session: Session, agent: Agent, boardroom_ids: set[str]) -> bool:
     """A reply to the boardroom already on its way: one queued or running in
     the talk lane, or any queued run that woke for the boardroom and has not

@@ -433,6 +433,10 @@ export interface Dashboard {
   /** True while the resident CEO chat session is live — boardroom replies
       arrive in seconds instead of via queued runs. */
   chat_live: boolean;
+  /** True when a message to the CEO would go unanswered for now: no live chat
+      session, and its replies kept failing so the reply lane is held. The only
+      "can't reply" — the activity banner is about work, which talk bypasses. */
+  chat_held: boolean;
   pending_approvals: number;
   /** Requirements the CEO proposed and is parked on — a decision only the
       chairman can make, taken on the Plan tab. */

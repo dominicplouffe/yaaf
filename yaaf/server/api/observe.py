@@ -98,6 +98,7 @@ from yaaf.server.dispatcher import (
     day_start,
     inbox_runs_used,
     run_walls,
+    talk_held,
     unread_messages_for,
 )
 from yaaf.server.identity import Person, person_auth, signed_in
@@ -899,6 +900,10 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         # the number that caused it.
         "activity": activity_state(session, project, cons),
         "chat_live": chat_session_live(session, project),
+        # Whether a message to the CEO would go unanswered right now. Not the
+        # activity banner: that explains why *work* is not starting, and the
+        # chairman's boardroom passes every one of those brakes.
+        "chat_held": talk_held(session, project),
         "pending_approvals": pending_approvals,
         "requirements_proposed": requirements_proposed,
         # The reader's, not the project's: None for someone with no seat here.
