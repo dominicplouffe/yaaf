@@ -617,19 +617,12 @@ button.eye:hover { color: var(--ink); }
 .tab:hover { color: var(--ink); background: none; border-color: transparent; }
 .tab.active { color: var(--ink); border-bottom-color: var(--accent); }
 
-/* ── boardroom chat ── */
-.chat { display: flex; flex-direction: column; gap: 10px; margin: 12px 0;
-  max-height: 55vh; overflow-y: auto; padding-right: 6px; }
+/* ── boardroom chat: your own bubble (the rest is pages/project/boardroom.css) ── */
 .msg { max-width: 78%; padding: 9px 13px; border-radius: 12px;
   background: var(--surface); border: 1px solid var(--border); }
 .msg.me { align-self: flex-end; background: var(--accent); border-color: var(--accent);
   color: var(--on-accent); }
-.msg .who { font-size: var(--t-micro); color: var(--muted); margin-bottom: 3px; }
 .msg .body { word-break: break-word; }
-.msg .when { font-size: var(--t-micro); color: var(--muted); margin-top: 4px; text-align: right; }
-/* The platform's own lines: drawn apart from the CEO's, so its wording is not
-   read as the CEO talking. */
-.msg.sys { background: var(--surface-2); border-style: dashed; }
 /* Your own bubble is painted with the accent, so it is a ground of its own and
    the page's tokens are wrong on it: --muted put "You" and the time at 1.3:1,
    and every link is --accent — the bubble itself, 1:1. So the tokens are
@@ -645,42 +638,6 @@ button.eye:hover { color: var(--ink); }
   --grid: rgba(var(--on-accent-rgb), 0.3);
 }
 .msg.me .body a { text-decoration: underline; }
-/* The head of the scroller: the sentinel that pulls older messages in, and the
-   cap that says there is nothing above it. Both are quiet — the reader should
-   be reading the conversation, not the paging. */
-.chat-earlier, .chat-start {
-  align-self: center; font-size: var(--t-micro); color: var(--muted);
-  background: none; border: 0; padding: 4px 8px;
-}
-.chat-earlier { cursor: pointer; text-decoration: underline dotted; }
-.chat-earlier:disabled { cursor: default; text-decoration: none; opacity: 0.7; }
-.chat-day {
-  align-self: stretch; text-align: center; font-size: var(--t-micro); color: var(--muted);
-  margin: 4px 0; border-top: 1px solid var(--border); line-height: 0;
-}
-.chat-day span { background: var(--page); padding: 0 10px; }
-/* "Jump to latest", over the foot of the chat. Only drawn for a reader who has
-   scrolled away from the live end. */
-.chat-wrap { position: relative; }
-.chat-jump {
-  position: absolute; right: 16px; bottom: 14px; z-index: 2;
-  font-size: 12px; padding: 5px 11px; border-radius: 999px; cursor: pointer;
-  background: var(--accent); color: var(--on-accent); border: 1px solid var(--border);
-  box-shadow: var(--e2);
-}
-.msg.typing .body { display: flex; gap: 4px; padding: 4px 0; }
-.typing-dot {
-  width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
-  animation: typing-bounce 1.2s ease-in-out infinite;
-}
-.typing-dot:nth-child(2) { animation-delay: 0.15s; }
-.typing-dot:nth-child(3) { animation-delay: 0.3s; }
-@keyframes typing-bounce {
-  0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
-  30% { opacity: 1; transform: translateY(-3px); }
-}
-.composer { display: flex; gap: 8px; }
-.composer textarea { min-height: 44px; }
 
 /* ── markdown message bodies ── */
 .markdown { word-break: break-word; }
@@ -809,20 +766,6 @@ pre.block {
 /* inline note capture — this app never window.prompt()s */
 .note-action { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .note-action input { width: 260px; padding: 5px 9px; font-size: 12px; }
-
-/* boardroom: chat + read-only context rail */
-.board-flex { display: flex; gap: 18px; align-items: flex-start; }
-.board-chat { flex: 1; min-width: 0; }
-.rail { width: 264px; flex: none; display: flex; flex-direction: column; gap: 10px; }
-.rail .card { padding: 12px 14px; }
-.rail .h { font-size: var(--t-micro); letter-spacing: normal;
-  color: var(--muted); font-weight: 600; margin-bottom: 7px;
-}
-@media (max-width: 1000px) {
-  .board-flex { flex-direction: column; }
-  .rail { width: 100%; }
-}
-.presence { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin: 8px 0 6px; }
 
 /* filter pills with counts — the counts are information on their own */
 .pills { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 0 0 10px; }
@@ -2449,22 +2392,6 @@ button.textblock, button.linkish, button.linklike, button.sort {
    stacked. Buttons became flex containers so an icon could sit beside a word,
    and that turned every one of these into a row of squeezed columns. */
 button.textblock { flex-direction: column; align-items: stretch; }
-
-/* Who you are talking to, at the top of the conversation with them. */
-.chat-id {
-  display: flex; align-items: center; gap: var(--s3);
-  padding: var(--s3) var(--s4); margin-bottom: var(--s3);
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); box-shadow: var(--e1);
-}
-.chat-id .ci { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
-.chat-id .ci b { font-size: var(--t-lead); font-weight: 600; }
-.chat-id .ci span { font-size: var(--t-small); color: var(--muted); }
-
-/* A message and the face of whoever sent it. */
-.msgrow { display: flex; align-items: flex-start; gap: var(--s2); max-width: 82%; }
-.msgrow.me { align-self: flex-end; max-width: 74%; }
-.msgrow .msg { max-width: none; }
 
 /* ══════════════════════════════════════════════════════════════════════════
    The redesign's shapes: the Overview's tiles and cards, the Inbox, the org
