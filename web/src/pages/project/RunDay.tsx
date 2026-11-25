@@ -269,7 +269,14 @@ export default function RunDay({ projectId, detail }: {
             <tbody>
               {shown.map((r) => (
                 <Fragment key={r.id}>
-                  <tr>
+                  <tr className={`${r.has_trace || r.has_context ? "rd-openable" : ""}${open === r.id ? " rd-open" : ""}`}
+                    onClick={(e) => {
+                      // The whole row opens its trace; the button is the
+                      // keyboard's way in and the visible sign that it can.
+                      if ((r.has_trace || r.has_context) && !(e.target as HTMLElement).closest("button, a")) {
+                        setOpen(open === r.id ? null : r.id);
+                      }
+                    }}>
                     <td>{time(r.started_at ?? r.created_at)}</td>
                     <td><span className="rd-dot" style={{ background: color[r.agent_id ?? ""] ?? "var(--muted)" }} />{r.agent}</td>
                     <td>{r.why}</td>
@@ -278,10 +285,13 @@ export default function RunDay({ projectId, detail }: {
                     <td className="num">{length(r.seconds)}</td>
                     <td className="num">{tokens(r.tokens)}</td>
                     <td>{(r.has_trace || r.has_context) && (
-                      <button className="linkish" aria-label="Open trace and context" aria-expanded={open === r.id}
-                        onClick={() => setOpen(open === r.id ? null : r.id)}>{open === r.id ? "‹" : "›"}</button>)}</td>
+                      <button className="rd-open-btn" aria-expanded={open === r.id}
+                        aria-label={`${open === r.id ? "Hide" : "Show"} what this run did`}
+                        onClick={() => setOpen(open === r.id ? null : r.id)}>
+                        {open === r.id ? "Hide" : "Details"}<span aria-hidden="true">{open === r.id ? "▴" : "▾"}</span>
+                      </button>)}</td>
                   </tr>
-                  {open === r.id && <tr><td colSpan={8}>{detail(r.id, r.has_trace, r.has_context)}</td></tr>}
+                  {open === r.id && <tr className="rd-detail"><td colSpan={8}>{detail(r.id, r.has_trace, r.has_context)}</td></tr>}
                 </Fragment>
               ))}
               {rows.length === 0 && <tr><td colSpan={8} className="help">No runs match.</td></tr>}

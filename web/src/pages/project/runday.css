@@ -125,3 +125,14 @@ table.rd-log .num { text-align: right; font-variant-numeric: tabular-nums; }
   .rd-who-row { grid-template-columns: 90px 1fr 34px; }
   .rd-big { font-size: 36px; }
 }
+
+/* A run's row opens what it did: the whole row is the target, and a labelled
+   button says so. A bare "›" in the last column read as decoration. */
+table.rd-log tr.rd-openable { cursor: pointer; }
+table.rd-log tr.rd-openable:hover > td, table.rd-log tr.rd-open > td { background: var(--hover-strong); }
+table.rd-log tr.rd-detail > td { background: var(--surface-2); padding: 12px; }
+.rd-open-btn { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); font-size: var(--t-small);
+  font-weight: 600; white-space: nowrap; cursor: pointer; }
+.rd-open-btn:hover { background: var(--surface-2); border-color: var(--ink-2); }
+.rd-open-btn span { font-size: 10px; color: var(--muted); }
