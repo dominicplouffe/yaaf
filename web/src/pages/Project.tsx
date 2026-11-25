@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { Dashboard, post } from "../api";
 import { InboxExplainer, RaiseInboxReads } from "../inbox";
-import { firstName, ProjectCtx, useProjectFrame } from "../projectCtx";
+import { useProjectFrame } from "../projectCtx";
 import { clip, statusBrief } from "../ui";
-import { Btn, PageHead } from "../ui/kit";
+import { Btn } from "../ui/kit";
 import { Icon } from "../ui/Icon";
 import Overview from "./project/Overview";
 import Boardroom from "./project/Boardroom";
@@ -232,21 +232,6 @@ function ReviewBanner({ projectId, number }: { projectId: string; number: number
   );
 }
 
-/** Each page's name, and — only where the page does not already say it —
-    one sentence on what it is for. Team draws its own head (it is the
-    project's front page), Results, Member and Details theirs. */
-function pageHead(path: string, ctx: ProjectCtx): { title: string; lede?: string } | null {
-  const ceo = firstName(ctx.ceoName);
-  if (path === "chat") {
-    return {
-      title: `Chat with ${ceo}`,
-      lede: `${ceo} runs this project and is the one agent you speak to. Give direction, ask why, `
-        + "or set a rule with “from now on…”. Don't ask for decisions it already holds.",
-    };
-  }
-  return null;
-}
-
 /** An old address, kept working: everything after the old prefix lands in
     the same place under the new one. */
 function Moved({ to, deep }: {
@@ -280,12 +265,10 @@ export default function ProjectPage() {
   const base = `/projects/${projectId}`;
   const sub = location.pathname.slice(base.length).replace(/^\//, "").split("/")[0];
   const onOverview = sub === "";
-  const head = pageHead(sub, ctx);
   const onRoadmap = location.pathname.startsWith(`${base}/details/roadmap`);
 
   return (
     <>
-      {head && <PageHead title={head.title} lede={head.lede} />}
 
       <StandingNotice dash={dash} />
 
@@ -304,7 +287,9 @@ export default function ProjectPage() {
       {/* One answer to "why is nothing happening?", on every page — a chairman
           who opens Tasks to see four of them sitting still should not have to
           go to the Overview to learn the project ran out of runs at 01:22. */}
-      <StatusBriefBox dash={dash} projectId={projectId} reload={ctx.reload} />
+      {/* The chat says this itself, in its presence and the one strip above
+          the conversation — a second box about the same wait was noise. */}
+      {sub !== "chat" && <StatusBriefBox dash={dash} projectId={projectId} reload={ctx.reload} />}
       <PinSuggestion projectId={projectId} />
       {ctx.error && (
         <div className="error">

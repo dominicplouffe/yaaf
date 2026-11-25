@@ -643,6 +643,11 @@ def test_options_are_kept_apart_so_the_owner_can_answer_with_one_click(client):
     assert ask["options"] == ["Candidate #1", "Candidate #2"]
     assert ask["recommendation"].startswith("Candidate #1")
     assert "- Candidate #2" in ask["body"]
+    # The chat draws the question where it was asked, from the project's own
+    # list, so the buttons have to be there too.
+    (on_page,) = client.get(f"/observe/projects/{project['id']}/asks", headers=ADMIN).json()
+    assert on_page["options"] == ask["options"]
+    assert on_page["recommendation"] == ask["recommendation"]
 
 
 def test_claude_reads_the_options_as_the_ceos_words(client):

@@ -163,3 +163,56 @@ def test_a_named_sender_still_reads_as_a_name(client):
     by_body = {m["body"]: m for m in _page(client, channel, 10)}
     assert by_body["from the chairman"]["from_name"] == "chairman"
     assert by_body["from the CEO"]["from_name"] == "CEO"
+
+
+# ── search ──────────────────────────────────────────────────────────────────
+#
+# The chat holds only the tail it polls and the pages the reader scrolled past.
+# A search run over that in the browser answers "not found" about everything
+# older, which reads as "you never said it". So the search is the server's.
+
+
+def _search(client, channel: str, q: str) -> list[dict]:
+    response = client.get(f"/observe/channels/{channel}/search", params={"q": q}, headers=ADMIN)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_search_finds_a_message_older_than_the_tail_and_ignores_case(client):
+    project = make_project(client)
+    channel = channel_of(client, project["id"], "boardroom")
+    _say(client, project, "Use the Canada numbers for the pricing baseline.")
+    for i in range(40):
+        _say(client, project, f"filler {i}")
+    assert all("Canada" not in m["body"] for m in _page(client, channel, 30))
+    found = _search(client, channel, "canada")
+    assert [m["body"] for m in found] == ["Use the Canada numbers for the pricing baseline."]
+    # The same row shape the chat draws from, so a hit can be rendered as is.
+    assert set(found[0]) == set(_page(client, channel, 1)[0])
+
+
+def test_search_matches_percent_and_underscore_as_text(client):
+    """'50%' is a percent sign, not a wildcard that matches every 50."""
+    project = make_project(client)
+    channel = channel_of(client, project["id"], "boardroom")
+    _say(client, project, "Cut the budget by 50% this month.")
+    _say(client, project, "Item 50 is fine.")
+    _say(client, project, "rename file_a")
+    _say(client, project, "rename fileXa")
+    assert [m["body"] for m in _search(client, channel, "50%")] == ["Cut the budget by 50% this month."]
+    assert [m["body"] for m in _search(client, channel, "file_a")] == ["rename file_a"]
+
+
+def test_search_stays_inside_its_channel(client):
+    project = make_project(client)
+    other = make_project(client, slug="other")
+    _say(client, other, "a secret only the other project said")
+    channel = channel_of(client, project["id"], "boardroom")
+    assert _search(client, channel, "secret") == []
+
+
+def test_a_blank_search_finds_nothing_rather_than_everything(client):
+    project = make_project(client)
+    channel = channel_of(client, project["id"], "boardroom")
+    _say(client, project, "hello")
+    assert _search(client, channel, "   ") == []

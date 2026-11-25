@@ -1031,6 +1031,9 @@ export interface AskRow {
   asked_by: string;
   answer_by: string;
   default_action: string;
+  /** The choices, when the question has them, and the CEO's pick. */
+  options: string[];
+  recommendation: string | null;
   asked_in_message_id: string;
   answered_at: string | null;
   lapsed_at: string | null;

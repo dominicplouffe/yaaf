@@ -2248,6 +2248,44 @@ def channel_messages(channel_id: str, limit: int = 100, before: str | None = Non
             .limit(min(limit, 500))
         ).scalars()
     )[::-1]
+    return _message_rows(session, channel_id, rows)
+
+
+#: LIKE's own wildcards, and its escape character, in what the reader typed.
+_LIKE_SPECIAL = re.compile(r"([\\%_])")
+
+
+@router.get("/channels/{channel_id}/search", dependencies=[authority.READ])
+def channel_search(channel_id: str, q: str = Query(..., max_length=200), limit: int = 50,
+                   session: Session = Depends(db)) -> list[dict]:
+    """The messages in one channel whose text contains `q`, newest `limit`,
+    oldest first — the same rows `channel_messages` returns.
+
+    The chat only ever holds the tail it polls and the pages the reader has
+    scrolled through, so a search run in the browser answers "not found" about
+    everything older than that, which reads as "you never said it". The search
+    is the server's, over the whole conversation.
+
+    What the reader typed is matched as text: a `%` or `_` is a percent sign or
+    an underscore, not a wildcard. "50%" matching every message with a 50 in it
+    would be a search that lies about what it found."""
+    needle = q.strip()
+    if not needle:
+        return []
+    pattern = "%" + _LIKE_SPECIAL.sub(r"\\\1", needle) + "%"
+    rows = list(
+        session.execute(
+            select(Message)
+            .where(Message.channel_id == channel_id, Message.body.ilike(pattern, escape="\\"))
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(min(limit, 200))
+        ).scalars()
+    )[::-1]
+    return _message_rows(session, channel_id, rows)
+
+
+def _message_rows(session: Session, channel_id: str, rows: list[Message]) -> list[dict]:
+    """Messages as the chat draws them, with their senders named."""
     # Names for the senders on this page only. This used to be _name_maps,
     # which reads every agent *and* every team in the project and throws the
     # teams away — two full scans on an endpoint the boardroom polls every two
@@ -2862,6 +2900,9 @@ def asks(project_id: str, session: Session = Depends(db)) -> list[dict]:
          "asked_by": a.asked_by_agent_id,
          "answer_by": a.answer_by.isoformat(),
          "default_action": a.default_action,
+         # The same two fields the desk carries, so the chat can draw a
+         # question where it was asked and answer it in one click.
+         "options": a.options or [], "recommendation": a.recommendation,
          "asked_in_message_id": a.asked_in_message_id,
          "answered_at": a.answered_at.isoformat() if a.answered_at else None,
          "lapsed_at": a.lapsed_at.isoformat() if a.lapsed_at else None,
