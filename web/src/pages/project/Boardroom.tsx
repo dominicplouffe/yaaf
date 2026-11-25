@@ -711,8 +711,9 @@ export default function Boardroom({ projectId, dash, org }: {
             onClick={() => { setSearching(!searching); setQuery(""); setHits(null); }}>
             <Icon name="search" size={16} />
           </button>
-          <button className={`small${rulesOpen ? " on" : ""}`} aria-expanded={rulesOpen} onClick={() => setRulesOpen(!rulesOpen)}>
-            <Icon name="list" size={14} /> Rules{ruleCount ? ` · ${ruleCount}` : ""}
+          <button className={`small${rulesOpen ? " on" : ""}`} aria-expanded={rulesOpen} onClick={() => setRulesOpen(!rulesOpen)}
+            aria-label={`Your rules${ruleCount ? ` (${ruleCount})` : ""}`}>
+            <Icon name="list" size={14} /> <span className="cr-hide-sm">Rules{ruleCount ? ` · ${ruleCount}` : ""}</span>
           </button>
         </header>
 
