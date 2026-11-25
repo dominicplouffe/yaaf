@@ -124,10 +124,16 @@ def _plural(n: int, word: str) -> str:
     return word if n == 1 else word + "s"
 
 
-def sentence(card: dict | None) -> str:
+def sentence(card: dict | None, *, cuts: bool = True) -> str:
     """The card in words, naming what it counts. One function, so the
     headline, the flag, the narrative stub and the CEO's notice cannot say
-    four different things about the same week."""
+    four different things about the same week.
+
+    `cuts=False` is the status meeting's headline: a cut is a decision with a
+    reason, and a row of keys ("R-100, R-101, R-102, R-104 cut") in the one
+    sentence a chairman reads first named four things he could not look up.
+    The meeting lists cuts, by name and reason, under what did not go to
+    plan."""
     card = card or {}
     if "standing" not in card:
         return _legacy(card)
@@ -153,7 +159,7 @@ def sentence(card: dict | None) -> str:
         if carried:
             text += f", {', '.join(carried)} carried forward"
         parts.append(text)
-    if card.get("cut_keys"):
+    if cuts and card.get("cut_keys"):
         parts.append(f"{', '.join(card['cut_keys'])} cut")
     if not parts:
         return "Nothing was owed."

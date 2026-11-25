@@ -1804,7 +1804,8 @@ export interface ReviewNumbers {
     status: string; deliver_by: string;
     projected_done_at: string | null; basis: string | null;
   } | null;
-  budget: { unit: string; spent_mtd: number; cap: number };
+  /** `tokens_mtd` is absent on snapshots frozen before it was recorded. */
+  budget: { unit: string; spent_mtd: number; cap: number; tokens_mtd?: number };
   scope: { open: number; proposed: number; met: number; cut: number;
     met_since_last_review: number };
   hypotheses: { statement: string; kill_date: string; status: string }[];
@@ -1864,14 +1865,18 @@ export interface CycleObligation {
 export interface ReviewRecord {
   since: string;
   until: string;
-  requirements_met: { key: string; statement: string; how: "verified" | "judged" }[];
-  standing_honoured: { key: string; statement: string }[];
-  requirements_cut: { key: string; statement: string; reason: string | null }[];
+  requirements_met: { key: string; statement: string; title?: string;
+    how: "verified" | "judged" }[];
+  standing_honoured: { key: string; statement: string; title?: string }[];
+  requirements_cut: { key: string; statement: string; title?: string;
+    reason: string | null }[];
   deliverables: { name: string; version: number; requirements: string[] }[];
   spot_checks: { considered: number; drawn: number; passed: number; failed: number;
     expired: number };
   tasks_closed: number;
   runs: { total: number; dead: number; usd: number };
+  /** Tokens booked in the window. Absent on meetings opened before it was kept. */
+  tokens?: number;
   cycle: { ordinal: number; status: string; goal: string | null; accepted?: number;
     met?: number; carried?: number; met_keys?: string[]; carried_keys?: string[];
     missed_keys?: string[]; cut_keys?: string[];
@@ -1905,6 +1910,20 @@ export interface ReviewReport {
     why: string | null };
 }
 
+export type BoardTone = "ok" | "warn" | "bad" | "neutral";
+
+/** The board report's platform half (`review_record.board`): a status, plan
+    against actual, and what did not go to plan — composed at zero tokens
+    from the same frozen facts as the headline. */
+export interface ReviewBoard {
+  status: { tone: "ok" | "warn" | "bad"; label: string; why: string[] };
+  scorecard: { what: string; plan: string; actual: string; tone: BoardTone;
+    note: string | null; detail?: string | null; keys?: string[] }[];
+  misses: { what: string; why: string | null; keys: string[] }[];
+  highlights: { published: number;
+    top: { name: string; file: string; version: number | null }[] };
+}
+
 export interface ReviewRow {
   id: string;
   number: number;
@@ -1918,6 +1937,7 @@ export interface ReviewRow {
   /** One sentence in words from the frozen facts; composed server-side so the
       screen, the reader tool and the opening mail say the same thing. */
   headline: string;
+  board: ReviewBoard;
   narrative: string | null;
   recommended: string | null;
   narrative_filed_at: string | null;

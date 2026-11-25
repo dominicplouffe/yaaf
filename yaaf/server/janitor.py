@@ -1459,6 +1459,9 @@ def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
             # budget's API-key seat (a DeepSeek CEO) moves real money too, and a
             # frozen review that left it out would disagree with the Spend page.
             "usd_mtd": round(float(usd), 4),
+            # And the tokens, whatever the unit: the meeting reports spend in
+            # tokens on every project, and a USD plan's snapshot had none.
+            "tokens_mtd": int(tokens),
         },
         "scope": {
             "open": len([r for r in scope if r.status in policy.OPEN_REQUIREMENT_STATUSES]),
@@ -1503,6 +1506,25 @@ def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
             },
         }
     return numbers
+
+
+def _board_lines(board: dict) -> str:
+    """The board report's platform half, for the opening mail: the status, plan
+    against actual, and what did not go to plan — the same rows the meeting
+    screen opens on, so the mail and the screen cannot disagree."""
+    status = board["status"]
+    lines = [f"Status: {status['label']}"
+             + (f" — {'; '.join(status['why'])}" if status["why"] else "") + "\n",
+             "Where it stands (plan → actual):\n"]
+    for row in board["scorecard"]:
+        lines.append(f"  {row['what'][:90]}: {row['plan']} → {row['actual']}"
+                     + (f" ({row['note']})" if row.get("note") else ""))
+    if board["misses"]:
+        lines.append("\nWhat did not go to plan:\n")
+        for miss in board["misses"]:
+            lines.append(f"  {miss['what'][:120]}"
+                         + (f" — {miss['why'][:120]}" if miss.get("why") else ""))
+    return "\n".join(lines) + "\n\n"
 
 
 def _record_lines(record: dict) -> str:
@@ -1583,6 +1605,7 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
     velocity = numbers["velocity"]
     commitment = numbers["commitment"]
     headline = review_record.headline(project.mode, numbers, record)
+    board = review_record.board(project.mode, numbers, record)
     prior_lines = ""
     if numbers.get("prior", {}).get("decisions"):
         bought = numbers["prior"]["bought"]
@@ -1596,6 +1619,7 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
     chairman_notify(
         session, project, f"status meeting #{number} is open",
         f"The status meeting for {project.name} is open. {headline}\n\n"
+        + _board_lines(board)
         + _record_lines(record)
         + "The numbers:\n\n"
         f"  goal: {project.goal[:300]}\n"
@@ -1605,8 +1629,10 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
         + (f"  commitment: {commitment['status']} — promised "
            f"{commitment['deliver_by'][:10]}, projected "
            f"{(commitment['projected_done_at'] or 'unknown')[:10]}\n" if commitment else "")
-        + f"  budget: {numbers['budget']['spent_mtd']:,.0f} of "
-          f"{numbers['budget']['cap']:,.0f} {numbers['budget']['unit']} this month\n"
+        # Tokens, whatever the billing unit: the meeting speaks one currency.
+        + f"  spend: {numbers['budget']['tokens_mtd']:,} tokens this month"
+          + (f", {round(100 * numbers['budget']['spent_mtd'] / numbers['budget']['cap'])}%"
+             " of plan" if numbers['budget']['cap'] else "") + "\n"
         f"  audit coverage since last review: "
         f"{numbers['audit_coverage']['sampled']} sampled, "
         f"{numbers['audit_coverage']['failed']} failed, "
