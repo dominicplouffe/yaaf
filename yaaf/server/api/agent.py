@@ -3612,6 +3612,15 @@ def brief_propose(
             "your work disagree, tell the CEO — a suggestion survives your run.",
             status_code=403,
         )
+    # The brief changes on what he decided. A question from him is the start of
+    # a conversation, and a second draft with nothing new from him is the CEO's
+    # mind changing — `discussion` has the morning that taught both.
+    from yaaf.server import discussion
+
+    for why in (discussion.brief_open_question(session, ctx.project.id),
+                discussion.brief_already_drafted(session, ctx.project.id)):
+        if why:
+            raise Refusal(why, status_code=409)
     try:
         proposed = briefs.normalise(body.goal, body.standing_orders, body.retired)
     except briefs.BriefError as exc:

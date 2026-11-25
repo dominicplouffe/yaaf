@@ -2507,12 +2507,16 @@ def check_plain_to_chairman(
     """
     if agent.kind != AgentKind.CEO or channel.kind != ChannelKind.BOARDROOM:
         return
-    from yaaf.server import plain
+    from yaaf.server import discussion, plain
+    from yaaf.server.dispatcher import TALK_RUN_KINDS
 
-    found = plain.problems(body)
+    # Answering his question is a conversation, and gets a conversation's room.
+    # Only the talk lane: a work run's post is a status, whatever he last said.
+    limit = (discussion.max_words(session, project.id) if run.kind in TALK_RUN_KINDS
+             else plain.MAX_MESSAGE_WORDS)
+    found = plain.problems(body, max_words=limit)
     if not found:
         return
-    from yaaf.server.dispatcher import TALK_RUN_KINDS
 
     # Either vehicle of the talk lane: the queued reply is the same live
     # conversation, and refusing its second draft left him unanswered exactly

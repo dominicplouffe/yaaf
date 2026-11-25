@@ -1105,7 +1105,9 @@ async def t_capacity_request(args):
     "that find it in a file or memory know it is dead; `what_changed` quotes what he "
     "said, with dates. Use it the moment he changes his mind about what the project "
     "is for, how it works, or any limit — agreeing in chat or saving a memory does "
-    "NOT change what the other runs read. Nothing changes until he confirms; then "
+    "NOT change what the other runs read. Refused while his newest boardroom message "
+    "asks you a question (talk it through; file once he says which way), and refused "
+    "again once you have drafted since he last spoke.Nothing changes until he confirms; then "
     "every agent reads the new brief first on every run and you are told to rewrite "
     "the files, scripts and memories that still say the old thing. A new draft "
     "replaces any unconfirmed one. " + FOR_HIM + ".",

@@ -73,7 +73,8 @@ def words(text: str) -> int:
     return sum(len(_WORD.findall(s)) for s in _sentences(text))
 
 
-def problems(text: str, *, whole_message: bool = True) -> list[str]:
+def problems(text: str, *, whole_message: bool = True,
+             max_words: int = MAX_MESSAGE_WORDS) -> list[str]:
     """What makes this hard to read cold, one plain line each. Empty = fine.
 
     `whole_message=False` checks sentence length only — for a field that is
@@ -89,8 +90,8 @@ def problems(text: str, *, whole_message: bool = True) -> list[str]:
                          f"per sentence, {MAX_SENTENCE_WORDS} words at most.")
     if whole_message:
         total = words(text)
-        if total > MAX_MESSAGE_WORDS:
-            found.append(f"{total} words in all; a message to him is {MAX_MESSAGE_WORDS} "
+        if total > max_words:
+            found.append(f"{total} words in all; a message to him is {max_words} "
                          "at most. Cut what would not change what he does next, or put "
                          "the detail in a file and name it in one line.")
     return found
