@@ -258,6 +258,34 @@ def test_a_ceo_whose_replies_keep_failing_is_held_by_the_lanes_backstop(client):
         assert dispatcher.dispatch_once(session) == 0
 
 
+def test_the_boardroom_says_cant_reply_only_when_the_reply_lane_is_held(client):
+    """The chat's "Can't reply right now" used to be any serious activity
+    banner. Out of runs is serious, and its own sentence says the boardroom is
+    still answered — the page said both at once. `chat_held` is the talk lane's
+    answer, not the work's: false on a spent day, true once the backstop trips."""
+    project = make_project(client, constitution=TIGHT)
+    _drain()
+    _spend(project, 4)
+    dash = client.get(f"/observe/projects/{project['id']}", headers=ADMIN).json()
+    assert dash["activity"]["brief"]["tone"] == "serious", "the day is spent"
+    assert dash["chat_held"] is False, "a spent day does not silence the CEO"
+
+    with db_session() as session:
+        for _ in range(3):
+            at = utcnow()
+            session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"],
+                            agent_id=project["ceo_agent_id"], kind=RunKind.BOARDROOM_RUN,
+                            status=RunStatus.FAILED, trigger={"type": "wake"}, attempt=1,
+                            created_at=at, started_at=at, finished_at=at))
+    dash = client.get(f"/observe/projects/{project['id']}", headers=ADMIN).json()
+    assert dash["chat_held"] is True
+
+    # A live chat session answers on its own lane; the queued lane's hold is moot.
+    live_token(project["id"], project["ceo_agent_id"], kind="chat_session")
+    dash = client.get(f"/observe/projects/{project['id']}", headers=ADMIN).json()
+    assert dash["chat_held"] is False
+
+
 def test_a_reply_run_is_given_the_chat_lanes_rules():
     """Same conversation, same rules, one text: only the delivery differs."""
     from yaaf.runner.talk_prompt import BOARDROOM_ADDENDUM, CHAT_ADDENDUM

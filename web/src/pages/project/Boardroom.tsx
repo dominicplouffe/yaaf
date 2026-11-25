@@ -619,13 +619,19 @@ export default function Boardroom({ projectId, dash, org }: {
   const quiet = dash.status === "running" && dash.activity.brief.banner ? dash.activity.brief : null;
 
   // One word on the question you have while waiting: when will it answer?
+  //
+  // Read off the chat lane, never off the activity banner. The banner says why
+  // *work* is not starting — out of runs, pacing, a paused seat, a blocked
+  // board — and the chairman's message passes every one of those brakes. This
+  // used to turn any serious banner into "Can't reply right now", which on a
+  // project out of runs sat beside a strip saying "your messages in the
+  // boardroom are still answered". The one real "can't" is the reply lane's
+  // own backstop, and the server says when that is tripped.
   const presence: Presence = dash.status === "paused" || dash.status === "stopped"
     ? { tone: "off", icon: "pause", word: dash.status === "paused" ? "Team paused" : "Project stopped" }
-    : quiet && (quiet.tone === "critical" || quiet.tone === "serious")
+    : dash.chat_held
       ? { tone: "bad", icon: "alert", word: "Can't reply right now" }
-      : quiet
-        ? { tone: "off", icon: "moon", word: quiet.clears_at ? `Back ${fmtSoon(quiet.clears_at)}` : "Away for now" }
-        : typing?.typing
+      : typing?.typing
           ? { tone: "work", icon: "message", word: "Typing…" }
           : dash.chat_live
             ? { tone: "good", icon: "check", word: "Replies in seconds" }
@@ -717,10 +723,17 @@ export default function Boardroom({ projectId, dash, org }: {
           </button>
         </header>
 
-        {/* One strip at most: why it can't answer now, else what waits for you
-            elsewhere. Questions are not counted here — they are in the
+        {/* One strip at most: why the project's work is held, else what waits
+            for you elsewhere. Questions are not counted here — they are in the
             conversation, where they were asked. */}
-        {quiet ? (
+        {dash.chat_held && dash.status === "running" ? (
+          <div className="cr-strip serious" role="status">
+            <Icon name="alert" size={15} />
+            <span className="grow"><b>The CEO's last few replies failed.</b>{" "}
+              <span className="help">Replies are held for a few minutes so a broken seat doesn't
+                loop; what you write is kept and answered once the hold lifts.</span></span>
+          </div>
+        ) : quiet ? (
           <div className={`cr-strip ${quiet.tone}`} role="status">
             <Icon name={quiet.tone === "critical" || quiet.tone === "serious" ? "alert" : "moon"} size={15} />
             <span className="grow"><b>{quiet.headline}</b> <span className="help">{quiet.detail}</span></span>
