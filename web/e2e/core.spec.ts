@@ -16,12 +16,21 @@ function sent(page: Page, path: string) {
     { timeout: 20_000 });
 }
 
+/* The project home lists decisions as rows; each opens its full card under
+   it with Decide. Open them all so a spec can find the card it wants. */
+async function openDecisions(page: import("@playwright/test").Page) {
+  const decide = page.locator(".vt-row").getByRole("button", { name: "Decide", exact: true });
+  await expect(decide.first()).toBeVisible();
+  while (await decide.count()) await decide.first().click();
+}
+
 test("answer the CEO's question with the option it recommends", async ({ page }) => {
   const errors = failOnPageErrors(page);
   const filings = await row(page.request, FILINGS);
   expect(filings.pending_asks.map((a) => a.title)).toContain("Which fiscal year should be the baseline?");
 
   await page.goto(`/app/#/projects/${filings.id}`);
+  await openDecisions(page);
   const card = page.locator(".ov-dcard").filter({ hasText: "Which fiscal year should be the baseline?" });
   await expect(card).toBeVisible();
   // The recommendation is said once, in its own box — not again in the question.
@@ -45,6 +54,7 @@ test("approve a spend from the project page, past the money check", async ({ pag
   expect(approval?.recommendation).toMatch(/^Approve it/);
 
   await page.goto(`/app/#/projects/${filings.id}`);
+  await openDecisions(page);
   const card = page.locator(".ov-dcard").filter({ hasText: "Buy 12 months of EDGAR" });
   await expect(card.locator(".sg-rec")).toContainText(approval!.recommendation!);
 
@@ -66,6 +76,7 @@ test("accept the proposed scope from its decision card", async ({ page }) => {
   expect(proposed).toBeGreaterThan(0);
 
   await page.goto(`/app/#/projects/${argument.id}`);
+  await openDecisions(page);
   const card = page.locator(".ov-dcard").filter({ hasText: "Proposed scope" });
   const accept = card.getByRole("button", { name: /^Accept (all )?\d+ outcomes?$/ });
   await expect(accept).toBeVisible();
@@ -82,6 +93,7 @@ test("complete a finished delivery from its sign-off", async ({ page }) => {
   expect(first.pending_signoff).not.toBeNull();
 
   await page.goto(`/app/#/projects/${first.id}`);
+  await openDecisions(page);
   const card = page.locator(".ov-dcard").filter({ hasText: "Completing writes the receipt" });
   await card.getByRole("button", { name: "Complete & write receipt…" }).click();
   const done = sent(page, `/admin/projects/${first.id}/complete`);

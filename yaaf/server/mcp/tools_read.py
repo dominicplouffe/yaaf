@@ -323,11 +323,14 @@ def _also_yours(session: Session, reachable: set[str]) -> list[dict]:
         "flags (obligations the platform opened), "
         "heads_ups (what the chairman asked to be told, to note), "
         "agenda (what is scheduled), briefing (what changed since you last looked — or "
-        "over the window `hours` or `since` names, for 'what changed since yesterday?')."
+        "over the window `hours` or `since` names, for 'what changed since yesterday?'), "
+        "vitals (runs today by hour, which limits held the project over two weeks, runs "
+        "by outcome, spend by day, the shared plan's windows, and what waited on you)."
     ),
     input_schema=_schema(
         view={"type": "string",
-              "enum": ["overview", "health", "setup", "flags", "heads_ups", "agenda", "briefing"]},
+              "enum": ["overview", "health", "setup", "flags", "heads_ups", "agenda", "briefing",
+                       "vitals"]},
         days={"type": "integer", "description": "agenda only: horizon, default 14"},
         hours={"type": "number",
                "description": "briefing only: the last N hours instead of since you last looked"},
@@ -350,6 +353,8 @@ def project(principal: Principal, session: Session, arguments: dict) -> dict:
     elif view == "agenda":
         payload = _observe(observe.project_agenda, project_id=row.id,
                            days=int(arguments.get("days") or 14), session=session)
+    elif view == "vitals":
+        payload = _observe(observe.project_vitals, project_id=row.id, session=session)
     elif view == "briefing":
         # The read mark is the default and never moves here; a window the
         # caller names is just a window. The CLI always had this (--hours).
