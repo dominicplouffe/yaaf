@@ -94,9 +94,15 @@ WAITS = {"daily_runs", "pacing", "governance_reserve", "wake_ceiling",
 # The waits that clear on their own within the hour, or at a moment the CEO
 # already chose, and need nothing from anybody. Stopped, but not a banner:
 # their own sentences say "nothing here needs you", and a box raised for them
-# was up over a resting project most of the day. The two day-long waits stay
-# loud — the project is idle until midnight and the cure is the chairman's.
+# was up over a resting project most of the day.
 QUIET_WAITS = {"pacing", "wake_ceiling", "coalescing", "scheduled"}
+# The day-long stops. They used to stay loud whatever they cost, until the
+# chairman asked what he was losing to one and the answer was "a notice and six
+# messages read tonight instead of now". So they are a banner only when ready
+# work is sitting idle behind them, and then they name it. Reading used up is
+# never that: its gate only fires when nobody holds ready work.
+COSTED = {"daily_runs", "governance_reserve"}
+QUIET_STOPS = {"inbox_runs"}
 
 
 def _drain(max_rounds: int = 6) -> None:
@@ -180,6 +186,27 @@ def test_every_gate_the_ladder_can_name_has_a_sentence():
             assert gate not in WAITS or not brief["banner"]
 
 
+def test_a_day_long_stop_is_a_banner_only_when_ready_work_waits():
+    """Out of runs with nothing ready loses nothing worth a box: it is a quiet
+    line that says so. Out of runs with a ready task loses that task's
+    afternoon, so the box names the task, how long it waits, and the setting
+    that would start it sooner."""
+    for gate in sorted(COSTED):
+        idle = dispatcher._activity_brief(_synthetic(gate))
+        assert idle["banner"] is False, gate
+        assert "Nothing ready is held up" in idle["headline"], gate
+
+        state = _synthetic(gate)
+        state["waiting"]["claimable_tasks"] = 1
+        state["board"]["claimable"] = 1
+        state["board"]["claimable_titles"] = ["Review the Nov 26 post"]
+        costly = dispatcher._activity_brief(state)
+        assert costly["banner"] is True, gate
+        assert "“Review the Nov 26 post” is ready but can't start" in costly["headline"], gate
+        assert "Runs per day" in costly["detail"] and "ask the CEO what to drop" in costly["detail"]
+        assert costly["clears_at"], gate
+
+
 def test_only_stopped_gates_raise_the_banner():
     """Concurrency, busy agents and checks in flight mean the project is
     *working*. A banner that fires when things are fine is how a reader learns
@@ -189,9 +216,9 @@ def test_only_stopped_gates_raise_the_banner():
     end by itself. This said "every stopped gate" until the chairman named the
     scheduled box useless: it, pacing, the wake ceiling and batching all clear
     on their own and say so, so they print as a quiet line instead."""
-    for gate in (*FINE, *QUIET_WAITS, *QUEUED, None):
+    for gate in (*FINE, *QUIET_WAITS, *QUEUED, *QUIET_STOPS, None):
         assert dispatcher._activity_brief(_synthetic(gate))["banner"] is False, gate
-    for gate in sorted(GATES - FINE - QUIET_WAITS - QUEUED):
+    for gate in sorted(GATES - FINE - QUIET_WAITS - QUEUED - QUIET_STOPS - COSTED):
         assert dispatcher._activity_brief(_synthetic(gate))["banner"] is True, gate
     # Quiet is not silent: each still names the moment it ends.
     for gate in QUIET_WAITS:

@@ -18,6 +18,7 @@ Hard limits enforced here (constitution class):
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -899,6 +900,8 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
 
     return {
         "claimable": len(claimable),
+        # Named, so a stop that holds ready work can say which work.
+        "claimable_titles": [t.title for t in claimable[:3]],
         "gated": len(gates),
         "next_gate_at": min(gates).isoformat() if gates else None,
         "blocked": blocked,
@@ -999,6 +1002,45 @@ def _activity_brief(state: dict) -> dict:
         return brief("ok", chip, short, headline, detail, banner=False,
                      sig=sig, clears_at=clears_at)
 
+    def day_stop(chip, sig, used_line, fix):
+        """Out of runs for the day: a banner only when it costs something.
+
+        The chairman's ruling: a stop he loses nothing to is a log line, not a
+        box. Run out at dusk with nothing ready and the cost is a few notices
+        and messages read later, which the status line and the Runs page
+        already say. The cost worth a banner is ready work sitting idle — so
+        the box names that work, how long it waits, and the one setting that
+        would start it sooner.
+        """
+        d = state["daily_runs"]
+        ready = waiting["claimable_tasks"]
+        if not ready:
+            # Still serious: the day is spent, and the boardroom reads that
+            # without going quiet. Just not a box, because nothing is lost.
+            return brief(
+                "serious", chip, f"{used_line}; nothing ready is waiting, resumes {_midnight(state)}",
+                f"{used_line[0].upper()}{used_line[1:]}. Nothing ready is held up.",
+                f"Runs come back at {_midnight(state)}. No task is ready to work, so "
+                f"nothing is lost by waiting.{queue} Your messages in the boardroom are "
+                "still answered. The Runs page shows what used today's runs.",
+                banner=False, sig=sig, clears_at=d["resets_at"])
+        titles = [f"“{t}”" for t in board.get("claimable_titles") or []]
+        what = (titles[0] if ready == 1 and titles
+                else f"{ready} ready tasks" + (f" ({_listed(titles)})" if titles else ""))
+        hours = None
+        with contextlib.suppress(TypeError, ValueError):
+            hours = max(0, round((datetime.fromisoformat(d["resets_at"]) - utcnow())
+                                 .total_seconds() / 3600))
+        wait = f" That's about {hours} hours of waiting." if hours else ""
+        return brief(
+            "serious", "work waiting",
+            f"{what} can't start until {_midnight(state)}",
+            f"{what[0].upper()}{what[1:]} {'is' if ready == 1 else 'are'} ready but can't "
+            f"start until {_midnight(state)}.",
+            f"Today's runs are used up ({used_line}).{wait} To start it sooner, {fix}, "
+            "or ask the CEO what to drop. Your messages in the boardroom are still answered.",
+            sig=sig, clears_at=d["resets_at"])
+
     if gate == "delivery_ready":
         # Not a banner. It needs him, which is why it was one — but a decision
         # has a home now: the finished delivery is a sign-off row in his Inbox,
@@ -1025,18 +1067,11 @@ def _activity_brief(state: dict) -> dict:
         wall = state["governance_reserve"].get("wall") or d["cap"]
         # The wall, not the plan, because the wall is where work actually stops.
         # Reporting the plan here printed "out of runs for today (225 of 150)".
-        over = (f" That is past the daily plan of {d['cap']}, which is allowed — "
-                f"the CEO owes an account of what the extra runs bought."
-                if d["used"] > d["cap"] else "")
-        return brief(
-            "serious", "capped",
-            f"out of runs for today ({d['used']} of {wall}), resumes {_midnight(state)}",
-            f"Out of runs for today — {d['used']} of {wall} used.",
-            f"No work starts until the count resets at {_midnight(state)}; your messages "
-            f"in the boardroom are still answered.{queue} A run that "
-            f"died having changed nothing was given back.{over} Raise 'Runs per day, whole "
-            "project' in Settings if this is tighter than you meant it to be.",
-            sig="daily_runs", clears_at=d["resets_at"])
+        over = (f", past the daily plan of {d['cap']}" if d["used"] > d["cap"] else "")
+        return day_stop(
+            "capped", "daily_runs", f"out of runs for today, {d['used']} of {wall} used{over}",
+            f"raise “Runs per day” from {d['cap']} to "
+            f"{d['cap'] + waiting['claimable_tasks']} in Settings")
 
     if gate == "pacing":
         p = state["pacing"]
@@ -1089,20 +1124,22 @@ def _activity_brief(state: dict) -> dict:
             "work. Reading has its own limit so chatter can't use up the runs "
             "meant for work. If this project needs to talk more, allow more inbox "
             "reads per day.",
-            sig=None)
+            # This gate only fires when nobody holds ready work, so waiting
+            # costs a few messages read later: the chairman's rule says that is
+            # a line, not a box.
+            banner=False, sig=None)
 
     if gate == "governance_reserve":
+        # The last few runs of the day are kept for a status review or a
+        # re-forecast, so the day the work runs out is not also the day the
+        # project cannot say so.
         g = state["governance_reserve"]
         d = state["daily_runs"]
-        return brief(
-            "serious", "reserved",
-            f"ordinary work is done for today ({d['used']} of {g['ordinary_cap']})",
-            f"Ordinary work has spent its day — {d['used']} of {g['ordinary_cap']}.",
-            f"The last {g['reserved']} run(s) of the day are reserved so a status "
-            f"review or a re-forecast always has somewhere to run.{queue} Everything "
-            f"else resumes at {_midnight(state)}. Raise 'Runs per day, whole project', or lower "
-            "'Reserved governance runs', in Settings.",
-            sig="governance_reserve", clears_at=d["resets_at"])
+        return day_stop(
+            "reserved", "governance_reserve",
+            f"{d['used']} of {g['ordinary_cap']} runs used, the last {g['reserved']} kept for reports",
+            f"raise “Runs per day” from {d['cap']} to {d['cap'] + waiting['claimable_tasks']}, "
+            f"or keep fewer runs for reports (now {g['reserved']}), in Settings")
 
     if gate == "wake_ceiling":
         w = state["wake_ceiling"]
