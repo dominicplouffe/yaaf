@@ -18,8 +18,8 @@ function tabLede(path: string, ctx: ProjectCtx): string | null {
       return `What has to be true for this project to be done, in the order it can happen. ${ceo} `
         + "proposes each requirement; only the platform can mark one met.";
     case "deliverables":
-      return "Every file the team has written, drafts and working files included. What was published "
-        + "is also on Results, with who made it and who checked it.";
+      return "Every file the team has published, with each earlier version. Results shows the same "
+        + "files with who made each one and who checked it.";
     case "spend":
       return "Every run is metered by the platform. The budget is the plan; no agent can talk "
         + "its way past the hard stop, where the project pauses itself.";

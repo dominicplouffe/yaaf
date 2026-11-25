@@ -234,8 +234,12 @@ def test_each_filter_counts_what_it_would_show_leaving_itself_out(client):
     })
     store().put_bytes(f"projects/{project['id']}/run_1/report.md", b"# report")
 
+    assert _browse(client, project)["states"] == {"all": 4, "published": 1, "working": 3}
+    # The shelf — all the web app asks for — never walks the workspace, so it
+    # counts what it holds and does not claim "working: 0". Its type list
+    # still counts what it would show: md (1), not md (0).
     published = _browse(client, project, state="published")
-    assert published["states"] == {"all": 4, "published": 1, "working": 3}
+    assert published["states"] == {"published": 1}
     assert published["types"] == [["md", 1]]
     assert published["matched"] == 1
 
@@ -436,3 +440,34 @@ def test_a_deliverable_titled_with_an_em_dash_still_downloads(client):
         assert disposition.startswith("attachment")
         encoded = disposition.split("filename*=UTF-8''", 1)[1]
         assert unquote(encoded) == name
+
+
+def test_the_published_shelf_never_walks_the_workspace(client, monkeypatch):
+    """The web app shows published files only. A project with fifty thousand
+    working files and eighty-four deliverables was walking all fifty thousand
+    every few seconds to show the eighty-four; asking for the shelf now lists
+    the artifact store and nothing else."""
+    from yaaf.server import file_index
+
+    project = make_project(client, slug="shelf-only", start=False)
+    _files(_workspace("shelf-only"), {"scratch/notes.md": "2024-03-01T12:00:00+00:00"})
+    from tests.conftest import live_token
+
+    _run, token = live_token(project["id"], project["ceo_agent_id"])
+    published = _publish(client, token, "report.md", b"# Report")
+    assert published.status_code == 200, published.text
+
+    walked: list = []
+    real = file_index._walk
+    monkeypatch.setattr(file_index, "_walk", lambda root: walked.append(root) or real(root))
+
+    view = _browse(client, project, state="published")
+    assert walked == [], "the shelf walked the workspace"
+    assert view["total"] == 1 and view["working_kept"] == 0
+    rows = client.get(f"/observe/projects/{project['id']}/files/browse/rows",
+                      params={"state": "published"}, headers=ADMIN).json()["rows"]
+    assert [r["name"] for r in rows] == ["report.md"]
+    gone = client.get(f"/observe/projects/{project['id']}/files/browse/entry",
+                      params={"state": "published", "id": "w:scratch/notes.md"}, headers=ADMIN)
+    assert gone.status_code == 404, "a working file is not on the shelf"
+    assert walked == []

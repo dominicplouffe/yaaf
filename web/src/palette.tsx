@@ -244,7 +244,7 @@ function useFileSearch(projectId: string | null, query: string, navigate: Naviga
     if (!projectId || q.length < 2) { setHits([]); return; }
     let live = true;
     const timer = window.setTimeout(() => {
-      get<{ rows: FileHit[] }>(`/observe/projects/${projectId}/files/browse/rows?q=${encodeURIComponent(q)}&limit=6&lean=true`)
+      get<{ rows: FileHit[] }>(`/observe/projects/${projectId}/files/browse/rows?q=${encodeURIComponent(q)}&state=published&limit=6&lean=true`)
         .then((r) => { if (live) setHits(r.rows); })
         .catch(() => { if (live) setHits([]); });
     }, 180);

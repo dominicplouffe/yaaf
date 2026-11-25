@@ -207,10 +207,15 @@ def _published(rows: list[dict]) -> list[Item]:
     return items
 
 
-def build(root: Path, prefix: str) -> Snapshot:
+def build(root: Path, prefix: str, working: bool = True) -> Snapshot:
+    """The index. `working=False` is the published shelf alone: the artifact
+    store is listed and the workspace is never walked. The web app shows only
+    what was published — a project with fifty thousand working files and
+    eighty-four deliverables was walking all fifty thousand, every few
+    seconds, to show the eighty-four."""
     as_of = datetime.now(UTC)
     began = time.monotonic()
-    found, stopped = _walk(root) if root.is_dir() else ([], False)
+    found, stopped = _walk(root) if working and root.is_dir() else ([], False)
     # Newest first, then cut: the screen's first question is "what changed
     # today", and a cap that kept the alphabetically first would answer it by
     # dropping this morning's work.
@@ -239,33 +244,37 @@ _inflight: dict[str, Future] = {}
 _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="file-index")
 
 
-def _rebuild(project_id: str, root: Path, prefix: str) -> Snapshot:
+def _rebuild(slot: str, root: Path, prefix: str, working: bool) -> Snapshot:
     try:
-        snap = build(root, prefix)
+        # The full index is built as it always was; only the shelf passes the flag.
+        snap = build(root, prefix) if working else build(root, prefix, working=False)
         with _lock:
-            _held[project_id] = snap
+            _held[slot] = snap
         return snap
     finally:
         with _lock:
-            _inflight.pop(project_id, None)
+            _inflight.pop(slot, None)
 
 
-def snapshot(project_id: str, root: Path, prefix: str) -> Snapshot:
+def snapshot(project_id: str, root: Path, prefix: str, working: bool = True) -> Snapshot:
     """The project's index — fresh, or as fresh as it can be without making
-    the reader wait on a walk that is already known to be slow."""
+    the reader wait on a walk that is already known to be slow. The published
+    shelf (`working=False`) is held apart from the full index, so asking for
+    it never starts, waits on or serves a workspace walk."""
     now = time.monotonic()
+    slot = project_id if working else f"{project_id}:published"
     with _lock:
         for pid in [p for p, s in _held.items() if now - s.read_at > IDLE_S]:
             del _held[pid]
-        held = _held.get(project_id)
+        held = _held.get(slot)
         if held is not None:
             held.read_at = now
             if now - held.built <= max(FRESH_S, held.cost / MAX_WALK_SHARE):
                 return held
-        pending = _inflight.get(project_id)
+        pending = _inflight.get(slot)
         if pending is None:
-            pending = _pool.submit(_rebuild, project_id, root, prefix)
-            _inflight[project_id] = pending
+            pending = _pool.submit(_rebuild, slot, root, prefix, working)
+            _inflight[slot] = pending
     if held is None or now - held.built > STALE_S:
         return pending.result()
     try:
@@ -275,7 +284,7 @@ def snapshot(project_id: str, root: Path, prefix: str) -> Snapshot:
     except Exception:
         # The last good index, labelled with its age, beats an error page on a
         # screen that polls; the next read tries again.
-        log.exception("file index rebuild failed for %s; serving the one held", project_id)
+        log.exception("file index rebuild failed for %s; serving the one held", slot)
         return held
 
 

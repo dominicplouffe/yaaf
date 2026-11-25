@@ -2899,8 +2899,11 @@ def _workspace_root(project: Project) -> Path:
     return Path(settings().workspaces_root) / project.slug
 
 
-def _file_index(project: Project) -> file_index.Snapshot:
-    return file_index.snapshot(project.id, _workspace_root(project), f"projects/{project.id}/")
+def _file_index(project: Project, state: str = "all") -> file_index.Snapshot:
+    """The index a question needs. Published-only questions — every one the
+    web app asks — read the shelf, which never walks the workspace."""
+    return file_index.snapshot(project.id, _workspace_root(project), f"projects/{project.id}/",
+                               working=state != "published")
 
 
 def _checked(satisfied: list) -> tuple[str | None, str | None]:
@@ -3157,7 +3160,7 @@ def project_files_browse(
     are open. `expand`/`collapse` are day keys the reader toggled; `more` is
     `<day>:<rows>` for a folder they asked to see further down."""
     project = _project(session, project_id)
-    snap = _file_index(project)
+    snap = _file_index(project, state)
     query = _files_query(q, state, type_, since, tz, sort, desc)
     result = file_index.view(snap, query)
     caps: dict[str, int] = {}
@@ -3175,7 +3178,11 @@ def project_files_browse(
         "published_total": result.published_total,
         "today_total": result.today_total,
         "matched": result.matched,
-        "states": result.states,
+        # The shelf never walked the workspace, so it cannot say how many
+        # working files there are; it counts only what it holds rather than
+        # reporting a false zero.
+        "states": ({"published": result.states["published"]} if state == "published"
+                   else result.states),
         "types": result.types,
         "days": [
             {"key": day.key, "count": len(day.items), "published": day.published,
@@ -3205,7 +3212,7 @@ def project_files_rows(
     reader stepping to the next file, the Overview's newest three, an export.
     `lean` drops receipts and earlier versions, which an export does not use."""
     project = _project(session, project_id)
-    snap = _file_index(project)
+    snap = _file_index(project, state)
     result = file_index.view(snap, _files_query(q, state, type_, since, tz, sort, desc))
     window = result.flat[offset:offset + limit]
     receipts = {} if lean else _receipts(session, project, window)
@@ -3226,7 +3233,7 @@ def project_files_entry(
     The Overview links to a deliverable by key; this is how that link lands
     on the file instead of on a list the chairman has to search again."""
     project = _project(session, project_id)
-    snap = _file_index(project)
+    snap = _file_index(project, state)
     item = snap.find(id)
     if item is None:
         raise HTTPException(status_code=404, detail="no such file")
