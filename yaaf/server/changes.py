@@ -52,7 +52,7 @@ GREEN = {"success", "neutral", "skipped"}
 LIVE = (ChangeStatus.OPEN, ChangeStatus.READY, ChangeStatus.MERGING)
 #: The order the gates are shown in, and the order a person reads them.
 GATES = ("serves", "size", "secrets", "tests", "packages", "protected", "ci_config",
-         "scan", "checks", "coverage", "scenarios", "review")
+         "scan", "checks", "coverage", "preview", "scenarios", "review")
 #: Where CI is defined. The checks gate trusts CI, so a change to these is a
 #: change to the judge, and needs more than the judged party's word.
 CI_PATHS = [".github/workflows/**", ".github/workflows/*", ".github/actions/**",
@@ -145,6 +145,7 @@ def open_change(session: Session, project: Project, agent: Agent, *, task_id: st
     scan(session, project, change)
     queue_scenarios(session, project, change)
     queue_scan(session, project, change)
+    queue_preview(session, project, change)
     _audit(session, project, "change.open", change, {"number": change.number,
                                                      "branch": branch})
     evaluate(session, project, change)
@@ -190,7 +191,7 @@ def scan(session: Session, project: Project, change: Change) -> None:
         change.findings = {"sha": change.head_sha, "error": str(exc)[:500]}
         return
     kept = {k: v for k, v in (change.findings or {}).items()
-            if k in ("coverage", "scan") and (v or {}).get("sha") == change.head_sha}
+            if k in ("coverage", "scan", "preview") and (v or {}).get("sha") == change.head_sha}
     change.findings = {"sha": change.head_sha,
                        **diffscan.inspect(files, diffscan.parse_globs(cons.protected_paths)),
                        "ci_config": diffscan.protected(files, CI_PATHS), **kept}
@@ -270,6 +271,7 @@ def gates_for(session: Session, project: Project, change: Change,
                    + ", ".join(ci[:4]))}
 
     gates["scan"] = scan_gate(change, cons)
+    gates["preview"] = preview_gate(project, change)
     gates["coverage"] = coverage_gate(change, cons)
     gates["scenarios"] = scenario_gate(session, change, cons)
 
@@ -351,6 +353,7 @@ def pull_request_event(session: Session, project: Project, action: str, pr: dict
         scan(session, project, change)
         queue_scenarios(session, project, change)
         queue_scan(session, project, change)
+        queue_preview(session, project, change)
         evaluate(session, project, change)
         return {"change": change.id, "head": change.head_sha, "moved_from": was}
     if action == "closed" and change.status in (ChangeStatus.OPEN, ChangeStatus.READY):
@@ -561,6 +564,62 @@ def record_scan(session: Session, change: Change, sha: str, result: dict) -> Non
     _audit(session, project, "change.scanned", change,
            {"sha": sha, "advisories_high": result.get("advisories_high"),
             "secrets": result.get("secrets")})
+    evaluate(session, project, change)
+
+
+# ── previews ────────────────────────────────────────────────────────────────────
+
+
+def preview_gate(project: Project, change: Change) -> dict:
+    from yaaf.server import releases
+
+    if releases.environment(project, "preview") is None:
+        return {"ok": True, "detail": "no preview environment set"}
+    seen = (change.findings or {}).get("preview") or {}
+    if seen.get("sha") != change.head_sha:
+        return {"ok": False, "detail": "the preview of this commit is not up yet"}
+    return {"ok": bool(seen.get("ok")), "detail": seen.get("detail") or ""}
+
+
+def queue_preview(session: Session, project: Project, change: Change) -> bool:
+    from yaaf.core.models import RunKind, RunQueue
+    from yaaf.server import releases
+
+    if not change.head_sha or releases.environment(project, "preview") is None:
+        return False
+    for queued in session.execute(
+        select(RunQueue).where(RunQueue.project_id == project.id,
+                               RunQueue.kind == RunKind.DEPLOY)
+    ).scalars():
+        trigger = queued.trigger or {}
+        if trigger.get("environment") == "preview" and trigger.get("change_id") == change.id:
+            if trigger.get("sha") == change.head_sha:
+                return False
+            session.delete(queued)
+    session.add(RunQueue(
+        id=ids.new_id(ids.RUN), project_id=project.id, agent_id=None, kind=RunKind.DEPLOY,
+        trigger={"type": "deploy", "environment": "preview", "action": "deploy",
+                 "change_id": change.id, "sha": change.head_sha, "branch": change.branch}))
+    return True
+
+
+def record_preview(session: Session, change: Change, sha: str, deployed: bool,
+                   output: str) -> None:
+    """The preview's deploy, then one read of its health URL by the platform."""
+    from yaaf.server import releases
+
+    project = session.get(Project, change.project_id)
+    if project is None or sha != change.head_sha:
+        return
+    env = releases.environment(project, "preview") or {}
+    url = str(env.get("health_url") or "").replace("{number}", str(change.number or ""))
+    if not deployed:
+        result = {"ok": False, "detail": f"the preview did not deploy: {output[-200:]}"}
+    else:
+        healthy, said = releases.probe(url)
+        result = {"ok": healthy, "url": url,
+                  "detail": f"up at {url}" if healthy else f"deployed, but {url} said {said}"}
+    change.findings = {**(change.findings or {}), "preview": {"sha": sha, **result}}
     evaluate(session, project, change)
 
 

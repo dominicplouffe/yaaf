@@ -354,3 +354,112 @@ def test_the_postmortem_is_the_ceos_and_more_than_a_line(client, gh):
     assert done.status_code == 200, done.text
     assert done.json()["status"] == "resolved"
     assert done.json()["timeline"][-1]["what"].startswith("postmortem written")
+
+
+# ── staging, provenance, SBOM, previews ─────────────────────────────────────────
+
+STAGED = {**PROD, "staging": {"deploy": "fly deploy -a slotwise-staging",
+                              "health_url": "https://staging.slotwise.example/healthz"}}
+
+
+def _with_staging(client, project):
+    assert client.put(f"/admin/projects/{project['id']}/environments", json=STAGED,
+                      headers=ADMIN).status_code == 200
+
+
+def test_staging_runs_first_and_the_chairman_is_asked_after_it_ran_clean(client, gh, health):
+    project = _factory(client)
+    _with_staging(client, project)
+    _shipped_change(client, project, gh)
+    body = _propose(client, project, "0.1.0").json()
+    assert body["environment"] == "staging" and body["status"] == ReleaseStatus.APPROVED
+    (staging,) = _deploys(project)
+    assert staging.trigger["environment"] == "staging"
+
+    _deployed(body["id"], minutes_ago=60)
+    _tick(project)
+    row = _release(body["id"])
+    assert row.environment == "production" and row.status == ReleaseStatus.PROPOSED
+    with db_session() as session:
+        assert "ran clean on staging" in session.get(Approval, row.approval_id).body
+    assert len(_deploys(project)) == 1, "production waits for his yes"
+
+
+def test_a_staging_failure_stops_there_with_no_incident(client, gh, health):
+    project = _factory(client, release_authority="autonomous", canary_max_failures=1)
+    _with_staging(client, project)
+    _shipped_change(client, project, gh)
+    body = _propose(client, project, "0.1.0").json()
+    _deployed(body["id"])
+    health["ok"] = False
+    _tick(project)
+    row = _release(body["id"])
+    assert row.status == ReleaseStatus.FAILED and "Production was never touched" in row.status_reason
+    with db_session() as session:
+        assert session.query(Incident).filter_by(project_id=project["id"]).count() == 0
+    assert all(q.trigger["environment"] == "staging" for q in _deploys(project))
+
+
+def test_a_live_release_carries_signed_provenance_anyone_can_check(client, gh, health):
+    from yaaf.server import provenance
+
+    project = _factory(client, release_authority="autonomous")
+    _with_prod(client, project)
+    _shipped_change(client, project, gh)
+    body = _propose(client, project, "0.1.0").json()
+    with db_session() as session:
+        row = session.get(Release, body["id"])
+        releases.deployed(session, row, "deploy", True, "ok", sbom=b'{"bomFormat": "CycloneDX"}')
+        row.deployed_at = utcnow() - timedelta(minutes=60)
+    _tick(project)
+    row = _release(body["id"])
+    assert row.status == ReleaseStatus.LIVE and row.sbom_uri
+    statement = row.provenance
+    assert statement["subject"][0]["digest"]["gitCommit"] == row.sha
+    inner = statement["predicate"]["buildDefinition"]["internalParameters"]
+    assert inner["sbom_sha256"] and len(inner["changes"]) == 1
+    key = client.get("/observe/provenance_key", headers=ADMIN).json()["public_key_pem"]
+    assert provenance.verify(key, statement, row.provenance_sig)
+    forged = {**statement, "subject": [{"name": "x", "digest": {"gitCommit": "0" * 40}}]}
+    assert not provenance.verify(key, forged, row.provenance_sig)
+    tag = next(c for c in gh.calls if c[1].endswith("/releases"))
+    assert "Provenance: signed" in tag[2]["body"]
+
+
+def test_a_preview_per_change_gates_the_merge_and_never_gets_production_keys(client, gh,
+                                                                             health):
+    from yaaf.core.models import Change, ChangeStatus
+    from yaaf.server import changes
+
+    project = _factory(client)
+    envs = {**PROD, "preview": {"deploy": "fly deploy -a slotwise-pr-$YAAF_CHANGE_NUMBER",
+                                "health_url": "https://pr-{number}.slotwise.example/healthz"}}
+    assert client.put(f"/admin/projects/{project['id']}/environments", json=envs,
+                      headers=ADMIN).status_code == 200
+    task = _claimed_task(client, project)
+    change = _open(client, project, task).json()
+    assert not change["gates"]["preview"]["ok"]
+    (queued,) = [q for q in _deploys(project) if q.trigger.get("environment") == "preview"]
+    assert queued.trigger["change_id"] == change["id"]
+    _green(client, project, change["head_sha"])
+    _sign(client, project, change["id"])
+
+    health["ok"] = False
+    with db_session() as session:
+        changes.record_preview(session, session.get(Change, change["id"]),
+                               change["head_sha"], True, "deployed")
+        row = session.get(Change, change["id"])
+        assert not row.gates["preview"]["ok"] and "pr-41." in row.gates["preview"]["detail"]
+    health["ok"] = True
+    with db_session() as session:
+        changes.record_preview(session, session.get(Change, change["id"]),
+                               change["head_sha"], True, "deployed")
+        assert session.get(Change, change["id"]).status == ChangeStatus.READY
+
+    for scope, value in (("deploy", "prod-key"), ("preview", "preview-key")):
+        assert client.post("/admin/secrets", headers=ADMIN, json={
+            "project_id": project["id"], "name": f"{scope}-token", "value": value,
+            "role_scopes": [scope]}).status_code == 200
+    with db_session() as session:
+        env = daemon._scoped_secret_env(session, session.get(Project, project["id"]), "preview")
+    assert list(env.values()) == ["preview-key"]

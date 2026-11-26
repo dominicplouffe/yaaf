@@ -1855,27 +1855,38 @@ def _materialize_deploy(session: Session, queued, project: Project, run, job: Ru
     """Production, deployed by the platform: the environment's command, at the
     release's commit, with the secrets granted to the reserved scope "deploy"
     — which no role can be named, so no seat's sandbox has ever held them."""
-    from yaaf.core.models import Release
+    from yaaf.core.models import Change, Release
     from yaaf.server import github, releases
 
     trigger = queued.trigger or {}
-    release = session.get(Release, trigger.get("release_id"))
-    env = releases.environment(project)
+    name = trigger.get("environment") or "production"
+    env = releases.environment(project, name)
     token = github.platform_token(session)
-    if release is None or env is None or not project.github_repo or token is None:
+    preview = name == "preview"
+    target = (session.get(Change, trigger.get("change_id")) if preview
+              else session.get(Release, trigger.get("release_id")))
+    if target is None or env is None or not project.github_repo or token is None \
+            or (preview and target.head_sha != trigger.get("sha")):
         run.status = RunStatus.FAILED
-        run.summary = "deploy with no release, no production environment, or no repo"
+        run.summary = f"deploy with no target, no {name} environment, or no repo"
         run.finished_at = utcnow()
         return None
     job.deploy_action = trigger.get("action") or "deploy"
-    job.check_sha = trigger.get("sha") or release.sha
-    job.check_branch = job.check_sha
+    job.check_sha = trigger.get("sha")
+    job.check_branch = trigger.get("branch") or job.check_sha
     job.check_command = env["deploy"]
     job.fetch_url = github.clone_url(project.github_repo, token)
-    job.deploy_env = _scoped_secret_env(session, project, releases.DEPLOY_SCOPE)
+    # A preview builds code nobody has signed yet, so it never runs with the
+    # production keys: previews get only what was granted to "preview".
+    job.deploy_env = _scoped_secret_env(
+        session, project, releases.PREVIEW_SCOPE if preview else releases.DEPLOY_SCOPE)
+    if preview:
+        job.deploy_env.update({"YAAF_CHANGE_NUMBER": str(target.number or ""),
+                               "YAAF_BRANCH": target.branch, "YAAF_SHA": target.head_sha or ""})
     job.workspace_dir = str(Path(settings().workspaces_root) / ".deploys" / run.id)
     job.timeout_s = min(cons.run_timeout_s, 1800)
-    releases.deploy_started(session, release, job.deploy_action)
+    if not preview:
+        releases.deploy_started(session, target, job.deploy_action)
     return job
 
 
@@ -1913,30 +1924,53 @@ def _run_deploy(job: RunJob) -> RunResult:
         if failed:
             return RunResult(ok=True, summary=f"deploy checkout failed: {failed}",
                              check_exit_code=1, check_output=f"checkout failed: {failed}")
+        sbom = None
+        if job.deploy_action == "deploy" and (job.trigger or {}).get("environment") != "preview":
+            # The SBOM is of exactly what ships: the release commit, before the
+            # deploy command can change the tree. Missing syft leaves it out.
+            run_check_command(command="syft dir:. -q -o cyclonedx-json=.yaaf-sbom.json "
+                                      ">/dev/null 2>&1 || true",
+                              workspace_dir=str(where), timeout_s=300)
+            path = where / ".yaaf-sbom.json"
+            sbom = path.read_bytes() if path.exists() else None
+            if path.exists():
+                path.unlink()
         code, output = run_check_command(command=job.check_command or "",
                                          workspace_dir=str(where), timeout_s=job.timeout_s,
                                          env=job.deploy_env)
-        for value in job.deploy_env.values():
-            if value:
+        for key, value in job.deploy_env.items():
+            if value and not key.startswith("YAAF_"):
                 output = output.replace(value, "<secret>")
     except Exception as exc:
         return RunResult(ok=False, summary=f"deploy crashed: {type(exc).__name__}")
     finally:
         shutil.rmtree(where, ignore_errors=True)
     return RunResult(ok=True, summary=f"{job.deploy_action} exit={code}",
-                     check_exit_code=code, check_output=output[-8000:])
+                     check_exit_code=code, check_output=output[-8000:],
+                     extra={"sbom": sbom} if sbom else {})
 
 
 def _finalize_deploy(session: Session, job: RunJob, result: RunResult) -> None:
     from yaaf.core.models import Release
     from yaaf.server import releases
 
-    release = session.get(Release, (job.trigger or {}).get("release_id"))
+    trigger = job.trigger or {}
+    ok = result.ok and result.check_exit_code == 0
+    if trigger.get("environment") == "preview":
+        from yaaf.core.models import Change
+        from yaaf.server import changes
+
+        change = session.get(Change, trigger.get("change_id"))
+        if change is not None:
+            changes.record_preview(session, change, trigger.get("sha") or "", ok,
+                                   result.check_output or result.summary or "")
+        return
+    release = session.get(Release, trigger.get("release_id"))
     if release is None:
         return
-    releases.deployed(session, release, job.deploy_action or "deploy",
-                      result.ok and result.check_exit_code == 0,
-                      result.check_output or result.summary or "")
+    releases.deployed(session, release, job.deploy_action or "deploy", ok,
+                      result.check_output or result.summary or "",
+                      sbom=(result.extra or {}).get("sbom"))
 
 
 def _finalize_scenario_check(session: Session, job: RunJob, result: RunResult) -> None:

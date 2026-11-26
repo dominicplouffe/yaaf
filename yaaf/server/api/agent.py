@@ -4125,7 +4125,8 @@ def credential_scope(
             "permission — so there is no grant to re-scope. Who gets a source is the "
             "chairman's tick on Data sources; what it may be called with is his too: "
             "ask with tool_permission_request.", status_code=403)
-    if "deploy" in (row.role_scopes or []) or "deploy" in body.add_roles:
+    reserved = {"deploy", "preview"}
+    if reserved & set(row.role_scopes or []) or reserved & set(body.add_roles):
         # Production's deploy credentials are the platform's to use, after a
         # release passes its rules. Re-scoped by an agent, they would be one
         # `curl` away from shipping around every one of them.

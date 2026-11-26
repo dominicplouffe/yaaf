@@ -24,12 +24,12 @@ type ChangesView = {
 };
 
 const GATE_ORDER = ["serves", "size", "secrets", "tests", "packages", "protected", "ci_config",
-  "scan", "checks", "coverage", "scenarios", "review"];
+  "scan", "checks", "coverage", "preview", "scenarios", "review"];
 const GATE_NAME: Record<string, string> = {
   serves: "Serves accepted scope", size: "Size", secrets: "No secrets",
   tests: "Tests not weakened", packages: "New packages checked",
   protected: "Paths that need you", ci_config: "CI left alone", scan: "Platform scan",
-  coverage: "Changed lines tested", checks: "CI on this commit",
+  coverage: "Changed lines tested", preview: "Preview is up", checks: "CI on this commit",
   scenarios: "Hidden scenarios", review: "Signed by a reader",
 };
 const STATUS_TONE: Record<string, string> = {
@@ -117,7 +117,8 @@ type ReleaseRow = {
   id: string; version: string; title: string; sha: string; notes: string; status: string;
   status_reason: string | null; probes: { ok?: number; failed?: number };
   deployed_at: string | null; live_at: string | null; rolled_back_at: string | null;
-  created_at: string | null;
+  created_at: string | null; environment: string; sbom: boolean;
+  provenance_sig: string | null;
 };
 type IncidentRow = {
   id: string; number: number; title: string; status: string; opened_by: string;
@@ -157,7 +158,8 @@ export function Releases({ ctx }: { ctx: ProjectCtx }) {
             <h3>v{r.version} · {r.title}</h3>
             <Badge status={r.status} />
           </div>
-          <p className="help mono">commit {r.sha.slice(0, 12)}
+          <p className="help mono">{r.environment} · commit {r.sha.slice(0, 12)}
+            {r.provenance_sig ? " · provenance signed" : ""}{r.sbom ? " · SBOM kept" : ""}
             {r.deployed_at ? ` · deployed ${fmtWhen(r.deployed_at)}` : ""}
             {r.status === "watching" ? ` · health ${r.probes.ok ?? 0} ok, ${r.probes.failed ?? 0} failed` : ""}
             {r.live_at ? ` · live ${fmtWhen(r.live_at)}` : ""}</p>
@@ -171,36 +173,58 @@ export function Releases({ ctx }: { ctx: ProjectCtx }) {
 }
 
 type Env = { deploy: string; health_url: string };
+const ENVS: { key: "production" | "staging" | "preview"; label: string; deploy: string;
+  health: string; note: string }[] = [
+  { key: "production", label: "Production", deploy: "fly deploy -a myapp --strategy canary",
+    health: "https://myapp.example/healthz",
+    note: "Deployed by the platform with secrets granted to deploy alone." },
+  { key: "staging", label: "Staging (optional)", deploy: "fly deploy -a myapp-staging",
+    health: "https://staging.myapp.example/healthz",
+    note: "Every release runs here first; your approval, when the dial asks, comes after." },
+  { key: "preview", label: "Preview per change (optional)",
+    deploy: "fly deploy -a myapp-pr-$YAAF_CHANGE_NUMBER",
+    health: "https://pr-{number}.myapp.example/healthz",
+    note: "Builds unsigned code, so it gets only secrets granted to preview — never production's." },
+];
 
-/** Where a Code Factory's software runs. The platform deploys with this
-    command, at a release's commit, with the secrets granted to the reserved
-    scope "deploy" — which no seat holds — and reads the health URL for the
-    canary watch. Set here, by a person, and never by a model. */
+/** Where a Code Factory's software runs. The platform deploys with these
+    commands, at the right commit, with secrets granted to the reserved scopes
+    "deploy" or "preview" — which no seat holds — and reads each health URL.
+    Set here, by a person, and never by a model. */
 export function EnvironmentsCard({ projectId, dash }: { projectId: string; dash: Dashboard }) {
-  const saved = ((dash.integrations ?? {}) as { environments?: { production?: Env } })
-    .environments?.production;
-  const [deploy, setDeploy] = useState(saved?.deploy ?? "");
-  const [health, setHealth] = useState(saved?.health_url ?? "");
+  const saved = ((dash.integrations ?? {}) as { environments?: Record<string, Env> })
+    .environments ?? {};
+  const [envs, setEnvs] = useState<Record<string, Env>>(() => Object.fromEntries(
+    ENVS.map((e) => [e.key, saved[e.key] ?? { deploy: "", health_url: "" }])));
   const [said, setSaid] = useState<string | null>(null);
+  const set = (key: string, field: keyof Env, value: string) =>
+    setEnvs((was) => ({ ...was, [key]: { ...was[key], [field]: value } }));
   async function save() {
     setSaid(null);
+    const body = Object.fromEntries(Object.entries(envs)
+      .filter(([, e]) => e.deploy.trim() && e.health_url.trim())
+      .map(([k, e]) => [k, { deploy: e.deploy.trim(), health_url: e.health_url.trim() }]));
     try {
-      await put(`/admin/projects/${projectId}/environments`,
-        { production: { deploy: deploy.trim(), health_url: health.trim() } });
-      setSaid("Saved. The next release deploys with this.");
+      await put(`/admin/projects/${projectId}/environments`, body);
+      setSaid("Saved. The next deploy uses these.");
     } catch (e) { setSaid(e instanceof Error ? e.message : String(e)); }
   }
   return (
     <div className="card">
-      <label className="field" htmlFor="env-deploy">Production deploy command</label>
-      <input id="env-deploy" className="mono" value={deploy} placeholder="fly deploy -a myapp --strategy canary"
-        onChange={(e) => setDeploy(e.target.value)} />
-      <label className="field" htmlFor="env-health">Health URL the canary guard reads</label>
-      <input id="env-health" value={health} placeholder="https://myapp.example/healthz"
-        onChange={(e) => setHealth(e.target.value)} />
-      <p className="help">The credentials the command needs go in Secrets, granted to <code>deploy</code> alone.
-        Agents never receive them; a bad deploy rolls back on its own.</p>
-      <button className="primary" onClick={save} disabled={!deploy.trim() || !health.trim()}>Save</button>
+      {ENVS.map((e) => (
+        <div key={e.key} style={{ marginBottom: "var(--s4)" }}>
+          <h3>{e.label}</h3>
+          <label className="field" htmlFor={`env-${e.key}-deploy`}>Deploy command</label>
+          <input id={`env-${e.key}-deploy`} className="mono" value={envs[e.key].deploy}
+            placeholder={e.deploy} onChange={(ev) => set(e.key, "deploy", ev.target.value)} />
+          <label className="field" htmlFor={`env-${e.key}-health`}>Health URL</label>
+          <input id={`env-${e.key}-health`} value={envs[e.key].health_url} placeholder={e.health}
+            onChange={(ev) => set(e.key, "health_url", ev.target.value)} />
+          <p className="help">{e.note}</p>
+        </div>
+      ))}
+      <button className="primary" onClick={save}
+        disabled={!envs.production.deploy.trim() || !envs.production.health_url.trim()}>Save</button>
       {said && <p className="help">{said}</p>}
     </div>
   );

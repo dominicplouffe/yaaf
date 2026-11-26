@@ -13,6 +13,7 @@ without asking anyone. Undoing damage is never a decision that waits.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from datetime import UTC, timedelta
@@ -50,6 +51,10 @@ SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 #: The secret scope a deploy runs with. Reserved: no role may be named it, so
 #: no seat's sandbox ever receives what production is deployed with.
 DEPLOY_SCOPE = "deploy"
+#: The scope a per-change preview deploys with. Reserved as well, and never
+#: the production one: a preview builds code nobody has signed yet.
+PREVIEW_SCOPE = "preview"
+RESERVED_SCOPES = (DEPLOY_SCOPE, PREVIEW_SCOPE)
 IN_FLIGHT = (ReleaseStatus.PROPOSED, ReleaseStatus.APPROVED, ReleaseStatus.DEPLOYING,
              ReleaseStatus.WATCHING)
 
@@ -147,27 +152,48 @@ def propose(session: Session, project: Project, agent: Agent, *, version: str,
         status=ReleaseStatus.PROPOSED)
     session.add(release)
     session.flush()
+    if environment(project, "staging") is not None:
+        # Staging first, and without asking: nothing there is anyone's yet.
+        # The chairman's question, when the dial asks one, comes after it
+        # has run clean — so he is asked about something that has run.
+        release.environment = "staging"
+        release.status = ReleaseStatus.APPROVED
+        _audit(session, project, "release.staging", release, {})
+        queue_deploy(session, project, release, "deploy")
+        return release
+    _to_production(session, project, release)
+    return release
+
+
+def _to_production(session: Session, project: Project, release: Release) -> None:
+    """Point a release at production: straight to the deploy when the dial
+    allows, or to the chairman as an approval silence never grants."""
     cons = effective(session, project.id)
-    why = needs_chairman(session, project, cons, wanted)
+    release.environment = "production"
+    why = needs_chairman(session, project, cons, _version(release.version))
     if why is None:
         _audit(session, project, "release.approved", release, {"by": "the dial"})
         release.status = ReleaseStatus.APPROVED
         queue_deploy(session, project, release, "deploy")
-    else:
-        approval = Approval(
-            id=ids.new_id(ids.APPROVAL), project_id=project.id, kind=ApprovalKind.RELEASE,
-            requested_by_agent_id=agent.id,
-            title=f"Release {release.version} to production: {release.title}"[:300],
-            body=(f"{agent.name} proposes releasing {release.version} ({len(merged)} "
-                  f"change(s), commit {release.sha[:12]}). It waits for you because {why}. "
-                  f"Every change in it passed the merge gate; the canary guard will watch "
-                  f"it and roll it back on its own.\n\n{notes}"),
-            status=ApprovalStatus.PENDING,
-            expires_at=utcnow() + timedelta(days=cons.approval_timeout_days))
-        session.add(approval)
-        release.approval_id = approval.id
-        _audit(session, project, "release.proposed", release, {"waits_because": why})
-    return release
+        return
+    agent = session.get(Agent, release.proposed_by_agent_id)
+    staged = (" It ran clean on staging for the canary window first."
+              if (release.probes or {}).get("staging_ok") else "")
+    approval = Approval(
+        id=ids.new_id(ids.APPROVAL), project_id=project.id, kind=ApprovalKind.RELEASE,
+        requested_by_agent_id=release.proposed_by_agent_id,
+        title=f"Release {release.version} to production: {release.title}"[:300],
+        body=(f"{agent.name if agent else 'A seat'} proposes releasing {release.version} "
+              f"({len(release.change_ids or [])} change(s), commit {release.sha[:12]}). It "
+              f"waits for you because {why}.{staged} Every change in it passed the merge "
+              "gate; the canary guard will watch it and roll it back on its own."
+              f"\n\n{release.notes}"),
+        status=ApprovalStatus.PENDING,
+        expires_at=utcnow() + timedelta(days=cons.approval_timeout_days))
+    session.add(approval)
+    release.approval_id = approval.id
+    release.status = ReleaseStatus.PROPOSED
+    _audit(session, project, "release.proposed", release, {"waits_because": why})
 
 
 def decided(session: Session, project: Project, approval: Approval, approve: bool,
@@ -199,7 +225,8 @@ def queue_deploy(session: Session, project: Project, release: Release, action: s
     session.add(RunQueue(
         id=ids.new_id(ids.RUN), project_id=project.id, agent_id=None, kind=RunKind.DEPLOY,
         trigger={"type": "deploy", "release_id": release.id, "action": action,
-                 "sha": sha or release.sha}))
+                 "sha": sha or release.sha,
+                 "environment": "production" if action == "rollback" else release.environment}))
 
 
 def deploy_started(session: Session, release: Release, action: str) -> None:
@@ -207,7 +234,8 @@ def deploy_started(session: Session, release: Release, action: str) -> None:
         release.status = ReleaseStatus.DEPLOYING
 
 
-def deployed(session: Session, release: Release, action: str, ok: bool, output: str) -> None:
+def deployed(session: Session, release: Release, action: str, ok: bool, output: str,
+             sbom: bytes | None = None) -> None:
     """What the deploy command did. A rollback's own result is recorded on the
     incident's timeline; a release's starts the canary watch or fails it."""
     project = session.get(Project, release.project_id)
@@ -228,6 +256,11 @@ def deployed(session: Session, release: Release, action: str, ok: bool, output: 
                             attention=Attention.ALARM)
         return
     release.deploy_output = output[-8000:]
+    if sbom and release.environment == "production":
+        from yaaf.core import artifacts
+
+        release.sbom_uri = artifacts.store().put_bytes(
+            f"projects/{project.id}/releases/{release.id}/sbom.cdx.json", sbom)
     if not ok:
         release.status = ReleaseStatus.FAILED
         release.status_reason = "the deploy command failed"
@@ -274,7 +307,7 @@ def watch(session: Session, project: Project) -> None:
     ).scalars().first()
     if release is None:
         return
-    env = environment(project)
+    env = environment(project, release.environment)
     cons = effective(session, project.id)
     if env is None:
         return
@@ -283,6 +316,18 @@ def watch(session: Session, project: Project) -> None:
     probes["ok" if ok else "failed"] = probes.get("ok" if ok else "failed", 0) + 1
     probes["last"] = {"ok": ok, "detail": detail, "at": utcnow().isoformat()}
     release.probes = probes
+    if probes.get("failed", 0) >= cons.canary_max_failures and \
+            release.environment == "staging":
+        # Staging broke: production never saw it, so there is nothing to undo
+        # and no incident — the release simply does not go further.
+        release.status = ReleaseStatus.FAILED
+        release.status_reason = (f"staging broke its guard: {probes['failed']} failed health "
+                                 f"reads; last: {detail}. Production was never touched.")
+        _audit(session, project, "release.staging_failed", release, {})
+        _tell(session, project, release.proposed_by_agent_id,
+              f"Release {release.version} failed on staging and stops there. "
+              f"{release.status_reason}")
+        return
     if probes.get("failed", 0) >= cons.canary_max_failures:
         roll_back(session, project, release,
                   f"{probes['failed']} failed health reads during the canary watch "
@@ -293,19 +338,30 @@ def watch(session: Session, project: Project) -> None:
         deployed_at = deployed_at.replace(tzinfo=UTC)
     if deployed_at is not None and utcnow() - deployed_at >= timedelta(
             minutes=cons.canary_minutes):
+        if release.environment == "staging":
+            release.probes = {"staging_ok": probes.get("ok", 0)}
+            release.deployed_at = None
+            _audit(session, project, "release.staging_passed", release, {})
+            _to_production(session, project, release)
+            return
         _go_live(session, project, release)
 
 
 def _go_live(session: Session, project: Project, release: Release) -> None:
-    from yaaf.server import github
+    from yaaf.server import github, provenance
 
     release.status = ReleaseStatus.LIVE
     release.live_at = utcnow()
+    provenance.sign_release(session, project, release, provenance.sbom_bytes(release))
     _audit(session, project, "release.live", release, {"probes": release.probes})
+    digest = hashlib.sha256(provenance.canonical(release.provenance)).hexdigest()
+    signed = ("\n\n---\nProvenance: signed by this yaaf install (Ed25519), statement "
+              f"sha256 {digest[:16]}…"
+              + ("; SBOM kept with the release record." if release.sbom_uri else "."))
     try:
         github.create_release(session, project.github_repo or "", tag=f"v{release.version}",
                               sha=release.sha, name=f"v{release.version} — {release.title}",
-                              body=release.notes)
+                              body=release.notes + signed)
     except github.GithubError as exc:
         log.warning("could not tag %s on GitHub: %s", release.version, exc)
     _tell(session, project, release.proposed_by_agent_id,
@@ -400,6 +456,8 @@ def view(release: Release) -> dict:
     return {"id": release.id, "version": release.version, "title": release.title,
             "sha": release.sha, "notes": release.notes, "changes": release.change_ids,
             "status": release.status, "status_reason": release.status_reason,
+            "environment": release.environment, "sbom": bool(release.sbom_uri),
+            "provenance": release.provenance, "provenance_sig": release.provenance_sig,
             "approval_id": release.approval_id, "probes": release.probes or {},
             "deployed_at": release.deployed_at.isoformat() if release.deployed_at else None,
             "live_at": release.live_at.isoformat() if release.live_at else None,

@@ -1724,6 +1724,15 @@ def project_changes(project_id: str, session: Session = Depends(db)) -> dict:
             "branch_protection": (project.integrations or {}).get("branch_protection")}
 
 
+@router.get("/provenance_key", dependencies=[authority.SIGNED_IN])
+def provenance_key(session: Session = Depends(db)) -> dict:
+    """The public half of the key this install signs release provenance with.
+    Anyone holding a release's statement and signature can check them with it."""
+    from yaaf.server import provenance
+
+    return {"algorithm": "Ed25519", "public_key_pem": provenance.public_key_pem(session)}
+
+
 @router.get("/projects/{project_id}/releases", dependencies=[authority.READ])
 def project_releases(project_id: str, session: Session = Depends(db)) -> dict:
     """A Code Factory's releases and incidents, as the platform recorded them."""

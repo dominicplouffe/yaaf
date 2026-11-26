@@ -2426,6 +2426,16 @@ class Release(Base):
     # {"ok": n, "failed": n, "last": {...}} while the canary guard reads health.
     probes: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     deploy_output: Mapped[str | None] = mapped_column(Text)
+    # Where it is going now: "staging" first when the project has one, then
+    # "production". The approval, when the dial asks for one, comes between.
+    environment: Mapped[str] = mapped_column(String(16), default="production",
+                                             server_default="production")
+    # The CycloneDX SBOM syft wrote from the release's commit, in the store.
+    sbom_uri: Mapped[str | None] = mapped_column(Text)
+    # An in-toto statement of what shipped and what it passed, signed with
+    # this install's Ed25519 key (`yaaf.server.provenance`).
+    provenance: Mapped[dict | None] = mapped_column(JSONVariant)
+    provenance_sig: Mapped[str | None] = mapped_column(Text)
     deployed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     live_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     rolled_back_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

@@ -494,11 +494,11 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
     # follows every project that pins the role — the ghost that broke a live
     # project which had never heard of the source it "declared". Data sources
     # are project-owned and assigned to roles (Settings → Data sources).
-    if body.slug == "deploy":
+    if body.slug in ("deploy", "preview"):
         # The secret scope a Code Factory deploys production with. A role of
         # that name would put the production credentials in a seat's sandbox.
         raise HTTPException(status_code=422,
-                            detail="'deploy' is reserved: it is the scope production "
+                            detail=f"'{body.slug}' is reserved: it is the scope Code Factory "
                                    "deploy credentials are granted to, and no seat holds it")
     if "mcp_servers" in body.tool_permissions:
         raise HTTPException(
@@ -6856,6 +6856,9 @@ class EnvironmentIn(BaseModel):
 class EnvironmentsIn(BaseModel):
     production: EnvironmentIn | None = None
     staging: EnvironmentIn | None = None
+    # One per change, before review: the deploy command reads YAAF_CHANGE_NUMBER
+    # and YAAF_BRANCH, and "{number}" in the health URL is the change's number.
+    preview: EnvironmentIn | None = None
 
 
 @router.put("/projects/{project_id}/environments", dependencies=[authority.STEER])
@@ -6870,7 +6873,8 @@ def set_environments(project_id: str, body: EnvironmentsIn,
         raise HTTPException(status_code=422,
                             detail="environments belong to a Code Factory project")
     environments = {name: env.model_dump() for name, env in
-                    (("production", body.production), ("staging", body.staging)) if env}
+                    (("production", body.production), ("staging", body.staging),
+                     ("preview", body.preview)) if env}
     project.integrations = {**(project.integrations or {}), "environments": environments}
     _audit(session, project.id, "project.environments", "project", project.id,
            {"names": sorted(environments)})
@@ -7440,15 +7444,15 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
     # was not asking it at all: the Settings table offered all thirty-one
     # library roles and stored whichever were ticked, including roles this
     # project never hired.
-    if body.role_scopes and "deploy" in body.role_scopes:
+    if body.role_scopes and set(body.role_scopes) & {"deploy", "preview"}:
         # The reserved Code Factory scope: the platform deploys production with
         # this credential, and no seat ever receives it — so it is granted to
         # "deploy" alone, never alongside a role.
         if len(set(body.role_scopes)) > 1:
             raise HTTPException(
                 status_code=422,
-                detail="a deploy credential is granted to 'deploy' alone; adding a role "
-                       "would put production's keys in that seat's sandbox")
+                detail="a deploy credential is granted to 'deploy' or 'preview' alone; "
+                       "adding a role would put its keys in that seat's sandbox")
     elif body.role_scopes:
         try:
             policy.check_roles_on_project(session, body.project_id, body.role_scopes)

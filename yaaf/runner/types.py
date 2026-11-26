@@ -77,6 +77,8 @@ class RunJob:
 class RunResult:
     ok: bool
     summary: str = ""
+    #: What a platform job hands back beside its output: a release's SBOM.
+    extra: dict = field(default_factory=dict)
     tokens_in: int = 0
     tokens_out: int = 0
     cache_creation_tokens: int = 0
