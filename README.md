@@ -97,7 +97,7 @@ so changing a provider's lineup once moves every seat. Full details in
 
 ## Install
 
-> **Try it for $0 first.** No server, no API key. Scripted agents run a real
+> **Try it first.** No server, no API key. Scripted agents run a real
 > project and show you where it would stall and what it would cost.
 
 ```bash
@@ -151,7 +151,7 @@ running in about a minute.
 
 | Command | Description |
 |---|---|
-| `yaaf rehearse SPEC` | Run a project with scripted agents, for $0 |
+| `yaaf rehearse SPEC` | Run a project with scripted agents, no key needed |
 | `yaaf create-project "BRIEF"` | Describe a project in words; the Founder drafts it |
 | `yaaf create-project --from-file SPEC` | Create a project from a spec in `examples/` |
 | `yaaf projects` | Every project: status, spend, and what waits on you |
@@ -264,8 +264,8 @@ Flow: `Goal → CEO plans → you accept scope → teams claim work → the plat
 
 ## Example Projects
 
-Twelve ready-made specs in [`examples/`](examples/). Rehearse any of them for
-$0, then create it for real with `yaaf create-project --from-file`.
+Twelve ready-made specs in [`examples/`](examples/). Rehearse any of them
+first, then create it for real with `yaaf create-project --from-file`.
 
 | Spec | Mode | What it does |
 |---|---|---|
@@ -310,7 +310,7 @@ yaaf/
 │   ├── runner/       # Leases queued runs, starts sandboxes, meters cost
 │   ├── runtimes/     # Providers, harnesses, model catalog and prices
 │   ├── founder/      # Turns a brief in plain words into a project
-│   ├── rehearsal/    # The $0 fire drill with scripted agents
+│   ├── rehearsal/    # The fire drill with scripted agents
 │   ├── core/         # Models, config, crypto, shared plumbing
 │   └── cli/          # The `yaaf` command
 ├── web/              # The dashboard (React + Vite)
