@@ -875,6 +875,19 @@ class TeamSpec(BaseModel):
     harness_overrides: dict[str, str] = Field(default_factory=dict)
 
 
+class PromisedCredential(BaseModel):
+    """Access the chairman said he would give, captured while founding
+    (yaaf.server.credential_needs). The fields and the check are the
+    Founder's suggestion for a service yaaf's catalog does not know; for one
+    it does, the catalog's own fields replace them."""
+    service: str = Field(min_length=1, max_length=120)
+    label: str | None = Field(default=None, max_length=120)
+    purpose: str = Field(default="", max_length=500)
+    roles: list[str] = Field(default_factory=list)
+    fields: list[dict] = Field(default_factory=list, max_length=12)
+    check: dict | None = None
+
+
 class ProjectCreate(BaseModel):
     billing_secret_id: str | None = None
     slug: str = Field(pattern="^[a-z0-9-]{2,64}$")
@@ -933,6 +946,9 @@ class ProjectCreate(BaseModel):
     # {"kind": "external", "url"/"note": ...} for a fact the world imposes;
     # {"kind": "chairman", "note": why} for a target he wants.
     deadline_source: dict | None = None
+    # Access promised while founding: each becomes a named setup step until it
+    # is given, tested, or he says the project does without it.
+    credentials_promised: list[PromisedCredential] = Field(default_factory=list, max_length=12)
 
 
 def _latest_role_version(session: Session, slug: str) -> RoleVersion:
@@ -1696,6 +1712,16 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
                                             "created": row["created"]}
                                            for row in slack["channels"]],
                 "deferred": [row["key"] for row in slack.get("deferred", [])]})
+
+    if body.credentials_promised:
+        # A role the draft named that this project does not employ would get
+        # nothing, so it is dropped; with none left, every role receives it.
+        from yaaf.server import credential_needs
+
+        employed = policy.roles_on_project(session, project.id)
+        credential_needs.promise(session, project, [
+            {**p.model_dump(), "roles": [r for r in p.roles if r in employed]}
+            for p in body.credentials_promised])
 
     _audit(session, project.id, "project.create", "project", project.id)
     return {"id": project.id, "ceo_agent_id": ceo.id, "teams": team_out,
@@ -4048,7 +4074,7 @@ class HealthAck(BaseModel):
 
 class SetupAction(BaseModel):
     action: Literal["skip", "unskip", "close", "reopen"]
-    step: str | None = Field(default=None, max_length=32)
+    step: str | None = Field(default=None, max_length=64)  # "cred:<id>" for a promised credential
 
 
 @router.post("/projects/{project_id}/setup", dependencies=[authority.STEER])
@@ -7035,6 +7061,135 @@ def _require_secret_steer(session: Session, project_id: str | None) -> None:
         authority.require_admin_here(session)
     else:
         authority.require_here(session, project_id, authority.Level.STEER)
+
+
+# ── promised credentials ────────────────────────────────────────────────────────
+
+
+class CredentialCheckIn(BaseModel):
+    service: str = Field(min_length=1, max_length=120)
+    values: dict[str, str] = Field(default_factory=dict)
+    check: dict | None = None
+
+
+@router.post("/credential_checks", dependencies=[authority.SIGNED_IN])
+def credential_check(body: CredentialCheckIn) -> dict:
+    """Test values before a project exists, from the creation form's "Save and
+    test". Nothing is stored. A suggested check runs under the same fence as
+    everywhere (credential_checks.run_suggested)."""
+    from yaaf.server import credential_checks
+
+    result, _ = credential_checks.test(body.service, body.values, body.check)
+    return result
+
+
+class PromisesIn(BaseModel):
+    promised: list[PromisedCredential] = Field(default_factory=list, max_length=12)
+
+
+@router.post("/credential_promises/resolve", dependencies=[authority.SIGNED_IN])
+def resolve_promises(body: PromisesIn) -> list[dict]:
+    """The cards the creation form draws for a draft's promised credentials,
+    before the project exists: the catalog's fields for a service yaaf knows,
+    the Founder's suggestion (and its fenced check) for one it does not."""
+    from yaaf.server import credential_checks
+    from yaaf.server.credential_needs import _field
+
+    out = []
+    for item in body.promised:
+        entry = credential_checks.known(item.service)
+        if entry is not None:
+            out.append({"service": entry.service, "label": entry.label, "purpose": item.purpose,
+                        "known": True, "fields": [f.view("catalog") for f in entry.fields],
+                        "check": None})
+            continue
+        try:
+            check = credential_checks.validate(item.check)
+        except credential_checks.Refused:
+            check = None
+        fields = [f for f in (_field(raw, "suggested") for raw in item.fields) if f]
+        out.append({"service": item.service, "label": item.label or item.service,
+                    "purpose": item.purpose, "known": False,
+                    "fields": [{k: v for k, v in f.items() if k != "secret_id"} for f in fields],
+                    "check": check})
+    return out
+
+
+class CredentialValuesIn(BaseModel):
+    #: {field key: value}; a file field's value is base64 of its bytes.
+    values: dict[str, str] = Field(default_factory=dict)
+    #: {field key: file name}, for file fields.
+    filenames: dict[str, str] = Field(default_factory=dict)
+    #: Fields the chairman adds: [{key, label, secret}].
+    add_fields: list[dict] = Field(default_factory=list, max_length=12)
+
+
+def _need(session: Session, project_id: str, need_id: str):
+    from yaaf.core.models import CredentialNeed
+
+    need = session.get(CredentialNeed, need_id)
+    if need is None or need.project_id != project_id:
+        raise HTTPException(status_code=404, detail="no such promised credential on this project")
+    return need
+
+
+def _need_view(session: Session, project_id: str, need_id: str) -> dict:
+    from yaaf.server import credential_needs
+
+    project = session.get(Project, project_id)
+    return next(n for n in credential_needs.view(session, project) if n["id"] == need_id)
+
+
+@router.put("/projects/{project_id}/credential_needs/{need_id}", dependencies=[authority.STEER])
+def save_credential_need(project_id: str, need_id: str, body: CredentialValuesIn,
+                         session: Session = Depends(db)) -> dict:
+    """Give a promised credential its values. Each is stored as an ordinary
+    project secret (through put_secret, so every rule a secret obeys holds),
+    granted to the roles the promise named. A service yaaf knows is tested at
+    once; one it does not is "saved, not tested" until he runs the check."""
+    from yaaf.server import credential_checks, credential_needs
+
+    need = _need(session, project_id, need_id)
+    if body.add_fields:
+        credential_needs.add_fields(need, body.add_fields)
+    roles = need.roles or sorted(policy.roles_on_project(session, project_id))
+    keys = {f["key"]: f for f in need.fields}
+    for key, value in body.values.items():
+        f = keys.get(key)
+        if f is None or not value:
+            continue
+        put_secret(SecretIn(project_id=project_id, name=key, value=value, role_scopes=roles,
+                            kind="service",
+                            filename=(body.filenames.get(key) or "") if f["file"] else None,
+                            visibility=None if f["secret"] or f["file"] else "plain"), session)
+    session.flush()
+    held = credential_needs.values_of(session, need)
+    # A field he added himself is an extra, not a requirement: an empty one
+    # does not hold the credential back.
+    if all(f["key"] in held for f in need.fields if f["origin"] != "user"):
+        if credential_checks.known(need.service):
+            credential_needs.run_check(session, need)
+        elif need.status in ("needed", "waived"):
+            need.status = "saved"
+    _audit(session, project_id, "credential_need.save", "credential_need", need.id,
+           {"service": need.service, "fields": sorted(body.values), "added": len(body.add_fields)})
+    session.flush()
+    return _need_view(session, project_id, need.id)
+
+
+@router.post("/projects/{project_id}/credential_needs/{need_id}/check",
+             dependencies=[authority.STEER])
+def check_credential_need(project_id: str, need_id: str, session: Session = Depends(db)) -> dict:
+    """Run its test now: the catalog's verified one, or the suggested call he
+    was shown. Only on his press — a suggested call never runs on its own."""
+    from yaaf.server import credential_needs
+
+    need = _need(session, project_id, need_id)
+    result = credential_needs.run_check(session, need)
+    _audit(session, project_id, "credential_need.check", "credential_need", need.id,
+           {"service": need.service, "ok": result["ok"], "kind": result["kind"]})
+    session.flush()
+    return _need_view(session, project_id, need.id)
 
 
 @router.post("/secrets", dependencies=[authority.IN_HANDLER])

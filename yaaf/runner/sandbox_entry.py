@@ -1120,6 +1120,19 @@ async def t_brief_propose(args):
 
 
 @tool(
+    "credential_report",
+    "Say whether a credential the chairman gave you worked when you used it. `name` is its "
+    "variable (WORDPRESS_APP_PASSWORD) or the service (\"WordPress\"); `worked` true or "
+    "false; `detail` what happened (\"published the Nov 26 post\", \"Google answered 403 "
+    "PERMISSION_DENIED\"). Report a refusal the moment you get one: yaaf cannot see your "
+    "calls to outside services, so this is how the chairman learns a key stopped working.",
+    {"name": str, "worked": bool, "detail": str},
+)
+async def t_credential_report(args):
+    return _text(_call("POST", "/agent/credentials/report", dict(args)))
+
+
+@tool(
     "heads_up",
     "CEO only. Tell the chairman something he ASKED to be told, for him to mark noted: "
     "tomorrow's ticket when it is 'no trade', the weekly number he wants to see. "
@@ -1816,6 +1829,7 @@ ALL_TOOLS = [
     t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
     t_capacity_request, t_brief_propose, t_heads_up, t_note_answer, t_need_request, t_credentials_list, t_credential_scope,
+    t_credential_report,
     t_assist_request, t_account_record, t_accounts_list,
     t_purchase_begin, t_purchase_finish,
     t_side_effect_begin, t_side_effect_finish,

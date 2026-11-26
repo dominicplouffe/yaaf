@@ -921,6 +921,14 @@ export default function Overview({
       plan={`What got done, where it stands, what's next, and what ${ceo} needs from you.`}
       actions={<Link className="btnlink small primary" to={`${base}/details/reviews`}>Open meeting</Link>} />);
   }
+  // A promised credential that stopped working: something he cares about has
+  // stopped, so it is said here with the one thing to do, not only as a red
+  // chip in the setup strip.
+  for (const st of ctx.setup?.steps ?? []) {
+    if (st.credential !== "failed") continue;
+    rows.push(<OkRow key={st.key} title={`${st.label} stopped working`} plan={st.detail}
+      actions={<Link className="btnlink small primary" to={`${base}/settings?s=${st.section}`}>Fix it</Link>} />);
+  }
   rows.push(...notes);
   if (dash.drought_active) {
     rows.push(<OkRow key="drought" title="Nothing has been checked from outside in a while"

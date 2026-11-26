@@ -92,6 +92,21 @@ REACHED = {
 #: Routes no tool reaches, and the reason. A reason is required: "we did not
 #: get to it" is a fine answer, but it has to be written down as one.
 WITHHELD = {
+    "POST /admin/credential_checks":
+        "the creation form's test of values typed into it before the project "
+        "exists; a model client founds through the Founder and stores values "
+        "with `credential (save)`, so it has no form to test.",
+    "POST /admin/credential_promises/resolve":
+        "draws the creation form's credential cards from a draft; it changes "
+        "nothing and a model client has no form to draw.",
+    "PUT /admin/projects/{project_id}/credential_needs/{need_id}":
+        "a promised credential's values are typed by the chairman on his "
+        "screen; a model client that holds a value already stores it with "
+        "`credential (save)`, under the same name, and the promise reads it "
+        "from there.",
+    "POST /admin/projects/{project_id}/credential_needs/{need_id}/check":
+        "runs a test that calls an outside service from the server, which "
+        "a suggested check only ever does on the chairman's own press.",
     "POST /admin/projects/{project_id}/boardroom/seen":
         "the unread count says what the person has not seen, and a model "
         "reading the boardroom is not the person reading it — clearing the "

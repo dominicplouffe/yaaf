@@ -3707,3 +3707,7 @@ button.gchip.tool-count:hover { border-color: var(--muted); color: var(--ink); }
 
 /* A bet a link pointed at: ringed, so the reader sees which one they came for. */
 .bet.bet-focus { border-radius: var(--radius); box-shadow: 0 0 0 2px var(--accent); }
+/* A promised credential that was given and does not work. */
+.setup-chip.failed { color: var(--critical); border-color: rgba(var(--critical-rgb), 0.5); background: rgba(var(--critical-rgb), 0.08); font-weight: 600; }
+/* Given, not yet proven: settled for the count, but not drawn as done. */
+.setup-chip.saved { color: var(--ink-2); }

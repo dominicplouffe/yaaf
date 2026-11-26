@@ -1654,6 +1654,19 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         said = _you_said_lately(session, agent, now)
         if said:
             pack["you_said_lately"] = said
+        # Access the chairman promised that is not given or not working, so
+        # the plan does not assume a site it cannot publish to. Absent once
+        # every promise is kept: a settled credential is just a credential.
+        from yaaf.server.credential_needs import open_for_ceo
+
+        missing = open_for_ceo(session, project.id)
+        if missing:
+            pack["access_not_ready"] = {
+                "items": missing,
+                "note": "The chairman promised these but they are not usable yet. Do not "
+                        "plan work that needs them until they are; it shows on his setup "
+                        "strip, so there is no need to ask him for them again.",
+            }
         # Only when the chairman gave the project a mailbox: a CEO without one
         # reads exactly what it always read.
         from yaaf.server.mail.service import for_context as mail_context

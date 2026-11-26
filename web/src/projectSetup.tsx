@@ -9,7 +9,7 @@
 // somebody who steers the project puts it away.
 
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { post, SetupStep } from "./api";
 import { ProjectCtx } from "./projectCtx";
 
@@ -97,19 +97,24 @@ export function ProjectSetup({ ctx }: { ctx: ProjectCtx }) {
 export function SetupStrip({ ctx, section }: { ctx: ProjectCtx; section?: string }) {
   const { setup, projectId, dash } = ctx;
   const [busy, setBusy] = useState(false);
+  const [params] = useSearchParams();
   if (!setup?.open) return null;
-  const current = section ?? setup.next?.section;
+  // A promised credential's step opens its own card in Settings › Credentials,
+  // so on that page the one in view is the one named in the link.
+  const need = params.get("need");
+  const current = section === "credentials" && need ? `credentials&need=${need}` : section ?? setup.next?.section;
   const step = setup.steps.find((s) => s.section === current);
   const canWave = !!step && step.state === "todo" && !step.required && dash.can_steer !== false;
+  const failed = setup.steps.find((s) => s.state === "failed");
   return (
     <nav className="setup-strip" aria-label="Setup steps">
       <span className="setup-strip-t">Setup {setup.settled} of {setup.total}</span>
       {setup.steps.map((st) => (
         <Link key={st.key} to={`/projects/${projectId}/settings?s=${st.section}`} replace={!!section}
-          className={`setup-chip ${st.state}${current === st.section ? " on" : ""}`}
+          className={`setup-chip ${st.credential === "saved" ? "saved" : st.state}${current === st.section ? " on" : ""}`}
           aria-current={current === st.section ? "step" : undefined}
           title={st.detail}>
-          {st.state === "done" ? "✓ " : ""}{st.label}
+          {chipText(st)}
           <span className="sr-only">{st.state === "todo" ? " — to do" : ` — ${st.state}`}</span>
         </Link>
       ))}
@@ -128,6 +133,19 @@ export function SetupStrip({ ctx, section }: { ctx: ProjectCtx; section?: string
           I'm good without {step!.label}
         </button>
       )}
+      {failed && (
+        <Link className="btnlink small" to={`/projects/${projectId}/settings?s=${failed.section}`}>Fix {failed.label}</Link>
+      )}
     </nav>
   );
+}
+
+/** A step's chip text. A promised credential says where it stands in words:
+    "✗ Needed: Beehiiv", "○ Beehiiv · not tested", "! Google Analytics stopped
+    working". */
+function chipText(st: SetupStep): string {
+  if (st.credential === "failed") return `! ${st.label} stopped working`;
+  if (st.credential === "saved") return `○ ${st.label} · not tested`;
+  if (st.credential === "needed") return `✗ Needed: ${st.label}`;
+  return `${st.state === "done" ? "✓ " : ""}${st.label}`;
 }

@@ -948,6 +948,16 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
+@router.get("/projects/{project_id}/credential_needs", dependencies=[authority.READ])
+def project_credential_needs(project_id: str, session: Session = Depends(db)) -> list[dict]:
+    """The access promised to this project: each one's fields (which are
+    given, never their secret values), how sure yaaf is of them, its check,
+    and how far it is proven. See yaaf.server.credential_needs."""
+    from yaaf.server import credential_needs
+
+    return credential_needs.view(session, _project(session, project_id))
+
+
 @router.get("/projects/{project_id}/runs/day", dependencies=[authority.READ])
 def project_run_day(project_id: str, session: Session = Depends(db)) -> dict:
     """The Runs page: every run started in the limit's day (00:00 UTC), each in

@@ -329,6 +329,29 @@
     "name": "commitment_reset"
   },
   {
+    "description": "Say whether a credential the chairman gave you worked when you used it. `name` is its variable (WORDPRESS_APP_PASSWORD) or the service (\"WordPress\"); `worked` true or false; `detail` what happened (\"published the Nov 26 post\", \"Google answered 403 PERMISSION_DENIED\"). Report a refusal the moment you get one: yaaf cannot see your calls to outside services, so this is how the chairman learns a key stopped working.",
+    "input_schema": {
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "worked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "worked",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "name": "credential_report"
+  },
+  {
     "description": "CEO only, and only where the constitution grants capability_authority: ceo \u2014 otherwise a 403 naming the paths (file a need, or the chairman's boardroom order as a directive). Delegate an existing credential across your team: add_roles / remove_roles by role slug, with a reason. The value never moves \u2014 only who receives it at run time. Audited and sent to the chairman with your reason \u2014 he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. Effective on each role's next run.",
     "input_schema": {
       "properties": {

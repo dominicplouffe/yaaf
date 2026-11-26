@@ -48,6 +48,7 @@ SIDE_EFFECT = "sfx"
 APPROVAL = "appr"
 ASK = "ask"  # a question to the chairman, with the moment it stops waiting
 SECRET = "secr"
+CREDENTIAL_NEED = "cned"  # access the chairman promised, until it is given
 AUDIT = "audt"
 NOTICE = "ntce"
 SUGGESTION = "sugg"

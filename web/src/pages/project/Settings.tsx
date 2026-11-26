@@ -24,6 +24,7 @@ import { MailboxSettings } from "./Mailbox";
 import Secrets, { pendingNeeds } from "./Secrets";
 import { ProjectCtx, useProject } from "../../projectCtx";
 import { SetupStrip } from "../../projectSetup";
+import { CredentialsSection } from "../../credentialNeeds";
 import { PinButton } from "../../shortcuts";
 import { MembersPanel } from "./Members";
 import { SETTINGS_NAV } from "../../nav";
@@ -1569,6 +1570,11 @@ export default function Settings({
       <Section on={section === "sources"}>
         <DataSources projectId={projectId} dash={dash} org={org} secrets={secrets}
                      notice={notice} reload={reload} />
+      </Section>
+
+      <Section on={section === "credentials"}>
+        <CredentialsSection projectId={projectId} canSteer={dash.can_steer !== false}
+          focus={params.get("need")} onSaved={reload} />
       </Section>
 
       <Section on={section === "secrets"}>
