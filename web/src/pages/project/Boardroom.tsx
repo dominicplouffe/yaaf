@@ -291,6 +291,38 @@ type Presence = { tone: "good" | "work" | "off" | "bad"; icon: IconName; word: s
     refused action, a question), one strip above it (what waits in the Inbox,
     why the CEO is quiet), or behind the Rules button. Nothing it showed is
     lost; none of it competes with the conversation any more. */
+/** What the CEO was trying to do, from the call the platform refused, in the
+    words a chairman uses. The refusal itself is written to the agent ("You
+    already answered that note…"), so quoting it at him read as if he were
+    being told off; it stays one click down, under Why. */
+const REFUSED: [RegExp, string][] = [
+  [/^\/agent\/tasks$/, "add a task"],
+  [/^\/agent\/tasks\/[^/]+\/claim$/, "pick up a task"],
+  [/^\/agent\/tasks\/[^/]+\/complete$/, "mark a task done"],
+  [/^\/agent\/tasks\/[^/]+\/(kill|block)$/, "stop a task"],
+  [/^\/agent\/tasks\//, "change a task"],
+  [/^\/agent\/brief$/, "change the brief"],
+  [/^\/agent\/notes\/[^/]+\/answer$/, "answer your note"],
+  [/^\/agent\/messages$/, "post a message"],
+  [/^\/agent\/(asks|asks\/close)$/, "ask you a question"],
+  [/^\/agent\/approvals$/, "ask for your approval"],
+  [/^\/agent\/(requirements|requirement_edges|scope|cycle_goal)$/, "change the plan"],
+  [/^\/agent\/commitments/, "change a delivery date"],
+  [/^\/agent\/memory/, "save a note to its memory"],
+  [/^\/agent\/artifacts$/, "publish a file"],
+  [/^\/agent\/teams/, "change the team"],
+  [/^\/agent\/(purchases|ledger\/spend)/, "spend money"],
+  [/^\/agent\/capacity$/, "ask for more runs"],
+  [/^\/agent\/(review_narrative|review_report)$/, "file the status report"],
+  [/^\/agent\/heads_up$/, "send you a heads-up"],
+  [/^\/agent\/mail$/, "send an email"],
+];
+
+function refusedAction(route: string | null): string {
+  if (!route) return "do something";
+  return REFUSED.find(([re]) => re.test(route))?.[1] ?? "do something";
+}
+
 export default function Boardroom({ projectId, dash, org }: {
   projectId: string;
   dash: Dashboard;
@@ -615,6 +647,7 @@ export default function Boardroom({ projectId, dash, org }: {
   // warning sitting beside a true "done" — so once the same call has gone
   // through, say that instead of telling him to doubt it.
   const refusalCleared = chatSession?.last_refusal_cleared_at ?? null;
+  const refusedWhat = refusedAction(chatSession?.last_refusal_route ?? null);
   const pending = (approvals ?? []).filter((a) => a.status === "pending");
   const quiet = dash.status === "running" && dash.activity.brief.banner ? dash.activity.brief : null;
 
@@ -824,16 +857,23 @@ export default function Boardroom({ projectId, dash, org }: {
                       <div className="cr-note good" key={row.key} role="note">
                         <Icon name="check" size={15} />
                         <div className="cr-note-b">
-                          A project rule stopped something {ceoFirst} tried{refusedAt ? ` at ${TIME.format(new Date(refusedAt))}` : ""}.
-                          {" "}{ceoFirst} tried again and it went through.
+                          {ceoFirst} tried to {refusedWhat}{refusedAt ? ` at ${TIME.format(new Date(refusedAt))}` : ""} and a
+                          project rule stopped it. {ceoFirst} tried again and it went through.
                         </div>
                       </div>
                     ) : (
                       <div className="cr-note warn" key={row.key} role="note">
                         <Icon name="alert" size={15} />
                         <div className="cr-note-b">
-                          <b>A project rule stopped something {ceoFirst} tried{refusedAt ? ` at ${TIME.format(new Date(refusedAt))}` : ""}.</b>
-                          {" "}It did not happen, even if a message says it did. {clip(lastRefusal ?? "", 220)}
+                          <b>{ceoFirst} tried to {refusedWhat}{refusedAt ? ` at ${TIME.format(new Date(refusedAt))}` : ""}, and a
+                          project rule stopped it.</b> It did not happen, even if a message says it did. {ceoFirst} was
+                          told why and usually tries again; if it needs you, it will be in your Inbox.
+                          {lastRefusal && (
+                            <details className="cr-why">
+                              <summary>Why</summary>
+                              {clip(lastRefusal, 500)}
+                            </details>
+                          )}
                         </div>
                       </div>
                     )

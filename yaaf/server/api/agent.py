@@ -3758,6 +3758,10 @@ def note_answer(
         note, already = chairman_notes.answer(session, ctx.project.id, note_id, body.reply,
                                               body.standing, agent_id=ctx.agent.id,
                                               say_it=ctx.run.kind != RunKind.CHAT_SESSION)
+    except chairman_notes.AlreadyAnswered as done:
+        return {"id": done.note.id, "note": (
+            f"Already answered, so nothing was changed. The reply under his note is: "
+            f"“{(done.note.reply or '')[:200]}”.")}
     except chairman_notes.NoteError as exc:
         raise Refusal(str(exc), status_code=422) from exc
     session.add(AuditLog(

@@ -159,3 +159,6 @@
   .cr-hint { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .cr-dots i, .cr-skel i { animation: none; } }
+/* The platform's own words to the CEO, kept one click down. */
+.cr-why { margin-top: 6px; font-size: var(--t-small); color: var(--ink-2); }
+.cr-why > summary { cursor: pointer; color: var(--muted); font-weight: 600; }
