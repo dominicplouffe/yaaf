@@ -1361,13 +1361,13 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
   // work in it. None when nothing is open, rather than stage 1 by default.
   const openStages = reqs.filter((r) => OPEN.has(r.status)).map((r) => r.stage);
   const firstOpen = openStages.length > 0 ? Math.min(...openStages) : null;
-  const status = data.mode === "deliver" && (commitment !== null || (plan.holds && reqs.length > 0))
+  const status = data.shape === "deliver" && (commitment !== null || (plan.holds && reqs.length > 0))
     ? deliveryStatus(commitment, data.velocity, counts, now)
     : null;
 
   return (
     <div className="plan">
-      {ctx.dash.mode === "operate" && ctx.dash.cycle && (
+      {ctx.dash.shape === "operate" && ctx.dash.cycle && (
         <PlanStatus s={{
           tone: "plain",
           lead: `Cycle ${ctx.dash.cycle.ordinal} — this board is this cycle's plan.`,
@@ -1407,7 +1407,7 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
           shape that carries the information for an Operate project is the
           record below, and drawing both put a chart that cannot be right
           beside the one that is. */}
-      {data.mode === "deliver" && commitment && commitment.status !== "proposed"
+      {data.shape === "deliver" && commitment && commitment.status !== "proposed"
         && data.burnup && (
         <Burnup c={commitment} burnup={data.burnup} range={projection} />
       )}
@@ -1545,7 +1545,7 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
         </div>
       )}
 
-      {ctx.dash.mode === "operate" && <CycleHistory projectId={projectId} />}
+      {ctx.dash.shape === "operate" && <CycleHistory projectId={projectId} />}
 
       {plan.holds && <MoreNumbers data={data} c={commitment} />}
     </div>

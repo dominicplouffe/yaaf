@@ -409,8 +409,13 @@ export interface Dashboard {
   retired_orders: string[];
   brief_confirmed_at: string | null;
   billing_mode: string;
-  /** explore | deliver | operate — decides whether a Plan exists at all. */
+  /** explore | deliver | operate | code_factory — what the chairman chose. */
   mode: string;
+  /** What the screens gate on: explore | deliver | operate. A Code Factory
+      being built reads as deliver, one in upkeep as operate. */
+  shape: "explore" | "deliver" | "operate";
+  /** Code Factory only: build, then upkeep. */
+  factory_phase: "build" | "upkeep" | null;
   month_to_date: {
     usd: number;
     tokens_in: number;
@@ -1879,7 +1884,9 @@ export interface PlanBurnup {
 export interface PlanView {
   /** Narrowed from `string` so a mis-typed mode in a gate is a build error
       rather than a chart that silently never draws. */
-  mode: "explore" | "deliver" | "operate";
+  mode: "explore" | "deliver" | "operate" | "code_factory";
+  /** What the plan gates on; see Dashboard.shape. Absent when planless. */
+  shape?: "explore" | "deliver" | "operate";
   planless: boolean;
   commitment?: PlanCommitment | null;
   burnup?: PlanBurnup | null;

@@ -60,12 +60,27 @@ class RunJob:
     workspace_dir: str = ""
     # Success checks only:
     check_command: str | None = None
+    # Hidden scenarios only: [(scenario id, command)], the commit and branch
+    # they run on, and where that commit is fetched from. Never logged: the
+    # fetch URL carries the platform token for the length of one fetch.
+    scenarios: list = field(default_factory=list)
+    check_sha: str | None = None
+    check_branch: str | None = None
+    fetch_url: str | None = None
+    # Deploys only: "deploy" or "rollback", and the env the command runs with
+    # (secrets granted to the reserved "deploy" scope). Never logged.
+    deploy_action: str | None = None
+    deploy_env: dict = field(default_factory=dict)
+    # Previews only: the page the platform photographs for the reviewer.
+    page_url: str | None = None
 
 
 @dataclass
 class RunResult:
     ok: bool
     summary: str = ""
+    #: What a platform job hands back beside its output: a release's SBOM.
+    extra: dict = field(default_factory=dict)
     tokens_in: int = 0
     tokens_out: int = 0
     cache_creation_tokens: int = 0

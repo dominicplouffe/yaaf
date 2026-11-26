@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, shape
 from yaaf.core.constitution import ConstitutionDoc
 from yaaf.core.models import (
     Cycle,
@@ -34,7 +34,6 @@ from yaaf.core.models import (
     FlagKind,
     FlagStatus,
     Project,
-    ProjectMode,
     Recurrence,
     Requirement,
     RequirementCycleResult,
@@ -323,7 +322,7 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     # 3. The arithmetic says the date does not hold. This is the one the
     #    chairman asked about directly and was reassured about.
     cycle = policy.current_cycle(session, project.id) if (
-        project.mode == ProjectMode.OPERATE) else None
+        shape.runs_on_cycles(project)) else None
     if cycle is not None and cycle.due_at is not None:
         forecast = capacity_forecast(session, project, cons, cycle.due_at)
         if not forecast["feasible"]:

@@ -243,13 +243,14 @@ from the team.
 
 Flow: `Goal → CEO plans → you accept scope → teams claim work → the platform verifies → you sign off`
 
-### Three kinds of project
+### Four kinds of project
 
 | Mode | For |
 |---|---|
 | **deliver** | A finished thing by a date: a report, a tool, a game |
 | **operate** | A standing job that runs every day or week: a triage desk, a digest, an overnight crew |
 | **explore** | An open question with a time box: find one idea worth building, and prove it |
+| **code_factory** | Software, built and then kept: from an empty repo to v1.0 by a date, then weekly upkeep. Or adopt a repo you already have and keep it patched and shipping |
 
 ### Guardrails that hold
 
@@ -264,7 +265,7 @@ Flow: `Goal → CEO plans → you accept scope → teams claim work → the plat
 
 ## Example Projects
 
-Twelve ready-made specs in [`examples/`](examples/). Rehearse any of them
+Fourteen ready-made specs in [`examples/`](examples/). Rehearse any of them
 first, then create it for real with `yaaf create-project --from-file`.
 
 | Spec | Mode | What it does |
@@ -281,6 +282,8 @@ first, then create it for real with `yaaf create-project --from-file`.
 | [`10-read-the-filings`](examples/10-read-the-filings.json) | deliver | An initiation note built only from SEC EDGAR filings |
 | [`11-numbers-you-can-defend`](examples/11-numbers-you-can-defend.json) | deliver | An answer from public data a skeptic could re-derive |
 | [`12-a-content-engine`](examples/12-a-content-engine.json) | operate | Publish posts that earn a reader, on a subject you know |
+| [`13-a-booking-app`](examples/13-a-booking-app.json) | code_factory | A booking web app built from an empty repo to v1.0, then kept weekly |
+| [`14-keep-a-repo-healthy`](examples/14-keep-a-repo-healthy.json) | code_factory | Adopt a repo you already have: read it, propose a charter, keep it patched and shipping |
 
 ---
 

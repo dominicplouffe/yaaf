@@ -806,7 +806,9 @@ ROLL_IS_THE_MEETING = ("weekly", "monthly", "quarterly")
 
 
 def meeting_at_the_roll(project: Project, cons) -> bool:
-    return (project.mode == ProjectMode.OPERATE
+    from yaaf.core import shape
+
+    return (shape.runs_on_cycles(project)
             and cons.cycle_frequency in ROLL_IS_THE_MEETING)
 
 

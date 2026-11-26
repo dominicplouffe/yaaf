@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, shape
 from yaaf.core.constitution import ConstitutionDoc, effective, propose_amendment
 from yaaf.core.db import notify
 from yaaf.core.models import (
@@ -490,6 +490,179 @@ class TaskReview(BaseModel):
         if len(raw.strip()) < 10:
             raise ValueError("say what you found; whitespace is not a review")
         return raw.strip()
+
+
+class ChangeOpen(BaseModel):
+    task_id: str
+    branch: str = Field(min_length=1, max_length=255)
+    title: str = Field(min_length=3, max_length=300)
+    summary: str = Field(min_length=10, max_length=20_000)
+
+
+@router.post("/changes")
+def open_change(body: ChangeOpen, ctx: RunContext = Depends(run_auth),
+                session: Session = Depends(db)) -> dict:
+    """Code Factory: ask the platform to open a pull request for the branch you
+    pushed. It opens it with its own token, counts its size from GitHub, and
+    merges it — itself, pinned to the head it checked — once every gate is
+    green. You never merge."""
+    from yaaf.server import changes
+
+    change = changes.open_change(session, ctx.project, ctx.agent, task_id=body.task_id,
+                                 branch=body.branch, title=body.title, summary=body.summary)
+    return changes.view(change)
+
+
+@router.get("/changes")
+def list_changes(ctx: RunContext = Depends(run_auth),
+                 session: Session = Depends(db)) -> dict:
+    from yaaf.server import changes
+
+    changes.require_factory(ctx.project)
+    return {"changes": changes.listing(session, ctx.project, live_only=True)}
+
+
+class ChangeReview(BaseModel):
+    # Checked by `changes.review`, which says what the two words are rather
+    # than returning a schema error an agent has to decode.
+    verdict: str = Field(min_length=1, max_length=16)
+    # Signing only: what you accept on purpose. Weaker tests need a reason;
+    # each new package you checked, by name.
+    allow_weaker_tests: str | None = Field(default=None, max_length=2000)
+    allow_packages: list[str] = Field(default_factory=list, max_length=50)
+    allow_ci_change: str | None = Field(default=None, max_length=2000)
+    allow_worse_health: str | None = Field(default=None, max_length=2000)
+    note: str = Field(min_length=1, max_length=4000)
+
+
+@router.post("/changes/{change_id}/review")
+def review_change(change_id: str, body: ChangeReview, ctx: RunContext = Depends(run_auth),
+                  session: Session = Depends(db)) -> dict:
+    """A challenge seat's verdict on somebody else's change, pinned to the head
+    commit it read. A later push clears it."""
+    from yaaf.core.models import Change
+    from yaaf.server import changes
+
+    change = session.get(Change, change_id)
+    if change is None or change.project_id != ctx.project.id:
+        raise Refusal("Unknown change.", status_code=404)
+    return changes.review(session, ctx.project, change, ctx.agent,
+                          verdict=body.verdict, note=body.note,
+                          allow_weaker_tests=body.allow_weaker_tests,
+                          allow_packages=body.allow_packages,
+                          allow_ci_change=body.allow_ci_change,
+                          allow_worse_health=body.allow_worse_health)
+
+
+class ReleasePropose(BaseModel):
+    version: str = Field(min_length=5, max_length=32)
+    title: str = Field(min_length=3, max_length=300)
+
+
+@router.post("/releases")
+def propose_release(body: ReleasePropose, ctx: RunContext = Depends(run_auth),
+                    session: Session = Depends(db)) -> dict:
+    """Code Factory: propose shipping everything merged since the last release.
+    The platform decides whether it waits for the chairman, deploys it itself,
+    watches it, and rolls it back itself if the guard breaks."""
+    from yaaf.server import releases
+
+    release = releases.propose(session, ctx.project, ctx.agent, version=body.version,
+                               title=body.title)
+    return releases.view(release)
+
+
+@router.get("/releases")
+def list_releases(ctx: RunContext = Depends(run_auth),
+                  session: Session = Depends(db)) -> dict:
+    from yaaf.server import changes, releases
+
+    changes.require_factory(ctx.project)
+    return releases.listing(session, ctx.project)
+
+
+class PostmortemIn(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+
+
+@router.post("/incidents/{incident_id}/postmortem")
+def incident_postmortem(incident_id: str, body: PostmortemIn,
+                        ctx: RunContext = Depends(run_auth),
+                        session: Session = Depends(db)) -> dict:
+    """The CEO writes what happened, why, and what changes — beside the
+    platform's own timeline, which it cannot edit — and the incident closes."""
+    from yaaf.core.models import Incident
+    from yaaf.server import releases
+
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("The CEO writes the postmortem: it is the project's account of "
+                      "itself, not one desk's.", status_code=403)
+    incident = session.get(Incident, incident_id)
+    if incident is None or incident.project_id != ctx.project.id:
+        raise Refusal("Unknown incident.", status_code=404)
+    releases.write_postmortem(session, ctx.project, incident, body.text)
+    return releases.incident_view(incident)
+
+
+class ScenarioAdd(BaseModel):
+    requirement_id: str
+    name: str = Field(min_length=3, max_length=200)
+    command: str = Field(min_length=5, max_length=8000)
+
+
+@router.post("/scenarios")
+def add_scenario(body: ScenarioAdd, ctx: RunContext = Depends(run_auth),
+                 session: Session = Depends(db)) -> dict:
+    """A challenge seat writes a hidden scenario: a command the platform runs
+    against every change serving this requirement, from the repo root of the
+    change's commit, passing on exit 0. Builders never read it."""
+    from yaaf.core.models import Requirement, Scenario
+    from yaaf.server import changes
+
+    changes.require_factory(ctx.project)
+    if not policy.is_review_seat(session, ctx.agent):
+        raise Refusal("Hidden scenarios are written by a challenge seat. A seat that "
+                      "builds cannot write the test it will be judged by.", status_code=403)
+    requirement = session.get(Requirement, body.requirement_id)
+    if requirement is None or requirement.project_id != ctx.project.id:
+        raise Refusal("Unknown requirement.", status_code=404)
+    row = Scenario(id=ids.new_id(ids.SCENARIO), project_id=ctx.project.id,
+                   requirement_id=requirement.id, name=body.name.strip(),
+                   command=body.command.strip(), author_agent_id=ctx.agent.id)
+    session.add(row)
+    session.flush()
+    from yaaf.core.models import Change
+
+    for change in session.execute(
+        select(Change).where(Change.requirement_id == requirement.id,
+                             Change.status.in_(changes.LIVE[:2]))
+    ).scalars():
+        changes.queue_scenarios(session, ctx.project, change)
+        changes.evaluate(session, ctx.project, change)
+    return {"id": row.id, "requirement": requirement.key,
+            "hidden": len(changes.live_scenarios(session, requirement.id))}
+
+
+@router.get("/scenarios")
+def list_scenarios(ctx: RunContext = Depends(run_auth),
+                   session: Session = Depends(db)) -> dict:
+    """A challenge seat reads the scenarios. Any other seat reads how many
+    guard each requirement — and only that."""
+    from yaaf.core.models import Scenario
+    from yaaf.server import changes
+
+    changes.require_factory(ctx.project)
+    if not policy.is_review_seat(session, ctx.agent):
+        return {"counts": changes.scenario_counts(session, ctx.project),
+                "note": "Hidden on purpose: you are judged by these, so you do not "
+                        "read them. Make the requirement true and they pass."}
+    rows = session.execute(
+        select(Scenario).where(Scenario.project_id == ctx.project.id,
+                               Scenario.retired_at.is_(None))
+    ).scalars()
+    return {"scenarios": [{"id": r.id, "requirement_id": r.requirement_id, "name": r.name,
+                           "command": r.command} for r in rows],
+            "counts": changes.scenario_counts(session, ctx.project)}
 
 
 @router.post("/tasks/{task_id}/review")
@@ -1671,10 +1844,14 @@ def propose_requirement(
     policy.check_proposals_after_delivery(session, ctx.project, cons)
     policy.check_plan_affordable(session, ctx.project, cons, body.est_runs or 0)
     if (body.recurrence == Recurrence.STANDING
-            and ctx.project.mode != ProjectMode.OPERATE):
+            and not shape.runs_on_cycles(ctx.project)):
         raise Refusal(
-            "A standing requirement is owed again every cycle, and only Operate runs "
-            f"on cycles — this project is {ctx.project.mode}. Here a requirement is a "
+            "A standing requirement is owed again every cycle, and only Operate — and "
+            "a Code Factory once it is in upkeep — runs on cycles; this project is "
+            f"{shape.label(ctx.project.mode)}"
+            + (" and still being built. Propose it after the hand-over, when upkeep "
+               "starts counting it" if shape.is_factory(ctx.project) else "")
+            + ". Here a requirement is a "
             "thing that must be true at the end, so one that never closed would be one "
             "the project could never satisfy.",
             status_code=422,
@@ -2054,11 +2231,13 @@ def set_cycle_goal(
             "suggestion survives your run.",
             status_code=403,
         )
-    if ctx.project.mode != ProjectMode.OPERATE:
+    if not shape.runs_on_cycles(ctx.project):
         raise Refusal(
-            f"Cycles belong to Operate projects; this one is {ctx.project.mode}. "
-            "Deliver promises a date through a commitment, and Explore has a window "
-            "rather than a rhythm.",
+            "Cycles belong to Operate projects and to a Code Factory in upkeep; this "
+            f"one is {shape.label(ctx.project.mode)}"
+            + (", still being built. " if shape.is_factory(ctx.project) else ". ")
+            + ("Deliver, and a factory being built, promise a date through a "
+               "commitment; Explore has a window rather than a rhythm."),
             status_code=422,
         )
     cycle = policy.current_cycle(session, ctx.project.id)
@@ -2343,7 +2522,7 @@ def _report_serves(session: Session, project: Project) -> dict[str, str]:
         for r in policy.scope_requirements(session, project.id):
             if r.status in policy.OPEN_REQUIREMENT_STATUSES:
                 allowed[r.key.upper()] = r.key
-        if project.mode == ProjectMode.OPERATE and policy.current_cycle(session, project.id):
+        if shape.runs_on_cycles(project) and policy.current_cycle(session, project.id):
             allowed["CYCLE"] = "cycle"
     return allowed
 
@@ -2469,7 +2648,7 @@ def file_review_report(
             what = (
                 "a live bet, by id" if ctx.project.mode == ProjectMode.EXPLORE
                 else "an open requirement, by key"
-                + (", or `cycle`" if ctx.project.mode == ProjectMode.OPERATE else "")
+                + (", or `cycle`" if shape.runs_on_cycles(ctx.project) else "")
             )
             raise Refusal(
                 f"`next` item {item.what[:80]!r} serves {item.serves!r}, which is not "
@@ -4023,6 +4202,15 @@ def credential_scope(
             "permission — so there is no grant to re-scope. Who gets a source is the "
             "chairman's tick on Data sources; what it may be called with is his too: "
             "ask with tool_permission_request.", status_code=403)
+    reserved = {"deploy", "preview"}
+    if reserved & set(row.role_scopes or []) or reserved & set(body.add_roles):
+        # Production's deploy credentials are the platform's to use, after a
+        # release passes its rules. Re-scoped by an agent, they would be one
+        # `curl` away from shipping around every one of them.
+        raise Refusal(
+            f"{name!r} is a production deploy credential. The platform deploys with "
+            "it; no seat holds it, and no agent may change who does. The chairman "
+            "manages it in Settings.", status_code=403)
     scopes = list(row.role_scopes or [])
     was = list(scopes)
     for slug in body.add_roles:

@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids, inbox
+from yaaf.core import ids, inbox, shape
 from yaaf.core.config import settings
 from yaaf.core.constitution import (
     ConstitutionDoc,
@@ -82,7 +82,20 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import asks as ask_lib
-from yaaf.server import briefing, metrics, plain, policy, scorecard, staffing, standing, writing
+from yaaf.server import (
+    briefing,
+    changes,
+    metrics,
+    plain,
+    policy,
+    pressure,
+    releases,
+    scorecard,
+    staffing,
+    standing,
+    upkeep,
+    writing,
+)
 from yaaf.server.notify import (
     Attention,
     boardroom_line,
@@ -215,6 +228,14 @@ def _janitor_project(session: Session, project: Project) -> None:
     roll_cycles(session, project, cons)
     check_explore_deadline(session, project)
     check_delivery_ready(session, project)
+    # Code Factory: judge pushes to main first, so a bypass freezes merging
+    # before this tick merges anything on top of it.
+    changes.reconcile_main(session, project)
+    changes.merge_ready(session, project)
+    releases.watch(session, project)
+    upkeep.refresh_packages(session, project)
+    upkeep.queue_main_health(session, project)
+    pressure.check_recurring(session, project)
     warn_drought(session, project, cons)
     warn_stall(session, project, cons)
     warn_memory_pressure(session, project, cons)
@@ -542,7 +563,7 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
     inline from three different callers, and a hook misses every one it was
     not wired to.
     """
-    if project.mode == ProjectMode.OPERATE:
+    if shape.runs_on_cycles(project):
         void_operate_commitments(session, project)
         return
     commitment = policy.live_commitment(session, project.id)
@@ -860,7 +881,7 @@ def judge_standing(session: Session, project: Project, cons: ConstitutionDoc) ->
     a report owed every morning always has tomorrow's run open, so the trigger
     every other requirement uses never fires for it.
     """
-    if project.mode != ProjectMode.OPERATE:
+    if not shape.runs_on_cycles(project):
         return 0
     queued = standing.judge_due(session, project.id,
                                 policy.current_cycle(session, project.id), cons.timezone)
@@ -951,7 +972,7 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
     paused across many boundaries resumes into ONE new cycle — the janitor
     never touches paused projects, so no boundaries "queue up".
     """
-    if project.mode != ProjectMode.OPERATE:
+    if not shape.runs_on_cycles(project):
         return
     cycle = policy.current_cycle(session, project.id)
     now = utcnow()
@@ -966,6 +987,9 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
         return
 
     scope = policy.scope_requirements(session, project.id)  # the open cycle's
+    # A Code Factory's upkeep promises get their week's verdict now, from the
+    # repo's own reports, before the scorecard reads them.
+    upkeep.judge_at_roll(session, project, cycle, scope, now)
     card = scorecard.build(session, cycle, scope, cons.timezone, now)
     # What is in force: cut scope was decided, not missed, and is not in the
     # denominator. Three cut versions of one daily report rode along in it for
@@ -1069,6 +1093,7 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
         ))
 
     new = _open_cycle(session, project, cycle.ordinal + 1)
+    upkeep.write_promises(session, project, new)
     carried = [r for r in unsettled if r.recurrence != Recurrence.STANDING] + [
         r for r in scope if r.status == RequirementStatus.PROPOSED]
     for requirement in carried:
@@ -1215,7 +1240,7 @@ def check_delivery_ready(session: Session, project: Project) -> None:
     sitting, asking why the project was still running), and the CEO — which had
     no way at all to learn that its own project had finished.
     """
-    if project.mode != ProjectMode.DELIVER:
+    if not shape.ships_once(project):
         return
     if delivery_outstanding(session, project):
         return
@@ -1255,7 +1280,9 @@ def check_delivery_ready(session: Session, project: Project) -> None:
         return (
             f"Every requirement is settled and {len(met)} of them are true: "
             f"{', '.join(r.key for r in met)}. Confirm completion {where} — it writes the "
-            "delivery receipt and closes the project down cleanly"
+            + ("delivery receipt and moves the project into upkeep, where it runs on "
+               "cycles from here" if shape.is_factory(project)
+               else "delivery receipt and closes the project down cleanly")
             + (f" — or it completes itself {at} unless scope moves first. Either way "
                "you can reopen it for 14 days. "
                if cons.complete_after_hours > 0 else ". ")
@@ -1324,6 +1351,17 @@ def _complete_itself(session: Session, project: Project, announced_at) -> bool:
     ))
     money = f"${receipt['cost_usd']:,.2f}"
     reqs = "requirement" if receipt["met"] == 1 else "requirements"
+    if done.get("handed_over"):
+        body = (f"Built: {receipt['met']} {reqs} true, {receipt['cut']} cut, "
+                f"{receipt['runs_total']} runs, {money}, {receipt['duration_days']} days. "
+                f"It had stood finished since {told}, so the build closed itself, wrote "
+                "the receipt, and moved into upkeep: cycle 1 is open and the CEO plans "
+                "it first." + project_link(project.id, "", "Open the project"))
+        chairman_notify(session, project, "built and handed over to upkeep", body,
+                        attention=Attention.FYI)
+        boardroom_line(session, project.id, body)
+        log.info("factory %s handed itself over to upkeep", project.slug)
+        return True
     # Two links, because the sentence names two places: what was delivered, and
     # the project page, where Reopen is. It linked only the first, so "reopen it
     # on the project page" sent him somewhere Reopen was not.
@@ -1604,8 +1642,8 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
 
     velocity = numbers["velocity"]
     commitment = numbers["commitment"]
-    headline = review_record.headline(project.mode, numbers, record)
-    board = review_record.board(project.mode, numbers, record)
+    headline = review_record.headline(shape.behaves_as(project), numbers, record)
+    board = review_record.board(shape.behaves_as(project), numbers, record)
     prior_lines = ""
     if numbers.get("prior", {}).get("decisions"):
         bought = numbers["prior"]["bought"]

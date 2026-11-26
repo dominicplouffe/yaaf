@@ -45,7 +45,7 @@ function plural(n: number, word: string): string {
 function hasDelivered(ctx: ProjectCtx): boolean {
   const { dash } = ctx;
   return dash.status === "completed"
-    || (dash.mode === "deliver" && Array.isArray(dash.delivery_outstanding) && dash.delivery_outstanding.length === 0);
+    || (dash.shape === "deliver" && Array.isArray(dash.delivery_outstanding) && dash.delivery_outstanding.length === 0);
 }
 
 function SealCounts({ data }: { data: ResultsView }) {

@@ -71,6 +71,11 @@ CHAIRMAN_NOTE = "cnot"  # his note on a decision, held until the CEO answers it
 MAIL_THREAD = "mthr"  # one correspondence from the project mailbox
 MAIL_MESSAGE = "mmsg"  # one email in it, either way
 DATA_SOURCE_TOOL = "dstl"  # one tool a data source offers, and its permission
+CHANGE = "chg"  # one pull request in a Code Factory, as the platform sees it
+SCENARIO = "scen"  # a hidden acceptance scenario builders never read
+RELEASE = "rel"  # one Code Factory version going to production
+INCIDENT = "inc"  # production went wrong, as the platform recorded it
+FACTORY_SIGNAL = "fsig"  # one fact a factory's repo reported, written by the platform
 
 
 def new_id(prefix: str) -> str:

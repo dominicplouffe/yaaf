@@ -77,7 +77,7 @@ the last verdict.
 question when it is open and a ledger entry, with its one-line reason, once it
 is settled — none of them may be skipped:
 
-- **The shape call and why** — Explore, Deliver or Operate, and what he loses
+- **The shape call and why** — Explore, Deliver, Operate or Code Factory, and what he loses
   if you picked wrong. Frozen at creation, so it is always asked.
 - **What you added that he did not ask for** — anti-metrics, a quality bar, a
   failure deliverable, and above all the standard: the only decision that

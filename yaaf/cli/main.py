@@ -707,7 +707,10 @@ def _await_turn(client: httpx.Client, thread: dict,
 def _draft_lines(bundle: dict) -> list[str]:
     """The draft at a glance — enough to decide whether to found it."""
     p = bundle.get("project") or {}
-    lines = [f"Draft: {p.get('name')} ({p.get('slug')}) — {p.get('mode', 'explore')}",
+    from yaaf.core import shape
+
+    lines = [f"Draft: {p.get('name')} ({p.get('slug')}) — "
+             f"{shape.label(p.get('mode', 'explore')).lower()}",
              f"  Goal: {p.get('goal')}",
              f"  CEO: {p.get('ceo_name', 'CEO')} ({p.get('ceo_role_slug', 'ceo')})"]
     for team in p.get("teams") or []:

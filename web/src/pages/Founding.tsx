@@ -15,6 +15,7 @@ import Markdown from "../Markdown";
 import { BaseUrlFields, DEFAULT_PROVIDER, KeyHelp, KeyInput, useProviders } from "../providers";
 import { SEND_HINT, sendOnEnter } from "../ui";
 import { Badge } from "../ui/kit";
+import { modeLabel } from "../ui/project";
 import type { Credential } from "../llmCredentials";
 import { Why } from "./NewProject";
 import {
@@ -337,7 +338,7 @@ function DraftPanel({ bundle, changed = [], rules = [], roles = [] }: {
     <div className="card">
       <h3>{p.name}</h3>
       <p className="muted">
-        {p.mode} · {p.teams?.length ?? 0} {(p.teams?.length ?? 0) === 1 ? "team" : "teams"}
+        {modeLabel(p.mode ?? "explore")} · {p.teams?.length ?? 0} {(p.teams?.length ?? 0) === 1 ? "team" : "teams"}
         {" "}· {headcount} {headcount === 1 ? "person" : "people"}
         {by ? ` · by ${by}` : ""}
         <Moved on={changed.includes("shape")} />

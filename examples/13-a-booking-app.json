@@ -1,0 +1,98 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "a-booking-app",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "a-booking-app",
+    "name": "A booking app",
+    "goal": "A booking web app for small physio clinics. Patients pick a free slot, pay a $20 deposit, and can reschedule or cancel up to 24 hours ahead for free. Clinic staff manage their calendars and see the day's list. Live for a three-clinic pilot. Card data never touches our servers. It must work on a cheap phone on a slow connection. Done means every requirement is proven by the platform's own checks and hidden scenarios, v1.0 is live behind a health check, and the code is kept on a weekly rhythm after.",
+    "billing_mode": "api_key",
+    "mode": "code_factory",
+    "controlled_domains": [],
+    "github_repo": null,
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 2.0,
+      "chairman_report_window_local": "08:00-21:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 6,
+      "monthly_usd_cap": 400,
+      "approval_threshold_usd": 15,
+      "drought_hours": 168,
+      "external_ratio_min": 0.0,
+      "max_usd_per_run": 3.0,
+      "release_authority": "approve_first",
+      "max_change_lines": 400,
+      "hidden_scenarios": true,
+      "stakes": "high"
+    },
+    "integrations": {
+      "runtime": "agent_sdk",
+      "factory_start": "new"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "tech-lead",
+    "ceo_name": "Ines",
+    "ceo_daily_at": null,
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "architect",
+        "name": "Architecture",
+        "employees": [
+          "Theo"
+        ]
+      },
+      {
+        "role_slug": "engineer",
+        "name": "Build",
+        "employees": [
+          "Mika",
+          "Dev"
+        ],
+        "lead": "Mika"
+      },
+      {
+        "role_slug": "code-reviewer",
+        "name": "Review",
+        "employees": [
+          "Rhea"
+        ]
+      },
+      {
+        "role_slug": "test-engineer",
+        "name": "Test",
+        "employees": [
+          "Quinn"
+        ]
+      },
+      {
+        "role_slug": "security-engineer",
+        "name": "Security",
+        "employees": [
+          "Sasha"
+        ]
+      },
+      {
+        "role_slug": "plan-adversary",
+        "name": "Plan review",
+        "employees": [
+          "Juno"
+        ]
+      },
+      {
+        "role_slug": "release-engineer",
+        "name": "Release",
+        "employees": [
+          "Omar"
+        ]
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": []
+}

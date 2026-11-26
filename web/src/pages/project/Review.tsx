@@ -1048,9 +1048,9 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
               </span>
             </summary>
             <div style={{ marginTop: 10 }}>
-              <RecordSection record={open.record} mode={ctx.dash.mode} />
+              <RecordSection record={open.record} mode={ctx.dash.shape} />
             </div>
-            <NumbersTiles n={open.numbers} mode={ctx.dash.mode} record={open.record}
+            <NumbersTiles n={open.numbers} mode={ctx.dash.shape} record={open.record}
               requirements={requirements ?? []} />
           </details>
         </div>

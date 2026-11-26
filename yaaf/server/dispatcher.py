@@ -213,6 +213,9 @@ UNMETERED_RUN_KINDS = (
     *TALK_RUN_KINDS,
     RunKind.SUCCESS_CHECK,
     RunKind.REQUIREMENT_CHECK,
+    RunKind.SCENARIO_CHECK,
+    RunKind.DEPLOY,
+    RunKind.CHANGE_SCAN,
 )
 
 # Kinds that spend the INBOX allowance instead of the work allowance. Same
@@ -2072,9 +2075,10 @@ def _wake_reasons(
         #     new cycle is to read the narratives and plan; governance-classed
         #     for the same reason the review is — a rhythm that rolled on a
         #     spent day still deserves its planning run.
-        from yaaf.core.models import ProjectMode, RequirementStatus
+        from yaaf.core import shape
+        from yaaf.core.models import RequirementStatus
 
-        if project.mode == ProjectMode.OPERATE:
+        if shape.runs_on_cycles(project):
             plan_row = policy.plan_requirement(session, project.id)
             if plan_row is not None and plan_row.status != RequirementStatus.MET:
                 reasons.append({"kind": "cycle_plan"})

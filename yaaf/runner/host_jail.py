@@ -586,10 +586,12 @@ def run_agent(*, entrypoint: str, workspace_dir: str, env: dict[str, str],
                env=env, timeout_s=timeout_s, stop_event=stop_event, entries=True)
 
 
-def run_check(command: str, workspace_dir: str, timeout_s: int) -> tuple[int, str]:
+def run_check(command: str, workspace_dir: str, timeout_s: int,
+              env: dict[str, str] | None = None) -> tuple[int, str]:
     """A success test or acceptance test: an agent-authored shell command, so
-    it gets the jail and no credentials at all — the job env is empty."""
-    code, output = run(["bash", "-lc", command], workspace_dir=workspace_dir, env=None,
+    it gets the jail and no credentials at all — the job env is empty. A Code
+    Factory deploy is the one platform command that carries `env`."""
+    code, output = run(["bash", "-lc", command], workspace_dir=workspace_dir, env=env,
                        timeout_s=timeout_s,
                        timeout_note=f"success test timed out after {timeout_s}s")
     return code, output[-8000:]

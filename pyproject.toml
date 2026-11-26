@@ -38,6 +38,9 @@ dev = [
     # count rather than test count.
     "pytest-split>=0.9",
     "ruff>=0.5",
+    # The Code Factory health ratchet measures complexity with lizard in the
+    # sandbox image; its tests run the same tool on a real checkout.
+    "lizard==1.17.10",
     # The deployment tests read deploy/docker-compose.yml as data.
     "pyyaml>=6",
     # The sandbox's Messages API client (deploy/sandbox/Dockerfile), never the

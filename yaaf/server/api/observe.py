@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import artifacts
+from yaaf.core import artifacts, shape
 from yaaf.core.constitution import (
     TEMPO_COPY,
     TEMPO_PRESETS,
@@ -713,7 +713,7 @@ def _current_cycle_view(session: Session, project: Project) -> dict | None:
     that was not going to be written in time. The goal, the due-by and the
     platform's own arithmetic about reaching it all belong in the same line.
     """
-    if project.mode != "operate":
+    if not shape.runs_on_cycles(project):
         return None
     from yaaf.server.janitor import next_cycle_roll
 
@@ -912,13 +912,20 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "ceo_judgment": policy.ceo_judgment(session, project.id),
         "constitution": cons.model_dump(),
         "mode": project.mode,
+        # A Code Factory's half of its life: build (reads as Deliver) or upkeep
+        # (reads as Operate). Null for every other mode.
+        "factory_phase": project.factory_phase,
+        # What the screens gate on: explore | deliver | operate. A factory being
+        # built reads as Deliver and one in upkeep as Operate, so no screen has
+        # to learn a fourth shape to draw the right one of three.
+        "shape": shape.behaves_as(project),
         # Explore's window; Deliver's completion readiness; Operate's current
         # turn. Mode-shaped facts, one each, so the Overview can show the one
         # that applies without three extra requests.
         "deadline": project.deadline.isoformat() if project.deadline else None,
         "delivery_outstanding": (
             _delivery_outstanding(session, project)
-            if project.mode == "deliver" and project.status == "running" else None),
+            if shape.ships_once(project) and project.status == "running" else None),
         "cycle": _current_cycle_view(session, project),
         "integrations": project.integrations or {},
         "github_repo": project.github_repo,
@@ -1360,7 +1367,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         # Deliver and Operate project, and gives the reason: the CEO wrote the
         # plan and on an autonomous project also accepted it, so it is the only
         # reader of that plan with no distance from it.
-        if project.mode in (ProjectMode.DELIVER, ProjectMode.OPERATE):
+        if shape.has_scope(project):
             categories = {
                 role.category
                 for role in session.execute(
@@ -1397,7 +1404,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         # obligation by hand every cycle. `Recurrence.STANDING` exists for
         # exactly this and names it: expressed as TERMINAL, a project that had
         # shipped 1 of 38 memos looked finished.
-        if project.mode == ProjectMode.OPERATE:
+        if shape.runs_on_cycles(project):
             standing = session.execute(
                 select(func.count(Requirement.id)).where(
                     Requirement.project_id == project.id,
@@ -1520,7 +1527,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             per_run = policy.avg_usd_per_run_box(session)
             cap = rules["monthly_usd_cap"] if project.billing_mode == "api_key" else None
             switch_fits_budget = False
-            if project.mode == ProjectMode.OPERATE:
+            if shape.runs_on_cycles(project):
                 wanted = tempo_for("operate", rules.get("cycle_frequency"))
                 moved = _rhythm_moved_after_pace(session, project.id)
                 if (on is not None and on != wanted and moved is not False
@@ -1704,6 +1711,67 @@ def health_sig(key: str, detail: str) -> str:
     return hashlib.sha1(f"{key}|{masked}".encode()).hexdigest()[:12]
 
 
+@router.get("/projects/{project_id}/changes", dependencies=[authority.READ])
+def project_changes(project_id: str, session: Session = Depends(db)) -> dict:
+    """A Code Factory's pull requests as the platform holds them: every gate,
+    who checked it, and whether merging is frozen."""
+    from yaaf.server import changes
+
+    project = _project(session, project_id)
+    frozen = changes.merges_frozen(session, project) if shape.is_factory(project) else None
+    return {"changes": changes.listing(session, project) if shape.is_factory(project) else [],
+            "merges_frozen": ({"flag_id": frozen.id, "summary": frozen.summary}
+                              if frozen is not None else None),
+            "branch_protection": (project.integrations or {}).get("branch_protection")}
+
+
+@router.get("/projects/{project_id}/factory", dependencies=[authority.READ])
+def project_factory(project_id: str, session: Session = Depends(db)) -> dict:
+    """A Code Factory's line, stage by stage, and its numbers."""
+    from yaaf.server import factory_view
+
+    project = _project(session, project_id)
+    if not shape.is_factory(project):
+        return {"phase": None, "rail": [], "vitals": {}}
+    return factory_view.summary(session, project)
+
+
+@router.get("/changes/{change_id}/preview.png", dependencies=[authority.READ])
+def change_preview_png(change_id: str, session: Session = Depends(db)):
+    """What a change's preview looked like on its current commit, as the
+    platform photographed it."""
+    from yaaf.core import artifacts
+    from yaaf.core.models import Change
+
+    change = session.get(Change, change_id)
+    preview = ((change.findings or {}).get("preview") or {}) if change else {}
+    if change is None or preview.get("sha") != change.head_sha \
+            or not preview.get("screenshot_uri"):
+        raise HTTPException(status_code=404, detail="no screenshot of this commit")
+    return Response(content=artifacts.read_uri(preview["screenshot_uri"]),
+                    media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
+
+
+@router.get("/provenance_key", dependencies=[authority.SIGNED_IN])
+def provenance_key(session: Session = Depends(db)) -> dict:
+    """The public half of the key this install signs release provenance with.
+    Anyone holding a release's statement and signature can check them with it."""
+    from yaaf.server import provenance
+
+    return {"algorithm": "Ed25519", "public_key_pem": provenance.public_key_pem(session)}
+
+
+@router.get("/projects/{project_id}/releases", dependencies=[authority.READ])
+def project_releases(project_id: str, session: Session = Depends(db)) -> dict:
+    """A Code Factory's releases and incidents, as the platform recorded them."""
+    from yaaf.server import releases
+
+    project = _project(session, project_id)
+    if not shape.is_factory(project):
+        return {"releases": [], "incidents": [], "production": False}
+    return releases.listing(session, project)
+
+
 @router.get("/projects/{project_id}/plan", dependencies=[authority.READ])
 def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
     """Everything the Plan screen draws, in one request.
@@ -1765,7 +1833,7 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
     # Deliver only. An Operate project has no finish line for a promise or a
     # burn-up to point at — its dates are its cycles' — and the rows an Operate
     # project picked up before that was refused are void, not history to draw.
-    commitment_row = None if project.mode == ProjectMode.OPERATE else session.execute(
+    commitment_row = None if shape.runs_on_cycles(project) else session.execute(
         select(Commitment).where(Commitment.project_id == project.id)
         .order_by(Commitment.created_at.desc()).limit(1)
     ).scalar_one_or_none()
@@ -1835,6 +1903,9 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
 
     return {
         "mode": project.mode,
+        # The shape the screens gate on: a factory being built reads as
+        # Deliver, one in upkeep as Operate (`yaaf.core.shape`).
+        "shape": shape.behaves_as(project),
         "planless": False,
         "plan": {
             "status": plan.status if plan else None,
@@ -3509,10 +3580,10 @@ def reviews(project_id: str, session: Session = Depends(db)) -> dict:
             # facts — composed here rather than stored, so it is a function
             # of the record and cannot be edited into disagreeing with it.
             "record": r.record,
-            "headline": review_record.headline(project.mode, r.numbers, r.record),
+            "headline": review_record.headline(shape.behaves_as(project), r.numbers, r.record),
             # The board report's platform half — status, plan against actual,
             # what did not go to plan — composed here for the same reason.
-            "board": review_record.board(project.mode, r.numbers, r.record),
+            "board": review_record.board(shape.behaves_as(project), r.numbers, r.record),
             # The structured filing, or None on a meeting filed the old way —
             # which the screen renders the old way rather than inventing a
             # `next` list the CEO never wrote.

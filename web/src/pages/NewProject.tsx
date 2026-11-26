@@ -197,6 +197,9 @@ const MODES = [
   { value: "operate", label: "Operate",
     blurb: "Run the same play on a rhythm, and get better at it every cycle.",
     example: "\u201CA weekly blog post, tracked and improved.\u201D" },
+  { value: "code_factory", label: "Code Factory",
+    blurb: "Build software and keep it healthy. The platform tests every change and only it can merge.",
+    example: "\u201CA booking app for physio clinics\u201D, or \u201Ckeep our invoice API patched and shipping.\u201D" },
 ] as const;
 
 // The authority dial: who holds the verbs. A preset is
@@ -349,6 +352,9 @@ export default function NewProject() {
   // mode is frozen at creation and Explore hides the Plan tab by design.
   const [modeNotice, setModeNotice] = useState<string | null>(null);
   const [exploreDeadline, setExploreDeadline] = useState("");
+  // Code Factory: build from nothing, or adopt a repo that already exists.
+  const [factoryStart, setFactoryStart] = useState<"new" | "repo">("new");
+  const [factoryRepo, setFactoryRepo] = useState("");
   // Autonomous unless the chairman says otherwise — the same default the
   // server applies to a spec that never mentions the dial.
   const [autonomy, setAutonomy] = useState("autonomous");
@@ -559,7 +565,10 @@ export default function NewProject() {
       it: the form only pre-selects, and the server fills the same silence the
       same way for the Founder, a spec file and the MCP surface. */
   function derivedTempo(): string {
-    if (mode !== "operate") return "live";
+    // A factory that adopts a repo is kept from day one, so it paces like
+    // Operate; one built from nothing paces like Deliver (`shape.behaves_as`).
+    const cycles = mode === "operate" || (mode === "code_factory" && factoryStart === "repo");
+    if (!cycles) return "live";
     const frequency = String(
       (bundle?.project.constitution as Record<string, unknown> | undefined)
         ?.cycle_frequency ?? "weekly");
@@ -956,7 +965,7 @@ export default function NewProject() {
     if (tempoTouched || !tempoPresets.length) return;
     applyTempoPreset(derivedTempo(), tempoPresets, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, tempoPresets.length, tempoTouched]);
+  }, [mode, factoryStart, tempoPresets.length, tempoTouched]);
 
   // Once, on arrival. A draft is a proposal to review, so it fills the form
   // and stops there — the chairman still presses Create.
@@ -1123,6 +1132,9 @@ export default function NewProject() {
           mode,
           ...(mode === "explore" && exploreDeadline
             ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
+          ...(mode === "code_factory" ? { factory_start: factoryStart } : {}),
+          ...(mode === "code_factory" && factoryStart === "repo" && factoryRepo.trim()
+            ? { github_repo: factoryRepo.trim() } : {}),
           controlled_domains: controlledDomains
             .split(",")
             .map((d) => d.trim())
@@ -1696,6 +1708,32 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               <Why>
                 Open scope, bounded time — “one sale in the next 60 days.” When it
                 passes you are told and the judgment is yours; nothing pauses itself.
+              </Why>
+            </div>
+          )}
+          {mode === "code_factory" && (
+            <div style={{ marginTop: 14 }}>
+              <label className="field">Start from</label>
+              <Cards label="Start from" value={factoryStart}
+                onPick={(value) => setFactoryStart(value as "new" | "repo")}
+                options={[
+                  { value: "new", label: "Nothing yet",
+                    line: "A new repo. CI, branch rules and hidden tests come before any feature." },
+                  { value: "repo", label: "A repo I already have",
+                    line: "The crew reads first: a read-only report and a proposed upkeep charter." },
+                ]} />
+              {factoryStart === "repo" && (
+                <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "baseline",
+                  flexWrap: "wrap" }}>
+                  <label className="field" style={{ margin: 0 }} htmlFor="np-repo">Repository</label>
+                  <input id="np-repo" value={factoryRepo} placeholder="owner/name"
+                    onChange={(e) => setFactoryRepo(e.target.value)} style={{ width: 260 }} />
+                </div>
+              )}
+              <Why>
+                {factoryStart === "new"
+                  ? "Built first, to a date you can sign, then kept on a weekly rhythm — the same project, without rebuilding it."
+                  : "A repo with users is kept from day one: it runs on a weekly rhythm, and nothing is written to it until you accept the crew's charter."}
               </Why>
             </div>
           )}

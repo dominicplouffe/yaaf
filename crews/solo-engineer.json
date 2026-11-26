@@ -1,0 +1,25 @@
+{
+  "slug": "solo-engineer",
+  "name": "Solo engineer",
+  "outcome": "A small tool, built and kept by one builder with one reader who signs every change.",
+  "ceo_role_slug": "tech-lead",
+  "domains": [
+    "general"
+  ],
+  "teams": [
+    {
+      "role_slug": "engineer",
+      "name": "Build",
+      "employees": [
+        "Mika"
+      ]
+    },
+    {
+      "role_slug": "code-reviewer",
+      "name": "Review",
+      "employees": [
+        "Rhea"
+      ]
+    }
+  ]
+}

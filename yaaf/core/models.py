@@ -172,6 +172,9 @@ class MetricSourceKind(enum.StrEnum):
 
     HTTP_JSON = "http_json"  # GET a JSON document, read one path out of it
     LEDGER = "ledger"        # sum a LedgerKind over the project's own ledger
+    # A Code Factory's upkeep, read from what its repo reported through signed
+    # webhooks and what package registries say — `yaaf.server.upkeep`.
+    FACTORY = "factory"
 
 
 class ProjectMode(enum.StrEnum):
@@ -179,7 +182,10 @@ class ProjectMode(enum.StrEnum):
 
     EXPLORE is the open-ended arm — a goal, bets, evidence, and the chairman's
     judgement on when it has earned its keep. DELIVER ships one thing and then
-    finishes. OPERATE is a DELIVER that starts again on a rhythm.
+    finishes. OPERATE is a DELIVER that starts again on a rhythm. CODE_FACTORY
+    builds software and then keeps it: a DELIVER while it is built, an OPERATE
+    once it is in upkeep (`FactoryPhase`), without being rebuilt in between —
+    the yes/no questions each phase answers live in `yaaf.core.shape`.
 
     The field exists from the first stage of the rebuild because the rules
     differ by mode: outside EXPLORE a task must serve a requirement. What later
@@ -190,6 +196,19 @@ class ProjectMode(enum.StrEnum):
     EXPLORE = "explore"
     DELIVER = "deliver"
     OPERATE = "operate"
+    CODE_FACTORY = "code_factory"
+
+
+class FactoryPhase(enum.StrEnum):
+    """Where a Code Factory is in its life. BUILD ships to a date the way
+    Deliver does; UPKEEP runs on cycles the way Operate does. The move is one
+    way, and it is the delivery's completion — the receipt is written and the
+    project keeps running, with its whole history, into its first cycle. A
+    factory that adopts an existing repo starts in UPKEEP: its code already
+    has users before the crew writes a line."""
+
+    BUILD = "build"
+    UPKEEP = "upkeep"
 
 
 class FlagKind(enum.StrEnum):
@@ -245,6 +264,11 @@ class FlagKind(enum.StrEnum):
     # work for two days and spent 139 million tokens, and the only thing that
     # noticed was the chairman reading a token bill.
     SEAT_IDLE = "seat_idle"
+    # A Code Factory's main branch moved without the platform moving it. Only
+    # the platform merges, after every gate; a commit that reached main any
+    # other way skipped all of them. Not arithmetic but a fact the repo
+    # reports, and the automatic half: no change merges until it is answered.
+    MAIN_BYPASSED = "main_bypassed"
 
 
 class FlagStatus(enum.StrEnum):
@@ -422,6 +446,14 @@ class RunKind(enum.StrEnum):
     # day's twelve runs were gone by 04:00, and the chairman's "hello" waited
     # until midnight UTC for an allowance that had never been his to spend.
     BOARDROOM_RUN = "boardroom_run"
+    # Code Factory: the platform runs a requirement's hidden scenarios against
+    # one change's head commit, in a checkout no agent's workspace shares.
+    SCENARIO_CHECK = "scenario_check"
+    # Code Factory: the platform runs an environment's deploy (or rollback)
+    # command at one release's commit, with the secrets granted to "deploy".
+    DEPLOY = "deploy"
+    # Code Factory: the platform's own scanners on one change's head commit.
+    CHANGE_SCAN = "change_scan"
 
 
 class ApprovalKind(enum.StrEnum):
@@ -440,6 +472,9 @@ class ApprovalKind(enum.StrEnum):
     # "if we ever want genuinely more runs in a day, that's a separate dial and
     # I'd come to you with what it buys before asking." It had no way to come.
     CAPACITY = "capacity"
+    # A Code Factory release to production that the authority dial leaves with
+    # the chairman. Never granted by silence: shipping is not a default.
+    RELEASE = "release"
     # The human-assist protocol (CEO Charter, stage E): a step only a human
     # can do — a captcha, a 2FA code, a KYC form, an account only he can
     # touch. Any agent may file one; the chairman's answer rides the decision
@@ -577,6 +612,15 @@ class NoticeKind(enum.StrEnum):
     # Not urgent: it can wait out a batching window, because the one thing it
     # must not do is buy a run on every tick of a project that has finished.
     DELIVERY_READY = "delivery_ready"
+    # Code Factory: a challenge seat sent the author's change back, or the
+    # platform refused it; and the platform merged it. Both go to the author,
+    # who otherwise learns only by polling a page.
+    CHANGE_RETURNED = "change_returned"
+    CHANGE_MERGED = "change_merged"
+    # Code Factory releases: decided, live, or rolled back by the guard. The
+    # last opens an incident; the CEO is told so it can write the postmortem.
+    RELEASE_UPDATE = "release_update"
+    INCIDENT_OPENED = "incident_opened"
     # The chairman took a completed delivery back: something is missing. Urgent
     # in the ordinary sense — the project is running again for this reason.
     DELIVERY_REOPENED = "delivery_reopened"
@@ -739,6 +783,9 @@ class Project(Base):
     # behaviour; outside it, a task must serve a requirement.
     mode: Mapped[str] = mapped_column(String(16), default=ProjectMode.EXPLORE,
                                       server_default=ProjectMode.EXPLORE)
+    # Code Factory only: build, then upkeep (FactoryPhase). Null for every
+    # other mode, so no reader can mistake an Operate project for a factory.
+    factory_phase: Mapped[str | None] = mapped_column(String(16))
     chairman_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     # "api_key" | "subscription" — decides the budget's native unit (usd vs tokens)
     billing_mode: Mapped[str] = mapped_column(String(16), default="api_key")
@@ -2258,6 +2305,189 @@ class Account(Base):
     note: Mapped[str | None] = mapped_column(Text)
     created_by_agent_id: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ChangeStatus(enum.StrEnum):
+    """One pull request's life in a Code Factory. Only the platform moves a
+    change to MERGED, and only from READY, which only `changes.evaluate` sets."""
+
+    OPEN = "open"          # opened; gates not yet all green
+    READY = "ready"        # every gate green on the current head; the merge is queued
+    MERGING = "merging"    # the platform has asked GitHub to merge it
+    MERGED = "merged"      # on main, merged by the platform
+    REFUSED = "refused"    # a gate the change can never pass as it stands (size)
+    CLOSED = "closed"      # closed unmerged, by the author or on GitHub
+
+
+class Change(Base):
+    """A pull request, as a record the platform owns rather than a page on
+    GitHub an agent describes.
+
+    Every gate is written by the platform: the size from GitHub's own count,
+    the checks from signed webhooks against this exact head commit, the review
+    from a challenge seat that did not write it — and a new push clears the
+    review, because a signature on code that has since changed signs nothing.
+    """
+
+    __tablename__ = "changes"
+    __table_args__ = (Index("ix_changes_project_status", "project_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
+    requirement_id: Mapped[str | None] = mapped_column(ForeignKey("requirements.id"))
+    author_agent_id: Mapped[str] = mapped_column(String(40))
+    number: Mapped[int | None] = mapped_column(Integer)
+    branch: Mapped[str] = mapped_column(String(255))
+    base: Mapped[str] = mapped_column(String(255), default="main")
+    title: Mapped[str] = mapped_column(String(300))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    head_sha: Mapped[str | None] = mapped_column(String(64))
+    lines_added: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    lines_removed: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    files_changed: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    status: Mapped[str] = mapped_column(String(16), default=ChangeStatus.OPEN)
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    # {check name: conclusion} for head_sha only; reset on every push.
+    checks: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # The last evaluation: {gate: {"ok": bool, "detail": str}}.
+    gates: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    reviewer_agent_id: Mapped[str | None] = mapped_column(String(40))
+    review_verdict: Mapped[str | None] = mapped_column(String(16))  # signed | returned
+    review_note: Mapped[str | None] = mapped_column(Text)
+    reviewed_sha: Mapped[str | None] = mapped_column(String(64))
+    reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    returns: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # What the diff says about itself (`yaaf.server.diffscan`), for head_sha.
+    findings: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # What a signing challenge seat accepted on purpose, pinned to the sha it
+    # read: {"sha", "by", "weaker_tests": reason | None, "packages": [names]}.
+    waivers: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # The chairman's own yes on a change touching a path that needs a person.
+    chairman_sha: Mapped[str | None] = mapped_column(String(64))
+    # Hidden scenarios, run by the platform: {"sha", "results": {id: ok}, "at"}.
+    scenario_results: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    merged_sha: Mapped[str | None] = mapped_column(String(64))
+    merged_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class Scenario(Base):
+    """A hidden acceptance scenario: a command the platform runs against a
+    change, written by a challenge seat, never shown to a seat that builds.
+
+    The point is the one StrongDM made of it: a builder optimising against a
+    test suite it can read will pass the suite. One it cannot read it has to
+    pass by making the requirement true. Builders see how many exist and how
+    many pass, never the text, the inputs or which one failed.
+    """
+
+    __tablename__ = "scenarios"
+    __table_args__ = (Index("ix_scenarios_requirement", "requirement_id"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
+    name: Mapped[str] = mapped_column(String(200))
+    command: Mapped[str] = mapped_column(Text)
+    author_agent_id: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    retired_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class ReleaseStatus(enum.StrEnum):
+    PROPOSED = "proposed"        # waiting on the chairman's yes
+    APPROVED = "approved"        # the deploy is queued
+    DEPLOYING = "deploying"      # the platform is running the deploy command
+    WATCHING = "watching"        # deployed; the canary guard is reading health
+    LIVE = "live"                # the window passed clean
+    ROLLED_BACK = "rolled_back"  # the guard broke; the previous release is back
+    FAILED = "failed"            # the deploy command itself failed
+    REFUSED = "refused"          # the chairman said no
+
+
+class Release(Base):
+    """One version of a Code Factory's software going to production.
+
+    Proposed by a seat, approved by whoever the dial says, deployed by the
+    platform with credentials no seat holds, watched by the platform, and
+    rolled back by the platform when the guard breaks — nobody asked first.
+    It always points at a commit the platform merged."""
+
+    __tablename__ = "releases"
+    __table_args__ = (Index("ix_releases_project", "project_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    version: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(300))
+    sha: Mapped[str] = mapped_column(String(64))
+    notes: Mapped[str] = mapped_column(Text, default="")
+    change_ids: Mapped[list] = mapped_column(JSONVariant, default=list)
+    proposed_by_agent_id: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(16), default=ReleaseStatus.PROPOSED)
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    approval_id: Mapped[str | None] = mapped_column(String(40))
+    previous_release_id: Mapped[str | None] = mapped_column(String(40))
+    # {"ok": n, "failed": n, "last": {...}} while the canary guard reads health.
+    probes: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    deploy_output: Mapped[str | None] = mapped_column(Text)
+    # Where it is going now: "staging" first when the project has one, then
+    # "production". The approval, when the dial asks for one, comes between.
+    environment: Mapped[str] = mapped_column(String(16), default="production",
+                                             server_default="production")
+    # The CycloneDX SBOM syft wrote from the release's commit, in the store.
+    sbom_uri: Mapped[str | None] = mapped_column(Text)
+    # An in-toto statement of what shipped and what it passed, signed with
+    # this install's Ed25519 key (`yaaf.server.provenance`).
+    provenance: Mapped[dict | None] = mapped_column(JSONVariant)
+    provenance_sig: Mapped[str | None] = mapped_column(Text)
+    deployed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    live_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    rolled_back_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Incident(Base):
+    """Production went wrong, written down by the platform as it happened.
+    Opened by the canary guard (or a signed alert), closed by a postmortem
+    the CEO writes and the chairman can read beside the platform's timeline."""
+
+    __tablename__ = "incidents"
+    __table_args__ = (Index("ix_incidents_project", "project_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    release_id: Mapped[str | None] = mapped_column(String(40))
+    number: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(300))
+    severity: Mapped[int] = mapped_column(Integer, default=2)
+    status: Mapped[str] = mapped_column(String(16), default="open")  # open | resolved
+    opened_by: Mapped[str] = mapped_column(String(40))  # canary | alert
+    # [{"at", "what"}], appended by the platform only.
+    timeline: Mapped[list] = mapped_column(JSONVariant, default=list)
+    postmortem: Mapped[str | None] = mapped_column(Text)
+    opened_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class FactorySignal(Base):
+    """One fact about a Code Factory's repo, written only by the platform: from
+    a signed GitHub webhook (main's CI, an issue opened or answered, a
+    Dependabot alert) or from a registry the platform read itself (how far a
+    package is behind). The upkeep promises are measured from these rows and
+    nothing else, so no agent's account of the week enters its verdict."""
+
+    __tablename__ = "factory_signals"
+    __table_args__ = (Index("ix_factory_signals", "project_id", "kind", "at"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    kind: Mapped[str] = mapped_column(String(32))
+    key: Mapped[str] = mapped_column(String(200))
+    data: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class SideEffect(Base):

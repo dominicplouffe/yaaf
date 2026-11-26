@@ -48,6 +48,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.core.tokens import mint
+from yaaf.runner import health
 from yaaf.runner.backends import get_backend
 from yaaf.runner.types import RunJob, RunResult
 from yaaf.runtimes import catalog
@@ -238,7 +239,7 @@ def _plan_reopens(session: Session, project: Project, provider: str, shut: set[s
 def _queued_seat(session: Session, queued: RunQueue, project: Project):
     """The seat a queued run will execute on, or None for a run that calls no
     model (a check)."""
-    if queued.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK) or not queued.agent_id:
+    if queued.kind in CHECK_KINDS or not queued.agent_id:
         return None
     agent = session.get(Agent, queued.agent_id)
     if agent is None:
@@ -293,6 +294,13 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
         job.check_command = (task.success_test or {}).get("command", "")
         job.timeout_s = min(cons.run_timeout_s, 300)
         return job
+
+    if queued.kind == RunKind.SCENARIO_CHECK:
+        return _materialize_scenarios(session, queued, project, run, job, cons)
+    if queued.kind == RunKind.DEPLOY:
+        return _materialize_deploy(session, queued, project, run, job, cons)
+    if queued.kind == RunKind.CHANGE_SCAN:
+        return _materialize_change_scan(session, queued, project, run, job, cons)
 
     if queued.kind == RunKind.REQUIREMENT_CHECK:
         requirement = session.get(Requirement, queued.requirement_id)
@@ -875,7 +883,13 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
         # a sandbox with no token, no prompt and no billing credential, which
         # dies as "Not logged in" and returns no exit code at all: the
         # requirement then fails a test that never ran, forever.
-        if job.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK):
+        if job.kind == RunKind.SCENARIO_CHECK:
+            result = _run_scenarios(job)
+        elif job.kind == RunKind.DEPLOY:
+            result = _run_deploy(job)
+        elif job.kind == RunKind.CHANGE_SCAN:
+            result = _run_change_scan(job)
+        elif job.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK):
             result = _run_check_command(job)
         elif (refused := _mint_token(job)) is not None:
             result = refused
@@ -1071,6 +1085,12 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
             _finalize_success_check(session, job, result)
         elif job.kind == RunKind.REQUIREMENT_CHECK:
             _finalize_requirement_check(session, job, result)
+        elif job.kind == RunKind.SCENARIO_CHECK:
+            _finalize_scenario_check(session, job, result)
+        elif job.kind == RunKind.DEPLOY:
+            _finalize_deploy(session, job, result)
+        elif job.kind == RunKind.CHANGE_SCAN:
+            _finalize_change_scan(session, job, result)
         elif run.status == RunStatus.FAILED:
             if project is not None and _looks_like_credential_failure(run):
                 _flag_credential_failure(session, project, run)
@@ -1650,6 +1670,497 @@ def _block_on_repeated_check_failure(
             + project_link(project.id, "tasks", "See the task"),
             attention=Attention.ALARM,
         )
+
+
+#: Runs the platform executes itself, reading exit codes — never model runs.
+CHECK_KINDS = (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK, RunKind.SCENARIO_CHECK,
+               RunKind.DEPLOY, RunKind.CHANGE_SCAN)
+
+
+def _materialize_scenarios(session: Session, queued, project: Project, run, job: RunJob,
+                           cons) -> RunJob | None:
+    """A change's hidden scenarios, against its head commit. The checkout is
+    made fresh under a directory no agent's workspace contains, and removed
+    after: the scenarios must never be left where a builder's next run could
+    read them."""
+    from yaaf.core.models import Change
+    from yaaf.server import changes, github
+
+    trigger = queued.trigger or {}
+    change = session.get(Change, trigger.get("change_id"))
+    token = github.platform_token(session)
+    if change is None or change.head_sha != trigger.get("sha") or not project.github_repo \
+            or token is None:
+        run.status = RunStatus.FAILED
+        run.summary = "scenario check for a change that moved on, or with no repo to fetch"
+        run.finished_at = utcnow()
+        return None
+    job.scenarios = [(s.id, s.command) for s in changes.live_scenarios(session,
+                                                                       change.requirement_id)]
+    job.check_sha = change.head_sha
+    job.check_branch = change.branch
+    job.fetch_url = github.clone_url(project.github_repo, token)
+    job.workspace_dir = str(Path(settings().workspaces_root) / ".scenarios" / run.id)
+    job.timeout_s = min(cons.run_timeout_s, 600)
+    return job
+
+
+def _run_scenarios(job: RunJob) -> RunResult:
+    """Check out the change's exact commit, run each scenario from its root,
+    record pass/fail by exit code, and remove the checkout. The output kept is
+    a count: which scenario failed, and why, is the test seat's to read."""
+    import json
+    import shutil
+
+    from yaaf.runner.sandbox import run_check_command
+
+    where = Path(job.workspace_dir)
+    results: dict[str, bool] = {}
+    try:
+        failed = _checkout(job, where)
+        if failed:
+            return RunResult(ok=False, summary=f"could not check out the change: {failed}")
+        per = max(30, job.timeout_s // max(1, len(job.scenarios)))
+        for scenario_id, command in job.scenarios:
+            code, _output = run_check_command(command=command, workspace_dir=str(where),
+                                              timeout_s=per)
+            results[scenario_id] = code == 0
+    except Exception as exc:
+        return RunResult(ok=False, summary=f"scenario run crashed: {type(exc).__name__}")
+    finally:
+        shutil.rmtree(where, ignore_errors=True)
+    passed = sum(results.values())
+    return RunResult(ok=True, summary=f"hidden scenarios {passed}/{len(results)}",
+                     check_exit_code=0 if passed == len(results) else 1,
+                     check_output=json.dumps({"sha": job.check_sha, "results": results}))
+
+
+def _checkout(job: RunJob, where: Path) -> str | None:
+    """A fresh checkout of exactly `job.check_sha`, or why not. The fetch URL
+    carries the platform token for this one fetch and is scrubbed from
+    anything said about a failure."""
+    import subprocess
+
+    secret = job.fetch_url or ""
+    where.mkdir(parents=True, exist_ok=True)
+    for step in (["git", "init", "-q", str(where)],
+                 ["git", "-C", str(where), "fetch", "-q", "--depth", "1", secret,
+                  job.check_branch or job.check_sha or ""],
+                 ["git", "-C", str(where), "checkout", "-q", job.check_sha or ""]):
+        proc = subprocess.run(step, capture_output=True, text=True, timeout=180)
+        if proc.returncode != 0:
+            return (proc.stderr or "").replace(secret, "<repo>").strip()[:300]
+    _open_to_sandbox(where)
+    return None
+
+
+def _open_to_sandbox(where: Path) -> None:
+    """The sandbox runs as an unprivileged user and the runner (often root)
+    made this tree, so open it up — as agent runs do their workspace. Without
+    it every tool's report file is silently unwritable, and a scanner that
+    could not write its findings reads exactly like one that found none."""
+    import os
+
+    for top, _dirs, files in os.walk(where):
+        os.chmod(top, 0o777)
+        for name in files:
+            path = os.path.join(top, name)
+            if not os.path.islink(path):
+                os.chmod(path, os.stat(path).st_mode | 0o666)
+
+
+#: What the change scan runs, from the checkout's root, in the sandbox image.
+#: Each tool's exit status is echoed so a missing binary (127) reads as
+#: "unavailable", which fails the gate closed rather than passing it.
+SCAN_COMMAND = (
+    "osv-scanner --format json --output .yaaf-osv.json -r . >/dev/null 2>&1; "
+    "echo \"osv-scanner=$?\"; "
+    "gitleaks detect --no-git --source . --report-format json "
+    "--report-path .yaaf-gitleaks.json --exit-code 0 >/dev/null 2>&1; "
+    "echo \"gitleaks=$?\""
+)
+
+
+def _materialize_change_scan(session: Session, queued, project: Project, run, job: RunJob,
+                             cons) -> RunJob | None:
+    from yaaf.core.models import Change
+    from yaaf.server import github
+
+    trigger = queued.trigger or {}
+    token = github.platform_token(session)
+    if trigger.get("type") == "main_health":
+        # Upkeep: the whole of main, measured for the health promise.
+        if not project.github_repo or token is None or not trigger.get("sha"):
+            run.status = RunStatus.FAILED
+            run.summary = "main health with no repo or no main commit"
+            run.finished_at = utcnow()
+            return None
+        job.check_sha = trigger["sha"]
+        job.check_branch = trigger.get("branch") or "main"
+    else:
+        change = session.get(Change, trigger.get("change_id"))
+        if change is None or change.head_sha != trigger.get("sha") \
+                or not project.github_repo or token is None:
+            run.status = RunStatus.FAILED
+            run.summary = "scan for a change that moved on, or with no repo to fetch"
+            run.finished_at = utcnow()
+            return None
+        job.check_sha = change.head_sha
+        job.check_branch = change.branch
+    job.check_command = SCAN_COMMAND
+    job.fetch_url = github.clone_url(project.github_repo, token)
+    job.workspace_dir = str(Path(settings().workspaces_root) / ".scans" / run.id)
+    job.timeout_s = min(cons.run_timeout_s, 900)
+    return job
+
+
+def parse_scan(output: str, osv_json: str | None, gitleaks_json: str | None) -> dict:
+    """Counts the gate reads, from the tools' own JSON."""
+    import contextlib
+    import json
+    import re
+
+    codes = dict(re.findall(r"^(osv-scanner|gitleaks)=(\d+)$", output or "", re.M))
+    high: list[str] = []
+    try:
+        osv = json.loads(osv_json) if osv_json else None
+    except ValueError:
+        osv = None
+    try:
+        leaks = json.loads(gitleaks_json) if gitleaks_json else None
+    except ValueError:
+        leaks = None
+    # A tool counts only when it finished *and* left its report. Any other
+    # exit is an error — osv-scanner says 129 when it could not reach its
+    # advisory database — and a scanner that could not check reads exactly
+    # like one that found nothing, so it fails the gate closed instead.
+    # osv-scanner: 0 clean, 1 found, 128 no packages; gitleaks runs with
+    # --exit-code 0.
+    available = {
+        "osv-scanner": codes.get("osv-scanner") == "128"
+        or (codes.get("osv-scanner") in ("0", "1") and isinstance(osv, dict)),
+        "gitleaks": codes.get("gitleaks") == "0" and isinstance(leaks, list),
+    }
+    osv = osv if isinstance(osv, dict) else {}
+    for result in osv.get("results") or []:
+        for pkg in result.get("packages") or []:
+            name = (pkg.get("package") or {}).get("name") or "?"
+            severe = False
+            for group in pkg.get("groups") or []:
+                with contextlib.suppress(ValueError):
+                    severe |= float(group.get("max_severity") or 0) >= 7.0
+            for vuln in pkg.get("vulnerabilities") or []:
+                level = str((vuln.get("database_specific") or {}).get("severity") or "").upper()
+                severe |= level in ("HIGH", "CRITICAL")
+            if severe:
+                high.append(name)
+    return {"available": available, "advisories_high": len(high),
+            "advisories": sorted(set(high))[:20],
+            "secrets": len(leaks) if isinstance(leaks, list) else 0}
+
+
+def _run_change_scan(job: RunJob) -> RunResult:
+    import json
+    import shutil
+
+    from yaaf.runner.sandbox import run_check_command
+
+    where = Path(job.workspace_dir)
+    main_health = (job.trigger or {}).get("type") == "main_health"
+    try:
+        failed = _checkout(job, where)
+        if failed:
+            return RunResult(ok=False, summary=f"could not check out the change: {failed}")
+
+        def read(name: str, root: Path = where) -> str | None:
+            path = root / name
+            return path.read_text(errors="replace") if path.exists() else None
+
+        if main_health:
+            files = health.code_files(_git_lines(where, ["ls-files"]))
+            payload = {"sha": job.check_sha, "health": _measure_health(where, files, job)}
+        else:
+            _code, output = run_check_command(command=SCAN_COMMAND, workspace_dir=str(where),
+                                              timeout_s=job.timeout_s)
+            result = parse_scan(output, read(".yaaf-osv.json"), read(".yaaf-gitleaks.json"))
+            payload = {"sha": job.check_sha, "result": result,
+                       "health": _change_health(job, where)}
+    except Exception as exc:
+        return RunResult(ok=False, summary=f"scan crashed: {type(exc).__name__}")
+    finally:
+        shutil.rmtree(where, ignore_errors=True)
+        shutil.rmtree(Path(str(where) + "-base"), ignore_errors=True)
+    return RunResult(ok=True, summary="health measured" if main_health else "scanned",
+                     check_exit_code=0, check_output=json.dumps(payload))
+
+
+def _git_lines(where: Path, args: list[str]) -> list[str]:
+    import subprocess
+
+    proc = subprocess.run(["git", "-C", str(where), *args], capture_output=True, text=True,
+                          timeout=120)
+    return [line for line in proc.stdout.splitlines() if line.strip()] \
+        if proc.returncode == 0 else []
+
+
+def _measure_health(where: Path, files: list[str], job: RunJob) -> dict:
+    from yaaf.runner.sandbox import run_check_command
+
+    present = [f for f in files if (where / f).exists()]
+    if not present:
+        return {"available": {"lizard": True}, "functions": 0, "over": 0, "lint": 0,
+                "codes": {}, "worst": []}
+    _code, output = run_check_command(command=health.command(present),
+                                      workspace_dir=str(where), timeout_s=job.timeout_s)
+
+    def read(name: str) -> str | None:
+        path = where / name
+        return path.read_text(errors="replace") if path.exists() else None
+
+    return health.reading(output, read(".yaaf-lizard.csv"), read(".yaaf-ruff.json"), present)
+
+
+def _change_health(job: RunJob, where: Path) -> dict:
+    """Measure the touched files at the change's head and at its base, in two
+    trees, and compare. The base is fetched by name from the same remote."""
+    import subprocess
+
+    base_ref = (job.trigger or {}).get("base") or "main"
+    fetch = subprocess.run(["git", "-C", str(where), "fetch", "-q", "--depth", "1",
+                            job.fetch_url or "", base_ref], capture_output=True, text=True,
+                           timeout=180)
+    if fetch.returncode != 0:
+        return {"error": "could not fetch the base branch to compare against"}
+    changed = health.code_files(_git_lines(where, ["diff", "--name-only", "FETCH_HEAD",
+                                                   "HEAD"]))
+    if not changed:
+        return {"worse": False, "detail": "touches no code", "available": {"lizard": True},
+                "files": 0}
+    base_dir = Path(str(where) + "-base")
+    base_dir.mkdir(parents=True, exist_ok=True)
+    for path in changed:
+        shown = subprocess.run(["git", "-C", str(where), "show", f"FETCH_HEAD:{path}"],
+                               capture_output=True, timeout=60)
+        if shown.returncode == 0:
+            target = base_dir / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(shown.stdout)
+    _open_to_sandbox(base_dir)
+    head_reading = _measure_health(where, changed, job)
+    base_reading = _measure_health(base_dir, changed, job)
+    verdict = health.compare(base_reading, head_reading)
+    available = {**base_reading.get("available", {}), **head_reading.get("available", {})}
+    return {**verdict, "available": available, "files": len(changed)}
+
+
+def _finalize_change_scan(session: Session, job: RunJob, result: RunResult) -> None:
+    import json
+
+    from yaaf.core.models import Change
+    from yaaf.server import changes
+
+    if not result.ok or not result.check_output:
+        return
+    try:
+        data = json.loads(result.check_output)
+    except ValueError:
+        return
+    trigger = job.trigger or {}
+    if trigger.get("type") == "main_health":
+        from yaaf.server import upkeep
+
+        project = session.get(Project, job.project_id)
+        if project is not None:
+            upkeep.record_main_health(session, project, data.get("sha") or "",
+                                      data.get("health") or {})
+        return
+    change = session.get(Change, trigger.get("change_id"))
+    if change is None:
+        return
+    changes.record_scan(session, change, data.get("sha") or "", data.get("result") or {})
+    changes.record_health(session, change, data.get("sha") or "", data.get("health") or {})
+
+
+def _materialize_deploy(session: Session, queued, project: Project, run, job: RunJob,
+                        cons) -> RunJob | None:
+    """Production, deployed by the platform: the environment's command, at the
+    release's commit, with the secrets granted to the reserved scope "deploy"
+    — which no role can be named, so no seat's sandbox has ever held them."""
+    from yaaf.core.models import Change, Release
+    from yaaf.server import github, releases
+
+    trigger = queued.trigger or {}
+    name = trigger.get("environment") or "production"
+    env = releases.environment(project, name)
+    token = github.platform_token(session)
+    preview = name == "preview"
+    target = (session.get(Change, trigger.get("change_id")) if preview
+              else session.get(Release, trigger.get("release_id")))
+    if target is None or env is None or not project.github_repo or token is None \
+            or (preview and target.head_sha != trigger.get("sha")):
+        run.status = RunStatus.FAILED
+        run.summary = f"deploy with no target, no {name} environment, or no repo"
+        run.finished_at = utcnow()
+        return None
+    job.deploy_action = trigger.get("action") or "deploy"
+    job.check_sha = trigger.get("sha")
+    job.check_branch = trigger.get("branch") or job.check_sha
+    job.check_command = env["deploy"]
+    job.fetch_url = github.clone_url(project.github_repo, token)
+    # A preview builds code nobody has signed yet, so it never runs with the
+    # production keys: previews get only what was granted to "preview".
+    job.deploy_env = _scoped_secret_env(
+        session, project, releases.PREVIEW_SCOPE if preview else releases.DEPLOY_SCOPE)
+    if preview:
+        job.deploy_env.update({"YAAF_CHANGE_NUMBER": str(target.number or ""),
+                               "YAAF_BRANCH": target.branch, "YAAF_SHA": target.head_sha or ""})
+        from urllib.parse import urlsplit
+
+        page = str(env.get("page_url") or env["health_url"]).replace(
+            "{number}", str(target.number or ""))
+        parts = urlsplit(page)
+        job.page_url = page if env.get("page_url") else f"{parts.scheme}://{parts.netloc}/"
+    job.workspace_dir = str(Path(settings().workspaces_root) / ".deploys" / run.id)
+    job.timeout_s = min(cons.run_timeout_s, 1800)
+    if not preview:
+        releases.deploy_started(session, target, job.deploy_action)
+    return job
+
+
+def _scoped_secret_env(session: Session, project: Project, scope: str) -> dict:
+    """Secrets granted to `scope`, as env vars — for a platform command."""
+    from sqlalchemy import or_
+
+    from yaaf.core.crypto import decrypt
+
+    env: dict = {}
+    for secret in session.execute(
+        select(Secret).where(or_(Secret.project_id == project.id, Secret.project_id.is_(None)))
+        .order_by(Secret.project_id.is_(None))
+    ).scalars():
+        if secret.kind in ("billing", "mailbox") or scope not in (secret.role_scopes or []):
+            continue
+        var = _env_var_name(secret.name)
+        if var in env:
+            continue
+        try:
+            env[var] = decrypt(secret.ciphertext)
+        except Exception:
+            log.warning("could not decrypt deploy secret %s", secret.id)
+    return env
+
+
+def _run_deploy(job: RunJob) -> RunResult:
+    import shutil
+
+    from yaaf.runner.sandbox import run_check_command
+
+    where = Path(job.workspace_dir)
+    try:
+        failed = _checkout(job, where)
+        if failed:
+            return RunResult(ok=True, summary=f"deploy checkout failed: {failed}",
+                             check_exit_code=1, check_output=f"checkout failed: {failed}")
+        sbom = None
+        if job.deploy_action == "deploy" and (job.trigger or {}).get("environment") != "preview":
+            # The SBOM is of exactly what ships: the release commit, before the
+            # deploy command can change the tree. Missing syft leaves it out.
+            run_check_command(command="syft dir:. -q -o cyclonedx-json=.yaaf-sbom.json "
+                                      ">/dev/null 2>&1 || true",
+                              workspace_dir=str(where), timeout_s=300)
+            path = where / ".yaaf-sbom.json"
+            sbom = path.read_bytes() if path.exists() else None
+            if path.exists():
+                path.unlink()
+        code, output = run_check_command(command=job.check_command or "",
+                                         workspace_dir=str(where), timeout_s=job.timeout_s,
+                                         env=job.deploy_env)
+        for key, value in job.deploy_env.items():
+            if value and not key.startswith("YAAF_"):
+                output = output.replace(value, "<secret>")
+        shot = _screenshot(job, where) if code == 0 and job.page_url else None
+    except Exception as exc:
+        return RunResult(ok=False, summary=f"deploy crashed: {type(exc).__name__}")
+    finally:
+        shutil.rmtree(where, ignore_errors=True)
+    extra = {k: v for k, v in (("sbom", sbom), ("screenshot", shot)) if v}
+    return RunResult(ok=True, summary=f"{job.deploy_action} exit={code}",
+                     check_exit_code=code, check_output=output[-8000:], extra=extra)
+
+
+#: Photograph the preview the way a reviewer would see it first: the browser
+#: lane's Chromium, 1280×800, retried while a fresh deploy comes up.
+SHOT_SCRIPT = (
+    "import sys, time\n"
+    "from playwright.sync_api import sync_playwright\n"
+    "with sync_playwright() as p:\n"
+    "    b = p.chromium.launch()\n"
+    "    page = b.new_page(viewport={'width': 1280, 'height': 800})\n"
+    "    for _ in range(6):\n"
+    "        try:\n"
+    "            page.goto(sys.argv[1], timeout=20000, wait_until='networkidle')\n"
+    "            break\n"
+    "        except Exception:\n"
+    "            time.sleep(10)\n"
+    "    page.screenshot(path='.yaaf-shot.png')\n"
+    "    b.close()\n"
+)
+
+
+def _screenshot(job: RunJob, where: Path) -> bytes | None:
+    """Never fatal: a preview that cannot be photographed is still a preview."""
+    import shlex
+
+    from yaaf.runner.sandbox import run_check_command
+
+    try:
+        run_check_command(command=f"python3 -c {shlex.quote(SHOT_SCRIPT)} "
+                                  f"{shlex.quote(job.page_url or '')} >/dev/null 2>&1 || true",
+                          workspace_dir=str(where), timeout_s=180)
+        path = where / ".yaaf-shot.png"
+        return path.read_bytes() if path.exists() else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _finalize_deploy(session: Session, job: RunJob, result: RunResult) -> None:
+    from yaaf.core.models import Release
+    from yaaf.server import releases
+
+    trigger = job.trigger or {}
+    ok = result.ok and result.check_exit_code == 0
+    if trigger.get("environment") == "preview":
+        from yaaf.core.models import Change
+        from yaaf.server import changes
+
+        change = session.get(Change, trigger.get("change_id"))
+        if change is not None:
+            changes.record_preview(session, change, trigger.get("sha") or "", ok,
+                                   result.check_output or result.summary or "",
+                                   screenshot=(result.extra or {}).get("screenshot"))
+        return
+    release = session.get(Release, trigger.get("release_id"))
+    if release is None:
+        return
+    releases.deployed(session, release, job.deploy_action or "deploy", ok,
+                      result.check_output or result.summary or "",
+                      sbom=(result.extra or {}).get("sbom"))
+
+
+def _finalize_scenario_check(session: Session, job: RunJob, result: RunResult) -> None:
+    import json
+
+    from yaaf.core.models import Change
+    from yaaf.server import changes
+
+    change = session.get(Change, (job.trigger or {}).get("change_id"))
+    if change is None or not result.ok or not result.check_output:
+        return
+    try:
+        data = json.loads(result.check_output)
+    except ValueError:
+        return
+    changes.record_scenarios(session, change, data.get("sha") or "", data.get("results") or {})
 
 
 def _run_check_command(job: RunJob) -> RunResult:

@@ -24,13 +24,15 @@ def test_every_shipped_role_seeds_with_its_category(client):
         assert r.status_code < 400, (path, r.text)
 
     rows = client.get("/admin/roles", headers=ADMIN).json()
-    assert len(rows) == 38
+    assert len(rows) == 44
     assert all(r["category"] for r in rows), \
         [r["slug"] for r in rows if not r["category"]]
 
     counts = collections.Counter(r["category"] for r in rows)
-    assert counts == {"research": 10, "content": 8, "challenge": 9,
-                      "growth": 5, "leadership": 3, "build": 3}, counts
+    # Code Factory added a tech lead, an architect, a release engineer, and
+    # three seats whose job is to attack code: reviewer, tester, security.
+    assert counts == {"research": 10, "content": 8, "challenge": 12,
+                      "growth": 5, "leadership": 4, "build": 5}, counts
 
     # The seed round-trip: GET detail -> POST it back must not drop the fields.
     detail = client.get("/admin/roles/compliance-officer", headers=ADMIN).json()
@@ -74,7 +76,7 @@ def test_every_shipped_crew_seeds_and_resolves_against_the_library(client):
         assert r.status_code < 400, (path, r.text)
 
     crews = client.get("/admin/crews", headers=ADMIN).json()
-    assert len(crews) == 17
+    assert len(crews) == 20
     for crew in crews:
         assert crew["missing_role_slugs"] == [], crew
         assert crew["teams"], crew["slug"]

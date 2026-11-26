@@ -1,0 +1,85 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "keep-a-repo-healthy",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "keep-a-repo-healthy",
+    "name": "Keep a repo healthy",
+    "goal": "Keep this repository healthy and shipping. Read it first and report: tests, coverage, flaky tests, CI, packages, advisories, licences, leaked secrets, runtimes out of support, and the last 90 days of delivery. Then propose a charter: critical advisories fixed within 2 days and high within 7, main green 95% of the week, new issues answered within a working day, flaky tests down to 3, and no package more than one major version behind. Nothing is written to the repo until the chairman accepts the charter.",
+    "billing_mode": "api_key",
+    "mode": "code_factory",
+    "controlled_domains": [],
+    "github_repo": "your-org/your-repo",
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 2.0,
+      "chairman_report_window_local": "08:00-21:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 6,
+      "monthly_usd_cap": 250,
+      "approval_threshold_usd": 15,
+      "drought_hours": 168,
+      "external_ratio_min": 0.0,
+      "max_usd_per_run": 3.0,
+      "release_authority": "approve_first",
+      "max_change_lines": 400,
+      "hidden_scenarios": true,
+      "stakes": "normal",
+      "protected_paths": "migrations/**"
+    },
+    "integrations": {
+      "runtime": "agent_sdk",
+      "factory_start": "repo"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "tech-lead",
+    "ceo_name": "Noor",
+    "ceo_daily_at": null,
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "engineer",
+        "name": "Build",
+        "employees": [
+          "Ravi",
+          "Lena"
+        ],
+        "lead": "Ravi"
+      },
+      {
+        "role_slug": "code-reviewer",
+        "name": "Review",
+        "employees": [
+          "Ash"
+        ]
+      },
+      {
+        "role_slug": "test-engineer",
+        "name": "Test",
+        "employees": [
+          "Kai"
+        ]
+      },
+      {
+        "role_slug": "security-engineer",
+        "name": "Security",
+        "employees": [
+          "Mo"
+        ]
+      },
+      {
+        "role_slug": "release-engineer",
+        "name": "Release",
+        "employees": [
+          "Pia"
+        ]
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": []
+}

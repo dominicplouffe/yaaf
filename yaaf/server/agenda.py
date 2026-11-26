@@ -259,7 +259,9 @@ def _review_event(session: Session, project: Project, cons: ConstitutionDoc,
 
 def _cycle_event(session: Session, project: Project, cons: ConstitutionDoc,
                  tz: ZoneInfo) -> dict | None:
-    if project.mode != ProjectMode.OPERATE:
+    from yaaf.core import shape
+
+    if not shape.runs_on_cycles(project):
         return None
     from yaaf.server import policy
     from yaaf.server.janitor import next_cycle_roll

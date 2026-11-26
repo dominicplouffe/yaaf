@@ -122,6 +122,8 @@ GROUP_THEMES = {
     "Operate rhythm": "Rhythm & reporting",
     "The review": "Rhythm & reporting",
     "The commitment": "Rhythm & reporting",
+    "Code Factory": "How work is run",
+    "Code Factory upkeep": "Rhythm & reporting",
 }
 
 #: Tab order on the rules screen — money first, because that is what a stuck
@@ -581,7 +583,8 @@ class ConstitutionDoc(BaseModel):
     cycle_frequency: str = _rule(
         "weekly", group="Operate rhythm", label="How often a cycle rolls",
         choices=["hourly", "daily", "weekly", "monthly", "quarterly"],
-        help="Operate projects only. Each roll closes the cycle, carries unfinished "
+        help="Operate projects, and a Code Factory once it is in upkeep. Each roll "
+             "closes the cycle, carries unfinished "
              "scope forward, reopens the plan gate, and hands the CEO the last three "
              "cycles' narratives verbatim. 'hourly' is for rhythms shorter than a day "
              "— an inbox swept every morning, an order queue checked on the hour. A "
@@ -622,6 +625,111 @@ class ConstitutionDoc(BaseModel):
              "ground moved. Rule changes and scope changes always re-validate; this "
              "catches the failure-storm case where neither moved but the pace did. "
              "0 turns this trigger off.")
+
+    # Code Factory. Gates on a change before the platform merges it; they bind
+    # only a Code Factory, whose main branch only the platform moves.
+    max_change_lines: int = _rule(
+        400, ge=20, le=5000, group="Code Factory", label="Largest change, in lines",
+        help="Code Factory only. A change adding and removing more lines than this, "
+             "counted by GitHub rather than by the agent, is refused and closed: split "
+             "it. Reviews of big changes miss what reviews of small ones catch, and a "
+             "factory that ships large changes ships them unread.")
+
+    protected_paths: str = _rule(
+        "", group="Code Factory", label="Paths that need a person",
+        help="Code Factory only. Comma-separated file globs, e.g. billing/tax/**, "
+             "migrations/**. A change touching any of them merges only with your own "
+             "yes on the exact commit, whatever the authority dial says.")
+    hidden_scenarios: bool = _rule(
+        True, group="Code Factory", label="Hidden scenarios must pass",
+        help="Code Factory only. A change merges only when the hidden scenarios for "
+             "its requirement pass, run by the platform on its exact commit. A "
+             "challenge seat writes them; builders see how many exist and pass, never "
+             "what they say. Off, the gate is skipped and builders grade themselves "
+             "against tests they can read.")
+
+    ci_changes_need_chairman: bool = _rule(
+        True, group="Code Factory", label="CI changes need you",
+        help="Code Factory only. The checks gate trusts CI, and CI is defined in the repo, "
+             "so a change to it could make every check pass. On: a change touching CI "
+             "config (.github/workflows and the like) merges only with your yes on that "
+             "commit. Off: a challenge seat's signed reason is enough.")
+    min_changed_line_coverage: int = _rule(
+        0, ge=0, le=100, group="Code Factory", label="Changed lines tested, at least %",
+        help="Code Factory only. Read from the check run named below, which CI reports on "
+             "the change's own commit with the percentage in its title or summary. 0 is off.")
+    coverage_check_name: str = _rule(
+        "coverage", group="Code Factory", label="Check run that reports coverage",
+        help="Code Factory only. The name of the CI check whose title or summary carries "
+             "the changed-line coverage, e.g. '87.5% of changed lines covered'.")
+    code_health_ratchet: bool = _rule(
+        True, group="Code Factory", label="Changes may not make the code harder to maintain",
+        help="Code Factory only. The platform measures the files a change touches, before "
+             "and after: functions too complex (more than 10 branches) or too long (more "
+             "than 60 lines), and Python lint aimed at what models get wrong. A change that "
+             "makes either worse waits for a challenge seat's signed reason. Models fix the "
+             "problem in front of them and leave the codebase worse; this is the ratchet.")
+    platform_scans: bool = _rule(
+        True, group="Code Factory", label="The platform scans every change",
+        help="Code Factory only. The platform runs osv-scanner (known-vulnerable "
+             "dependencies, high and critical) and gitleaks (secrets) on each change's "
+             "commit in the sandbox image, and holds the merge on what they find. A "
+             "runner whose image lacks them holds every merge until it is rebuilt.")
+    release_authority: str = _rule(
+        "approve_first", choices=["approve_first", "autonomous"], group="Code Factory",
+        label="Releases to production",
+        help="Code Factory only. 'approve_first': you approve the first production "
+             "release and every major one; after that the crew ships minor and patch "
+             "releases. 'autonomous': the crew ships every release, and you are told "
+             "after. Either way a release points at a commit the platform merged, the "
+             "canary guard watches it, and a broken guard rolls it back without asking.")
+    canary_minutes: int = _rule(
+        30, ge=1, le=1440, group="Code Factory", label="Canary watch, in minutes",
+        help="Code Factory only. How long the platform reads production health after "
+             "a deploy before it calls the release live.")
+    canary_max_failures: int = _rule(
+        3, ge=1, le=100, group="Code Factory", label="Failed health reads that roll back",
+        help="Code Factory only. This many failed reads of the health URL during the "
+             "watch, and the platform deploys the previous release again and opens an "
+             "incident. Nobody is asked first.")
+
+    # Upkeep. Each becomes a standing promise the platform writes when a
+    # factory enters upkeep and judges at every roll from what the repo
+    # reported — 0 leaves that promise out.
+    upkeep_main_green_pct: int = _rule(
+        95, ge=0, le=100, group="Code Factory upkeep", label="Main green, % of the week",
+        help="Code Factory only. The share of the cycle main's CI was green, from the "
+             "check runs GitHub reported on main's head. 0 leaves this promise out.")
+    upkeep_issue_hours: int = _rule(
+        24, ge=0, le=720, group="Code Factory upkeep", label="New issues answered within, hours",
+        help="Code Factory only. The longest any new issue waited for a reply from "
+             "someone with write access. 0 leaves this promise out.")
+    upkeep_critical_days: int = _rule(
+        2, ge=0, le=90, group="Code Factory upkeep", label="Critical advisories fixed within, days",
+        help="Code Factory only. Counted from GitHub's own Dependabot alert. 0 leaves "
+             "advisories out of upkeep.")
+    upkeep_high_days: int = _rule(
+        7, ge=0, le=180, group="Code Factory upkeep", label="High advisories fixed within, days",
+        help="Code Factory only. Counted from GitHub's own Dependabot alert.")
+    upkeep_flaky_max: int = _rule(
+        3, ge=0, le=100, group="Code Factory upkeep", label="Most flaky checks allowed",
+        help="Code Factory only. A check on main that both failed and passed on the same "
+             "commit this cycle is flaky. Set it to 0 to promise none. Off with "
+             "upkeep_flaky_enabled.")
+    upkeep_flaky_enabled: bool = _rule(
+        True, group="Code Factory upkeep", label="Promise on flaky checks",
+        help="Code Factory only. Off leaves flaky checks out of upkeep.")
+    upkeep_majors_behind: int = _rule(
+        1, ge=0, le=20, group="Code Factory upkeep", label="Most major versions behind",
+        help="Code Factory only. For each direct dependency on main, how many major "
+             "versions it trails the registry's latest. Off with upkeep_packages_enabled.")
+    upkeep_health_enabled: bool = _rule(
+        True, group="Code Factory upkeep", label="Promise the codebase gets no harder to maintain",
+        help="Code Factory only. Main is measured each day; the cycle is kept when it ends "
+             "with no more over-complex functions or lint findings than it began with.")
+    upkeep_packages_enabled: bool = _rule(
+        True, group="Code Factory upkeep", label="Promise on package age",
+        help="Code Factory only. Off leaves package lag out of upkeep.")
 
     # Runs
     run_timeout_s: int = _rule(

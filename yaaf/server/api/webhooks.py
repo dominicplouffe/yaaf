@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, shape
 from yaaf.core.models import (
     AuditLog,
     Evidence,
@@ -152,6 +152,8 @@ async def github_webhook(
         raise HTTPException(status_code=422, detail="body is not JSON") from exc
 
     event = request.headers.get("X-GitHub-Event", "")
+    if event in _FACTORY_EVENTS and shape.is_factory(project):
+        return _factory_event(session, project, request, event, payload)
     if event not in _HANDLED_GITHUB_EVENTS:
         return {"ignored": f"unhandled event '{event}'"}
     actions = _HANDLED_GITHUB_EVENTS[event]
@@ -194,6 +196,51 @@ async def github_webhook(
         )
     )
     return {"evidence_id": row.id}
+
+
+# ── code factory: what the merge gate reads from the repo ───────────────────────
+
+#: A factory's own repo, read as the record of its changes rather than as
+#: evidence of the outside world: these come from the platform's account and
+#: its agents' accounts, which the evidence path rightly ignores.
+_FACTORY_EVENTS = {"pull_request", "check_run", "push", "issues", "issue_comment",
+                   "dependabot_alert"}
+
+
+def _factory_event(session: Session, project: Project, request: Request, event: str,
+                   payload: dict) -> dict:
+    from yaaf.server import changes
+
+    delivery = request.headers.get("X-GitHub-Delivery")
+    if delivery and _seen_delivery(session, project.id, delivery):
+        return {"ignored": "duplicate delivery"}
+    from yaaf.server import upkeep
+
+    action = payload.get("action") or ""
+    if event == "pull_request":
+        result = changes.pull_request_event(session, project, action,
+                                            payload.get("pull_request") or {})
+    elif event == "check_run":
+        run = payload.get("check_run") or {}
+        result = changes.check_run_event(session, project, run)
+        result["main"] = upkeep.on_check_run(session, project, run)
+    elif event == "push":
+        result = changes.push_event(session, project, payload)
+        if "main_push" in result:
+            upkeep.on_push(session, project, result["main_push"])
+    elif event == "issues":
+        result = {"issue": upkeep.on_issue(session, project, action, payload)}
+    elif event == "issue_comment":
+        result = {"issue": upkeep.on_issue_comment(session, project, payload)}
+    else:
+        result = {"advisory": upkeep.on_dependabot_alert(session, project, action,
+                                                         payload.get("alert") or {})}
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:webhook",
+        action="webhook.github", entity="project", entity_id=project.id,
+        detail={"delivery": delivery, "event": event,
+                "sender": (payload.get("sender") or {}).get("login")}))
+    return result
 
 
 # ── slack: the chairman's inbound path ──────────────────────────────────────────

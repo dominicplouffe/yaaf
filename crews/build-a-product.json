@@ -1,0 +1,63 @@
+{
+  "slug": "build-a-product",
+  "name": "Build a product",
+  "outcome": "Software built from an empty repo to a v1.0 people use, then kept healthy on a weekly rhythm.",
+  "ceo_role_slug": "tech-lead",
+  "domains": [
+    "general"
+  ],
+  "source": "examples/13-a-booking-app",
+  "teams": [
+    {
+      "role_slug": "architect",
+      "name": "Architecture",
+      "employees": [
+        "Theo"
+      ]
+    },
+    {
+      "role_slug": "engineer",
+      "name": "Build",
+      "employees": [
+        "Mika",
+        "Dev"
+      ],
+      "lead": "Mika"
+    },
+    {
+      "role_slug": "code-reviewer",
+      "name": "Review",
+      "employees": [
+        "Rhea"
+      ]
+    },
+    {
+      "role_slug": "test-engineer",
+      "name": "Test",
+      "employees": [
+        "Quinn"
+      ]
+    },
+    {
+      "role_slug": "security-engineer",
+      "name": "Security",
+      "employees": [
+        "Sasha"
+      ]
+    },
+    {
+      "role_slug": "plan-adversary",
+      "name": "Plan review",
+      "employees": [
+        "Juno"
+      ]
+    },
+    {
+      "role_slug": "release-engineer",
+      "name": "Release",
+      "employees": [
+        "Omar"
+      ]
+    }
+  ]
+}

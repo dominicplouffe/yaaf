@@ -151,11 +151,16 @@ def test_the_burn_up_is_drawn_for_deliver_projects_only():
     climbed through the top of its own axis every turn of the rhythm. The
     server no longer feeds it that, but the gate is one clause in one JSX
     expression and a later refactor would drop it with nothing to notice.
+
+    The gate reads `shape`, not `mode`: a Code Factory being built ships once
+    and reads as Deliver, and one in upkeep recurs and reads as Operate, so a
+    gate on the raw mode would either draw the climbing line for a factory in
+    upkeep or draw nothing for one being built.
     """
     source = (WEB_SRC / "pages" / "project" / "Plan.tsx").read_text()
     call = re.search(r"\{[^{}]*<Burnup\b", source, re.DOTALL)
     assert call, "<Burnup> is no longer rendered from a guarded expression"
-    assert 'mode === "deliver"' in call.group(0), (
+    assert 'shape === "deliver"' in call.group(0), (
         "the burn-up is rendered without the Deliver gate — see "
         "velocity.standing_record for why a recurring project must not get one"
     )

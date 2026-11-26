@@ -393,7 +393,7 @@ async def t_task_create(args):
     "how many runs it will take, and it is compared against what it actually costs. "
     "depends_on lists requirement ids that must be settled first. "
     "recurrence is 'terminal' (met once) or 'standing' (owed again every cycle; "
-    "Operate only). A standing obligation owed EVERY DAY puts its deadline in the "
+    "Operate, or a Code Factory in upkeep). A standing obligation owed EVERY DAY puts its deadline in the "
     "command test — {type: command, command: ..., due_daily_at: 'HH:MM'} in the "
     "project's timezone — and the platform runs the test after each deadline, "
     "whatever work is open, and reports the cycle in days. ALWAYS fill meta — it is what the project's OWNER sees: "
@@ -460,6 +460,114 @@ async def t_task_review(args):
         _call("POST", f"/agent/tasks/{args['task_id']}/review",
               {"ok": bool(args["ok"]), "notes": args["notes"]})
     )
+
+
+@tool(
+    "change_open",
+    "Code Factory only. Push your work to a branch of its own with git, then call "
+    "this to have the platform open the pull request for the task you hold. It "
+    "counts the size from GitHub (over the project's line limit is refused: "
+    "split it), waits for CI on that exact commit and for a challenge seat's "
+    "signature, and merges it ITSELF when every gate is green. You never merge "
+    "and never push to main. A push to the same branch re-runs every gate and "
+    "clears the review.",
+    {"task_id": str, "branch": str, "title": str, "summary": str},
+)
+async def t_change_open(args):
+    return _text(_call("POST", "/agent/changes", {
+        "task_id": args["task_id"], "branch": args["branch"],
+        "title": args["title"], "summary": args["summary"]}))
+
+
+@tool("changes_list",
+      "Code Factory only. Open changes and every gate on each: serves, size, checks, "
+      "review.", {})
+async def t_changes_list(args):
+    return _text(_call("GET", "/agent/changes"))
+
+
+@tool(
+    "change_review",
+    "Code Factory, challenge seats only. Sign somebody else's change, or return it "
+    "with what is wrong. `verdict` is 'sign' or 'return'; `note` says what you read "
+    "and what you found. Your signature is pinned to the commit you read; a later "
+    "push clears it. You cannot sign your own change. When signing a change the "
+    "platform holds for weaker tests, `allow_weaker_tests` is your reason (what the "
+    "removed assertions checked and why that no longer matters); for new packages, "
+    "`allow_packages` lists each one you checked by name; for a change to CI, "
+    "`allow_ci_change` is your reason, where the project lets a seat accept one; for "
+    "code the platform measured as harder to maintain, `allow_worse_health` says why "
+    "the complexity is inherent rather than convenient — prefer returning it. A "
+    "credential in the diff cannot be signed through.",
+    _schema({"change_id": str, "verdict": str, "note": str, "allow_weaker_tests": str,
+             "allow_packages": list[str], "allow_ci_change": str, "allow_worse_health": str},
+            optional=("allow_weaker_tests", "allow_packages", "allow_ci_change",
+                      "allow_worse_health")),
+)
+async def t_change_review(args):
+    body = {"verdict": args["verdict"], "note": args["note"]}
+    if args.get("allow_weaker_tests"):
+        body["allow_weaker_tests"] = args["allow_weaker_tests"]
+    if args.get("allow_packages"):
+        body["allow_packages"] = list(args["allow_packages"])
+    if args.get("allow_ci_change"):
+        body["allow_ci_change"] = args["allow_ci_change"]
+    if args.get("allow_worse_health"):
+        body["allow_worse_health"] = args["allow_worse_health"]
+    return _text(_call("POST", f"/agent/changes/{args['change_id']}/review", body))
+
+
+@tool(
+    "scenario_add",
+    "Code Factory, challenge seats only. Write a hidden scenario for a requirement: "
+    "a shell command the platform runs from the root of every change serving it, "
+    "passing on exit 0. Builders never read it — so test what the requirement "
+    "promises, including the cases a builder would not think to check. Keep the "
+    "script outside the repo: put the whole check in the command.",
+    {"requirement_id": str, "name": str, "command": str},
+)
+async def t_scenario_add(args):
+    return _text(_call("POST", "/agent/scenarios", {
+        "requirement_id": args["requirement_id"], "name": args["name"],
+        "command": args["command"]}))
+
+
+@tool("scenarios_list",
+      "Code Factory. Challenge seats read the hidden scenarios; any other seat reads "
+      "only how many guard each requirement.", {})
+async def t_scenarios_list(args):
+    return _text(_call("GET", "/agent/scenarios"))
+
+
+@tool(
+    "release_propose",
+    "Code Factory only. Propose releasing everything merged since the last release "
+    "as `version` (MAJOR.MINOR.PATCH). The platform decides whether it waits for the "
+    "chairman, deploys it itself with credentials no seat holds, watches production "
+    "health, and rolls it back on its own if the guard breaks. One release at a time.",
+    {"version": str, "title": str},
+)
+async def t_release_propose(args):
+    return _text(_call("POST", "/agent/releases",
+                       {"version": args["version"], "title": args["title"]}))
+
+
+@tool("releases_list", "Code Factory only. Releases and incidents, as the platform "
+      "recorded them.", {})
+async def t_releases_list(args):
+    return _text(_call("GET", "/agent/releases"))
+
+
+@tool(
+    "incident_postmortem",
+    "CEO only, Code Factory. Close an incident with its postmortem: what happened, "
+    "why, and what changes so it cannot happen the same way again. Causes, not blame. "
+    "The platform's timeline stays beside it and you cannot edit that.",
+    {"incident_id": str, "text": str},
+)
+async def t_incident_postmortem(args):
+    return _text(_call("POST", f"/agent/incidents/{args['incident_id']}/postmortem",
+                       {"text": args["text"]}))
 
 
 @tool("task_block", "Block your claimed task with a reason; the CEO will re-plan.",
@@ -631,8 +739,8 @@ async def t_scope_act(args):
 
 @tool(
     "commitment_propose",
-    "CEO only, Deliver projects only — an Operate project runs on cycles and has no "
-    "single date to promise. Ask to commit to a delivery date. You do not and cannot "
+    "CEO only, Deliver projects and a Code Factory being built — an Operate project, "
+    "or a factory in upkeep, runs on cycles and has no single date to promise. Ask to commit to a delivery date. You do not and cannot "
     "write the date: "
     "the platform stamps its own projection from pace and scope, and the chairman "
     "accepts it (with that date or his own) or declines. Nothing binds until he does. "
@@ -729,7 +837,7 @@ async def t_evidence_add(args):
 
 @tool(
     "cycle_goal",
-    "CEO only, Operate projects only. Say what THIS cycle is for — one outcome, in "
+    "CEO only, Operate projects and a Code Factory in upkeep. Say what THIS cycle is for — one outcome, in "
     "words the chairman would recognise — and, when the outside world sets a "
     "deadline for this turn's work (a gameweek deadline, a filing date, a carrier "
     "cutoff), when it is due. due_at is an ISO datetime and is a fact you found, "
@@ -1817,6 +1925,8 @@ def _meta_of(obj) -> dict:
 ALL_TOOLS = [
     t_board, t_task_create, t_task_claim, t_task_complete, t_task_review,
     t_task_block, t_task_kill,
+    t_change_open, t_changes_list, t_change_review, t_scenario_add, t_scenarios_list,
+    t_release_propose, t_releases_list, t_incident_postmortem,
     t_requirement_propose, t_requirement_depends_on,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_ask_chairman, t_ask_close,
@@ -1852,7 +1962,7 @@ ALL_TOOLS = [
 CEO_ONLY_TOOLS = frozenset({
     "ask_chairman", "ask_close",
     "brief_propose", "capacity_request", "heads_up", "need_request", "note_answer",
-    "commitment_propose", "commitment_reset",
+    "commitment_propose", "commitment_reset", "incident_postmortem",
     "credential_scope", "credentials_list",
     "cycle_goal",
     "directive_file",
