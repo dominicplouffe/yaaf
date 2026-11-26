@@ -1245,6 +1245,9 @@ def _audit_directive(session: Session, ctx: RunContext, cited: Message, changes:
 class TypingIn(BaseModel):
     channel_id: str
     seconds: float = Field(default=15.0, ge=0, le=120)
+    #: What the writer is doing, in a few words the room shows after its
+    #: name: "searching the web". Omitted keeps the last one.
+    status: str | None = Field(default=None, max_length=60)
 
 
 @router.post("/typing")
@@ -1252,11 +1255,13 @@ def set_typing(
     body: TypingIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
     """Presence, not state: the chat session flips this on while composing a
-    reply so the boardroom can show "typing…". Expires by itself."""
+    reply so the boardroom can show "typing…", and what it is doing meanwhile.
+    Expires by itself."""
     channel = session.get(Channel, body.channel_id)
     if channel is None or channel.id not in policy.agent_channel_ids(session, ctx.agent):
         raise Refusal("Not a member of that channel.", status_code=403)
-    typing_state.set_typing(channel.id, body.seconds)
+    status = " ".join((body.status or "").split()) or None
+    typing_state.set_typing(channel.id, body.seconds, status)
     return {"ok": True}
 
 

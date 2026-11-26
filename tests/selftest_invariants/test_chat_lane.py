@@ -948,3 +948,107 @@ def test_a_new_billing_credential_restarts_the_chat_session(client, monkeypatch)
                                                    status=RunStatus.RUNNING).one()
     assert state["containers"][project["id"]] == replacement.id
     assert state["started"] == [project["id"], project["id"]]
+
+
+# ── presence: a long turn is shown as work, never as dots that stop ────────────
+
+
+def test_typing_says_what_the_ceo_is_doing_and_since_when(client):
+    """26 November 2026: a six-minute reply showed dots that lapsed at minute
+    two, and the chairman concluded the CEO had crashed. The flag now carries
+    what the turn is doing and when it began, and a refresh keeps both."""
+    project = make_project(client)
+    boardroom = channel_of(client, project["id"], "boardroom")
+    _, chat_token = live_token(project["id"], _ceo_id(project), kind="chat_session")
+
+    def raise_(**body):
+        assert client.post("/agent/typing", json={"channel_id": boardroom, **body},
+                           headers=bearer(chat_token)).status_code == 200
+        return client.get(f"/observe/channels/{boardroom}/typing", headers=ADMIN).json()
+
+    first = raise_(seconds=60, status="searching the web")
+    assert first["typing"] is True and first["status"] == "searching the web"
+    assert first["since"]
+    # A bare refresh keeps the words; a new status replaces them; neither
+    # restarts the clock the room counts minutes from.
+    assert raise_(seconds=60) == first
+    later = raise_(seconds=60, status="working on images")
+    assert later["status"] == "working on images" and later["since"] == first["since"]
+
+    cleared = raise_(seconds=0)
+    assert cleared == {"typing": False, "status": None, "since": None}
+
+
+def test_every_harness_spelling_of_a_tool_call_reads_as_plain_words(monkeypatch):
+    chat_entry = _chat_entry(monkeypatch)
+    activity = chat_entry._activity
+    # yaaf's loop
+    assert activity({"type": "ToolUseBlock", "name": "WebSearch", "input": "{}"}) \
+        == "searching the web"
+    assert activity({"type": "ToolUseBlock", "name": "Bash",
+                     "input": '{"command": "python draw.py --out hero.png"}'}) \
+        == "working on images"
+    assert activity({"type": "ToolResultBlock", "name": "Bash"}) == "thinking"
+    # the Claude CLI's JSON block, gemini's and opencode's `tool`, codex's item
+    assert activity({"type": "ToolUseBlock", "repr": '{"type": "tool_use", '
+                     '"name": "mcp__yaaf__task_create", "input": {}}'}) \
+        == "checking the task board"
+    assert activity({"type": "tool_use", "tool": "google_web_search"}) == "searching the web"
+    assert activity({"type": "tool_use", "tool": "read_file"}) == "reading files"
+    assert activity({"type": "command_execution", "repr": '{"command": "ls"}'}) \
+        == "running a script"
+    # Bookkeeping lines say nothing new.
+    assert activity({"type": "AssistantMessage", "calls": ["Bash"]}) is None
+    assert activity({"type": "compacted", "how": "elided"}) is None
+
+
+def test_a_long_turn_keeps_its_flag_up_and_clears_it_with_the_reply(monkeypatch, tmp_path):
+    """The flag is beaten on its own clock while a tool holds the turn, names
+    each step, and comes down once the reply is posted — never after it."""
+    from claude_agent_sdk import AssistantMessage, ToolUseBlock, UserMessage
+
+    turn = [AssistantMessage(content=[ToolUseBlock(id="t1", name="Bash",
+                                                   input={"command": "python hero.py"})],
+                             model="m"),
+            UserMessage(content="done"),
+            *_said("Here are the new heroes.")]
+    chat_entry, posted, _, _ = _session(monkeypatch, tmp_path, [turn])
+    raised: list[tuple[float, str | None, int]] = []
+    inner = chat_entry.base._call
+
+    def call(method, path, payload=None, params=None):
+        if path == "/agent/typing":
+            raised.append((payload["seconds"], payload.get("status"), len(posted)))
+        return inner(method, path, payload, params)
+
+    monkeypatch.setattr(chat_entry.base, "_call", call)
+    monkeypatch.setattr(chat_entry, "PRESENCE_BEAT_S", 0.01)
+
+    assert asyncio.run(chat_entry.main()) == 0
+    assert posted == ["Here are the new heroes."]
+    said = [status for _, status, _ in raised if status]
+    assert said[:4] == ["thinking", "working on images", "thinking", "writing the reply"]
+    # Lowered exactly once, after the reply, and nothing raised it again.
+    assert [r for r in raised if r[0] == 0] == [(0, None, 1)]
+    assert raised[-1] == (0, None, 1)
+
+
+def test_the_beat_outlasts_a_tool_that_holds_the_event_loop(monkeypatch):
+    """One tool call can block the turn for minutes; the beat is a thread, so
+    it keeps the flag up anyway, and stops the moment the turn ends."""
+    import time as _time
+
+    chat_entry = _chat_entry(monkeypatch)
+    beats: list[float] = []
+    monkeypatch.setattr(chat_entry.base, "_call",
+                        lambda m, p, payload=None, params=None:
+                        beats.append(payload["seconds"]) or {"status": 200, "body": {}})
+    monkeypatch.setattr(chat_entry, "PRESENCE_BEAT_S", 0.01)
+    presence = chat_entry._Presence()
+    presence.start("chan_x")
+    _time.sleep(0.1)  # a blocking tool: no await, no event
+    presence.stop()
+    settled = len(beats)
+    _time.sleep(0.05)
+    assert beats.count(chat_entry.PRESENCE_TTL_S) >= 3
+    assert beats[-1] == 0 and len(beats) == settled

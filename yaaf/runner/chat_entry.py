@@ -27,7 +27,9 @@ import contextlib
 import importlib
 import json
 import os
+import re
 import sys
+import threading
 import time
 
 import sandbox_entry as base
@@ -37,6 +39,7 @@ from claude_agent_sdk import (
     ClaudeSDKClient,
     ResultMessage,
     TextBlock,
+    ToolUseBlock,
     create_sdk_mcp_server,
 )
 
@@ -156,8 +159,128 @@ def _read_messages(channel_id: str, limit: int = 50) -> tuple[int, list[dict] | 
     return 200, list(result["body"])
 
 
-def _set_typing(channel_id: str, seconds: float) -> None:
-    base._call("POST", "/agent/typing", {"channel_id": channel_id, "seconds": seconds})
+def _set_typing(channel_id: str, seconds: float, status: str | None = None) -> None:
+    payload: dict = {"channel_id": channel_id, "seconds": seconds}
+    if status:
+        payload["status"] = status
+    base._call("POST", "/agent/typing", payload)
+
+
+# ── presence: what the room shows while a turn runs ─────────────────────────────
+#
+# A turn is not a reply being typed. On 26 November 2026 one ran six minutes —
+# downloading five images, reading them with a vision model, drawing two more —
+# and the typing flag, raised once for 120 seconds and refreshed only when the
+# model wrote prose, lapsed at minute two. The chairman watched the dots vanish
+# under his message and concluded the CEO had crashed. A tool call writes no
+# prose, and one call can hold the event loop for minutes, so the flag is kept
+# up by a thread on its own clock, and says what the turn is doing.
+
+#: How often a running turn re-raises the flag, and how long each raise lasts.
+#: A dead process stops beating, so the room goes quiet within the minute.
+PRESENCE_BEAT_S = 20.0
+PRESENCE_TTL_S = 60.0
+THINKING = "thinking"
+WRITING = "writing the reply"
+REWRITING = "rewriting the reply"
+RETRYING = "waiting for the AI provider"
+
+_IMAGES = re.compile(r"\b(?:images?|imagen|png|jpe?g|webp|hero|draw|render)\b", re.I)
+#: Tool name (any harness's spelling, lower-cased, MCP prefix dropped) → words.
+_DOING = {
+    **dict.fromkeys(("websearch", "web_search", "google_web_search", "search"),
+                    "searching the web"),
+    **dict.fromkeys(("webfetch", "web_fetch", "fetch", "data_fetch"), "reading a web page"),
+    **dict.fromkeys(("bash", "shell", "run_shell_command", "command_execution"),
+                    "running a script"),
+    **dict.fromkeys(("read", "read_file", "read_many_files", "glob", "grep", "list",
+                     "list_directory", "search_file_content", "artifact_get",
+                     "artifact_list", "env_list"), "reading files"),
+    **dict.fromkeys(("write", "edit", "write_file", "replace", "patch", "file_change",
+                     "artifact_put"), "writing a file"),
+    **dict.fromkeys(("messages_read", "channels", "mail_read"), "reading messages"),
+    **dict.fromkeys(("message_post", "mail_send", "heads_up"), "sending a message"),
+}
+_DOING_PREFIX = (("task_", "checking the task board"), ("board", "checking the task board"),
+                 ("memory", "checking its notes"), ("requirement", "checking the plan"),
+                 ("brief", "drafting the brief"), ("approval", "checking approvals"))
+
+
+def _doing(name: str, detail: str = "") -> str:
+    """A tool call in the words the room shows after the CEO's name."""
+    name = name.rsplit("__", 1)[-1].lower()
+    doing = _DOING.get(name)
+    if doing is None:
+        doing = next((words for prefix, words in _DOING_PREFIX if name.startswith(prefix)),
+                     "working")
+    if doing in ("running a script", "working") and _IMAGES.search(detail):
+        return "working on images"
+    return doing
+
+
+def _activity(record: dict) -> str | None:
+    """What a harness's trace line says the turn is now doing, or None when
+    it says nothing new. Each harness spells a tool call its own way."""
+    kind = str(record.get("type") or "")
+    if kind in ("ToolResultBlock", "tool_result"):
+        return THINKING
+    name = record.get("name") or record.get("tool")
+    detail = str(record.get("input") or record.get("command") or "")
+    if not name and record.get("repr") and kind in ("ToolUseBlock", "tool_use"):
+        try:
+            block = json.loads(record["repr"])
+        except (TypeError, ValueError):
+            block = {}
+        name = block.get("name") if isinstance(block, dict) else None
+        detail = json.dumps(block.get("input"), default=str) if name else ""
+    if not name and kind in _DOING:
+        name, detail = kind, str(record.get("repr") or "")
+    return _doing(str(name), detail) if name else None
+
+
+class _Presence:
+    """The typing flag for the turn in flight, beaten from a thread. Every
+    post happens under the lock, so a beat can never land after `stop` and
+    leave dots under a reply that has already arrived."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._channel: str | None = None
+        self._status: str | None = None
+        self._stop: threading.Event | None = None
+
+    def start(self, channel_id: str, status: str = THINKING) -> None:
+        with self._lock:
+            self._channel, self._status = channel_id, status
+            if self._stop is None:
+                self._stop = threading.Event()
+                threading.Thread(target=self._beat, args=(self._stop,), daemon=True).start()
+            _set_typing(channel_id, PRESENCE_TTL_S, status)
+
+    def say(self, status: str | None) -> None:
+        with self._lock:
+            if self._channel is None or not status or status == self._status:
+                return
+            self._status = status
+            _set_typing(self._channel, PRESENCE_TTL_S, status)
+
+    def stop(self) -> None:
+        with self._lock:
+            if self._stop is not None:
+                self._stop.set()
+            if self._channel is not None:
+                _set_typing(self._channel, 0)
+            self._channel = self._status = self._stop = None
+
+    def _beat(self, stop: threading.Event) -> None:
+        while not stop.wait(PRESENCE_BEAT_S):
+            with self._lock:
+                if stop.is_set() or self._channel is None:
+                    return
+                _set_typing(self._channel, PRESENCE_TTL_S, self._status)
+
+
+_presence = _Presence()
 
 
 def _post_reply(channel_id: str, text: str, answers: list[str] | None = None,
@@ -194,7 +317,7 @@ async def _deliver(conversation, channel_id: str, reply: str, answers: list[str]
     result = _post_reply(channel_id, reply, answers)
     refusal = _plain_refusal(result)
     if refusal is not None:
-        _set_typing(channel_id, 120)
+        _presence.say(REWRITING)
         try:
             rewrite = await conversation.turn(channel_id, (
                 "Your reply was not delivered. The platform said:\n" + refusal
@@ -202,7 +325,6 @@ async def _deliver(conversation, channel_id: str, reply: str, answers: list[str]
         except Exception as exc:
             _log(f"rewrite turn failed: {exc!r}; sending the first draft")
             rewrite = ""
-        _set_typing(channel_id, 0)
         result = _post_reply(channel_id, rewrite.strip() or reply, answers, redrafted=True)
     return result["status"] == 200
 
@@ -348,10 +470,12 @@ async def _run_turn(client: ClaudeSDKClient, channel_id: str, prompt: str) -> st
     await client.query(prompt)
     async for message in client.receive_response():
         if isinstance(message, AssistantMessage):
-            _set_typing(channel_id, 60)
             for block in message.content:
                 if isinstance(block, TextBlock):
+                    _presence.say(WRITING)
                     reply_parts.append(block.text)
+                elif isinstance(block, ToolUseBlock):
+                    _presence.say(_doing(block.name, json.dumps(block.input, default=str)))
         elif isinstance(message, ResultMessage):
             result = message
             tokens_in, tokens_out, cache_creation, cache_read = _usage_tokens(message)
@@ -360,6 +484,9 @@ async def _run_turn(client: ClaudeSDKClient, channel_id: str, prompt: str) -> st
                 cost_delta = max(0.0, message.total_cost_usd - _cost_booked)
                 _cost_booked = max(_cost_booked, message.total_cost_usd)
             _book_usage(tokens_in, tokens_out, cache_creation, cache_read, cost_delta)
+        else:
+            # Tool results coming back: the model reads them next.
+            _presence.say(THINKING)
     if result is not None and not _turn_result_ok(result):
         raise TurnFailed(_result_error_text(result))
     return "\n".join(part for part in reply_parts if part.strip())
@@ -402,8 +529,10 @@ class DriverConversation:
             if isinstance(event, base.Session):
                 self.session = event.id
             elif isinstance(event, base.Text):
-                _set_typing(channel_id, 60)
+                _presence.say(WRITING)
                 parts.append(event.text)
+            elif isinstance(event, base.TraceLine):
+                _presence.say(_activity(event.record))
             elif isinstance(event, base.AttemptResult):
                 _book_usage(event.tokens_in, event.tokens_out, event.cache_creation,
                             event.cache_read, event.cost_usd)
@@ -528,7 +657,7 @@ async def _serve(conversation, channel_id: str, state: dict) -> int | None:
                 await asyncio.sleep(POLL_S)
                 continue
 
-        _set_typing(channel_id, 120)
+        _presence.start(channel_id)
         # Carry the message id: a standing instruction he gives here has to
         # be citable to `directive_file`, and without the id the CEO can
         # only write it down and hope the next run reads the note.
@@ -575,18 +704,19 @@ async def _serve(conversation, channel_id: str, state: dict) -> int | None:
                 # Hold the typing dots across the wait. A silent boardroom reads
                 # as a dead one and the chairman re-asks, which is a second paid
                 # turn into the same overloaded API.
-                _set_typing(channel_id, delay + POLL_S + 5)
+                _presence.say(RETRYING)
                 state["backlog"] = fresh + state["backlog"]
                 await asyncio.sleep(delay)
             else:
-                _set_typing(channel_id, 0)
+                _presence.stop()
                 _post_reply(channel_id, _apology(exc, attempt))
             return None
 
-        _set_typing(channel_id, 0)
         state["turns_ok"] += 1
-        if reply and not await _deliver(conversation, channel_id, reply,
-                                        [m["id"] for m in fresh]):
+        delivered = not reply or await _deliver(conversation, channel_id, reply,
+                                                [m["id"] for m in fresh])
+        _presence.stop()
+        if not delivered:
             # Composed and undeliverable — a revoked token, a refused post. The
             # reply itself is lost, but the chairman is not left guessing: the
             # supervisor sees the session end and says so in the boardroom
@@ -637,6 +767,7 @@ async def main() -> int:
                     return code
         except Exception as exc:
             _log(f"conversation failed: {exc!r}")
+            _presence.stop()
         # Consecutive, not lifetime. The cap exists to surface an SDK that is
         # systematically broken; a session that lives for days collects five
         # unrelated rebuilds — and a bad afternoon on the API now costs two per

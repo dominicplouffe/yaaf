@@ -318,6 +318,18 @@ const REFUSED: [RegExp, string][] = [
   [/^\/agent\/mail$/, "send an email"],
 ];
 
+/** The CEO's presence while a reply is on its way. `status` is what the turn is
+ *  doing ("searching the web"), `since` when it began: a reply can take
+ *  minutes of real work, and dots alone that long read as a crash. */
+type Typing = { typing: boolean; status?: string | null; since?: string | null };
+
+/** "3 min" once a turn has run a minute; nothing before that. */
+function workedFor(since: string | null | undefined): string | null {
+  if (!since) return null;
+  const minutes = Math.floor((Date.now() - new Date(since).getTime()) / 60000);
+  return minutes >= 1 ? `${minutes} min` : null;
+}
+
 function refusedAction(route: string | null): string {
   if (!route) return "do something";
   return REFUSED.find(([re]) => re.test(route))?.[1] ?? "do something";
@@ -400,8 +412,8 @@ export default function Boardroom({ projectId, dash, org }: {
   const { data: typing } = usePoll(
     () =>
       channelId
-        ? get<{ typing: boolean }>(`/observe/channels/${channelId}/typing`)
-        : Promise.resolve({ typing: false }),
+        ? get<Typing>(`/observe/channels/${channelId}/typing`)
+        : Promise.resolve({ typing: false, status: null, since: null }),
     2000,
     [channelId],
   );
@@ -665,7 +677,7 @@ export default function Boardroom({ projectId, dash, org }: {
     : dash.chat_held
       ? { tone: "bad", icon: "alert", word: "Can't reply right now" }
       : typing?.typing
-          ? { tone: "work", icon: "message", word: "Typing…" }
+          ? { tone: "work", icon: "message", word: typing.status && typing.status !== "writing the reply" ? "Working…" : "Typing…" }
           : dash.chat_live
             ? { tone: "good", icon: "check", word: "Replies in seconds" }
             : { tone: "work", icon: "clock", word: ceoRun || dash.runs.running > 0 ? "Finishing other work" : "Replies in a few minutes" };
@@ -893,10 +905,13 @@ export default function Boardroom({ projectId, dash, org }: {
                   ),
                 )}
                 {typing?.typing && (
-                  <div className="cr-typing" aria-label={`${ceoFirst} is typing`}>
+                  <div className="cr-typing" role="status">
                     <Avatar name={ceoName} team="leadership" size="sm" />
                     <span className="cr-dots" aria-hidden="true"><i /><i /><i /></span>
-                    <span>{ceoFirst} is typing…</span>
+                    <span>
+                      {ceoFirst} is {typing.status ?? "typing"}…
+                      {workedFor(typing.since) && <span className="cr-for"> · {workedFor(typing.since)}</span>}
+                    </span>
                   </div>
                 )}
                 {!typing?.typing && ceoRun && !dash.chat_live && loaded.length > 0 && loaded[loaded.length - 1].from_user && (
