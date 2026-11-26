@@ -31,6 +31,7 @@ import { SETTINGS_NAV } from "../../nav";
 import { ConfirmModal, fmtUnit, SecretInput, StoredSecret } from "../../ui";
 import { choiceLabel, humanizeHelp, Lede, splitLead, Why } from "../../settingsCopy";
 import { modeLabel } from "../../ui/project";
+import { EnvironmentsCard } from "./Factory";
 
 /** "amazon-audit-v2" → "amazon-audit-v3"; "Acme" → "Acme (clone)". Twins come
     in numbered runs far more often than they come in ones. */
@@ -1598,6 +1599,13 @@ export default function Settings({
       </div>
 
       </Section>
+
+      {dash.mode === "code_factory" && (
+        <Section on={section === "integrations"}>
+          <h2>Environments</h2>
+          <EnvironmentsCard projectId={projectId} dash={dash} />
+        </Section>
+      )}
 
       <Section on={section === "integrations"}>
       <h2>GitHub workspace</h2>

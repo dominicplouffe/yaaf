@@ -1709,6 +1709,23 @@ def check_plan_affordable(session: Session, project: Project, cons: Constitution
     )
 
 
+#: The artifact an adopting Code Factory must publish before its plan can hold.
+INTAKE_REPORT = "intake-report.md"
+
+
+def intake_owed(session: Session, project: Project) -> bool:
+    """A Code Factory that adopted a repo, with no intake report published."""
+    if not shape.is_factory(project) or \
+            (project.integrations or {}).get("factory_start") != "repo":
+        return False
+    from yaaf.core.models import Artifact
+
+    return session.execute(
+        select(Artifact.id).where(Artifact.project_id == project.id,
+                                  Artifact.name == INTAKE_REPORT).limit(1)
+    ).first() is None
+
+
 def evaluate_plan(session: Session, project: Project, cons: ConstitutionDoc) -> list[str]:
     """What is still missing before R-00 can be met. Empty means the plan holds.
 
@@ -1719,6 +1736,16 @@ def evaluate_plan(session: Session, project: Project, cons: ConstitutionDoc) -> 
     report itself ready.
     """
     missing: list[str] = []
+    if intake_owed(session, project):
+        # An adopted repo is read before it is changed. The plan is its charter,
+        # and a charter written without the facts is a guess about someone
+        # else's code; until the report exists, no work may be created at all.
+        missing.append(
+            f"no intake report yet. This Code Factory adopted an existing repo: read "
+            f"it first and publish {INTAKE_REPORT} — tests, coverage, flaky tests, CI, "
+            "packages, advisories, licences, leaked secrets, runtimes out of support, "
+            "and 90 days of delivery — then propose the charter from it.")
+        return missing
     scope = scope_requirements(session, project.id)
     accepted = [r for r in scope if r.status not in (RequirementStatus.PROPOSED,)]
     live = [r for r in accepted if r.status not in CLOSED_REQUIREMENT_STATUSES]

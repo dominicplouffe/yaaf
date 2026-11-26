@@ -1,0 +1,49 @@
+{
+  "slug": "keep-a-repo-healthy",
+  "name": "Keep a repo healthy",
+  "outcome": "An existing codebase patched, green, answered and current, every week, with nothing reaching main unchecked.",
+  "ceo_role_slug": "tech-lead",
+  "domains": [
+    "general"
+  ],
+  "source": "examples/14-keep-a-repo-healthy",
+  "teams": [
+    {
+      "role_slug": "engineer",
+      "name": "Build",
+      "employees": [
+        "Ravi",
+        "Lena"
+      ],
+      "lead": "Ravi"
+    },
+    {
+      "role_slug": "code-reviewer",
+      "name": "Review",
+      "employees": [
+        "Ash"
+      ]
+    },
+    {
+      "role_slug": "test-engineer",
+      "name": "Test",
+      "employees": [
+        "Kai"
+      ]
+    },
+    {
+      "role_slug": "security-engineer",
+      "name": "Security",
+      "employees": [
+        "Mo"
+      ]
+    },
+    {
+      "role_slug": "release-engineer",
+      "name": "Release",
+      "employees": [
+        "Pia"
+      ]
+    }
+  ]
+}

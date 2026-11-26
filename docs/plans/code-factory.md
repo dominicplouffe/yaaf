@@ -179,3 +179,25 @@ All are computed by the platform, never by the crew:
 - Each phase passes tier 1 for its area, then `pytest -q -n auto` once, and Postgres (tier 3) for phases 2 and 4, because they add JSON columns and timestamps.
 - A rehearsal on mock models and a fake GitHub walks both examples end to end for $0. It shows: a size refusal, a review return, a hidden-scenario refusal, a merge, a release, a forced canary breach with automatic rollback, an incident, and a cycle roll.
 - One paid run builds a small real app (the Slotwise pilot spec, cut down) to prove the loop with real harnesses.
+
+## Status (built on this branch)
+
+| Phase | State | Where |
+|---|---|---|
+| 1. The mode | Done | `yaaf/core/shape.py`, `FactoryPhase`, hand-over in `admin.complete_delivery` |
+| 2. Changes and the merge gate | Done | `yaaf/server/changes.py`, GitHub webhook, `protect_main` |
+| 3. Quality gates | Done | `yaaf/server/diffscan.py`, hidden scenarios (`Scenario`, `scenario_check` runs) |
+| 4. Releases | Done | `yaaf/server/releases.py`, `deploy` runs, canary guard, incidents |
+| 5. Upkeep | Partly | Weekly cycles, standing promises and review-at-the-roll come from Operate. The promises are proposed by the tech lead as standing requirements; platform-measured checkers for "main green %", "issues answered" and "advisories open" are not built yet. |
+| 6. Adopt a repo | Done | An adopted factory starts in upkeep; its plan cannot hold until `intake-report.md` is published |
+| 7. Crew, docs, UI | Done | 6 roles, 3 crews, examples 13 and 14, Changes and Releases tabs, Settings → Environments, New Project card |
+
+Attack tests: `test_code_factory.py`, `test_merge_gate.py`, `test_quality_gates.py`, `test_releases.py`.
+
+Not built yet, in order of value:
+1. Platform-measured upkeep checkers (main green %, issue answer time, advisories open, flaky count, package lag).
+2. Scanners in the sandbox image (Semgrep, gitleaks, OSV-Scanner, Syft). The gates read the diff today; the image does not yet ship scanners agents or checks can run.
+3. A changed-line coverage gate (needs coverage from CI, by commit).
+4. SBOM and signed provenance on a release. Not claimed anywhere until built.
+5. Staging as its own step before production, and preview builds per change driven by the platform.
+6. Overview screens from the mockups: the lifecycle rail and factory vitals on the project home.

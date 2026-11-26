@@ -8,6 +8,7 @@ import Deliverables from "./Deliverables";
 import Spend from "./Spend";
 import Review from "./Review";
 import Activity from "./Activity";
+import { Changes, Releases } from "./Factory";
 import { PinButton } from "../../shortcuts";
 
 /** One sentence per tab, only where the tab does not already say it. */
@@ -43,7 +44,10 @@ export default function Details({ ctx }: { ctx: ProjectCtx }) {
   const base = `/projects/${projectId}/details`;
   // An Explore project has no roadmap to show — it runs on bets, which live
   // on the task board — so it opens on Tasks instead.
-  const tabs = DETAIL_TABS.filter((t) => !(dash.shape === "explore" && t.path === "roadmap"));
+  // Changes and Releases are a Code Factory's own records; nothing else has them.
+  const factoryOnly = (path: string) => path === "changes" || path === "releases";
+  const tabs = DETAIL_TABS.filter((t) => !(dash.shape === "explore" && t.path === "roadmap")
+    && !(factoryOnly(t.path) && dash.mode !== "code_factory"));
   const { pathname, search } = useLocation();
   const here = pathname.slice(base.length + 1).replace(/\/$/, "");
   const tab = tabs.find((t) => here === t.path || here.startsWith(`${t.path}/`));
@@ -78,6 +82,8 @@ export default function Details({ ctx }: { ctx: ProjectCtx }) {
                 {t.path === "roadmap" ? <Plan ctx={ctx} />
                   : t.path === "tasks" ? <Tasks ctx={ctx} />
                   : t.path === "deliverables" ? <Deliverables projectId={projectId} />
+                  : t.path === "changes" ? <Changes ctx={ctx} />
+                  : t.path === "releases" ? <Releases ctx={ctx} />
                   : t.path === "spend" ? <Spend ctx={ctx} />
                   : t.path === "reviews" ? <Review ctx={ctx} />
                   : <Activity ctx={ctx} />}

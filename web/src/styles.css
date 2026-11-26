@@ -3711,3 +3711,13 @@ button.gchip.tool-count:hover { border-color: var(--muted); color: var(--ink); }
 .setup-chip.failed { color: var(--critical); border-color: rgba(var(--critical-rgb), 0.5); background: rgba(var(--critical-rgb), 0.08); font-weight: 600; }
 /* Given, not yet proven: settled for the count, but not drawn as done. */
 .setup-chip.saved { color: var(--ink-2); }
+
+/* Code Factory records: a change's gates, a release, an incident's timeline. */
+.factory { display: grid; gap: var(--s4); }
+.factory .row-between { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s3); flex-wrap: wrap; }
+.factory .warn-card { border-color: var(--warning); }
+.factory table.gates { width: 100%; border-collapse: collapse; font-size: var(--t-small); }
+.factory table.gates td { padding: var(--s1) var(--s2); border-top: 1px solid var(--border); vertical-align: top; }
+.factory table.gates td:first-child { width: 1.5em; text-align: center; color: var(--good); }
+.factory .timeline { margin: 0; padding-left: var(--s5); font-size: var(--t-small); }
+.factory .prewrap { white-space: pre-wrap; }

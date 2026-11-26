@@ -290,3 +290,37 @@ def test_a_setup_file_carries_where_the_factory_started(client):
     spec = bundle.json()["project"]
     assert spec["mode"] == "code_factory"
     assert spec["integrations"].get("factory_start") == "repo"
+
+
+def test_an_adopted_repo_is_read_before_any_work_is_created(client):
+    """The plan of an adopted repo is its charter, and the charter is written
+    from the facts. Until the intake report is published, R-00 cannot hold, so
+    no task — and so no change — can exist."""
+    import base64
+
+    from tests.selftest_invariants.test_requirements import make_task, tick
+
+    project = adopted(client, slug="read-first")
+    token = ceo_token(project)
+    rid = propose(client, token, statement="Critical advisories are fixed in 2 days")[
+        "requirement_id"]
+    accept(client, rid, project)
+    tick(project)
+    with db_session() as session:
+        plan = policy.plan_requirement(session, project["id"])
+        assert plan.status != RequirementStatus.MET
+        row = session.get(Project, project["id"])
+        from yaaf.core.constitution import effective
+        missing = policy.evaluate_plan(session, row, effective(session, row.id))
+        assert any("intake report" in m for m in missing)
+    refused = make_task(client, token, project, rid)
+    assert refused.status_code in (409, 422)
+
+    published = client.post("/agent/artifacts", headers=bearer(token), json={
+        "filename": policy.INTAKE_REPORT,
+        "content_base64": base64.b64encode(b"# What we found\n1,204 tests, 3 failing.").decode()})
+    assert published.status_code == 200, published.text
+    tick(project)
+    with db_session() as session:
+        assert policy.plan_requirement(session, project["id"]).status == RequirementStatus.MET
+    assert make_task(client, token, project, rid).status_code == 200
