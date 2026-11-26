@@ -440,6 +440,58 @@ class TaskReview(BaseModel):
         return raw.strip()
 
 
+class ChangeOpen(BaseModel):
+    task_id: str
+    branch: str = Field(min_length=1, max_length=255)
+    title: str = Field(min_length=3, max_length=300)
+    summary: str = Field(min_length=10, max_length=20_000)
+
+
+@router.post("/changes")
+def open_change(body: ChangeOpen, ctx: RunContext = Depends(run_auth),
+                session: Session = Depends(db)) -> dict:
+    """Code Factory: ask the platform to open a pull request for the branch you
+    pushed. It opens it with its own token, counts its size from GitHub, and
+    merges it — itself, pinned to the head it checked — once every gate is
+    green. You never merge."""
+    from yaaf.server import changes
+
+    change = changes.open_change(session, ctx.project, ctx.agent, task_id=body.task_id,
+                                 branch=body.branch, title=body.title, summary=body.summary)
+    return changes.view(change)
+
+
+@router.get("/changes")
+def list_changes(ctx: RunContext = Depends(run_auth),
+                 session: Session = Depends(db)) -> dict:
+    from yaaf.server import changes
+
+    changes.require_factory(ctx.project)
+    return {"changes": changes.listing(session, ctx.project, live_only=True)}
+
+
+class ChangeReview(BaseModel):
+    # Checked by `changes.review`, which says what the two words are rather
+    # than returning a schema error an agent has to decode.
+    verdict: str = Field(min_length=1, max_length=16)
+    note: str = Field(min_length=1, max_length=4000)
+
+
+@router.post("/changes/{change_id}/review")
+def review_change(change_id: str, body: ChangeReview, ctx: RunContext = Depends(run_auth),
+                  session: Session = Depends(db)) -> dict:
+    """A challenge seat's verdict on somebody else's change, pinned to the head
+    commit it read. A later push clears it."""
+    from yaaf.core.models import Change
+    from yaaf.server import changes
+
+    change = session.get(Change, change_id)
+    if change is None or change.project_id != ctx.project.id:
+        raise Refusal("Unknown change.", status_code=404)
+    return changes.review(session, ctx.project, change, ctx.agent,
+                          verdict=body.verdict, note=body.note)
+
+
 @router.post("/tasks/{task_id}/review")
 def review_task(
     task_id: str,

@@ -82,7 +82,17 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import asks as ask_lib
-from yaaf.server import briefing, metrics, plain, policy, scorecard, staffing, standing, writing
+from yaaf.server import (
+    briefing,
+    changes,
+    metrics,
+    plain,
+    policy,
+    scorecard,
+    staffing,
+    standing,
+    writing,
+)
 from yaaf.server.notify import (
     Attention,
     boardroom_line,
@@ -215,6 +225,10 @@ def _janitor_project(session: Session, project: Project) -> None:
     roll_cycles(session, project, cons)
     check_explore_deadline(session, project)
     check_delivery_ready(session, project)
+    # Code Factory: judge pushes to main first, so a bypass freezes merging
+    # before this tick merges anything on top of it.
+    changes.reconcile_main(session, project)
+    changes.merge_ready(session, project)
     warn_drought(session, project, cons)
     warn_stall(session, project, cons)
     warn_memory_pressure(session, project, cons)

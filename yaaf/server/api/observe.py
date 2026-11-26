@@ -1710,6 +1710,20 @@ def health_sig(key: str, detail: str) -> str:
     return hashlib.sha1(f"{key}|{masked}".encode()).hexdigest()[:12]
 
 
+@router.get("/projects/{project_id}/changes", dependencies=[authority.READ])
+def project_changes(project_id: str, session: Session = Depends(db)) -> dict:
+    """A Code Factory's pull requests as the platform holds them: every gate,
+    who checked it, and whether merging is frozen."""
+    from yaaf.server import changes
+
+    project = _project(session, project_id)
+    frozen = changes.merges_frozen(session, project) if shape.is_factory(project) else None
+    return {"changes": changes.listing(session, project) if shape.is_factory(project) else [],
+            "merges_frozen": ({"flag_id": frozen.id, "summary": frozen.summary}
+                              if frozen is not None else None),
+            "branch_protection": (project.integrations or {}).get("branch_protection")}
+
+
 @router.get("/projects/{project_id}/plan", dependencies=[authority.READ])
 def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
     """Everything the Plan screen draws, in one request.

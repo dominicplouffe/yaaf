@@ -292,6 +292,65 @@
     "name": "capacity_request"
   },
   {
+    "description": "Code Factory only. Push your work to a branch of its own with git, then call this to have the platform open the pull request for the task you hold. It counts the size from GitHub (over the project's line limit is refused: split it), waits for CI on that exact commit and for a challenge seat's signature, and merges it ITSELF when every gate is green. You never merge and never push to main. A push to the same branch re-runs every gate and clears the review.",
+    "input_schema": {
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "branch",
+        "title",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "name": "change_open"
+  },
+  {
+    "description": "Code Factory, challenge seats only. Sign somebody else's change, or return it with what is wrong. `verdict` is 'sign' or 'return'; `note` says what you read and what you found. Your signature is pinned to the commit you read; a later push clears it. You cannot sign your own change.",
+    "input_schema": {
+      "properties": {
+        "change_id": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "verdict": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "change_id",
+        "verdict",
+        "note"
+      ],
+      "type": "object"
+    },
+    "name": "change_review"
+  },
+  {
+    "description": "Code Factory only. Open changes and every gate on each: serves, size, checks, review.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "changes_list"
+  },
+  {
     "description": "List your channels with unread counts.",
     "input_schema": {
       "properties": {},

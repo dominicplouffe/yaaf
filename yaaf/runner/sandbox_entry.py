@@ -462,6 +462,43 @@ async def t_task_review(args):
     )
 
 
+@tool(
+    "change_open",
+    "Code Factory only. Push your work to a branch of its own with git, then call "
+    "this to have the platform open the pull request for the task you hold. It "
+    "counts the size from GitHub (over the project's line limit is refused: "
+    "split it), waits for CI on that exact commit and for a challenge seat's "
+    "signature, and merges it ITSELF when every gate is green. You never merge "
+    "and never push to main. A push to the same branch re-runs every gate and "
+    "clears the review.",
+    {"task_id": str, "branch": str, "title": str, "summary": str},
+)
+async def t_change_open(args):
+    return _text(_call("POST", "/agent/changes", {
+        "task_id": args["task_id"], "branch": args["branch"],
+        "title": args["title"], "summary": args["summary"]}))
+
+
+@tool("changes_list",
+      "Code Factory only. Open changes and every gate on each: serves, size, checks, "
+      "review.", {})
+async def t_changes_list(args):
+    return _text(_call("GET", "/agent/changes"))
+
+
+@tool(
+    "change_review",
+    "Code Factory, challenge seats only. Sign somebody else's change, or return it "
+    "with what is wrong. `verdict` is 'sign' or 'return'; `note` says what you read "
+    "and what you found. Your signature is pinned to the commit you read; a later "
+    "push clears it. You cannot sign your own change.",
+    {"change_id": str, "verdict": str, "note": str},
+)
+async def t_change_review(args):
+    return _text(_call("POST", f"/agent/changes/{args['change_id']}/review",
+                       {"verdict": args["verdict"], "note": args["note"]}))
+
+
 @tool("task_block", "Block your claimed task with a reason; the CEO will re-plan.",
       {"task_id": str, "reason": str})
 async def t_task_block(args):
@@ -1817,6 +1854,7 @@ def _meta_of(obj) -> dict:
 ALL_TOOLS = [
     t_board, t_task_create, t_task_claim, t_task_complete, t_task_review,
     t_task_block, t_task_kill,
+    t_change_open, t_changes_list, t_change_review,
     t_requirement_propose, t_requirement_depends_on,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_ask_chairman, t_ask_close,

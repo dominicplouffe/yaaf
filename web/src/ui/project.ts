@@ -89,6 +89,11 @@ export const FLAG_PLAIN: Record<string, { title: string; means: string }> = {
     means: "The rhythm moved on to the next cycle and carried the unfinished work "
       + "with it. Nothing was lost and nothing stopped.",
   },
+  main_bypassed: {
+    title: "Main moved without the platform",
+    means: "A commit reached the main branch without passing a single check. No "
+      + "change merges until you answer it: keep the commit and say why, or revert it.",
+  },
   standing_missed: {
     title: "Something owed every cycle did not happen",
     means: "One of the standing obligations failed its check this cycle. It is owed "

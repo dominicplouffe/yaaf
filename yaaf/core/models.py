@@ -261,6 +261,11 @@ class FlagKind(enum.StrEnum):
     # work for two days and spent 139 million tokens, and the only thing that
     # noticed was the chairman reading a token bill.
     SEAT_IDLE = "seat_idle"
+    # A Code Factory's main branch moved without the platform moving it. Only
+    # the platform merges, after every gate; a commit that reached main any
+    # other way skipped all of them. Not arithmetic but a fact the repo
+    # reports, and the automatic half: no change merges until it is answered.
+    MAIN_BYPASSED = "main_bypassed"
 
 
 class FlagStatus(enum.StrEnum):
@@ -593,6 +598,11 @@ class NoticeKind(enum.StrEnum):
     # Not urgent: it can wait out a batching window, because the one thing it
     # must not do is buy a run on every tick of a project that has finished.
     DELIVERY_READY = "delivery_ready"
+    # Code Factory: a challenge seat sent the author's change back, or the
+    # platform refused it; and the platform merged it. Both go to the author,
+    # who otherwise learns only by polling a page.
+    CHANGE_RETURNED = "change_returned"
+    CHANGE_MERGED = "change_merged"
     # The chairman took a completed delivery back: something is missing. Urgent
     # in the ordinary sense — the project is running again for this reason.
     DELIVERY_REOPENED = "delivery_reopened"
@@ -2270,6 +2280,63 @@ class Account(Base):
     note: Mapped[str | None] = mapped_column(Text)
     created_by_agent_id: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ChangeStatus(enum.StrEnum):
+    """One pull request's life in a Code Factory. Only the platform moves a
+    change to MERGED, and only from READY, which only `changes.evaluate` sets."""
+
+    OPEN = "open"          # opened; gates not yet all green
+    READY = "ready"        # every gate green on the current head; the merge is queued
+    MERGING = "merging"    # the platform has asked GitHub to merge it
+    MERGED = "merged"      # on main, merged by the platform
+    REFUSED = "refused"    # a gate the change can never pass as it stands (size)
+    CLOSED = "closed"      # closed unmerged, by the author or on GitHub
+
+
+class Change(Base):
+    """A pull request, as a record the platform owns rather than a page on
+    GitHub an agent describes.
+
+    Every gate is written by the platform: the size from GitHub's own count,
+    the checks from signed webhooks against this exact head commit, the review
+    from a challenge seat that did not write it — and a new push clears the
+    review, because a signature on code that has since changed signs nothing.
+    """
+
+    __tablename__ = "changes"
+    __table_args__ = (Index("ix_changes_project_status", "project_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
+    requirement_id: Mapped[str | None] = mapped_column(ForeignKey("requirements.id"))
+    author_agent_id: Mapped[str] = mapped_column(String(40))
+    number: Mapped[int | None] = mapped_column(Integer)
+    branch: Mapped[str] = mapped_column(String(255))
+    base: Mapped[str] = mapped_column(String(255), default="main")
+    title: Mapped[str] = mapped_column(String(300))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    head_sha: Mapped[str | None] = mapped_column(String(64))
+    lines_added: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    lines_removed: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    files_changed: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    status: Mapped[str] = mapped_column(String(16), default=ChangeStatus.OPEN)
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    # {check name: conclusion} for head_sha only; reset on every push.
+    checks: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # The last evaluation: {gate: {"ok": bool, "detail": str}}.
+    gates: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    reviewer_agent_id: Mapped[str | None] = mapped_column(String(40))
+    review_verdict: Mapped[str | None] = mapped_column(String(16))  # signed | returned
+    review_note: Mapped[str | None] = mapped_column(Text)
+    reviewed_sha: Mapped[str | None] = mapped_column(String(64))
+    reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    returns: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    merged_sha: Mapped[str | None] = mapped_column(String(64))
+    merged_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 class SideEffect(Base):

@@ -6833,9 +6833,20 @@ def attach_github(project_id: str, body: GithubAttach, session: Session = Depend
     project = _get_project(session, project_id)
     full_name = github.provision_repo(session, project, body.repo)
     project.github_repo = full_name
+    protection = None
+    if shape.is_factory(project):
+        # Only the platform merges in a factory. GitHub's own rule says so too
+        # where the token may set it; where it may not, the platform's push
+        # detection is the rule that holds, and the result is recorded either
+        # way so the project page can say which.
+        protection = github.protect_main(session, full_name)
+        project.integrations = {**(project.integrations or {}),
+                                "branch_protection": protection}
     _audit(session, project.id, "project.github_attach", "project", project.id,
-           {"github_repo": full_name})
-    return {"github_repo": full_name}
+           {"github_repo": full_name,
+            **({"branch_protection": protection} if protection is not None else {})})
+    return {"github_repo": full_name,
+            **({"branch_protection": protection} if protection is not None else {})}
 
 
 # ── slack: what this project inherits, and its rooms ────────────────────────────

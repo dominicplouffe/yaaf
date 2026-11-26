@@ -71,6 +71,7 @@ CHAIRMAN_NOTE = "cnot"  # his note on a decision, held until the CEO answers it
 MAIL_THREAD = "mthr"  # one correspondence from the project mailbox
 MAIL_MESSAGE = "mmsg"  # one email in it, either way
 DATA_SOURCE_TOOL = "dstl"  # one tool a data source offers, and its permission
+CHANGE = "chg"  # one pull request in a Code Factory, as the platform sees it
 
 
 def new_id(prefix: str) -> str:

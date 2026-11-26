@@ -122,6 +122,7 @@ GROUP_THEMES = {
     "Operate rhythm": "Rhythm & reporting",
     "The review": "Rhythm & reporting",
     "The commitment": "Rhythm & reporting",
+    "Code Factory": "How work is run",
 }
 
 #: Tab order on the rules screen — money first, because that is what a stuck
@@ -623,6 +624,15 @@ class ConstitutionDoc(BaseModel):
              "ground moved. Rule changes and scope changes always re-validate; this "
              "catches the failure-storm case where neither moved but the pace did. "
              "0 turns this trigger off.")
+
+    # Code Factory. Gates on a change before the platform merges it; they bind
+    # only a Code Factory, whose main branch only the platform moves.
+    max_change_lines: int = _rule(
+        400, ge=20, le=5000, group="Code Factory", label="Largest change, in lines",
+        help="Code Factory only. A change adding and removing more lines than this, "
+             "counted by GitHub rather than by the agent, is refused and closed: split "
+             "it. Reviews of big changes miss what reviews of small ones catch, and a "
+             "factory that ships large changes ships them unread.")
 
     # Runs
     run_timeout_s: int = _rule(
