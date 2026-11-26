@@ -1109,6 +1109,13 @@ class Message(Base):
     frozen_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     slack_ts: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # What a chairman's boardroom line was read as (yaaf.server.intent): one of
+    # order, approval, hold, question, venting, info. Read once, when something
+    # first needs it; `read_by` names the model, "rules", or "chairman" for his
+    # own correction. Only an order or an approval lets the CEO act on it.
+    read_as: Mapped[str | None] = mapped_column(String(16))
+    read_confidence: Mapped[float | None] = mapped_column(Float)
+    read_by: Mapped[str | None] = mapped_column(String(80))
 
 
 class ChannelRead(Base):

@@ -574,6 +574,9 @@ class LoopDriver:
         return dataclasses.replace(usage, cost_usd=cost, subtype=usage.subtype or subtype)
 
     async def _run(self, call: ToolCall) -> ToolOutput:
+        refused = base.talk_only_refusal(call.name)
+        if refused:
+            return ToolOutput(call.id, refused, True)
         tool = (self.tools or {}).get(call.name)
         if tool is None:
             return ToolOutput(call.id, f"no tool named {call.name} in this run", True)

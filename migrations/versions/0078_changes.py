@@ -1,14 +1,14 @@
 """A Code Factory's pull requests are rows the platform owns.
 
-Revision ID: 0077
-Revises: 0076
+Revision ID: 0078
+Revises: 0077
 """
 import sqlalchemy as sa
 
 from yaaf.core.migration_ops import create_index_if_missing, create_table_if_missing
 
-revision = "0077"
-down_revision = "0076"
+revision = "0078"
+down_revision = "0077"
 branch_labels = None
 depends_on = None
 

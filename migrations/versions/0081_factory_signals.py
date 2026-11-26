@@ -1,14 +1,14 @@
 """What a Code Factory's repo reported, for its upkeep promises.
 
-Revision ID: 0080
-Revises: 0079
+Revision ID: 0081
+Revises: 0080
 """
 import sqlalchemy as sa
 
 from yaaf.core.migration_ops import create_index_if_missing, create_table_if_missing
 
-revision = "0080"
-down_revision = "0079"
+revision = "0081"
+down_revision = "0080"
 branch_labels = None
 depends_on = None
 

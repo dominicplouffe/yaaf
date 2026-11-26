@@ -852,7 +852,13 @@ export interface MessageRow {
   frozen?: boolean;
   body: string;
   at: string;
+  /** What the chairman's line was read as (yaaf/server/intent.py). Only an
+      order or an approval the reader was sure of lets the CEO act on it. */
+  read_as?: ReadAs | null;
 }
+
+export type ReadAsLabel = "order" | "approval" | "hold" | "question" | "venting" | "info";
+export interface ReadAs { label: ReadAsLabel; confidence: number; by: string; acts: boolean }
 
 /** GET /observe/projects/:id/conversations — the Messages page: each room,
     and each conversation in it with how it ended (yaaf/server/conversations.py). */

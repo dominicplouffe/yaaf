@@ -1,14 +1,14 @@
 """A Code Factory remembers whether it is being built or being kept.
 
-Revision ID: 0076
-Revises: 0075
+Revision ID: 0077
+Revises: 0076
 """
 import sqlalchemy as sa
 
 from yaaf.core.migration_ops import add_column_if_missing
 
-revision = "0076"
-down_revision = "0075"
+revision = "0077"
+down_revision = "0076"
 branch_labels = None
 depends_on = None
 

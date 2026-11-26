@@ -1,14 +1,14 @@
 """A release's environment, SBOM and signed provenance.
 
-Revision ID: 0081
-Revises: 0080
+Revision ID: 0082
+Revises: 0081
 """
 import sqlalchemy as sa
 
 from yaaf.core.migration_ops import add_column_if_missing
 
-revision = "0081"
-down_revision = "0080"
+revision = "0082"
+down_revision = "0081"
 branch_labels = None
 depends_on = None
 

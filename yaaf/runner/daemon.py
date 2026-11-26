@@ -362,6 +362,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
     job.agent_kind = agent.kind
     _offer_mail(project, agent, job)
     source_specs = _merge_project_data_sources(session, project, role_version, job)
+    _talk_only_if_held(session, run, job)
     role_secrets = _role_secret_env(session, project, role_version)
     job.billing_env = {**_billing_env(session, project, job.provider), **role_secrets,
                        **_search_env(session, job)}
@@ -602,6 +603,22 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
             source["name"]: datasource_tools.denied_names(session, project.id, source["name"])
             for source in sources}}
     return specs
+
+
+def _talk_only_if_held(session: Session, run: Run, job: RunJob) -> None:
+    """The queued vehicle of the talk lane, when his newest line is not an order
+    (yaaf.server.intent): no scripts, no file writes, and the reason, which the
+    sandbox gives any changing tool that is called anyway. The resident session
+    does the same per turn (yaaf.runner.chat_entry); the API refuses the rest."""
+    if job.kind != RunKind.BOARDROOM_RUN:
+        return
+    from yaaf.server import intent
+
+    standing = intent.standing(session, run.project_id)
+    if standing.acts:
+        return
+    job.tool_permissions = {**job.tool_permissions, "bash": False, "data_processing": False,
+                            "files": False, "talk_only": intent.refusal(standing, "A script")}
 
 
 def _prepare_workspace(session: Session, project: Project) -> str:

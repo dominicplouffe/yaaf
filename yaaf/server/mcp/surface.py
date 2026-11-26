@@ -100,6 +100,10 @@ WITHHELD = {
         "a Code Factory path the chairman marked as needing a person is approved "
         "by that person, with the diff in front of him. A model client approving "
         "it would be a model approving the change the rule keeps from models.",
+    "POST /admin/projects/{project_id}/boardroom/messages/{message_id}/read_as":
+        "what the chairman meant by his own line, which decides whether the CEO "
+        "may act on it. A model client correcting that would be a model saying "
+        "what he meant, which is the reading this click exists to overrule.",
     "POST /admin/credential_checks":
         "the creation form's test of values typed into it before the project "
         "exists; a model client founds through the Founder and stores values "

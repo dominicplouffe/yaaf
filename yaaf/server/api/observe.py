@@ -82,6 +82,7 @@ from yaaf.server import (
     authority,
     briefing,
     file_index,
+    intent,
     metrics,
     policy,
     spend_rollup,
@@ -2273,9 +2274,15 @@ def channel_typing(channel_id: str, session: Session = Depends(db)) -> dict:
     """Ephemeral presence for the chat UI — true while the CEO's chat session
     is composing a reply (in-memory, self-expiring, never stored), or, where
     there is no resident session, while a run woken by this room is on its way
-    to the reply."""
-    return {"typing": typing_state.is_typing(channel_id)
-            or _reply_on_its_way(session, channel_id)}
+    to the reply.
+
+    `status` is what the session says it is doing ("searching the web") and
+    `since` when this stretch of work began: a long reply is shown as work in
+    progress with its age, never as dots that silently stop."""
+    flag = typing_state.state(channel_id)
+    if flag is not None:
+        return {"typing": True, "status": flag.status, "since": flag.since.isoformat()}
+    return {"typing": _reply_on_its_way(session, channel_id), "status": None, "since": None}
 
 
 def _reply_on_its_way(session: Session, channel_id: str) -> bool:
@@ -2420,6 +2427,9 @@ def _message_rows(session: Session, channel_id: str, rows: list[Message]) -> lis
                           else agents.get(m.sender_agent_id)),
             "thread_id": m.thread_id, "frozen": m.frozen_at is not None,
             "body": m.body, "at": m.created_at.isoformat(),
+            # What his line was read as, if anything has read it yet: shown
+            # under it, so a wrong reading costs him one click to correct.
+            "read_as": intent.label_line(intent.stored(m)),
         }
         for m in rows
     ]

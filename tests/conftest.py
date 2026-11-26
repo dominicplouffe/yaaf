@@ -50,7 +50,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.core.tokens import hash_token, mint
-from yaaf.server import datasource_tools
+from yaaf.server import datasource_tools, intent
 
 settings.cache_clear()
 
@@ -69,6 +69,10 @@ price_feed.TRANSPORT = httpx.MockTransport(_offline)
 # platform makes to one goes through the gateway's seam, and a test that wants
 # a server stands one in there.
 datasource_tools.TRANSPORT = httpx.MockTransport(_offline)
+# The chairman's lines are read by the word rules, as on an install with no API
+# key: reading one with a model is a paid call. A test of that path stands a
+# reader in (tests/selftest_invariants/test_read_as.py).
+intent.READER = None
 
 #: The suite's person, seeded into every test's empty database: the instance
 #: admin, and — through `make_project` — the chairman of every project a test

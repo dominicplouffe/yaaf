@@ -2070,6 +2070,44 @@ def _skill_slug(name: str) -> str:
     )[:64]
 
 
+# ── a turn that answers without acting ─────────────────────────────────────────
+#
+# Set by the chat lane for one turn whose message from the chairman is not an
+# order or an approval (yaaf.server.intent): the reason, worded for the model.
+# The platform refuses that turn's API writes itself; scripts and file writes
+# never reach the API, so they are refused here, when they run, under every
+# harness — yaaf's loop and the SDK by the tool's name, the CLIs by having the
+# grant taken away for the turn (yaaf.runner.chat_entry).
+TALK_ONLY: str | None = PERMS.get("talk_only") or None
+#: Tools that change something, in every harness's spelling.
+CHANGING_TOOLS = frozenset({"Bash", "Write", "Edit", "NotebookEdit", "bash", "write",
+                            "edit", "patch", "shell", "run_shell_command", "write_file",
+                            "replace"})
+
+
+def talk_only_refusal(tool: str) -> str | None:
+    """The refusal a changing tool gets in a turn that only talks, or None."""
+    if TALK_ONLY and tool.rsplit("__", 1)[-1] in CHANGING_TOOLS:
+        return TALK_ONLY
+    return None
+
+
+async def _refuse_while_talking(input_data, tool_use_id, context):
+    refused = talk_only_refusal(str((input_data or {}).get("tool_name") or ""))
+    if not refused:
+        return {}
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                   "permissionDecision": "deny",
+                                   "permissionDecisionReason": refused}}
+
+
+def talk_only_hooks() -> dict:
+    """The SDK's half: a PreToolUse decision, which holds under
+    bypassPermissions, where a permission callback is never asked. It can
+    only refuse, and only while TALK_ONLY is set."""
+    return {"PreToolUse": [HookMatcher(hooks=[_refuse_while_talking])]}
+
+
 def _builtin_tools() -> list[str]:
     """The base set of built-in tool declarations, not just permissions: a tool
     absent here never reaches the model at all. Undeclared schemas (Task,
@@ -2673,7 +2711,7 @@ class SdkDriver:
             cwd="/workspace",
             setting_sources=[],
             max_turns=100,
-            hooks=build_hooks(),
+            hooks={**build_hooks(), **talk_only_hooks()},
             # Explicit allowlist, [] when the role grants none — [] suppresses
             # every discovered skill, which is the point: the workspace is
             # agent-writable and an unlisted skill must stay dark.

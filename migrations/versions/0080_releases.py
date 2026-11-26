@@ -1,14 +1,14 @@
 """Code Factory releases and incidents.
 
-Revision ID: 0079
-Revises: 0078
+Revision ID: 0080
+Revises: 0079
 """
 import sqlalchemy as sa
 
 from yaaf.core.migration_ops import create_index_if_missing, create_table_if_missing
 
-revision = "0079"
-down_revision = "0078"
+revision = "0080"
+down_revision = "0079"
 branch_labels = None
 depends_on = None
 

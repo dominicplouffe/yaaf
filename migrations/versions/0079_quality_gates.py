@@ -1,7 +1,7 @@
 """Quality gates: what a change's diff says, and hidden scenarios.
 
-Revision ID: 0078
-Revises: 0077
+Revision ID: 0079
+Revises: 0078
 """
 import sqlalchemy as sa
 
@@ -11,8 +11,8 @@ from yaaf.core.migration_ops import (
     create_table_if_missing,
 )
 
-revision = "0078"
-down_revision = "0077"
+revision = "0079"
+down_revision = "0078"
 branch_labels = None
 depends_on = None
 

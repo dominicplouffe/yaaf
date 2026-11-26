@@ -3944,6 +3944,36 @@ class BoardroomPost(BaseModel):
     thread_id: str | None = None
 
 
+class ReadAs(BaseModel):
+    label: str
+
+
+@router.post("/projects/{project_id}/boardroom/messages/{message_id}/read_as",
+             dependencies=[authority.STEER])
+def boardroom_read_as(project_id: str, message_id: str, body: ReadAs,
+                      session: Session = Depends(db)) -> dict:
+    """His own reading of his own line, over the model's (yaaf.server.intent).
+    "Order" lets the CEO act on it; anything else makes its reply talk only."""
+    from yaaf.server import intent
+
+    project = _get_project(session, project_id)
+    message = session.get(Message, message_id)
+    channel = session.get(Channel, message.channel_id) if message is not None else None
+    if (message is None or message.project_id != project.id or channel is None
+            or channel.kind != ChannelKind.BOARDROOM or not message.sender_user_id):
+        raise HTTPException(status_code=404, detail="no message of yours by that id here")
+    if body.label not in intent.LABELS:
+        raise HTTPException(status_code=422, detail=(
+            f"unknown reading '{body.label}' — one of {', '.join(intent.LABELS)}"))
+    was = intent.stored(message)
+    reading = intent.correct(message, body.label)
+    _audit(session, project.id, "message.read_as", "message", message.id,
+           {"was": was.label if was else None, "was_by": was.by if was else None,
+            "now": reading.label})
+    notify(session, WAKE_CHANNEL, project.id)
+    return intent.label_line(reading)
+
+
 @router.post("/projects/{project_id}/boardroom", dependencies=[authority.STEER])
 def boardroom_post(
     project_id: str, body: BoardroomPost, session: Session = Depends(db)
