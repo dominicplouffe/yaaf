@@ -93,7 +93,7 @@ export default function RunDay({ projectId, detail }: {
             <div className="rd-leg">
               <span><i className="rd-s-counted" /><b>{started.counted}</b> counted: work that changed something</span>
               <span><i className="rd-s-given" /><b>{started.given_back}</b> given back: woke and changed nothing</span>
-              <span><i className="rd-s-reads" /><b>{started.reads}</b> message reads: their own allowance, {limit.reads} of {limit.reads_cap}</span>
+              <span><i className="rd-s-reads" /><b>{started.reads}</b> message reads: {limit.reads_cap} a day don't count; past that, each read counts as a run</span>
               {started.checks > 0 && <span><i className="rd-s-chat" /><b>{started.checks}</b> platform checks: never counted</span>}
               <span><i className="rd-s-chat" /><b>{started.chat}</b> chat with you: never counted</span>
             </div>

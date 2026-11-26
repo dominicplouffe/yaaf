@@ -164,7 +164,6 @@ def _limits(cons: ConstitutionDoc, runs: list, now: datetime) -> dict:
     wakes: dict[tuple, int] = defaultdict(int)
     work_per_hour: dict[datetime, int] = defaultdict(int)
     work_per_day: dict[datetime, list] = defaultdict(list)
-    inbox_per_day: dict[datetime, list] = defaultdict(list)
     plan_hours: set[datetime] = set()
     for r in runs:
         if r.kind not in TALK_RUN_KINDS and r.attempt == 1 and r.agent_id:
@@ -172,8 +171,6 @@ def _limits(cons: ConstitutionDoc, runs: list, now: datetime) -> dict:
         if r.kind not in NON_WORK_RUN_KINDS and r.metered:
             work_per_hour[_hour(r.created_at)] += 1
             work_per_day[day_start(r.created_at)].append(r.created_at)
-        if r.kind in INBOX_RUN_KINDS:
-            inbox_per_day[day_start(r.created_at)].append(r.created_at)
         if r.status in DEAD_STATUSES and _plan_refused(r.summary):
             plan_hours.add(_hour(r.created_at))
 
@@ -212,10 +209,6 @@ def _limits(cons: ConstitutionDoc, runs: list, now: datetime) -> dict:
         {"key": "daily_runs", "label": "Runs per day used up",
          "means": f"{wall} runs a day; nothing new starts until 00:00 UTC",
          "hours": stopped_after(work_per_day, wall)},
-        {"key": "inbox_runs", "label": "Message reading used up",
-         "means": f"{cons.inbox_runs_per_project_per_day} reads a day; mail waits "
-                  "until 00:00 UTC",
-         "hours": stopped_after(inbox_per_day, cons.inbox_runs_per_project_per_day)},
         {"key": "plan", "label": "Claude plan limit",
          "means": "the subscription's usage window was full and Claude turned runs away",
          "hours": hours_by_day(plan_hours)},

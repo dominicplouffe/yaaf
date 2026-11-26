@@ -420,17 +420,17 @@ class ConstitutionDoc(BaseModel):
     # project's own chatter eats the runs its deliverables needed. These are
     # the walls that keep "reading is cheap" from meaning "reading is free".
     inbox_runs_per_project_per_day: int = _rule(
-        40, ge=0, group="Wake-loop brakes", label="Inbox runs per day, whole project",
-        help="Wakes that only read messages, across every agent. Separate from the work "
-             "allowance: an agent catching up on its channels no longer crowds out an "
-             "agent holding a ready task. Still every-one-a-paid-model-call, so it has a "
-             "ceiling of its own. 0 stops message-only wakes entirely — agents then read "
-             "their channels on the next wake they were having anyway.")
+        40, ge=0, group="Wake-loop brakes", label="Message reads per day that don't use runs",
+        help="Wakes that only read messages, across every agent, that don't count against "
+             "the daily runs. This is not a ceiling: past it, agents still wake to read and "
+             "each read counts as one of the day's runs — after every agent with real work, "
+             "and never from the runs kept for reviews. 0 switches off waking just to read: "
+             "agents then read their channels on the next wake they were having anyway.")
     inbox_runs_per_project_per_hour: int = _rule(
-        8, ge=0, group="Wake-loop brakes", label="Inbox runs per hour, whole project",
-        help="The pacing brake for the inbox lane, for the same reason the work lane has "
-             "one: a broadcast to leadership makes every agent unread at the same instant, "
-             "and without this they all wake in the same minute.")
+        8, ge=0, group="Wake-loop brakes", label="Message reads per hour that don't use runs",
+        help="The same, per hour: a broadcast to leadership makes every agent unread at the "
+             "same instant. Past it, reads count as runs, under the hourly run limit. 0 "
+             "switches off waking just to read, like the daily number.")
     pair_breaker_messages: int = _rule(
         10, ge=2, group="Wake-loop brakes", label="Messages before a thread freezes",
         help="Two agents talking this many times in one thread with nothing landing are "
