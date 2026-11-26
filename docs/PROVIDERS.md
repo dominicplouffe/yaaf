@@ -1,4 +1,12 @@
+<div align="center">
+
 # Models and providers
+
+[← README](../README.md) · [Install](INSTALL.md) · [Configuration](CONFIGURATION.md) · [Deployment](DEPLOYMENT.md) · [Architecture](ARCHITECTURE.md) · **Providers** · [CLI](CLI.md)
+
+</div>
+
+---
 
 yaaf runs on any of 23 model providers, including a model on your own machine.
 Each seat on the org chart can run on a different one. Every run is metered
@@ -194,3 +202,11 @@ mints its tokens there; the service account key never enters a sandbox.
 | `yaaf repick-lineup` | Move a picked class onto a newer model |
 | `yaaf set-default-provider` | The provider used before a project pays one |
 | `yaaf spend --by provider` | What each provider cost |
+
+---
+
+<div align="center">
+
+[← Back to README](../README.md) · [Report a problem](https://github.com/dominicplouffe/yaaf/issues)
+
+</div>

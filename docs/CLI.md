@@ -1,4 +1,12 @@
+<div align="center">
+
 # The yaaf command
+
+[← README](../README.md) · [Install](INSTALL.md) · [Configuration](CONFIGURATION.md) · [Deployment](DEPLOYMENT.md) · [Architecture](ARCHITECTURE.md) · [Providers](PROVIDERS.md) · **CLI**
+
+</div>
+
+---
 
 Everything the dashboard does, from a terminal. Every command takes `--help`.
 
@@ -288,3 +296,11 @@ Covered in [PROVIDERS.md](PROVIDERS.md).
 | `YAAF_HOME` | Native install folder. Default `~/.yaaf`. |
 
 All other settings are in [CONFIGURATION.md](CONFIGURATION.md).
+
+---
+
+<div align="center">
+
+[← Back to README](../README.md) · [Report a problem](https://github.com/dominicplouffe/yaaf/issues)
+
+</div>

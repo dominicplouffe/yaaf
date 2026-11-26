@@ -1,4 +1,12 @@
+<div align="center">
+
 # Install
+
+[← README](../README.md) · **Install** · [Configuration](CONFIGURATION.md) · [Deployment](DEPLOYMENT.md) · [Architecture](ARCHITECTURE.md) · [Providers](PROVIDERS.md) · [CLI](CLI.md)
+
+</div>
+
+---
 
 Three ways to run yaaf. Pick the one that fits.
 
@@ -269,3 +277,11 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) before you open a pull request.
 | A run starts and dies at once | The sandbox image is missing. `docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .` |
 | Runs never start | No runner is running. Check `docker compose ps`, or `yaaf doctor`. |
 | Anything else | `yaaf doctor` |
+
+---
+
+<div align="center">
+
+[← Back to README](../README.md) · [Report a problem](https://github.com/dominicplouffe/yaaf/issues)
+
+</div>

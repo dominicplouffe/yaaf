@@ -1,4 +1,12 @@
+<div align="center">
+
 # Configuration
+
+[← README](../README.md) · [Install](INSTALL.md) · **Configuration** · [Deployment](DEPLOYMENT.md) · [Architecture](ARCHITECTURE.md) · [Providers](PROVIDERS.md) · [CLI](CLI.md)
+
+</div>
+
+---
 
 yaaf reads its settings from environment variables that start with `YAAF_`.
 
@@ -303,3 +311,11 @@ yourself.
 
 `YAAF_ADMIN_TOKEN` is retired. People sign in with accounts. If an old
 `deploy/.env` still has it, delete the line.
+
+---
+
+<div align="center">
+
+[← Back to README](../README.md) · [Report a problem](https://github.com/dominicplouffe/yaaf/issues)
+
+</div>
