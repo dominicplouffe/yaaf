@@ -2133,6 +2133,17 @@ def channels(project_id: str, session: Session = Depends(db)) -> list[dict]:
     ]
 
 
+@router.get("/projects/{project_id}/conversations", dependencies=[authority.READ])
+def conversations(project_id: str, days: int = 14, session: Session = Depends(db)) -> dict:
+    """What the agents said to each other, as conversations: each room, each
+    thread in it with how it ended, and who has not read its last word. The
+    Messages page reads this; see yaaf/server/conversations.py."""
+    from yaaf.server import conversations as conversations_lib
+
+    project = _project(session, project_id)
+    return conversations_lib.view(session, project, days=max(1, min(days, 90)))
+
+
 #: Enough to read what is waiting without turning an agent that has fallen far
 #: behind into a page of thousands of rows. The count above it stays exact.
 INBOX_MESSAGES_PER_AGENT = 50

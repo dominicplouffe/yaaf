@@ -232,7 +232,7 @@ export default function Activity({ ctx }: { ctx: ProjectCtx }) {
         <Route path="decisions" element={<Decisions ctx={ctx} />} />
         <Route path="runs" element={<Runs projectId={projectId} dash={dash} />} />
         <Route path="evidence" element={<Evidence projectId={projectId} />} />
-        <Route path="messages" element={<Channels projectId={projectId} />} />
+        <Route path="messages" element={<Channels ctx={ctx} />} />
         <Route path="inbox" element={<AgentInbox ctx={ctx} />} />
         <Route path="memory" element={<Memory projectId={projectId} ctx={ctx} />} />
         <Route path="mail" element={<MailThreads projectId={projectId} ceoName={ctx.ceoName} />} />
