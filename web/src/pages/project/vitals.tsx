@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { AgendaView, Dashboard, HypothesisRow, PlanView, VitalsView } from "../../api";
 import { fmtSoon, fmtUnit } from "../../ui";
 import { Icon } from "../../ui/Icon";
@@ -54,6 +54,10 @@ export function ModePill({ dash, plan }: { dash: Dashboard; plan: PlanView | nul
 // ── right now ──────────────────────────────────────────────────────────────────
 
 type Tone = "ok" | "warn" | "serious" | "critical" | "idle";
+
+/** The reasons the platform writes for itself on a pause or a stop: nobody
+    typed one, so they are not said as if somebody had. */
+const UNSPOKEN = new Set(["paused by chairman", "stopped by chairman"]);
 
 /** The state, in the words a person would use, for each gate the dispatcher
     can name. The server's own sentence stays one hover away. */
@@ -125,17 +129,22 @@ export function resumesAt(dash: Dashboard, vitals: VitalsView | null): string | 
     the capped banner, the yellow sentence under the title, and the setup
     check that said the same thing a third time. */
 export function StatusLine({ dash, vitals, fix }: { dash: Dashboard; vitals: VitalsView | null; fix?: ReactNode }) {
+  const navigate = useNavigate();
   const a = dash.activity;
   if (dash.status !== "running") {
-    const said: Record<string, [string, Tone]> = {
-      paused: ["Paused", "warn"], stopped: ["Stopped", "idle"], completed: ["Delivered", "ok"],
-      draft: ["Not started yet", "idle"],
+    const said: Record<string, [string, Tone, string]> = {
+      paused: ["Paused", "warn", "Nothing new starts until you resume. The board and the record are intact."],
+      stopped: ["Stopped", "idle", "This is final. Duplicate it from Settings to carry the work forward."],
+      completed: ["Delivered", "ok", ""],
+      draft: ["Not started yet", "idle", ""],
     };
-    const [title, tone] = said[dash.status] ?? [dash.status, "idle"];
+    const [title, tone, means] = said[dash.status] ?? [dash.status, "idle" as Tone, ""];
+    // "paused by chairman" is the platform's default, not a reason anybody gave.
+    const reason = dash.status_reason && !UNSPOKEN.has(dash.status_reason) ? dash.status_reason : null;
     return (
       <section className={`vt-status tone-${tone}`} aria-label="Right now">
         <div className="vt-state"><i className="vt-dot" aria-hidden="true" />
-          <div><b>{title}</b>{dash.status_reason && <span className="help">{dash.status_reason}</span>}</div>
+          <div><b>{title}{reason ? `: ${reason}` : ""}</b>{means && <span className="help">{means}</span>}</div>
         </div>
       </section>
     );
@@ -153,6 +162,7 @@ export function StatusLine({ dash, vitals, fix }: { dash: Dashboard; vitals: Vit
     w.unread ? `${w.unread} unread message${w.unread === 1 ? "" : "s"}` : null,
   ].filter(Boolean).join(" · ");
   const at = tone === "ok" ? null : resumesAt(dash, vitals);
+  const cost = a.brief.chip === "work waiting" ? a.brief.headline : null;
   return (
     <section className={`vt-status tone-${tone}`} aria-label="Right now">
       <div className="vt-state" title={`${a.brief.headline} ${a.brief.detail}`}>
@@ -177,6 +187,17 @@ export function StatusLine({ dash, vitals, fix }: { dash: Dashboard; vitals: Vit
           <span className="help">{fmtSoon(at)}</span>
         </div>
       ) : fix ? <div className="vt-resume">{fix}</div> : null}
+      {cost && (
+        // Ready work held up by the day's limit is the one wait with a price,
+        // so it is said inside the line, with its two fixes, rather than in a
+        // box of its own above every page.
+        <div className="vt-cost">
+          <span><b>Waiting:</b> {cost}</span>
+          <Link to={`/projects/${dash.id}/settings?s=rules&t=${encodeURIComponent("Pace & brakes")}`}>Allow more runs per day</Link>
+          <button className="linkish" onClick={() => navigate(`/projects/${dash.id}/chat`,
+            { state: { draft: `${cost} What would you drop so it can run today?` } })}>Ask the CEO what to drop</button>
+        </div>
+      )}
     </section>
   );
 }

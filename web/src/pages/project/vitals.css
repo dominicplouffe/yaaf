@@ -257,3 +257,9 @@
 .vt-group { margin: 14px 0 2px; padding-top: 12px; border-top: 1px solid var(--border); }
 .vt-chart .vt-extra { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; }
 .vt-legend i.vt-extra-key { background: none; box-shadow: inset 0 0 0 1px var(--muted); }
+
+/* ready work held up: said inside the status line, with its two fixes */
+.vt-cost { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; padding-top: 10px;
+  border-top: 1px solid var(--border); font-size: var(--t-small); color: var(--ink-2); }
+.vt-cost b { color: var(--warning); font-weight: 600; }
+.vt-cost > span { flex: 1 1 320px; min-width: 0; }
