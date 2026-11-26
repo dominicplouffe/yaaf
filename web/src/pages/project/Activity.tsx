@@ -8,7 +8,6 @@ import { Seg } from "../../ui/kit";
 import type { ProjectCtx } from "../../projectCtx";
 import { ACTIVITY_DEFAULT, ACTIVITY_VIEWS } from "../../nav";
 import Runs from "./Runs";
-import AgentInbox from "./AgentInbox";
 import Channels from "./Channels";
 import Memory from "./Memory";
 import Decisions from "./Decisions";
@@ -218,7 +217,7 @@ export default function Activity({ ctx }: { ctx: ProjectCtx }) {
             {label}
             {/* Where the inbox banner's number lives now: on the door to it,
                 not over every page of a project that is resting as designed. */}
-            {path === "inbox" && dash.activity.waiting.unread > 0 && (
+            {path === "messages" && dash.activity.waiting.unread > 0 && (
               <span className="pill-n">{dash.activity.waiting.unread}</span>
             )}
           </NavLink>
@@ -233,7 +232,7 @@ export default function Activity({ ctx }: { ctx: ProjectCtx }) {
         <Route path="runs" element={<Runs projectId={projectId} dash={dash} />} />
         <Route path="evidence" element={<Evidence projectId={projectId} />} />
         <Route path="messages" element={<Channels ctx={ctx} />} />
-        <Route path="inbox" element={<AgentInbox ctx={ctx} />} />
+        <Route path="inbox" element={<Navigate to={`/projects/${projectId}/details/activity/messages?view=unread`} replace />} />
         <Route path="memory" element={<Memory projectId={projectId} ctx={ctx} />} />
         <Route path="mail" element={<MailThreads projectId={projectId} ceoName={ctx.ceoName} />} />
         <Route path="*" element={<Navigate to={home} replace />} />

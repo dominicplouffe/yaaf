@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Conversation, ConversationsView, get, post } from "../../api";
 import { usePoll } from "../../hooks";
+import { InboxExplainer, RaiseInboxReads, readingLine } from "../../inbox";
 import Markdown from "../../Markdown";
 import type { ProjectCtx } from "../Project";
 import "./conversations.css";
@@ -70,10 +71,16 @@ export default function Channels({ ctx }: { ctx: ProjectCtx }) {
   // Opens on the room with the most that needs attention, else the busiest.
   const roomId = params.get("room") && rooms.some((r) => r.id === params.get("room")) ? params.get("room")!
     : [...rooms].sort((a, b) => b.open - a.open || (b.last_at ?? "").localeCompare(a.last_at ?? ""))[0]?.id;
-  const room = rooms.find((r) => r.id === roomId);
-  const inRoom = data.conversations.filter((c) => c.room === roomId);
+  // Unread by agent: what one agent has not read yet, from every room, and
+  // why. This is the old Agent inbox tab, folded in.
+  const agentId = params.get("agent") ?? (params.get("view") === "unread" ? data.agents[0]?.id ?? null : null);
+  const agent = agentId ? data.agents.find((a) => a.id === agentId) ?? null : null;
+  const room = agent ? undefined : rooms.find((r) => r.id === roomId);
+  const roomOf = (id: string) => rooms.find((r) => r.id === id)?.name ?? "";
+  const inRoom = agent ? data.conversations.filter((c) => c.unread_ids.includes(agent.id))
+    : data.conversations.filter((c) => c.room === roomId);
   const open = inRoom.filter((c) => ATTENTION.has(c.outcome));
-  const mode = filter ?? (open.length ? "attention" : "all");
+  const mode = agent ? "all" : filter ?? (open.length ? "attention" : "all");
   const needle = q.trim().toLowerCase();
   const shown = inRoom
     .filter((c) => mode === "all" || ATTENTION.has(c.outcome))
@@ -102,8 +109,8 @@ export default function Channels({ ctx }: { ctx: ProjectCtx }) {
                 <div key={kind} className="cv-group">
                   <span className="cv-label">{label}</span>
                   {rs.map((r) => (
-                    <button key={r.id} className="cv-room" aria-current={r.id === roomId}
-                      onClick={() => { setFilter(null); setWho(""); pick({ room: r.id, c: null }); }}>
+                    <button key={r.id} className="cv-room" aria-current={!agent && r.id === roomId}
+                      onClick={() => { setFilter(null); setWho(""); pick({ room: r.id, c: null, agent: null, view: null }); }}>
                       <b>{r.name}</b>
                       <span className={`cv-open${r.open ? "" : " zero"}`}>{r.open || "–"}</span>
                       <span className="cv-meta">{r.members.map(nameOf).join(", ")}{r.last_at ? ` · ${when(r.last_at)}` : " · quiet"}</span>
@@ -112,14 +119,36 @@ export default function Channels({ ctx }: { ctx: ProjectCtx }) {
                 </div>
               );
             })}
+            <div className="cv-group">
+              <span className="cv-label">Unread by agent</span>
+              {data.agents.length ? data.agents.map((a) => (
+                <button key={a.id} className={`cv-room${a.fault ? " fault" : ""}`} aria-current={agent?.id === a.id}
+                  onClick={() => { setWho(""); pick({ agent: a.id, view: null, c: null }); }}>
+                  <b>{a.name}</b>
+                  <span className="cv-open">{a.unread}</span>
+                  <span className="cv-meta">{a.why}</span>
+                </button>
+              )) : <span className="cv-meta cv-allread">Every agent has read its messages.</span>}
+            </div>
           </div>
         </nav>
 
         <section className="cv-pane" aria-label="Conversations">
           <div className="cv-pane-h">
+            {agent && (
+              <div className={`cv-agent-sum${agent.fault ? " fault" : ""}`}>
+                <b>{agent.name} hasn't read {agent.unread} message{agent.unread === 1 ? "" : "s"}</b>
+                <span>{agent.why}</span>
+                <span className="help">{readingLine(dash.activity.inbox_runs)}</span>
+                {dash.can_steer !== false && (
+                  <RaiseInboxReads projectId={projectId} reading={dash.activity.inbox_runs} onDone={() => { reload(); ctx.reload(); }} />
+                )}
+                <InboxExplainer projectId={projectId} reading={dash.activity.inbox_runs} onInbox />
+              </div>
+            )}
             <input className="cv-search" type="search" placeholder="Search what agents said" aria-label="Search conversations"
               value={q} onChange={(e) => setQ(e.target.value)} />
-            <div className="cv-filters" role="group" aria-label="Show">
+            {!agent && <div className="cv-filters" role="group" aria-label="Show">
               <button className="cv-chip" aria-pressed={mode === "attention"} onClick={() => setFilter("attention")}>
                 Needs attention<span className="n">{open.length}</span></button>
               <button className="cv-chip" aria-pressed={mode === "all"} onClick={() => setFilter("all")}>
@@ -128,14 +157,14 @@ export default function Channels({ ctx }: { ctx: ProjectCtx }) {
                 <option value="">Anyone</option>
                 {(room?.members ?? []).map((m) => <option key={m} value={m}>{nameOf(m)}</option>)}
               </select>
-            </div>
+            </div>}
           </div>
           <div className="cv-list">
             {shown.length ? shown.map((c) => (
               <button key={c.id} className="cv-card" aria-current={c.id === current?.id} onClick={() => pick({ c: c.id })}>
                 <span className="cv-card-top">
                   <span className="cv-faces">{c.people.map((p) => <Face key={p} id={p} name={nameOf(p)} cls={faceOf(p)} />)}</span>
-                  <span className="cv-whois">{c.people.map(nameOf).join(" ↔ ")} · {c.replies ? `${c.replies} ${c.replies === 1 ? "reply" : "replies"}` : "no replies"}</span>
+                  <span className="cv-whois">{agent && <>{roomOf(c.room)} · </>}{c.people.map(nameOf).join(" ↔ ")} · {c.replies ? `${c.replies} ${c.replies === 1 ? "reply" : "replies"}` : "no replies"}</span>
                   <span className="cv-when">{when(c.last_at)}</span>
                 </span>
                 <h3>{c.title}</h3>
@@ -143,7 +172,7 @@ export default function Channels({ ctx }: { ctx: ProjectCtx }) {
               </button>
             )) : (
               <div className="cv-empty">
-                {inRoom.length ? (mode === "attention" ? <>Nothing needs attention in this room.<br />
+                {agent ? "Nothing unread in the last two weeks." : inRoom.length ? (mode === "attention" ? <>Nothing needs attention in this room.<br />
                   <button className="small" onClick={() => setFilter("all")}>Show all conversations</button></>
                   : "Nothing matches.") : `Nobody has said anything here in the last ${data.days} days.`}
               </div>
@@ -154,7 +183,7 @@ export default function Channels({ ctx }: { ctx: ProjectCtx }) {
         <section className="cv-pane cv-thread" aria-label="Conversation">
           {current ? (
             <ThreadView c={current} base={base} nameOf={nameOf} faceOf={faceOf} people={people}
-              roomName={room?.name ?? ""} expanded={expanded === current.id} onExpand={() => setExpanded(current.id)}
+              roomName={roomOf(current.room)} whyOf={(name) => data.agents.find((a) => a.name === name)?.why ?? null} expanded={expanded === current.id} onExpand={() => setExpanded(current.id)}
               canSteer={dash.can_steer !== false} error={error}
               onAsk={(draft) => navigate(`${base}/chat`, { state: { draft } })}
               onUnfreeze={async () => {
@@ -177,9 +206,10 @@ function Face({ id, name, cls, big }: { id: string; name: string; cls: string; b
 const withMentions = (body: string, names: string[]) =>
   names.reduce((text, n) => text.replace(new RegExp(`(^|[^\\w\\[])@${n}\\b`, "gi"), `$1[@${n}](#@${n})`), body);
 
-function ThreadView({ c, base, nameOf, faceOf, people, roomName, expanded, onExpand, canSteer, error, onAsk, onUnfreeze }: {
+function ThreadView({ c, base, nameOf, faceOf, people, roomName, whyOf, expanded, onExpand, canSteer, error, onAsk, onUnfreeze }: {
   c: Conversation; base: string; nameOf: (id: string | null) => string; faceOf: (id: string | null) => string;
-  people: ConversationsView["people"]; roomName: string; expanded: boolean; onExpand: () => void;
+  people: ConversationsView["people"]; roomName: string; whyOf: (name: string) => string | null;
+  expanded: boolean; onExpand: () => void;
   canSteer: boolean; error: string | null; onAsk: (draft: string) => void; onUnfreeze: () => void;
 }) {
   const starter = nameOf(c.started_by);
@@ -256,6 +286,9 @@ function ThreadView({ c, base, nameOf, faceOf, people, roomName, expanded, onExp
     );
   });
 
+  // Why they haven't, from the same gates that decide the wake: one reason
+  // per distinct reason, so three agents held by one setting read as one line.
+  const whys = [...new Set(c.unread.map(whyOf).filter((w): w is string => !!w))];
   const readLine = c.unread.length
     ? [`Not read yet by ${list(c.unread)}`, c.read.length ? `${list(c.read)} read it` : null,
         c.asleep.length ? `${list(c.asleep)} ${has(c.asleep.length)} woken up since` : null].filter(Boolean).join(" · ")
@@ -283,7 +316,8 @@ function ThreadView({ c, base, nameOf, faceOf, people, roomName, expanded, onExp
       {error && <div className="error" style={{ margin: "8px 18px 0" }}>{error}</div>}
       <div className="cv-msgs">
         {rows}
-        {readLine && <div className={`cv-read${c.unread.length ? " unread" : ""}`}>{readLine}</div>}
+        {readLine && <div className={`cv-read${c.unread.length ? " unread" : ""}`}>{readLine}
+          {whys.map((w) => <span key={w} className="cv-why">{w}</span>)}</div>}
       </div>
     </>
   );

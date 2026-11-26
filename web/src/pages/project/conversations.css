@@ -100,3 +100,12 @@ button.cv-more { background: none; border: 0; padding: 0; font-weight: 500; curs
   .cv-group { grid-auto-flow: column; }
   .cv-label { display: none; }
 }
+
+/* unread by agent (the old Agent inbox tab) */
+.cv-room.fault .cv-meta { color: var(--critical); }
+.cv-room.fault .cv-open { background: var(--critical); }
+.cv-allread { padding: 4px 10px; }
+.cv-agent-sum { display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--radius); background: var(--sunken); font-size: 14px; color: var(--ink); }
+.cv-agent-sum.fault { background: rgba(var(--critical-rgb), 0.08); border: 1px solid rgba(var(--critical-rgb), 0.4); }
+.cv-agent-sum .help { font-size: var(--t-micro); }
+.cv-why { display: block; color: var(--ink-2); margin-top: 2px; }
