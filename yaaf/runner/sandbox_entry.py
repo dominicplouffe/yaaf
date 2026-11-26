@@ -495,11 +495,14 @@ async def t_changes_list(args):
     "platform holds for weaker tests, `allow_weaker_tests` is your reason (what the "
     "removed assertions checked and why that no longer matters); for new packages, "
     "`allow_packages` lists each one you checked by name; for a change to CI, "
-    "`allow_ci_change` is your reason, where the project lets a seat accept one. A "
+    "`allow_ci_change` is your reason, where the project lets a seat accept one; for "
+    "code the platform measured as harder to maintain, `allow_worse_health` says why "
+    "the complexity is inherent rather than convenient — prefer returning it. A "
     "credential in the diff cannot be signed through.",
     _schema({"change_id": str, "verdict": str, "note": str, "allow_weaker_tests": str,
-             "allow_packages": list[str], "allow_ci_change": str},
-            optional=("allow_weaker_tests", "allow_packages", "allow_ci_change")),
+             "allow_packages": list[str], "allow_ci_change": str, "allow_worse_health": str},
+            optional=("allow_weaker_tests", "allow_packages", "allow_ci_change",
+                      "allow_worse_health")),
 )
 async def t_change_review(args):
     body = {"verdict": args["verdict"], "note": args["note"]}
@@ -509,6 +512,8 @@ async def t_change_review(args):
         body["allow_packages"] = list(args["allow_packages"])
     if args.get("allow_ci_change"):
         body["allow_ci_change"] = args["allow_ci_change"]
+    if args.get("allow_worse_health"):
+        body["allow_worse_health"] = args["allow_worse_health"]
     return _text(_call("POST", f"/agent/changes/{args['change_id']}/review", body))
 
 

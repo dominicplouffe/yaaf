@@ -3721,6 +3721,8 @@ button.gchip.tool-count:hover { border-color: var(--muted); color: var(--ink); }
 .factory table.gates td:first-child { width: 1.5em; text-align: center; color: var(--good); }
 .factory .timeline { margin: 0; padding-left: var(--s5); font-size: var(--t-small); }
 .factory .prewrap { white-space: pre-wrap; }
+.factory .preview-shot { margin: var(--s2) 0; }
+.factory .preview-shot img { max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius); }
 
 /* The line on a Code Factory's home: each stage, then the factory's numbers. */
 .factory-line .row-between { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s3); }

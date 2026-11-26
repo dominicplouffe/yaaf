@@ -51,9 +51,14 @@ RUN set -eu; \
     curl -fsSL "https://github.com/anchore/syft/releases/download/v1.11.1/syft_1.11.1_linux_${GO}.tar.gz" \
         | tar -xz -C /usr/local/bin syft; \
     chmod 0755 /usr/local/bin/gitleaks /usr/local/bin/osv-scanner /usr/local/bin/syft
-# semgrep in a venv of its own: its pins are not the agent venv's business.
-RUN python3 -m venv /opt/semgrep && /opt/semgrep/bin/pip install --no-cache-dir semgrep==1.85.0 \
-    && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep
+# semgrep, and the health ratchet's lizard (complexity, every language) and
+# ruff (Python lint), in a venv of their own: their pins are not the agent
+# venv's business.
+RUN python3 -m venv /opt/scan \
+    && /opt/scan/bin/pip install --no-cache-dir semgrep==1.85.0 lizard==1.17.10 ruff==0.6.9 \
+    && ln -s /opt/scan/bin/semgrep /usr/local/bin/semgrep \
+    && ln -s /opt/scan/bin/lizard /usr/local/bin/lizard \
+    && ln -s /opt/scan/bin/ruff /usr/local/bin/ruff
 
 # pandas and duckdb are baked in because the alternative to having them is an
 # agent reading ten thousand rows into its own context to count them. duckdb

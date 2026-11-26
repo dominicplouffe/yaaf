@@ -423,6 +423,11 @@ def open_incident(session: Session, project: Project, *, title: str, opened_by: 
                   "can (see the timeline). Find the cause, ship the fix through the gates, "
                   "and write the postmortem with incident_postmortem — causes, not "
                   "blame.")))
+    session.flush()
+    from yaaf.server import pressure
+
+    # Forward pressure: the fix is on the board before anyone reads the alarm.
+    pressure.on_incident(session, project, incident, release)
     return incident
 
 

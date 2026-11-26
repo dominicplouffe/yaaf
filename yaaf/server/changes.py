@@ -52,7 +52,7 @@ GREEN = {"success", "neutral", "skipped"}
 LIVE = (ChangeStatus.OPEN, ChangeStatus.READY, ChangeStatus.MERGING)
 #: The order the gates are shown in, and the order a person reads them.
 GATES = ("serves", "size", "secrets", "tests", "packages", "protected", "ci_config",
-         "scan", "checks", "coverage", "preview", "scenarios", "review")
+         "scan", "health", "checks", "coverage", "preview", "scenarios", "review")
 #: Where CI is defined. The checks gate trusts CI, so a change to these is a
 #: change to the judge, and needs more than the judged party's word.
 CI_PATHS = [".github/workflows/**", ".github/workflows/*", ".github/actions/**",
@@ -191,7 +191,8 @@ def scan(session: Session, project: Project, change: Change) -> None:
         change.findings = {"sha": change.head_sha, "error": str(exc)[:500]}
         return
     kept = {k: v for k, v in (change.findings or {}).items()
-            if k in ("coverage", "scan", "preview") and (v or {}).get("sha") == change.head_sha}
+            if k in ("coverage", "scan", "preview", "health")
+            and (v or {}).get("sha") == change.head_sha}
     change.findings = {"sha": change.head_sha,
                        **diffscan.inspect(files, diffscan.parse_globs(cons.protected_paths)),
                        "ci_config": diffscan.protected(files, CI_PATHS), **kept}
@@ -271,6 +272,7 @@ def gates_for(session: Session, project: Project, change: Change,
                    + ", ".join(ci[:4]))}
 
     gates["scan"] = scan_gate(change, cons)
+    gates["health"] = health_gate(change, cons, waivers)
     gates["preview"] = preview_gate(project, change)
     gates["coverage"] = coverage_gate(change, cons)
     gates["scenarios"] = scenario_gate(session, change, cons)
@@ -306,6 +308,11 @@ def evaluate(session: Session, project: Project, change: Change,
         return change.gates or {}
     gates = gates_for(session, project, change, cons)
     change.gates = gates
+    from yaaf.server import pressure
+
+    for gate, detail in pressure.failures(change, gates, cons or effective(session, project.id)
+                                          ).items():
+        pressure.gate_failed(session, project, change, gate, detail)
     if not gates["size"]["ok"]:
         change.status = ChangeStatus.REFUSED
         change.status_reason = (
@@ -412,7 +419,8 @@ def push_event(session: Session, project: Project, payload: dict) -> dict:
 def review(session: Session, project: Project, change: Change, agent: Agent, *,
            verdict: str, note: str, allow_weaker_tests: str | None = None,
            allow_packages: list[str] | None = None,
-           allow_ci_change: str | None = None) -> dict:
+           allow_ci_change: str | None = None,
+           allow_worse_health: str | None = None) -> dict:
     """A challenge seat signs the head it read, or returns it with a reason.
     The author can never sign, and neither can a seat whose job is to make
     rather than to attack — the read is only worth something from a distance."""
@@ -454,14 +462,22 @@ def review(session: Session, project: Project, change: Change, agent: Agent, *,
             raise Refusal("Accepting a CI change needs a real reason: what changed in how "
                           "changes are judged, and why it is still a fair judge.",
                           status_code=422)
+        health_reason = (allow_worse_health or "").strip()
+        if health_reason and len(health_reason) < 20:
+            raise Refusal("Accepting harder-to-maintain code needs a real reason: why the "
+                          "complexity is inherent here, not convenient.", status_code=422)
         change.waivers = {"sha": change.head_sha, "by": agent.id,
                           "ci_config": ci_reason or None,
+                          "health": health_reason or None,
                           "weaker_tests": reason or None,
                           "packages": sorted({p.strip().lower() for p in allow_packages or []
                                               if p.strip()})}
     else:
         change.review_verdict = "returned"
         change.returns = (change.returns or 0) + 1
+        from yaaf.server import pressure
+
+        pressure.gate_failed(session, project, change, "review", note)
         _tell(session, project, change.author_agent_id, NoticeKind.CHANGE_RETURNED,
               f"{agent.name} returned change #{change.number} ({change.title}): {note[:1500]}"
               " Push the fix to the same branch; the gates re-run on the new head.")
@@ -536,7 +552,8 @@ def scan_gate(change: Change, cons: ConstitutionDoc) -> dict:
 def queue_scan(session: Session, project: Project, change: Change) -> bool:
     from yaaf.core.models import RunKind, RunQueue
 
-    if not change.head_sha or not effective(session, project.id).platform_scans:
+    cons = effective(session, project.id)
+    if not change.head_sha or not (cons.platform_scans or cons.code_health_ratchet):
         return False
     for queued in session.execute(
         select(RunQueue).where(RunQueue.project_id == project.id,
@@ -551,14 +568,48 @@ def queue_scan(session: Session, project: Project, change: Change) -> bool:
         id=ids.new_id(ids.RUN), project_id=project.id, agent_id=None,
         kind=RunKind.CHANGE_SCAN,
         trigger={"type": "change_scan", "change_id": change.id, "sha": change.head_sha,
-                 "branch": change.branch}))
+                 "branch": change.branch, "base": change.base}))
     return True
+
+
+def health_gate(change: Change, cons: ConstitutionDoc, waivers: dict) -> dict:
+    """The ratchet: the touched files may not get harder to maintain."""
+    if not cons.code_health_ratchet:
+        return {"ok": True, "detail": "off for this project"}
+    seen = (change.findings or {}).get("health") or {}
+    if seen.get("sha") != change.head_sha:
+        return {"ok": False, "detail": "the platform has not measured this commit yet"}
+    if seen.get("error"):
+        return {"ok": False, "detail": seen["error"]}
+    missing = [tool for tool, ok in (seen.get("available") or {}).items() if not ok]
+    if missing:
+        return {"ok": False, "detail": f"this runner's sandbox image lacks {', '.join(missing)}:"
+                                       " rebuild it (deploy/sandbox/Dockerfile)"}
+    if not seen.get("worse"):
+        return {"ok": True, "detail": seen.get("detail") or "no worse"}
+    if waivers.get("health"):
+        return {"ok": True, "detail": f"worse, accepted by a challenge seat: "
+                                      f"{waivers['health'][:200]}"}
+    worst = "; ".join((seen.get("worst") or [])[:3])
+    return {"ok": False, "detail": f"makes the code harder to maintain: {seen.get('detail')}"
+                                   + (f" — {worst}" if worst else "")
+                                   + ". Simplify it, or a challenge seat signs a reason."}
+
+
+def record_health(session: Session, change: Change, sha: str, result: dict) -> None:
+    project = session.get(Project, change.project_id)
+    if project is None or sha != change.head_sha or not result:
+        return
+    change.findings = {**(change.findings or {}), "health": {"sha": sha, **result}}
+    _audit(session, project, "change.health", change,
+           {"sha": sha, "worse": result.get("worse"), "detail": result.get("detail")})
+    evaluate(session, project, change)
 
 
 def record_scan(session: Session, change: Change, sha: str, result: dict) -> None:
     """What the platform's scanners saw on one commit; ignored once it moved."""
     project = session.get(Project, change.project_id)
-    if project is None or sha != change.head_sha:
+    if project is None or sha != change.head_sha or not result:
         return
     change.findings = {**(change.findings or {}), "scan": {"sha": sha, **result}}
     _audit(session, project, "change.scanned", change,
@@ -604,7 +655,7 @@ def queue_preview(session: Session, project: Project, change: Change) -> bool:
 
 
 def record_preview(session: Session, change: Change, sha: str, deployed: bool,
-                   output: str) -> None:
+                   output: str, screenshot: bytes | None = None) -> None:
     """The preview's deploy, then one read of its health URL by the platform."""
     from yaaf.server import releases
 
@@ -619,6 +670,11 @@ def record_preview(session: Session, change: Change, sha: str, deployed: bool,
         healthy, said = releases.probe(url)
         result = {"ok": healthy, "url": url,
                   "detail": f"up at {url}" if healthy else f"deployed, but {url} said {said}"}
+    if screenshot:
+        from yaaf.core import artifacts
+
+        result["screenshot_uri"] = artifacts.store().put_bytes(
+            f"projects/{project.id}/changes/{change.id}/preview-{sha[:12]}.png", screenshot)
     change.findings = {**(change.findings or {}), "preview": {"sha": sha, **result}}
     evaluate(session, project, change)
 

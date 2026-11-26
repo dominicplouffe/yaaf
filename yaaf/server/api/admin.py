@@ -6881,6 +6881,9 @@ class GithubAttach(BaseModel):
 class EnvironmentIn(BaseModel):
     deploy: str = Field(min_length=3, max_length=2000)
     health_url: str = Field(pattern=r"^https?://", max_length=2000)
+    # Previews only: the page photographed for the reviewer ("{number}" is the
+    # change). Unset, the health URL's site root.
+    page_url: str | None = Field(default=None, pattern=r"^https?://", max_length=2000)
 
 
 class EnvironmentsIn(BaseModel):

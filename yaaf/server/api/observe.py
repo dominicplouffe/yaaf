@@ -1736,6 +1736,22 @@ def project_factory(project_id: str, session: Session = Depends(db)) -> dict:
     return factory_view.summary(session, project)
 
 
+@router.get("/changes/{change_id}/preview.png", dependencies=[authority.READ])
+def change_preview_png(change_id: str, session: Session = Depends(db)):
+    """What a change's preview looked like on its current commit, as the
+    platform photographed it."""
+    from yaaf.core import artifacts
+    from yaaf.core.models import Change
+
+    change = session.get(Change, change_id)
+    preview = ((change.findings or {}).get("preview") or {}) if change else {}
+    if change is None or preview.get("sha") != change.head_sha \
+            or not preview.get("screenshot_uri"):
+        raise HTTPException(status_code=404, detail="no screenshot of this commit")
+    return Response(content=artifacts.read_uri(preview["screenshot_uri"]),
+                    media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
+
+
 @router.get("/provenance_key", dependencies=[authority.SIGNED_IN])
 def provenance_key(session: Session = Depends(db)) -> dict:
     """The public half of the key this install signs release provenance with.

@@ -319,7 +319,7 @@
     "name": "change_open"
   },
   {
-    "description": "Code Factory, challenge seats only. Sign somebody else's change, or return it with what is wrong. `verdict` is 'sign' or 'return'; `note` says what you read and what you found. Your signature is pinned to the commit you read; a later push clears it. You cannot sign your own change. When signing a change the platform holds for weaker tests, `allow_weaker_tests` is your reason (what the removed assertions checked and why that no longer matters); for new packages, `allow_packages` lists each one you checked by name; for a change to CI, `allow_ci_change` is your reason, where the project lets a seat accept one. A credential in the diff cannot be signed through.",
+    "description": "Code Factory, challenge seats only. Sign somebody else's change, or return it with what is wrong. `verdict` is 'sign' or 'return'; `note` says what you read and what you found. Your signature is pinned to the commit you read; a later push clears it. You cannot sign your own change. When signing a change the platform holds for weaker tests, `allow_weaker_tests` is your reason (what the removed assertions checked and why that no longer matters); for new packages, `allow_packages` lists each one you checked by name; for a change to CI, `allow_ci_change` is your reason, where the project lets a seat accept one; for code the platform measured as harder to maintain, `allow_worse_health` says why the complexity is inherent rather than convenient \u2014 prefer returning it. A credential in the diff cannot be signed through.",
     "input_schema": {
       "properties": {
         "allow_ci_change": {
@@ -332,6 +332,9 @@
           "type": "array"
         },
         "allow_weaker_tests": {
+          "type": "string"
+        },
+        "allow_worse_health": {
           "type": "string"
         },
         "change_id": {

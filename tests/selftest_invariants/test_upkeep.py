@@ -190,7 +190,8 @@ def _roll(project_id, days_open=8):
 def test_a_promise_is_judged_at_the_roll_not_by_a_good_monday(client):
     project = adopted(client, slug="judged", constitution={
         "upkeep_issue_hours": 0, "upkeep_flaky_enabled": False,
-        "upkeep_packages_enabled": False, "upkeep_critical_days": 0, "upkeep_high_days": 0})
+        "upkeep_packages_enabled": False, "upkeep_critical_days": 0, "upkeep_high_days": 0,
+        "upkeep_health_enabled": False})
     pid = project["id"]
     (green,) = _promises(pid).values()
     _sig(pid, "main_head", "a", {"sha": "a"}, 24 * 8)
@@ -213,7 +214,8 @@ def test_a_promise_is_judged_at_the_roll_not_by_a_good_monday(client):
 def test_a_red_week_is_missed_at_the_roll(client):
     project = adopted(client, slug="red-week", constitution={
         "upkeep_issue_hours": 0, "upkeep_flaky_enabled": False,
-        "upkeep_packages_enabled": False, "upkeep_critical_days": 0, "upkeep_high_days": 0})
+        "upkeep_packages_enabled": False, "upkeep_critical_days": 0, "upkeep_high_days": 0,
+        "upkeep_health_enabled": False})
     pid = project["id"]
     (green,) = _promises(pid).values()
     _sig(pid, "main_head", "a", {"sha": "a"}, 24 * 8)

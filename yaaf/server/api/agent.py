@@ -531,6 +531,7 @@ class ChangeReview(BaseModel):
     allow_weaker_tests: str | None = Field(default=None, max_length=2000)
     allow_packages: list[str] = Field(default_factory=list, max_length=50)
     allow_ci_change: str | None = Field(default=None, max_length=2000)
+    allow_worse_health: str | None = Field(default=None, max_length=2000)
     note: str = Field(min_length=1, max_length=4000)
 
 
@@ -549,7 +550,8 @@ def review_change(change_id: str, body: ChangeReview, ctx: RunContext = Depends(
                           verdict=body.verdict, note=body.note,
                           allow_weaker_tests=body.allow_weaker_tests,
                           allow_packages=body.allow_packages,
-                          allow_ci_change=body.allow_ci_change)
+                          allow_ci_change=body.allow_ci_change,
+                          allow_worse_health=body.allow_worse_health)
 
 
 class ReleasePropose(BaseModel):

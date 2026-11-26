@@ -71,6 +71,8 @@ class RunJob:
     # (secrets granted to the reserved "deploy" scope). Never logged.
     deploy_action: str | None = None
     deploy_env: dict = field(default_factory=dict)
+    # Previews only: the page the platform photographs for the reviewer.
+    page_url: str | None = None
 
 
 @dataclass

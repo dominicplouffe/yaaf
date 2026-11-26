@@ -124,6 +124,7 @@ def summary(session: Session, project: Project) -> dict:
         "rail": rail,
         "vitals": {
             "requirements_met": len(met), "requirements": len(accepted),
+            "promises_kept": kept if promises else None, "promises": len(promises),
             "merged_week": len(merged_week), "merged_total": len(merged),
             "branch_to_merge_hours": round(median(hours), 1) if hours else None,
             "returned_pct": (round(100 * sum(1 for c in reviewed if c.returns) / len(reviewed))

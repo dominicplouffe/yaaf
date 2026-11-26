@@ -88,6 +88,7 @@ from yaaf.server import (
     metrics,
     plain,
     policy,
+    pressure,
     releases,
     scorecard,
     staffing,
@@ -233,6 +234,8 @@ def _janitor_project(session: Session, project: Project) -> None:
     changes.merge_ready(session, project)
     releases.watch(session, project)
     upkeep.refresh_packages(session, project)
+    upkeep.queue_main_health(session, project)
+    pressure.check_recurring(session, project)
     warn_drought(session, project, cons)
     warn_stall(session, project, cons)
     warn_memory_pressure(session, project, cons)

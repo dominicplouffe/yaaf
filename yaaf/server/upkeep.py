@@ -47,6 +47,7 @@ MEASURES: dict[str, str] = {
     "advisories_overdue": "decreasing",
     "flaky_checks": "decreasing",
     "packages_majors_behind": "decreasing",
+    "health_regressions": "decreasing",
 }
 MEMBER = {"OWNER", "MEMBER", "COLLABORATOR"}
 GREEN = {"success", "neutral", "skipped"}
@@ -178,6 +179,8 @@ def measure(session: Session, project: Project, name: str, start: datetime,
         return _flaky(session, project, start, end)
     if name == "packages_majors_behind":
         return _majors_behind(session, project)
+    if name == "health_regressions":
+        return _health_regressions(session, project, start, end)
     raise ValueError(f"unknown upkeep measure {name!r}")
 
 
@@ -277,6 +280,60 @@ def _flaky(session, project, start, end) -> tuple[float, str]:
     return float(len(flaky)), (f"flaky: {', '.join(flaky[:5])}" if flaky else "none flaky")
 
 
+def _health_regressions(session, project, start, end) -> tuple[float, str]:
+    """How much harder to maintain main got over the cycle: over-limit
+    functions plus lint findings, last reading against the one in force when
+    the cycle began."""
+    rows = _signals(session, project.id, "code_health", until=end)
+    if not rows:
+        raise ValueError("main's health has not been measured yet")
+    before = [r for r in rows if _aware(r.at) <= start] or rows[:1]
+
+    def score(row) -> int:
+        return int(row.data.get("over", 0)) + int(row.data.get("lint", 0))
+
+    first, last = before[-1], rows[-1]
+    grew = max(0, score(last) - score(first))
+    return float(grew), (f"{grew} more over-limit functions and lint findings on main"
+                         if grew else f"no worse ({score(last)} now, {score(first)} at start)")
+
+
+def record_main_health(session: Session, project: Project, sha: str, reading: dict) -> None:
+    if not sha or not reading or not all((reading.get("available") or {}).values()):
+        return
+    signal(session, project, "code_health", sha,
+           {"sha": sha, "over": reading.get("over", 0), "lint": reading.get("lint", 0),
+            "functions": reading.get("functions", 0)})
+
+
+def queue_main_health(session: Session, project: Project) -> bool:
+    """Once a day per factory in upkeep, measure main's head."""
+    from yaaf.core.models import RunKind, RunQueue
+
+    if not shape.is_factory(project) or not shape.runs_on_cycles(project):
+        return False
+    if not effective(session, project.id).upkeep_health_enabled:
+        return False
+    sha = main_head(session, project.id)
+    if not sha:
+        return False
+    measured = _signals(session, project.id, "code_health")
+    if measured and (measured[-1].data.get("sha") == sha
+                     or utcnow() - _aware(measured[-1].at) < timedelta(hours=24)):
+        return False
+    pending = [q for q in session.execute(select(RunQueue).where(
+        RunQueue.project_id == project.id, RunQueue.kind == RunKind.CHANGE_SCAN)).scalars()
+        if (q.trigger or {}).get("type") == "main_health"]
+    if pending:
+        return False
+    session.add(RunQueue(id=ids.new_id(ids.RUN), project_id=project.id, agent_id=None,
+                         kind=RunKind.CHANGE_SCAN,
+                         trigger={"type": "main_health", "sha": sha,
+                                  "branch": str((project.integrations or {}).get(
+                                      "default_branch") or "main")}))
+    return True
+
+
 def _majors_behind(session, project) -> tuple[float, str]:
     rows = _signals(session, project.id, "package_lag")
     if not rows:
@@ -310,6 +367,10 @@ def _wanted(cons: ConstitutionDoc) -> list[tuple[str, str, float]]:
         out.append(("flaky_checks",
                     f"At most {cons.upkeep_flaky_max} flaky checks on main",
                     float(cons.upkeep_flaky_max)))
+    if cons.upkeep_health_enabled:
+        out.append(("health_regressions",
+                    "Main is no harder to maintain at the end of every cycle than at its start",
+                    0.0))
     if cons.upkeep_packages_enabled:
         out.append(("packages_majors_behind",
                     f"No direct dependency is more than {cons.upkeep_majors_behind} major "

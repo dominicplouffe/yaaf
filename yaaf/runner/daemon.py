@@ -48,6 +48,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.core.tokens import mint
+from yaaf.runner import health
 from yaaf.runner.backends import get_backend
 from yaaf.runner.types import RunJob, RunResult
 from yaaf.runtimes import catalog
@@ -1770,16 +1771,26 @@ def _materialize_change_scan(session: Session, queued, project: Project, run, jo
     from yaaf.server import github
 
     trigger = queued.trigger or {}
-    change = session.get(Change, trigger.get("change_id"))
     token = github.platform_token(session)
-    if change is None or change.head_sha != trigger.get("sha") or not project.github_repo \
-            or token is None:
-        run.status = RunStatus.FAILED
-        run.summary = "scan for a change that moved on, or with no repo to fetch"
-        run.finished_at = utcnow()
-        return None
-    job.check_sha = change.head_sha
-    job.check_branch = change.branch
+    if trigger.get("type") == "main_health":
+        # Upkeep: the whole of main, measured for the health promise.
+        if not project.github_repo or token is None or not trigger.get("sha"):
+            run.status = RunStatus.FAILED
+            run.summary = "main health with no repo or no main commit"
+            run.finished_at = utcnow()
+            return None
+        job.check_sha = trigger["sha"]
+        job.check_branch = trigger.get("branch") or "main"
+    else:
+        change = session.get(Change, trigger.get("change_id"))
+        if change is None or change.head_sha != trigger.get("sha") \
+                or not project.github_repo or token is None:
+            run.status = RunStatus.FAILED
+            run.summary = "scan for a change that moved on, or with no repo to fetch"
+            run.finished_at = utcnow()
+            return None
+        job.check_sha = change.head_sha
+        job.check_branch = change.branch
     job.check_command = SCAN_COMMAND
     job.fetch_url = github.clone_url(project.github_repo, token)
     job.workspace_dir = str(Path(settings().workspaces_root) / ".scans" / run.id)
@@ -1829,26 +1840,90 @@ def _run_change_scan(job: RunJob) -> RunResult:
     from yaaf.runner.sandbox import run_check_command
 
     where = Path(job.workspace_dir)
+    main_health = (job.trigger or {}).get("type") == "main_health"
     try:
         failed = _checkout(job, where)
         if failed:
             return RunResult(ok=False, summary=f"could not check out the change: {failed}")
-        _code, output = run_check_command(command=SCAN_COMMAND, workspace_dir=str(where),
-                                          timeout_s=job.timeout_s)
 
-        def read(name: str) -> str | None:
-            path = where / name
+        def read(name: str, root: Path = where) -> str | None:
+            path = root / name
             return path.read_text(errors="replace") if path.exists() else None
 
-        result = parse_scan(output, read(".yaaf-osv.json"), read(".yaaf-gitleaks.json"))
+        if main_health:
+            files = health.code_files(_git_lines(where, ["ls-files"]))
+            payload = {"sha": job.check_sha, "health": _measure_health(where, files, job)}
+        else:
+            _code, output = run_check_command(command=SCAN_COMMAND, workspace_dir=str(where),
+                                              timeout_s=job.timeout_s)
+            result = parse_scan(output, read(".yaaf-osv.json"), read(".yaaf-gitleaks.json"))
+            payload = {"sha": job.check_sha, "result": result,
+                       "health": _change_health(job, where)}
     except Exception as exc:
         return RunResult(ok=False, summary=f"scan crashed: {type(exc).__name__}")
     finally:
         shutil.rmtree(where, ignore_errors=True)
-    return RunResult(ok=True, summary=f"scan: {result['advisories_high']} high, "
-                                      f"{result['secrets']} secrets",
-                     check_exit_code=0, check_output=json.dumps(
-                         {"sha": job.check_sha, "result": result}))
+        shutil.rmtree(Path(str(where) + "-base"), ignore_errors=True)
+    return RunResult(ok=True, summary="health measured" if main_health else "scanned",
+                     check_exit_code=0, check_output=json.dumps(payload))
+
+
+def _git_lines(where: Path, args: list[str]) -> list[str]:
+    import subprocess
+
+    proc = subprocess.run(["git", "-C", str(where), *args], capture_output=True, text=True,
+                          timeout=120)
+    return [line for line in proc.stdout.splitlines() if line.strip()] \
+        if proc.returncode == 0 else []
+
+
+def _measure_health(where: Path, files: list[str], job: RunJob) -> dict:
+    from yaaf.runner.sandbox import run_check_command
+
+    present = [f for f in files if (where / f).exists()]
+    if not present:
+        return {"available": {"lizard": True}, "functions": 0, "over": 0, "lint": 0,
+                "codes": {}, "worst": []}
+    _code, output = run_check_command(command=health.command(present),
+                                      workspace_dir=str(where), timeout_s=job.timeout_s)
+
+    def read(name: str) -> str | None:
+        path = where / name
+        return path.read_text(errors="replace") if path.exists() else None
+
+    return health.reading(output, read(".yaaf-lizard.csv"), read(".yaaf-ruff.json"), present)
+
+
+def _change_health(job: RunJob, where: Path) -> dict:
+    """Measure the touched files at the change's head and at its base, in two
+    trees, and compare. The base is fetched by name from the same remote."""
+    import subprocess
+
+    base_ref = (job.trigger or {}).get("base") or "main"
+    fetch = subprocess.run(["git", "-C", str(where), "fetch", "-q", "--depth", "1",
+                            job.fetch_url or "", base_ref], capture_output=True, text=True,
+                           timeout=180)
+    if fetch.returncode != 0:
+        return {"error": "could not fetch the base branch to compare against"}
+    changed = health.code_files(_git_lines(where, ["diff", "--name-only", "FETCH_HEAD",
+                                                   "HEAD"]))
+    if not changed:
+        return {"worse": False, "detail": "touches no code", "available": {"lizard": True},
+                "files": 0}
+    base_dir = Path(str(where) + "-base")
+    base_dir.mkdir(parents=True, exist_ok=True)
+    for path in changed:
+        shown = subprocess.run(["git", "-C", str(where), "show", f"FETCH_HEAD:{path}"],
+                               capture_output=True, timeout=60)
+        if shown.returncode == 0:
+            target = base_dir / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(shown.stdout)
+    head_reading = _measure_health(where, changed, job)
+    base_reading = _measure_health(base_dir, changed, job)
+    verdict = health.compare(base_reading, head_reading)
+    available = {**base_reading.get("available", {}), **head_reading.get("available", {})}
+    return {**verdict, "available": available, "files": len(changed)}
 
 
 def _finalize_change_scan(session: Session, job: RunJob, result: RunResult) -> None:
@@ -1857,14 +1932,26 @@ def _finalize_change_scan(session: Session, job: RunJob, result: RunResult) -> N
     from yaaf.core.models import Change
     from yaaf.server import changes
 
-    change = session.get(Change, (job.trigger or {}).get("change_id"))
-    if change is None or not result.ok or not result.check_output:
+    if not result.ok or not result.check_output:
         return
     try:
         data = json.loads(result.check_output)
     except ValueError:
         return
+    trigger = job.trigger or {}
+    if trigger.get("type") == "main_health":
+        from yaaf.server import upkeep
+
+        project = session.get(Project, job.project_id)
+        if project is not None:
+            upkeep.record_main_health(session, project, data.get("sha") or "",
+                                      data.get("health") or {})
+        return
+    change = session.get(Change, trigger.get("change_id"))
+    if change is None:
+        return
     changes.record_scan(session, change, data.get("sha") or "", data.get("result") or {})
+    changes.record_health(session, change, data.get("sha") or "", data.get("health") or {})
 
 
 def _materialize_deploy(session: Session, queued, project: Project, run, job: RunJob,
@@ -1900,6 +1987,12 @@ def _materialize_deploy(session: Session, queued, project: Project, run, job: Ru
     if preview:
         job.deploy_env.update({"YAAF_CHANGE_NUMBER": str(target.number or ""),
                                "YAAF_BRANCH": target.branch, "YAAF_SHA": target.head_sha or ""})
+        from urllib.parse import urlsplit
+
+        page = str(env.get("page_url") or env["health_url"]).replace(
+            "{number}", str(target.number or ""))
+        parts = urlsplit(page)
+        job.page_url = page if env.get("page_url") else f"{parts.scheme}://{parts.netloc}/"
     job.workspace_dir = str(Path(settings().workspaces_root) / ".deploys" / run.id)
     job.timeout_s = min(cons.run_timeout_s, 1800)
     if not preview:
@@ -1958,13 +2051,49 @@ def _run_deploy(job: RunJob) -> RunResult:
         for key, value in job.deploy_env.items():
             if value and not key.startswith("YAAF_"):
                 output = output.replace(value, "<secret>")
+        shot = _screenshot(job, where) if code == 0 and job.page_url else None
     except Exception as exc:
         return RunResult(ok=False, summary=f"deploy crashed: {type(exc).__name__}")
     finally:
         shutil.rmtree(where, ignore_errors=True)
+    extra = {k: v for k, v in (("sbom", sbom), ("screenshot", shot)) if v}
     return RunResult(ok=True, summary=f"{job.deploy_action} exit={code}",
-                     check_exit_code=code, check_output=output[-8000:],
-                     extra={"sbom": sbom} if sbom else {})
+                     check_exit_code=code, check_output=output[-8000:], extra=extra)
+
+
+#: Photograph the preview the way a reviewer would see it first: the browser
+#: lane's Chromium, 1280×800, retried while a fresh deploy comes up.
+SHOT_SCRIPT = (
+    "import sys, time\n"
+    "from playwright.sync_api import sync_playwright\n"
+    "with sync_playwright() as p:\n"
+    "    b = p.chromium.launch()\n"
+    "    page = b.new_page(viewport={'width': 1280, 'height': 800})\n"
+    "    for _ in range(6):\n"
+    "        try:\n"
+    "            page.goto(sys.argv[1], timeout=20000, wait_until='networkidle')\n"
+    "            break\n"
+    "        except Exception:\n"
+    "            time.sleep(10)\n"
+    "    page.screenshot(path='.yaaf-shot.png')\n"
+    "    b.close()\n"
+)
+
+
+def _screenshot(job: RunJob, where: Path) -> bytes | None:
+    """Never fatal: a preview that cannot be photographed is still a preview."""
+    import shlex
+
+    from yaaf.runner.sandbox import run_check_command
+
+    try:
+        run_check_command(command=f"python3 -c {shlex.quote(SHOT_SCRIPT)} "
+                                  f"{shlex.quote(job.page_url or '')} >/dev/null 2>&1 || true",
+                          workspace_dir=str(where), timeout_s=180)
+        path = where / ".yaaf-shot.png"
+        return path.read_bytes() if path.exists() else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _finalize_deploy(session: Session, job: RunJob, result: RunResult) -> None:
@@ -1980,7 +2109,8 @@ def _finalize_deploy(session: Session, job: RunJob, result: RunResult) -> None:
         change = session.get(Change, trigger.get("change_id"))
         if change is not None:
             changes.record_preview(session, change, trigger.get("sha") or "", ok,
-                                   result.check_output or result.summary or "")
+                                   result.check_output or result.summary or "",
+                                   screenshot=(result.extra or {}).get("screenshot"))
         return
     release = session.get(Release, trigger.get("release_id"))
     if release is None:

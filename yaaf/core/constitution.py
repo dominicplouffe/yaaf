@@ -662,6 +662,13 @@ class ConstitutionDoc(BaseModel):
         "coverage", group="Code Factory", label="Check run that reports coverage",
         help="Code Factory only. The name of the CI check whose title or summary carries "
              "the changed-line coverage, e.g. '87.5% of changed lines covered'.")
+    code_health_ratchet: bool = _rule(
+        True, group="Code Factory", label="Changes may not make the code harder to maintain",
+        help="Code Factory only. The platform measures the files a change touches, before "
+             "and after: functions too complex (more than 10 branches) or too long (more "
+             "than 60 lines), and Python lint aimed at what models get wrong. A change that "
+             "makes either worse waits for a challenge seat's signed reason. Models fix the "
+             "problem in front of them and leave the codebase worse; this is the ratchet.")
     platform_scans: bool = _rule(
         True, group="Code Factory", label="The platform scans every change",
         help="Code Factory only. The platform runs osv-scanner (known-vulnerable "
@@ -716,6 +723,10 @@ class ConstitutionDoc(BaseModel):
         1, ge=0, le=20, group="Code Factory upkeep", label="Most major versions behind",
         help="Code Factory only. For each direct dependency on main, how many major "
              "versions it trails the registry's latest. Off with upkeep_packages_enabled.")
+    upkeep_health_enabled: bool = _rule(
+        True, group="Code Factory upkeep", label="Promise the codebase gets no harder to maintain",
+        help="Code Factory only. Main is measured each day; the cycle is kept when it ends "
+             "with no more over-complex functions or lint findings than it began with.")
     upkeep_packages_enabled: bool = _rule(
         True, group="Code Factory upkeep", label="Promise on package age",
         help="Code Factory only. Off leaves package lag out of upkeep.")

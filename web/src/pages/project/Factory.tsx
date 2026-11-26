@@ -16,6 +16,7 @@ type ChangeRow = {
   head_sha: string | null; gates: Record<string, Gate>; checks: Record<string, string>;
   review: { by: string | null; verdict: string | null; note: string | null; returns: number };
   merged_sha: string | null; merged_at: string | null; created_at: string | null;
+  findings?: { preview?: { sha?: string; screenshot_uri?: string; url?: string } };
 };
 type ChangesView = {
   changes: ChangeRow[];
@@ -100,6 +101,13 @@ export function Changes({ ctx }: { ctx: ProjectCtx }) {
             {c.review.verdict && (
               <p className="help">{c.review.verdict === "signed" ? "Signed" : "Returned"} by {name(c.review.by)}
                 {c.review.returns ? ` · returned ${c.review.returns}×` : ""}: {c.review.note}</p>
+            )}
+            {c.findings?.preview?.screenshot_uri && c.findings.preview.sha === c.head_sha && (
+              <figure className="preview-shot">
+                <img src={`/observe/changes/${c.id}/preview.png`}
+                  alt={`The preview of #${c.number} as the platform saw it`} loading="lazy" />
+                <figcaption className="help">The preview of this commit, photographed by the platform.</figcaption>
+              </figure>
             )}
             {needsYou && (
               <button className="primary" disabled={busy === c.id} onClick={() => approve(c.id)}>

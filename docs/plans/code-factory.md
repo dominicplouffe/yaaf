@@ -198,6 +198,9 @@ Everything in this plan is built. Attack tests: `test_code_factory.py`,
 | Upkeep promises, measured by the platform | `yaaf/server/upkeep.py`, `FactorySignal`, judged at the roll |
 | Adopted repos read first | `policy.intake_owed` (plan holds only after `intake-report.md`) |
 | The repo's AGENTS.md / CLAUDE.md, from main | `yaaf/server/repo_guidance.py` |
+| Code-health ratchet (lizard + ruff on touched files, before vs after) and the "main no harder to maintain" promise | `yaaf/runner/health.py`, `changes.health_gate`, `upkeep.queue_main_health` |
+| Forward pressure: a rollback opens the fix; a gate failing on 3 changes in 14 days opens work on the cause | `yaaf/server/pressure.py` |
+| Preview screenshots for the reviewer | `daemon._screenshot`, `/observe/changes/{id}/preview.png` |
 | Crew | six roles, three crews, examples 13 and 14 |
 | Screens | New Project card, home-page line and numbers, Changes and Releases tabs, Settings → Environments |
 
