@@ -40,6 +40,7 @@ import {
 } from "./vitals";
 import { DecisionCard } from "../Inbox";
 import { ProjectSetup, SetupStrip } from "../../projectSetup";
+import { DeliverComingUp, DeliverHero, DeliverNumbers, GoalChecklist, goalsOf, GoalsOverTime } from "./deliverHome";
 
 /** A project's Inbox answers three questions, in the order they are asked:
 
@@ -499,13 +500,25 @@ function DecisionRow({ item, base, card }: { item: Item; base: string; card: Rea
     most: past that the Inbox, which sorts and filters them, is the place. */
 const SHOWN_HERE = 3;
 
-function ProjectDecisions({ projectId, desk, rows, vitals }: {
+function ProjectDecisions({ projectId, desk, rows, vitals, compact }: {
   projectId: string; desk: ReturnType<typeof useDesk>; rows: ReactNode[]; vitals: VitalsView | null;
+  /** A Deliver home: one line when there is nothing, and "You, last 30
+      days" lives on the Decisions page instead of beside the rows. */
+  compact?: boolean;
 }) {
   const base = `/projects/${projectId}`;
   const decisions = desk.mine.filter((i) => i.project.id === projectId);
   const inbox = `/inbox?project=${encodeURIComponent(projectId)}`;
   if (!desk.data) return null;
+  if (compact && !decisions.length && !rows.length) {
+    return (
+      <div className="dh-caught">
+        <span className="dh-caught-ic" aria-hidden="true">✓</span>
+        <span><b>Nothing needs your OK.</b> <span className="help">Decisions show up here.</span></span>
+      </div>
+    );
+  }
+  if (compact) vitals = null;
   // Two groups under one panel. Only a decision is counted and given a fuse:
   // a flag or a meeting goes ahead without you, and a count that included
   // them would say something was waiting on you when nothing was.
@@ -941,6 +954,12 @@ export default function Overview({
         : "More than usual: a data source, a key, or work the team can't do may be in the way."}
       actions={<Link className="btnlink small" to={`${base}/details/activity/runs`}>See runs</Link>} />);
   }
+  // A Deliver project's goals, worked out once for the hero, the checklist
+  // and the chart, so the three cannot disagree.
+  const goals = dash.mode === "deliver" ? goalsOf(ctx, verdicts) : null;
+  const unstarted = goals?.list.filter((g) => g.state === "todo" && !g.after.length && !g.r.tasks.length) ?? [];
+  const idleWhy = unstarted.length
+    ? `${unstarted.map((g) => g.key).join(", ")} ${unstarted.length === 1 ? "has" : "have"} no tasks yet` : null;
   const pausedUntil = dash.status === "running" && ["daily_runs", "governance_reserve", "pacing", "inbox_runs"]
     .includes(dash.activity.blocked_by ?? "") ? resumesAt(dash, vitals) : null;
 
@@ -1004,6 +1023,32 @@ export default function Overview({
           run, the strip of steps (each one click from its section) while the
           project is only unfinished. */}
       {settingUp ? <ProjectSetup ctx={ctx} /> : <SetupStrip ctx={ctx} />}
+      {goals ? (
+        // A Deliver project leads with how close it is to done; the rest of
+        // its home is the approved Deliver mockup, below.
+        <>
+          <DeliverHero ctx={ctx} goals={goals} />
+          {!settingUp && <StatusLine dash={dash} vitals={vitals} fix={fix} idleWhy={idleWhy} />}
+          {banner}
+          <ProjectDecisions projectId={projectId} desk={desk} rows={rows} vitals={vitals} compact />
+          <div className="ov-grid">
+            <div className="ov-col">
+              <GoalChecklist ctx={ctx} goals={goals} />
+              <GoalsOverTime ctx={ctx} goals={goals} />
+            </div>
+            <aside className="ov-col">
+              <DeliverNumbers ctx={ctx} goals={goals} vitals={vitals} />
+              <DeliverComingUp projectId={projectId} />
+              {vitals && <SharedPlan vitals={vitals} />}
+              <MemoryCard dash={dash} base={base} />
+              <WhatsNew ctx={ctx} watch={watch} />
+              <LatestResults ctx={ctx} />
+            </aside>
+          </div>
+          <HealthLine ctx={ctx} />
+          <AsOf at={ctx.asOf} error={ctx.error} />
+        </>
+      ) : <>
       {!settingUp && <StatusLine dash={dash} vitals={vitals} fix={fix} />}
       {banner}
 
@@ -1030,6 +1075,7 @@ export default function Overview({
 
       <HealthLine ctx={ctx} />
       <AsOf at={ctx.asOf} error={ctx.error} />
+      </>}
     </>
   );
 }

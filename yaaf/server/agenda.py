@@ -350,7 +350,7 @@ def _clock_events(session: Session, project: Project, tz: ZoneInfo,
         if kill > horizon:
             continue
         out.append(_event(
-            kill, "kill_date", f"Bet dies: “{bet.statement[:70]}”", tz,
+            kill, "kill_date", f"The CEO's guess “{bet.statement[:70]}” gets its verdict", tz,
             detail="its work blocks unless you extend it, once, with a reason",
             tone="consequence", where="work",
         ))
