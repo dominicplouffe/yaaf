@@ -85,10 +85,12 @@ function gates(dash: Dashboard, vitals: VitalsView | null): Gate[] {
   const b = a.blocked_by;
   const waitingOnWork = b !== null && !(b in STATE && ["daily_runs", "governance_reserve", "pacing", "wake_ceiling",
     "coalescing", "concurrency", "agents_busy", "inbox_runs"].includes(b));
-  const idle = b === null && dash.runs.running === 0 && a.waiting.agents_with_work === 0;
+  // Ready means a task an agent can claim, or a run already going. Unread mail
+  // between agents is not work: counting it put "✓ Work ready" beside "Idle".
+  const idle = b === null && dash.runs.running === 0 && a.waiting.claimable_tasks === 0;
   const planShut = vitals?.plan?.status === "rejected";
   const list: Gate[] = [
-    { key: "work", label: idle ? "Nothing to do" : waitingOnWork ? "Work not ready" : "Work ready",
+    { key: "work", label: waitingOnWork ? "Work not ready" : "Work ready",
       state: idle || waitingOnWork ? "stop" : "ok" },
     { key: "day", label: `Runs today ${a.daily_runs.used}/${vitals?.today.wall ?? a.daily_runs.cap}`,
       state: b === "daily_runs" || b === "governance_reserve" ? "stop" : "ok" },
@@ -128,7 +130,11 @@ export function resumesAt(dash: Dashboard, vitals: VitalsView | null): string | 
     a run has to pass with the shut one marked, and when it opens. It replaces
     the capped banner, the yellow sentence under the title, and the setup
     check that said the same thing a third time. */
-export function StatusLine({ dash, vitals, fix }: { dash: Dashboard; vitals: VitalsView | null; fix?: ReactNode }) {
+export function StatusLine({ dash, vitals, fix, idleWhy }: {
+  dash: Dashboard; vitals: VitalsView | null; fix?: ReactNode;
+  /** Why nothing is ready, when the page knows better than "Nothing waiting". */
+  idleWhy?: string | null;
+}) {
   const navigate = useNavigate();
   const a = dash.activity;
   if (dash.status !== "running") {
@@ -153,24 +159,30 @@ export function StatusLine({ dash, vitals, fix }: { dash: Dashboard; vitals: Vit
   const planShut = vitals?.plan?.status === "rejected";
   let [title, tone] = b && STATE[b] ? STATE[b]
     : b ? [`Stuck: ${a.brief.short}`, "serious" as Tone]
-      : dash.runs.running > 0 ? ["Working", "ok" as Tone] : ["Idle: nothing to do", "idle" as Tone];
+      : dash.runs.running > 0 ? ["Working", "ok" as Tone] : ["Idle: no work is ready", "idle" as Tone];
   if (planShut && (b === null || tone === "ok")) [title, tone] = ["Paused: the Claude plan is full", "warn"];
   const w = a.waiting;
+  // Agents' mail to each other is not said here: it is held a few minutes and
+  // read together, nothing is lost, and "15 unread messages" read as his. It
+  // is said only when it is stuck, which is the reading allowance below.
+  const reading = b === "inbox_runs";
   const behind = [
     w.claimable_tasks ? `${w.claimable_tasks} task${w.claimable_tasks === 1 ? "" : "s"} ready` : null,
     w.gated_tasks ? `${w.gated_tasks} scheduled` : null,
-    w.unread ? `${w.unread} unread message${w.unread === 1 ? "" : "s"}` : null,
+    reading && w.unread ? `${w.unread} message${w.unread === 1 ? "" : "s"} between agents wait${w.unread === 1 ? "s" : ""} to be read` : null,
   ].filter(Boolean).join(" · ");
   const at = tone === "ok" ? null : resumesAt(dash, vitals);
   const cost = a.brief.chip === "work waiting" ? a.brief.headline : null;
+  const idleLine = idleWhy && title.startsWith("Idle") ? idleWhy : null;
   return (
     <section className={`vt-status tone-${tone}`} aria-label="Right now">
       <div className="vt-state" title={`${a.brief.headline} ${a.brief.detail}`}>
         <i className="vt-dot" aria-hidden="true" />
         <div>
           <b>{title}</b>
-          <span className="help">{behind || (dash.runs.running ? `${dash.runs.running} running` : "Nothing waiting")}
-            {dash.chat_live ? " · your messages still get answered" : ""}</span>
+          <span className="help">{behind || idleLine || (dash.runs.running ? `${dash.runs.running} running` : "Nothing waiting")}
+            {/* Only worth saying while a limit has stopped the team. */}
+            {dash.chat_live && tone === "warn" ? " · your messages still get answered" : ""}</span>
         </div>
       </div>
       <ol className="vt-gates" aria-label="What a run needs">
@@ -187,6 +199,14 @@ export function StatusLine({ dash, vitals, fix }: { dash: Dashboard; vitals: Vit
           <span className="help">{fmtSoon(at)}</span>
         </div>
       ) : fix ? <div className="vt-resume">{fix}</div> : null}
+      {reading && (
+        // The one wall that had no way out on the page: agents' mail to each
+        // other has an allowance of its own, separate from the daily runs.
+        <div className="vt-cost">
+          <span><b>Why:</b> agents get a separate daily allowance for waking up just to read each other's messages ({vitals ? `${a.daily_runs.used} of ${vitals.today.wall} work runs used` : "work runs are separate"}). It's used up, so those messages wait until {at ? time(at) : "tomorrow"}. Ready tasks still run.</span>
+          <Link to={`/projects/${dash.id}/settings?s=rules&t=${encodeURIComponent("Pace & brakes")}`}>Allow more message reads</Link>
+        </div>
+      )}
       {cost && (
         // Ready work held up by the day's limit is the one wait with a price,
         // so it is said inside the line, with its two fixes, rather than in a

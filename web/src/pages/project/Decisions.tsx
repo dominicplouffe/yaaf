@@ -3,12 +3,14 @@ import { plainStatus } from "../../ui/kit";
 import { Link } from "react-router-dom";
 import {
   AmendmentRow, ApprovalRow, AskRow, BriefDraft, CeoDecisionRow, get,
-  post, splitWithout,
+  post, splitWithout, VitalsView,
 } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { grantRoles, RoleGrants } from "../../roles";
 import { clockClass, DecideButtons, downloadCsv, ExportCsv, fmtLeft, SplitAction } from "../../ui";
 import type { ProjectCtx } from "../Project";
+import { YouPanel } from "./vitals";
+import "./vitals.css";
 
 /** Which constitutional rule put this in front of the human, in one sentence. */
 function whyYours(kind: string): string {
@@ -603,6 +605,7 @@ function AskCard({ ask, to }: { ask: AskRow; to: string }) {
 
 export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, dash, approvals, asks, reloadApprovals } = ctx;
+  const { data: vitals } = usePoll(() => get<VitalsView>(`/observe/projects/${projectId}/vitals`), 60000, [projectId]);
   const { data: amendments } = usePoll(
     () => get<AmendmentRow[]>(`/admin/projects/${projectId}/amendments`),
     15000,
@@ -624,6 +627,9 @@ export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
       <p className="subtitle">
         Approvals expire to <strong>deny</strong>; questions fall back to the CEO's stated default.
       </p>
+      {/* "You, last 30 days" — how long work waited on you. A Deliver home
+          keeps one line when nothing needs a decision, so it lives here. */}
+      {vitals && <div style={{ maxWidth: 420, margin: "var(--s3) 0 var(--s4)" }}><YouPanel vitals={vitals} /></div>}
 
       {openAsks.length > 0 && (
         <>
