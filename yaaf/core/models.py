@@ -452,6 +452,8 @@ class RunKind(enum.StrEnum):
     # Code Factory: the platform runs an environment's deploy (or rollback)
     # command at one release's commit, with the secrets granted to "deploy".
     DEPLOY = "deploy"
+    # Code Factory: the platform's own scanners on one change's head commit.
+    CHANGE_SCAN = "change_scan"
 
 
 class ApprovalKind(enum.StrEnum):

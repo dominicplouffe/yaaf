@@ -51,8 +51,13 @@ GREEN = {"success", "neutral", "skipped"}
 #: Statuses a change can still move out of.
 LIVE = (ChangeStatus.OPEN, ChangeStatus.READY, ChangeStatus.MERGING)
 #: The order the gates are shown in, and the order a person reads them.
-GATES = ("serves", "size", "secrets", "tests", "packages", "protected", "checks",
-         "scenarios", "review")
+GATES = ("serves", "size", "secrets", "tests", "packages", "protected", "ci_config",
+         "scan", "checks", "coverage", "scenarios", "review")
+#: Where CI is defined. The checks gate trusts CI, so a change to these is a
+#: change to the judge, and needs more than the judged party's word.
+CI_PATHS = [".github/workflows/**", ".github/workflows/*", ".github/actions/**",
+            ".gitlab-ci.yml", ".circleci/**", "Jenkinsfile", ".buildkite/**",
+            "azure-pipelines.yml", "CODEOWNERS", ".github/CODEOWNERS"]
 #: How long a push to main may stay unexplained while a merge is in flight.
 RECONCILE_GRACE = timedelta(minutes=2)
 
@@ -139,6 +144,7 @@ def open_change(session: Session, project: Project, agent: Agent, *, task_id: st
     session.flush()
     scan(session, project, change)
     queue_scenarios(session, project, change)
+    queue_scan(session, project, change)
     _audit(session, project, "change.open", change, {"number": change.number,
                                                      "branch": branch})
     evaluate(session, project, change)
@@ -183,8 +189,11 @@ def scan(session: Session, project: Project, change: Change) -> None:
     except github.GithubError as exc:
         change.findings = {"sha": change.head_sha, "error": str(exc)[:500]}
         return
+    kept = {k: v for k, v in (change.findings or {}).items()
+            if k in ("coverage", "scan") and (v or {}).get("sha") == change.head_sha}
     change.findings = {"sha": change.head_sha,
-                       **diffscan.inspect(files, diffscan.parse_globs(cons.protected_paths))}
+                       **diffscan.inspect(files, diffscan.parse_globs(cons.protected_paths)),
+                       "ci_config": diffscan.protected(files, CI_PATHS), **kept}
 
 
 
@@ -247,6 +256,21 @@ def gates_for(session: Session, project: Project, change: Change,
                    else "approved by the chairman on this commit" if approved
                    else "needs the chairman's yes: " + ", ".join(touched[:5]))}
 
+    ci = findings.get("ci_config") or []
+    ci_ok = (not ci) or (change.chairman_sha == change.head_sha if cons.ci_changes_need_chairman
+                         else bool(waivers.get("ci_config")))
+    gates["ci_config"] = {
+        "ok": not unread and ci_ok,
+        "detail": (why_unread if unread
+                   else "leaves CI as it is" if not ci
+                   else "CI change accepted on this commit" if ci_ok
+                   else ("changes CI, which judges every change — needs the chairman's "
+                         "yes: " if cons.ci_changes_need_chairman
+                         else "changes CI — needs a challenge seat's signed reason: ")
+                   + ", ".join(ci[:4]))}
+
+    gates["scan"] = scan_gate(change, cons)
+    gates["coverage"] = coverage_gate(change, cons)
     gates["scenarios"] = scenario_gate(session, change, cons)
 
     checks = change.checks or {}
@@ -326,6 +350,7 @@ def pull_request_event(session: Session, project: Project, action: str, pr: dict
             change.status = ChangeStatus.OPEN
         scan(session, project, change)
         queue_scenarios(session, project, change)
+        queue_scan(session, project, change)
         evaluate(session, project, change)
         return {"change": change.id, "head": change.head_sha, "moved_from": was}
     if action == "closed" and change.status in (ChangeStatus.OPEN, ChangeStatus.READY):
@@ -345,11 +370,16 @@ def check_run_event(session: Session, project: Project, run: dict) -> dict:
     conclusion = (run.get("conclusion") or "pending") if run.get("status") == "completed" \
         else "pending"
     touched = []
+    coverage_name = effective(session, project.id).coverage_check_name
+    pct = _percent(run) if name == coverage_name and conclusion != "pending" else None
     for change in session.execute(
         select(Change).where(Change.project_id == project.id, Change.head_sha == sha,
                              Change.status.in_((ChangeStatus.OPEN, ChangeStatus.READY)))
     ).scalars():
         change.checks = {**(change.checks or {}), name: conclusion}
+        if pct is not None:
+            change.findings = {**(change.findings or {}),
+                               "coverage": {"sha": sha, "pct": pct}}
         evaluate(session, project, change)
         touched.append(change.id)
     return {"changes": touched, "check": name, "conclusion": conclusion}
@@ -378,7 +408,8 @@ def push_event(session: Session, project: Project, payload: dict) -> dict:
 
 def review(session: Session, project: Project, change: Change, agent: Agent, *,
            verdict: str, note: str, allow_weaker_tests: str | None = None,
-           allow_packages: list[str] | None = None) -> dict:
+           allow_packages: list[str] | None = None,
+           allow_ci_change: str | None = None) -> dict:
     """A challenge seat signs the head it read, or returns it with a reason.
     The author can never sign, and neither can a seat whose job is to make
     rather than to attack — the read is only worth something from a distance."""
@@ -415,7 +446,13 @@ def review(session: Session, project: Project, change: Change, agent: Agent, *,
             raise Refusal("Accepting weaker tests needs a real reason — what the removed "
                           "assertions checked, and why that no longer matters.",
                           status_code=422)
+        ci_reason = (allow_ci_change or "").strip()
+        if ci_reason and len(ci_reason) < 20:
+            raise Refusal("Accepting a CI change needs a real reason: what changed in how "
+                          "changes are judged, and why it is still a fair judge.",
+                          status_code=422)
         change.waivers = {"sha": change.head_sha, "by": agent.id,
+                          "ci_config": ci_reason or None,
                           "weaker_tests": reason or None,
                           "packages": sorted({p.strip().lower() for p in allow_packages or []
                                               if p.strip()})}
@@ -445,6 +482,86 @@ def chairman_approve(session: Session, project: Project, change: Change) -> dict
     _audit(session, project, "change.chairman_approved", change, {"sha": change.head_sha})
     gates = evaluate(session, project, change)
     return {"change": view(change), "gates": gates}
+
+
+# ── coverage and the platform's own scan ────────────────────────────────────────
+
+
+def _percent(run: dict) -> float | None:
+    import re
+
+    output = run.get("output") or {}
+    for text in (output.get("title"), output.get("summary")):
+        m = re.search(r"(\d{1,3}(?:\.\d+)?)\s*%", text or "")
+        if m:
+            return min(100.0, float(m.group(1)))
+    return None
+
+
+def coverage_gate(change: Change, cons: ConstitutionDoc) -> dict:
+    floor = cons.min_changed_line_coverage
+    if not floor:
+        return {"ok": True, "detail": "off for this project"}
+    reported = (change.findings or {}).get("coverage") or {}
+    if reported.get("sha") != change.head_sha:
+        return {"ok": False, "detail": f"CI has not reported '{cons.coverage_check_name}' "
+                                       "with a percentage on this commit"}
+    pct = float(reported.get("pct") or 0)
+    return {"ok": pct >= floor, "detail": f"{pct:g}% of changed lines tested, floor {floor}%"}
+
+
+def scan_gate(change: Change, cons: ConstitutionDoc) -> dict:
+    if not cons.platform_scans:
+        return {"ok": True, "detail": "off for this project"}
+    result = (change.findings or {}).get("scan") or {}
+    if result.get("sha") != change.head_sha:
+        return {"ok": False, "detail": "the platform has not scanned this commit yet"}
+    missing = [tool for tool, ok in (result.get("available") or {}).items() if not ok]
+    if missing:
+        return {"ok": False, "detail": f"this runner's sandbox image lacks {', '.join(missing)}:"
+                                       " rebuild it (deploy/sandbox/Dockerfile)"}
+    problems = []
+    if result.get("advisories_high"):
+        problems.append(f"{result['advisories_high']} high or critical advisory(ies): "
+                        + ", ".join(result.get("advisories") or [])[:200])
+    if result.get("secrets"):
+        problems.append(f"{result['secrets']} secret(s) in the tree — rotate, then remove")
+    return {"ok": not problems,
+            "detail": "; ".join(problems) or "no high advisories, no secrets"}
+
+
+def queue_scan(session: Session, project: Project, change: Change) -> bool:
+    from yaaf.core.models import RunKind, RunQueue
+
+    if not change.head_sha or not effective(session, project.id).platform_scans:
+        return False
+    for queued in session.execute(
+        select(RunQueue).where(RunQueue.project_id == project.id,
+                               RunQueue.kind == RunKind.CHANGE_SCAN)
+    ).scalars():
+        trigger = queued.trigger or {}
+        if trigger.get("change_id") == change.id:
+            if trigger.get("sha") == change.head_sha:
+                return False
+            session.delete(queued)
+    session.add(RunQueue(
+        id=ids.new_id(ids.RUN), project_id=project.id, agent_id=None,
+        kind=RunKind.CHANGE_SCAN,
+        trigger={"type": "change_scan", "change_id": change.id, "sha": change.head_sha,
+                 "branch": change.branch}))
+    return True
+
+
+def record_scan(session: Session, change: Change, sha: str, result: dict) -> None:
+    """What the platform's scanners saw on one commit; ignored once it moved."""
+    project = session.get(Project, change.project_id)
+    if project is None or sha != change.head_sha:
+        return
+    change.findings = {**(change.findings or {}), "scan": {"sha": sha, **result}}
+    _audit(session, project, "change.scanned", change,
+           {"sha": sha, "advisories_high": result.get("advisories_high"),
+            "secrets": result.get("secrets")})
+    evaluate(session, project, change)
 
 
 # ── hidden scenarios ────────────────────────────────────────────────────────────

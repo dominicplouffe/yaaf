@@ -298,6 +298,8 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
         return _materialize_scenarios(session, queued, project, run, job, cons)
     if queued.kind == RunKind.DEPLOY:
         return _materialize_deploy(session, queued, project, run, job, cons)
+    if queued.kind == RunKind.CHANGE_SCAN:
+        return _materialize_change_scan(session, queued, project, run, job, cons)
 
     if queued.kind == RunKind.REQUIREMENT_CHECK:
         requirement = session.get(Requirement, queued.requirement_id)
@@ -867,6 +869,8 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
             result = _run_scenarios(job)
         elif job.kind == RunKind.DEPLOY:
             result = _run_deploy(job)
+        elif job.kind == RunKind.CHANGE_SCAN:
+            result = _run_change_scan(job)
         elif job.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK):
             result = _run_check_command(job)
         elif (refused := _mint_token(job)) is not None:
@@ -1067,6 +1071,8 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
             _finalize_scenario_check(session, job, result)
         elif job.kind == RunKind.DEPLOY:
             _finalize_deploy(session, job, result)
+        elif job.kind == RunKind.CHANGE_SCAN:
+            _finalize_change_scan(session, job, result)
         elif run.status == RunStatus.FAILED:
             if project is not None and _looks_like_credential_failure(run):
                 _flag_credential_failure(session, project, run)
@@ -1650,7 +1656,7 @@ def _block_on_repeated_check_failure(
 
 #: Runs the platform executes itself, reading exit codes — never model runs.
 CHECK_KINDS = (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK, RunKind.SCENARIO_CHECK,
-               RunKind.DEPLOY)
+               RunKind.DEPLOY, RunKind.CHANGE_SCAN)
 
 
 def _materialize_scenarios(session: Session, queued, project: Project, run, job: RunJob,
@@ -1727,6 +1733,121 @@ def _checkout(job: RunJob, where: Path) -> str | None:
         if proc.returncode != 0:
             return (proc.stderr or "").replace(secret, "<repo>").strip()[:300]
     return None
+
+
+#: What the change scan runs, from the checkout's root, in the sandbox image.
+#: Each tool's exit status is echoed so a missing binary (127) reads as
+#: "unavailable", which fails the gate closed rather than passing it.
+SCAN_COMMAND = (
+    "osv-scanner --format json --output .yaaf-osv.json -r . >/dev/null 2>&1; "
+    "echo \"osv-scanner=$?\"; "
+    "gitleaks detect --no-git --source . --report-format json "
+    "--report-path .yaaf-gitleaks.json --exit-code 0 >/dev/null 2>&1; "
+    "echo \"gitleaks=$?\""
+)
+
+
+def _materialize_change_scan(session: Session, queued, project: Project, run, job: RunJob,
+                             cons) -> RunJob | None:
+    from yaaf.core.models import Change
+    from yaaf.server import github
+
+    trigger = queued.trigger or {}
+    change = session.get(Change, trigger.get("change_id"))
+    token = github.platform_token(session)
+    if change is None or change.head_sha != trigger.get("sha") or not project.github_repo \
+            or token is None:
+        run.status = RunStatus.FAILED
+        run.summary = "scan for a change that moved on, or with no repo to fetch"
+        run.finished_at = utcnow()
+        return None
+    job.check_sha = change.head_sha
+    job.check_branch = change.branch
+    job.check_command = SCAN_COMMAND
+    job.fetch_url = github.clone_url(project.github_repo, token)
+    job.workspace_dir = str(Path(settings().workspaces_root) / ".scans" / run.id)
+    job.timeout_s = min(cons.run_timeout_s, 900)
+    return job
+
+
+def parse_scan(output: str, osv_json: str | None, gitleaks_json: str | None) -> dict:
+    """Counts the gate reads, from the tools' own JSON."""
+    import contextlib
+    import json
+    import re
+
+    codes = dict(re.findall(r"^(osv-scanner|gitleaks)=(\d+)$", output or "", re.M))
+    available = {tool: codes.get(tool) not in (None, "126", "127") for tool in
+                 ("osv-scanner", "gitleaks")}
+    high: list[str] = []
+    try:
+        osv = json.loads(osv_json) if osv_json else {}
+    except ValueError:
+        osv = {}
+    for result in osv.get("results") or []:
+        for pkg in result.get("packages") or []:
+            name = (pkg.get("package") or {}).get("name") or "?"
+            severe = False
+            for group in pkg.get("groups") or []:
+                with contextlib.suppress(ValueError):
+                    severe |= float(group.get("max_severity") or 0) >= 7.0
+            for vuln in pkg.get("vulnerabilities") or []:
+                level = str((vuln.get("database_specific") or {}).get("severity") or "").upper()
+                severe |= level in ("HIGH", "CRITICAL")
+            if severe:
+                high.append(name)
+    try:
+        leaks = json.loads(gitleaks_json) if gitleaks_json else []
+    except ValueError:
+        leaks = []
+    return {"available": available, "advisories_high": len(high),
+            "advisories": sorted(set(high))[:20],
+            "secrets": len(leaks) if isinstance(leaks, list) else 0}
+
+
+def _run_change_scan(job: RunJob) -> RunResult:
+    import json
+    import shutil
+
+    from yaaf.runner.sandbox import run_check_command
+
+    where = Path(job.workspace_dir)
+    try:
+        failed = _checkout(job, where)
+        if failed:
+            return RunResult(ok=False, summary=f"could not check out the change: {failed}")
+        _code, output = run_check_command(command=SCAN_COMMAND, workspace_dir=str(where),
+                                          timeout_s=job.timeout_s)
+
+        def read(name: str) -> str | None:
+            path = where / name
+            return path.read_text(errors="replace") if path.exists() else None
+
+        result = parse_scan(output, read(".yaaf-osv.json"), read(".yaaf-gitleaks.json"))
+    except Exception as exc:
+        return RunResult(ok=False, summary=f"scan crashed: {type(exc).__name__}")
+    finally:
+        shutil.rmtree(where, ignore_errors=True)
+    return RunResult(ok=True, summary=f"scan: {result['advisories_high']} high, "
+                                      f"{result['secrets']} secrets",
+                     check_exit_code=0, check_output=json.dumps(
+                         {"sha": job.check_sha, "result": result}))
+
+
+def _finalize_change_scan(session: Session, job: RunJob, result: RunResult) -> None:
+    import json
+
+    from yaaf.core.models import Change
+    from yaaf.server import changes
+
+    change = session.get(Change, (job.trigger or {}).get("change_id"))
+    if change is None or not result.ok or not result.check_output:
+        return
+    try:
+        data = json.loads(result.check_output)
+    except ValueError:
+        return
+    changes.record_scan(session, change, data.get("sha") or "", data.get("result") or {})
 
 
 def _materialize_deploy(session: Session, queued, project: Project, run, job: RunJob,

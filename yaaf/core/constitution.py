@@ -648,6 +648,26 @@ class ConstitutionDoc(BaseModel):
              "what they say. Off, the gate is skipped and builders grade themselves "
              "against tests they can read.")
 
+    ci_changes_need_chairman: bool = _rule(
+        True, group="Code Factory", label="CI changes need you",
+        help="Code Factory only. The checks gate trusts CI, and CI is defined in the repo, "
+             "so a change to it could make every check pass. On: a change touching CI "
+             "config (.github/workflows and the like) merges only with your yes on that "
+             "commit. Off: a challenge seat's signed reason is enough.")
+    min_changed_line_coverage: int = _rule(
+        0, ge=0, le=100, group="Code Factory", label="Changed lines tested, at least %",
+        help="Code Factory only. Read from the check run named below, which CI reports on "
+             "the change's own commit with the percentage in its title or summary. 0 is off.")
+    coverage_check_name: str = _rule(
+        "coverage", group="Code Factory", label="Check run that reports coverage",
+        help="Code Factory only. The name of the CI check whose title or summary carries "
+             "the changed-line coverage, e.g. '87.5% of changed lines covered'.")
+    platform_scans: bool = _rule(
+        True, group="Code Factory", label="The platform scans every change",
+        help="Code Factory only. The platform runs osv-scanner (known-vulnerable "
+             "dependencies, high and critical) and gitleaks (secrets) on each change's "
+             "commit in the sandbox image, and holds the merge on what they find. A "
+             "runner whose image lacks them holds every merge until it is rebuilt.")
     release_authority: str = _rule(
         "approve_first", choices=["approve_first", "autonomous"], group="Code Factory",
         label="Releases to production",

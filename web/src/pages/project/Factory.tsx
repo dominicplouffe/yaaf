@@ -23,12 +23,13 @@ type ChangesView = {
   branch_protection: { ok: boolean; detail: string } | null;
 };
 
-const GATE_ORDER = ["serves", "size", "secrets", "tests", "packages", "protected", "checks",
-  "scenarios", "review"];
+const GATE_ORDER = ["serves", "size", "secrets", "tests", "packages", "protected", "ci_config",
+  "scan", "checks", "coverage", "scenarios", "review"];
 const GATE_NAME: Record<string, string> = {
   serves: "Serves accepted scope", size: "Size", secrets: "No secrets",
   tests: "Tests not weakened", packages: "New packages checked",
-  protected: "Paths that need you", checks: "CI on this commit",
+  protected: "Paths that need you", ci_config: "CI left alone", scan: "Platform scan",
+  coverage: "Changed lines tested", checks: "CI on this commit",
   scenarios: "Hidden scenarios", review: "Signed by a reader",
 };
 const STATUS_TONE: Record<string, string> = {
@@ -73,8 +74,8 @@ export function Changes({ ctx }: { ctx: ProjectCtx }) {
         <p className="help">No changes yet. A seat opens one for the task it holds; the platform merges it once every gate is green.</p>
       )}
       {data.changes.map((c) => {
-        const needsYou = c.gates.protected && !c.gates.protected.ok
-          && !c.gates.protected.detail.startsWith("the diff")
+        const waitsOnYou = (g: Gate | undefined) => !!g && !g.ok && g.detail.includes("chairman");
+        const needsYou = (waitsOnYou(c.gates.protected) || waitsOnYou(c.gates.ci_config))
           && (c.status === "open" || c.status === "ready");
         return (
           <section className="card" key={c.id}>

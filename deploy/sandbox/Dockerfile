@@ -36,6 +36,25 @@ RUN npm install -g opencode-ai@1.19.0
 # settings out, and which model names it rewrites — so re-check both on a bump.
 RUN npm install -g @google/gemini-cli@0.63.0
 
+# Code Factory scanners, pinned: the platform's change scan runs osv-scanner
+# (known-vulnerable dependencies) and gitleaks (secrets) on every change's
+# commit, and syft writes a release's SBOM. Agents may run them too, and
+# semgrep, for a read before they ask for review. Bump deliberately: the scan
+# parser in yaaf/runner/daemon.py reads these versions' JSON.
+ARG TARGETARCH=amd64
+RUN set -eu; \
+    case "$TARGETARCH" in arm64) GL=arm64; GO=arm64 ;; *) GL=x64; GO=amd64 ;; esac; \
+    curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_${GL}.tar.gz" \
+        | tar -xz -C /usr/local/bin gitleaks; \
+    curl -fsSL -o /usr/local/bin/osv-scanner \
+        "https://github.com/google/osv-scanner/releases/download/v1.8.5/osv-scanner_linux_${GO}"; \
+    curl -fsSL "https://github.com/anchore/syft/releases/download/v1.11.1/syft_1.11.1_linux_${GO}.tar.gz" \
+        | tar -xz -C /usr/local/bin syft; \
+    chmod 0755 /usr/local/bin/gitleaks /usr/local/bin/osv-scanner /usr/local/bin/syft
+# semgrep in a venv of its own: its pins are not the agent venv's business.
+RUN python3 -m venv /opt/semgrep && /opt/semgrep/bin/pip install --no-cache-dir semgrep==1.85.0 \
+    && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep
+
 # pandas and duckdb are baked in because the alternative to having them is an
 # agent reading ten thousand rows into its own context to count them. duckdb
 # queries csv/parquet/json with SQL straight off disk; pandas is what a model

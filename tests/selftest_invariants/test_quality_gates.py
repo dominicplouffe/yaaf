@@ -254,3 +254,103 @@ def test_the_runner_runs_scenarios_on_the_commit_and_leaves_nothing_behind(tmp_p
     assert '"s1": true' in result.check_output and '"s2": false' in result.check_output
     assert result.check_exit_code == 1
     assert not where.exists(), "the checkout holding the scenarios run is removed"
+
+
+# ── CI, coverage and the platform's scan ────────────────────────────────────────
+
+CI_FILE = [{"filename": ".github/workflows/ci.yml", "status": "modified",
+            "patch": "@@\n-      run: make test\n+      run: make test || true"}]
+
+
+def test_a_change_to_ci_waits_for_the_chairman(client, gh):
+    project = _factory(client)
+    change = _ready_but_for(client, project, gh, CI_FILE)
+    assert not change["gates"]["ci_config"]["ok"]
+    assert "chairman" in change["gates"]["ci_config"]["detail"]
+    reasoned = _sign_with(client, project, change["id"], allow_ci_change=(
+        "Adds a lint job; the test job is unchanged and still blocks on failure."))
+    assert reasoned.json()["change"]["status"] == ChangeStatus.OPEN, "a seat is not enough"
+    assert client.post(f"/admin/changes/{change['id']}/approve",
+                       headers=ADMIN).json()["change"]["status"] == ChangeStatus.READY
+
+
+def test_with_the_rule_off_a_ci_change_needs_a_signed_reason(client, gh):
+    project = _factory(client, ci_changes_need_chairman=False)
+    change = _ready_but_for(client, project, gh, CI_FILE)
+    assert _sign(client, project, change["id"]).json()["change"]["status"] == ChangeStatus.OPEN
+    reasoned = _sign_with(client, project, change["id"], allow_ci_change=(
+        "Adds a lint job; the test job is unchanged and still blocks on failure."))
+    assert reasoned.json()["change"]["status"] == ChangeStatus.READY
+
+
+def _coverage(client, project, sha, title, delivery):
+    return _hook(client, project, "check_run", {
+        "action": "completed", "sender": {"login": "github-actions"},
+        "check_run": {"head_sha": sha, "name": "coverage", "status": "completed",
+                      "conclusion": "success", "output": {"title": title}}}, delivery)
+
+
+def test_coverage_is_read_from_ci_on_the_commit_and_held_to_the_floor(client, gh):
+    project = _factory(client, min_changed_line_coverage=80)
+    change = _ready_but_for(client, project, gh, gh.files)
+    assert "has not reported" in change["gates"]["coverage"]["detail"]
+    _coverage(client, project, change["head_sha"], "61.0% of changed lines covered", "cov-1")
+    _sign(client, project, change["id"])
+    row = _change(change["id"])
+    assert not row.gates["coverage"]["ok"] and "61%" in row.gates["coverage"]["detail"]
+    _coverage(client, project, change["head_sha"], "87.5% of changed lines covered", "cov-2")
+    assert _change(change["id"]).status == ChangeStatus.READY
+
+
+def test_the_platform_scans_every_change_and_holds_on_what_it_finds(client, gh):
+    project = _factory(client, platform_scans=True)
+    change = _ready_but_for(client, project, gh, gh.files)
+    assert "not scanned" in change["gates"]["scan"]["detail"]
+    with db_session() as session:
+        assert session.query(RunQueue).filter_by(kind=RunKind.CHANGE_SCAN).count() == 1
+    _sign(client, project, change["id"])
+    row = _change(change["id"])
+
+    def scanned(result):
+        with db_session() as session:
+            changes.record_scan(session, session.get(type(row), row.id), row.head_sha, result)
+        return _change(change["id"])
+
+    ok = {"osv-scanner": True, "gitleaks": True}
+    assert not scanned({"available": ok, "advisories_high": 1, "advisories": ["pillow"],
+                        "secrets": 0}).gates["scan"]["ok"]
+    assert "lacks gitleaks" in scanned({"available": {**ok, "gitleaks": False},
+                                        "advisories_high": 0, "secrets": 0}
+                                       ).gates["scan"]["detail"]
+    assert scanned({"available": ok, "advisories_high": 0, "secrets": 0}
+                   ).status == ChangeStatus.READY
+
+
+def test_scan_output_is_read_from_the_tools_json():
+    osv = ('{"results": [{"packages": [{"package": {"name": "pillow"}, '
+           '"groups": [{"max_severity": "9.8"}], "vulnerabilities": [{"id": "GHSA-x"}]}, '
+           '{"package": {"name": "left-pad"}, "groups": [{"max_severity": "4.3"}]}]}]}')
+    leaks = '[{"RuleID": "aws-access-token", "File": "config.py"}]'
+    result = daemon.parse_scan("osv-scanner=1\ngitleaks=0\n", osv, leaks)
+    assert result["advisories"] == ["pillow"] and result["secrets"] == 1
+    assert result["available"] == {"osv-scanner": True, "gitleaks": True}
+    missing = daemon.parse_scan("osv-scanner=127\ngitleaks=127\n", None, None)
+    assert missing["available"] == {"osv-scanner": False, "gitleaks": False}
+
+
+def test_a_runner_without_the_scanners_fails_the_gate_closed(tmp_path, repo):
+    origin, sha = repo
+    job = RunJob(run_id="run_s", project_id="p", agent_id=None, kind=RunKind.CHANGE_SCAN,
+                 trigger={"change_id": "c"}, task_id=None, timeout_s=60,
+                 workspace_dir=str(tmp_path / ".scans" / "run_s"), check_sha=sha,
+                 check_branch="mika/hold", fetch_url=str(origin))
+    result = daemon._run_change_scan(job)
+    assert result.ok, result.summary
+    import json
+    data = json.loads(result.check_output)
+    if not all(data["result"]["available"].values()):
+        from yaaf.core.constitution import ConstitutionDoc
+        from yaaf.core.models import Change
+        fake = Change(head_sha=sha, findings={"scan": {"sha": sha, **data["result"]}})
+        assert not changes.scan_gate(fake, ConstitutionDoc()).get("ok")
+    assert not (tmp_path / ".scans" / "run_s").exists()

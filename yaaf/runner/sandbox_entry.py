@@ -494,11 +494,12 @@ async def t_changes_list(args):
     "push clears it. You cannot sign your own change. When signing a change the "
     "platform holds for weaker tests, `allow_weaker_tests` is your reason (what the "
     "removed assertions checked and why that no longer matters); for new packages, "
-    "`allow_packages` lists each one you checked by name. A credential in the diff "
-    "cannot be signed through.",
+    "`allow_packages` lists each one you checked by name; for a change to CI, "
+    "`allow_ci_change` is your reason, where the project lets a seat accept one. A "
+    "credential in the diff cannot be signed through.",
     _schema({"change_id": str, "verdict": str, "note": str, "allow_weaker_tests": str,
-             "allow_packages": list[str]},
-            optional=("allow_weaker_tests", "allow_packages")),
+             "allow_packages": list[str], "allow_ci_change": str},
+            optional=("allow_weaker_tests", "allow_packages", "allow_ci_change")),
 )
 async def t_change_review(args):
     body = {"verdict": args["verdict"], "note": args["note"]}
@@ -506,6 +507,8 @@ async def t_change_review(args):
         body["allow_weaker_tests"] = args["allow_weaker_tests"]
     if args.get("allow_packages"):
         body["allow_packages"] = list(args["allow_packages"])
+    if args.get("allow_ci_change"):
+        body["allow_ci_change"] = args["allow_ci_change"]
     return _text(_call("POST", f"/agent/changes/{args['change_id']}/review", body))
 
 
