@@ -35,7 +35,7 @@ each ships with an attack test in `tests/selftest_invariants/` (house rules 1–
 | 5 | Tests can't get weaker quietly. | A diff that deletes or loosens assertions, or skips tests, is held until a challenge seat gives a signed reason. |
 | 6 | Small changes only. | More than 400 changed lines (amendable) is refused. |
 | 7 | New packages are checked. | Below the age or download floor, or outside the licence list: held for the security seat. A known advisory: refused. |
-| 8 | Production waits for you. | The first production release is always yours. Later releases follow the authority dial. |
+| 8 | You choose who releases. | Per project: **approve first** (you approve the first production release and every major; the release seat ships minor and patch after) or **fully autonomous** (the release seat ships everything; you are told after). Gates, canary and rollback apply in both. Protected paths still need a person. |
 | 9 | Bad deploys undo themselves. | The canary guard reads health metrics. A breach rolls back and opens an incident, with nobody asked first. |
 | 10 | Upkeep is a promise. | Standing requirements (as in Operate) are judged every cycle. Two misses in a row pause new feature work. |
 
@@ -113,7 +113,7 @@ Every phase ships on its own, with its attack tests, and leaves the suite green.
 - Add a `Release` model with: version, commit, changelog, SBOM artifact, provenance, stage and rollback target.
 - Environments are a deploy command plus a health URL, with the key scoped to the release seat.
 - Canary guard on metric requirements (`metrics.py`), automatic rollback, and an `Incident` record opened by the guard or the generic webhook.
-- Approval kind `release`, never granted by silence.
+- Approval kind `release`, never granted by silence. A new constitution field `release_authority` (`approve_first` | `autonomous`), set on step 3 and amendable.
 
 **5. Upkeep (M).**
 - Reuse Operate's cycle roll, standing checks and review-at-the-roll.
@@ -167,12 +167,12 @@ All are computed by the platform, never by the crew:
 - Hidden-scenario pass rate.
 - The four DORA measures against the day-0 baseline: deploys a week, commit to production, share needing a fix, and time to recover.
 
-## Decisions for you
+## Decisions
 
-1. **GitHub only at launch.** Recommended. GitLab and Bitbucket follow the same shape later.
-2. **Deploys are a command plus a health URL.** Recommended. There are no per-cloud adapters in v1, and teams that already have a pipeline keep it.
-3. **Release button.** Recommended: yours for the first production release. The release seat holds it for later minor and patch releases. Majors stay with you.
-4. **Upkeep rhythm.** Recommended: weekly, with the review held at the roll.
+1. **GitHub only at launch.** Decided. GitLab and Bitbucket later.
+2. **Deploys are a command plus a health URL.** Decided. No per-cloud adapters in v1; teams with a pipeline keep it.
+3. **Release button.** Decided: a choice per project, "approve first" or "fully autonomous".
+4. **Upkeep rhythm.** Open. Recommended: weekly. The crew works every day; the scorecard and review close every Monday. Daily and monthly are offered too.
 
 ## Verification
 
