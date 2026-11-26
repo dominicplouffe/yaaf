@@ -331,6 +331,9 @@ function groupRoles(rows: RoleSummary[]) {
   return groups;
 }
 
+/** Chips shown on a crew card before the rest fold into "+N more". */
+const CREW_CHIPS = 3;
+
 export function HirePanel({
   roles, crews, loaded, error, selected, onToggle, onApplyCrew,
   onClose, alreadyOn, gaps, title, goal,
@@ -467,13 +470,22 @@ export function HirePanel({
                     : undefined}>
                   <span className="cn">{crew.name}</span>
                   <span className="co" title={crew.outcome}>{purposeOf(crew.outcome, 90)}</span>
+                  {/* The rail is one grid row, so every card is as tall as the
+                      tallest crew in it, scrolled out of view or not. Capping
+                      the chips keeps one big crew from padding all the others. */}
                   <span className="cr">
-                    {crew.teams.map((t, i) => (
+                    {crew.teams.slice(0, CREW_CHIPS).map((t, i) => (
                       <span className="chip" key={i}>
                         {t.role_name ?? t.role_slug}
                         {t.employees.length > 1 ? ` ×${t.employees.length}` : ""}
                       </span>
                     ))}
+                    {crew.teams.length > CREW_CHIPS && (
+                      <span className="chip" title={crew.teams.slice(CREW_CHIPS)
+                        .map((t) => t.role_name ?? t.role_slug).join(", ")}>
+                        +{crew.teams.length - CREW_CHIPS} more
+                      </span>
+                    )}
                   </span>
                   <span className="cf">
                     <span>{crew.teams.length} team{crew.teams.length === 1 ? "" : "s"}</span>
