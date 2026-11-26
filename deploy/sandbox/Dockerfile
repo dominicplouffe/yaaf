@@ -57,6 +57,7 @@ RUN set -eu; \
 RUN python3 -m venv /opt/scan \
     && /opt/scan/bin/pip install --no-cache-dir semgrep==1.85.0 lizard==1.17.10 ruff==0.6.9 \
     && ln -s /opt/scan/bin/semgrep /usr/local/bin/semgrep \
+    && ln -s /opt/scan/bin/pysemgrep /usr/local/bin/pysemgrep \
     && ln -s /opt/scan/bin/lizard /usr/local/bin/lizard \
     && ln -s /opt/scan/bin/ruff /usr/local/bin/ruff
 

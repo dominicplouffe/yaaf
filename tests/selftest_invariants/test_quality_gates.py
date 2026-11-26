@@ -338,6 +338,38 @@ def test_scan_output_is_read_from_the_tools_json():
     assert missing["available"] == {"osv-scanner": False, "gitleaks": False}
 
 
+def test_a_checkout_is_writable_by_the_sandbox_user(tmp_path, repo):
+    """Found on the real image: the sandbox runs as uid 10001 and the runner
+    (often root) makes the checkout, so every tool's report was silently
+    unwritable — gitleaks read clean, lizard measured nothing, no SBOM."""
+    import stat
+
+    origin, sha = repo
+    where = tmp_path / ".scans" / "run_w"
+    job = RunJob(run_id="run_w", project_id="p", agent_id=None, kind=RunKind.CHANGE_SCAN,
+                 trigger={}, task_id=None, timeout_s=60, workspace_dir=str(where),
+                 check_sha=sha, check_branch="mika/hold", fetch_url=str(origin))
+    assert daemon._checkout(job, where) is None
+    for path in [where, *where.rglob("*")]:
+        if path.is_symlink():
+            continue
+        mode = path.stat().st_mode
+        assert mode & stat.S_IWOTH and mode & stat.S_IROTH, f"{path} {oct(mode)}"
+
+
+def test_a_scanner_that_could_not_check_is_not_a_clean_scan():
+    """Found on the real image: osv-scanner exits 129 when it cannot reach its
+    advisory database, and leaves no report. That once read as "no
+    advisories" and passed the gate."""
+    offline = daemon.parse_scan("osv-scanner=129\ngitleaks=0\n", None, "[]")
+    assert offline["available"] == {"osv-scanner": False, "gitleaks": True}
+    unwritten = daemon.parse_scan("osv-scanner=1\ngitleaks=0\n", None, None)
+    assert unwritten["available"] == {"osv-scanner": False, "gitleaks": False}, \
+        "a tool whose report never landed checked nothing"
+    no_packages = daemon.parse_scan("osv-scanner=128\ngitleaks=0\n", None, "[]")
+    assert no_packages["available"] == {"osv-scanner": True, "gitleaks": True}
+
+
 def test_a_runner_without_the_scanners_fails_the_gate_closed(tmp_path, repo):
     origin, sha = repo
     job = RunJob(run_id="run_s", project_id="p", agent_id=None, kind=RunKind.CHANGE_SCAN,

@@ -1750,7 +1750,23 @@ def _checkout(job: RunJob, where: Path) -> str | None:
         proc = subprocess.run(step, capture_output=True, text=True, timeout=180)
         if proc.returncode != 0:
             return (proc.stderr or "").replace(secret, "<repo>").strip()[:300]
+    _open_to_sandbox(where)
     return None
+
+
+def _open_to_sandbox(where: Path) -> None:
+    """The sandbox runs as an unprivileged user and the runner (often root)
+    made this tree, so open it up — as agent runs do their workspace. Without
+    it every tool's report file is silently unwritable, and a scanner that
+    could not write its findings reads exactly like one that found none."""
+    import os
+
+    for top, dirs, files in os.walk(where):
+        os.chmod(top, 0o777)
+        for name in files:
+            path = os.path.join(top, name)
+            if not os.path.islink(path):
+                os.chmod(path, os.stat(path).st_mode | 0o666)
 
 
 #: What the change scan runs, from the checkout's root, in the sandbox image.
@@ -1805,13 +1821,27 @@ def parse_scan(output: str, osv_json: str | None, gitleaks_json: str | None) -> 
     import re
 
     codes = dict(re.findall(r"^(osv-scanner|gitleaks)=(\d+)$", output or "", re.M))
-    available = {tool: codes.get(tool) not in (None, "126", "127") for tool in
-                 ("osv-scanner", "gitleaks")}
     high: list[str] = []
     try:
-        osv = json.loads(osv_json) if osv_json else {}
+        osv = json.loads(osv_json) if osv_json else None
     except ValueError:
-        osv = {}
+        osv = None
+    try:
+        leaks = json.loads(gitleaks_json) if gitleaks_json else None
+    except ValueError:
+        leaks = None
+    # A tool counts only when it finished *and* left its report. Any other
+    # exit is an error — osv-scanner says 129 when it could not reach its
+    # advisory database — and a scanner that could not check reads exactly
+    # like one that found nothing, so it fails the gate closed instead.
+    # osv-scanner: 0 clean, 1 found, 128 no packages; gitleaks runs with
+    # --exit-code 0.
+    available = {
+        "osv-scanner": codes.get("osv-scanner") == "128"
+        or (codes.get("osv-scanner") in ("0", "1") and isinstance(osv, dict)),
+        "gitleaks": codes.get("gitleaks") == "0" and isinstance(leaks, list),
+    }
+    osv = osv if isinstance(osv, dict) else {}
     for result in osv.get("results") or []:
         for pkg in result.get("packages") or []:
             name = (pkg.get("package") or {}).get("name") or "?"
@@ -1824,10 +1854,6 @@ def parse_scan(output: str, osv_json: str | None, gitleaks_json: str | None) -> 
                 severe |= level in ("HIGH", "CRITICAL")
             if severe:
                 high.append(name)
-    try:
-        leaks = json.loads(gitleaks_json) if gitleaks_json else []
-    except ValueError:
-        leaks = []
     return {"available": available, "advisories_high": len(high),
             "advisories": sorted(set(high))[:20],
             "secrets": len(leaks) if isinstance(leaks, list) else 0}
@@ -1919,6 +1945,7 @@ def _change_health(job: RunJob, where: Path) -> dict:
             target = base_dir / path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(shown.stdout)
+    _open_to_sandbox(base_dir)
     head_reading = _measure_health(where, changed, job)
     base_reading = _measure_health(base_dir, changed, job)
     verdict = health.compare(base_reading, head_reading)
