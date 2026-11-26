@@ -222,6 +222,7 @@ def view(session: Session, project: Project, *, days: int = 14) -> dict:
             "frozen": root.frozen_at is not None,
             "to": to,
             "unread": [name(a) for a in unread],
+            "unread_ids": unread,
             "read": [name(a) for a in read],
             "asleep": [name(a) for a in unread if (last_run.get(a) is None or last_run[a] < last)],
             "refs": refs,
@@ -247,7 +248,72 @@ def view(session: Session, project: Project, *, days: int = 14) -> dict:
         })
     people["you"] = {"id": "you", "name": "You", "role": "Chairman"}
     people["yaaf"] = {"id": "yaaf", "name": "yaaf", "role": "Platform"}
-    return {"days": days, "rooms": rooms, "people": people, "conversations": convs}
+    by_agent = unread_by_agent(session, project, agents, people)
+    # An agent in the middle of a run has woken up: it is reading now.
+    busy = {a["name"] for a in by_agent if a["busy"]}
+    for c in convs:
+        c["asleep"] = [n for n in c["asleep"] if n not in busy]
+    return {"days": days, "rooms": rooms, "people": people, "conversations": convs,
+            "agents": by_agent}
+
+
+#: Unread mail this old, on an agent nothing is holding, means the wake that
+#: should have read it did not happen.
+OVERDUE = timedelta(minutes=30)
+
+
+def unread_by_agent(session: Session, project: Project, agents: dict[str, Agent],
+                    people: dict[str, dict]) -> list[dict]:
+    """Each agent's unread count, and — the question the chairman actually
+    asks — why it has not read them yet, in his words. The answer is the
+    dispatcher's own state (`activity_state`), the same gates that decide the
+    wake, so the sentence cannot disagree with what happens."""
+    from yaaf.core.constitution import effective
+    from yaaf.server import dispatcher
+
+    cons = effective(session, project.id)
+    state = dispatcher.activity_state(session, project, cons)
+    rows = {r["id"]: r for r in state["agents"]}
+    blocked = state["blocked_by"]
+    delivered = blocked == "delivery_ready"
+    now = utcnow()
+    out = []
+    for aid, agent in agents.items():
+        unread = dispatcher.unread_messages_for(session, project, agent) \
+            if agent.status == AgentStatus.ACTIVE else []
+        if not unread:
+            continue
+        oldest = min(_aware(m.created_at) for m, _ in unread)
+        row = rows.get(aid, {})
+        fault = False
+        if project.status != "running":
+            why = "The project is paused, so nobody wakes up."
+        elif row.get("busy"):
+            why = "It's working right now and reads them when this run ends."
+        elif dispatcher.reading_off(cons):
+            why = ("This project doesn't wake agents just to read. It reads them the next time "
+                   "it wakes up for work.")
+        elif delivered:
+            why = "The project is finished, so only your messages wake agents now."
+        elif blocked in ("daily_runs", "governance_reserve"):
+            why = "Today's runs are used up. It reads them after the daily reset."
+        elif blocked == "pacing":
+            why = "The project's hourly limit is reached. It reads them within the hour."
+        elif blocked == "concurrency":
+            why = "Every run slot is busy. It reads them when one frees up."
+        elif row.get("wake_slot_frees_at"):
+            why = "It has used its runs for this hour and reads them within the hour."
+        elif row.get("batching_until"):
+            why = "It waits a few minutes to read several messages at once."
+        elif now - oldest > OVERDUE:
+            why = "Nothing is holding it, so it should have woken up by now. This looks like a fault."
+            fault = True
+        else:
+            why = "It reads them on its next wake, within a few minutes."
+        out.append({**people[aid], "unread": len(unread), "oldest_at": oldest.isoformat(),
+                    "why": why, "fault": fault, "busy": bool(row.get("busy"))})
+    out.sort(key=lambda a: (-a["unread"], a["name"]))
+    return out
 
 
 def project_ceo(agents: dict[str, Agent]) -> str | None:

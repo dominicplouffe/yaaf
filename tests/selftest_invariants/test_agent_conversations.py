@@ -121,3 +121,21 @@ def test_nothing_in_the_boardroom_needs_attention_here(client):
     c = _conv(view, mid)
     assert c["outcome"] == "note" and c["people"] == ["yaaf"]
     assert next(r for r in view["rooms"] if r["id"] == board)["open"] == 0
+
+
+def test_each_agent_says_why_it_has_not_read_its_mail(client):
+    """"Why is nothing ever read?" answered per agent, from the same gates the
+    dispatcher wakes by: a setting is named as a setting, and mail that nothing
+    is holding back is called what it is, a fault."""
+    off = make_project(client, slug="readoff", constitution={"inbox_runs_per_project_per_day": 0})
+    team = channel_of(client, off["id"], "team")
+    _say(off, team, "Lead", "Can you check the totals?", ago=timedelta(hours=3))
+    (emp2,) = [a for a in _view(client, off)["agents"] if a["name"] == "Emp2"]
+    assert emp2["unread"] == 1 and emp2["fault"] is False
+    assert "doesn't wake agents just to read" in emp2["why"]
+
+    on = make_project(client, slug="readon")
+    team = channel_of(client, on["id"], "team")
+    _say(on, team, "Lead", "Can you check the totals?", ago=timedelta(hours=3))
+    (emp2,) = [a for a in _view(client, on)["agents"] if a["name"] == "Emp2"]
+    assert emp2["fault"] is True and "should have woken up" in emp2["why"]

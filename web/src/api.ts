@@ -866,6 +866,7 @@ export interface Conversation {
   frozen: boolean;
   to: string | null;
   unread: string[];
+  unread_ids: string[];
   read: string[];
   /** Of `unread`, the ones with no run since the last word. */
   asleep: string[];
@@ -877,6 +878,8 @@ export interface ConversationsView {
   rooms: { id: string; kind: string; name: string; members: string[]; last_at: string | null; open: number }[];
   people: Record<string, ConversationPerson>;
   conversations: Conversation[];
+  /** Agents with unread mail, and why each has not read it (the dispatcher's gates). */
+  agents: (ConversationPerson & { unread: number; oldest_at: string; why: string; fault: boolean; busy: boolean })[];
 }
 
 export interface ChannelRow {

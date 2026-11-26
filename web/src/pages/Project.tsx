@@ -260,7 +260,7 @@ export default function ProjectPage() {
         <Route path="approvals" element={<Navigate to={`${base}/details/activity/decisions`} replace />} />
         <Route path="runs" element={<Navigate to={`${base}/details/activity/runs`} replace />} />
         <Route path="channels" element={<Navigate to={`${base}/details/activity/messages`} replace />} />
-        <Route path="inbox" element={<Navigate to={`${base}/details/activity/inbox`} replace />} />
+        <Route path="inbox" element={<Navigate to={`${base}/details/activity/messages?view=unread`} replace />} />
         <Route path="memory" element={<Navigate to={`${base}/details/activity/memory`} replace />} />
         <Route path="*" element={<Navigate to={base} replace />} />
       </Routes>

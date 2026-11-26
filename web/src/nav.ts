@@ -81,11 +81,9 @@ export const ACTIVITY_VIEWS = [
   // drawn as a queue with a verdict button on every row and a percentage of it
   // done, which is a demand rather than an account.
   ["evidence", "Proof", "every claim the agents made, and what the platform could check"],
-  // The channel log, then who has not read it. The inbox banner links
-  // straight to the inbox and its pill carries the unread count, so it does
-  // not need to stand first to be found.
-  ["messages", "Messages", "every channel you can read but not speak in"],
-  ["inbox", "Agent inbox", "each agent's unread messages"],
+  // Every room's conversations, and who has not read what and why. The Agent
+  // inbox tab is folded in here; its old address still lands on it.
+  ["messages", "Messages", "what the agents said to each other, and who hasn't read it"],
   ["mail", "Email", "everything the CEO emailed from the project mailbox, and every reply"],
   ["memory", "Memory", "what the project chose to remember"],
 ] as const;

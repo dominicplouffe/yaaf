@@ -17,17 +17,17 @@ export function readingOff(r: InboxReading): boolean {
   return r.cap_today === 0 || r.cap_this_hour === 0;
 }
 
-/** No wake may be bought just to read right now: reading is off, or today's
-    or this hour's reads are used. Mail alone moves nobody until it clears. */
+/** No wake may be bought just to read. Only when reading is switched off:
+    past the allowance, reads go on the daily runs instead of waiting. */
 export function readingBlocked(r: InboxReading): boolean {
-  return readingOff(r) || r.used_today >= r.cap_today || r.used_this_hour >= r.cap_this_hour;
+  return readingOff(r);
 }
 
 /** One line: how much reading the project may do, and how much it has. */
 export function readingLine(r: InboxReading): string {
   if (readingOff(r)) return "Inbox reads are off: agents read messages only when they wake up for work.";
-  return `Inbox reads: ${r.used_today} of ${r.cap_today} used today, ` +
-    `${r.used_this_hour} of ${r.cap_this_hour} this hour.`;
+  return `Inbox reads: ${r.used_today} of the ${r.cap_today} free reads used today. ` +
+    "Past that, each read counts as one of the day's runs.";
 }
 
 /** The working-hours tempo card's numbers. Not invented for this button: they
@@ -54,24 +54,6 @@ export function nextInboxStep(r: InboxReading): Step | null {
       confirm: `Agents will be able to wake up to ${day} times a day (${hour} an hour) just to ` +
         "read their messages. Each wake is a paid AI call.",
       changes: { inbox_runs_per_project_per_day: day, inbox_runs_per_project_per_hour: hour },
-    };
-  }
-  if (r.used_today >= r.cap_today) {
-    const day = r.cap_today * 2;
-    return {
-      label: `Raise to ${day} inbox reads a day`,
-      confirm: `Agents will be able to wake up to ${day} times a day just to read their ` +
-        "messages, starting now. Each wake is a paid AI call.",
-      changes: { inbox_runs_per_project_per_day: day },
-    };
-  }
-  if (r.used_this_hour >= r.cap_this_hour) {
-    const hour = r.cap_this_hour * 2;
-    return {
-      label: `Raise to ${hour} inbox reads an hour`,
-      confirm: `Agents will be able to wake up to ${hour} times an hour just to read their ` +
-        "messages. Each wake is a paid AI call.",
-      changes: { inbox_runs_per_project_per_hour: hour },
     };
   }
   return null;
@@ -190,7 +172,7 @@ export function InboxExplainer({ projectId, reading, onInbox }: {
       <p className="help">
         {!onInbox && (
           <>
-            <NavLink to={`/projects/${projectId}/details/activity/inbox`}>See each agent's unread messages</NavLink>
+            <NavLink to={`/projects/${projectId}/details/activity/messages?view=unread`}>See each agent's unread messages</NavLink>
             {" · "}
           </>
         )}
