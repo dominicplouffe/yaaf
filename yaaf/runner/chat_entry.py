@@ -283,6 +283,58 @@ class _Presence:
 _presence = _Presence()
 
 
+# ── a turn that answers without acting ─────────────────────────────────────────
+
+_READ_AS_WHY = {
+    "hold": "he told you not to change anything",
+    "question": "he asked you something",
+    "venting": "he is telling you how he feels, not what to do",
+    "info": "he told you something and asked for nothing",
+}
+
+
+def _held(fresh: list[dict]) -> str | None:
+    """Why this turn may only talk, or None when his newest line lets it act.
+    The platform read his line (yaaf.server.intent) and says so on it; a line
+    that arrives without a reading is treated as one that does not act."""
+    newest = next((m for m in reversed(fresh) if m.get("from_user")), None)
+    if newest is None:
+        return None
+    reading = newest.get("read_as") or {}
+    if reading.get("acts"):
+        return None
+    why = _READ_AS_WHY.get(reading.get("label"), "his message is not an order")
+    return (f"THIS TURN ONLY TALKS: {why}. Answer him in the boardroom — what you see, "
+            "with the evidence, and what you would do. Change nothing: scripts, file "
+            "writes, the board, the brief, the site and the team are refused until he "
+            "tells you to act.")
+
+
+def _cli_grants_off() -> dict:
+    """The CLI harnesses build their tool grants per attempt from PERMS; a turn
+    that only talks takes the changing ones away for that attempt."""
+    return {**base.PERMS, "bash": False, "data_processing": False, "files": False}
+
+
+@contextlib.contextmanager
+def _talk_only(reason: str | None):
+    """Refuse changing tools for one turn, under any harness: yaaf's loop and
+    the SDK check base.TALK_ONLY when a tool runs; the CLIs lose the grant."""
+    if not reason:
+        yield
+        return
+    perms = base.PERMS
+    base.TALK_ONLY = reason
+    if CHAT_ENTRY not in (SDK_ENTRY, "loop_entry.py"):
+        base.PERMS = _cli_grants_off()
+    try:
+        yield
+    finally:
+        base.TALK_ONLY = None
+        base.PERMS = perms
+
+
+
 def _post_reply(channel_id: str, text: str, answers: list[str] | None = None,
                 *, redrafted: bool = False) -> dict:
     """Post a reply; the platform's answer as `_call` gives it."""
@@ -577,6 +629,7 @@ def _sdk_options() -> ClaudeAgentOptions:
         tools=base._builtin_tools(),
         allowed_tools=base._allowed_tools(),
         permission_mode="bypassPermissions",  # containment is the sandbox + API
+        hooks=base.talk_only_hooks(),
         cwd="/workspace",
         setting_sources=[],
         # A runaway backstop, not a lifetime budget: the old value (30) was
@@ -679,9 +732,13 @@ async def _serve(conversation, channel_id: str, state: dict) -> int | None:
                     "\n".join(base.MOUNT_PROBLEMS) + "\n\n"
             first_turn = False
         prompt = preamble + "The chairman just said:\n" + prompt
+        held = _held(fresh)
+        if held:
+            prompt = held + "\n\n" + prompt
 
         try:
-            reply = await conversation.turn(channel_id, prompt)
+            with _talk_only(held):
+                reply = await conversation.turn(channel_id, prompt)
         except Exception as exc:
             ids_ = {m["id"] for m in fresh}
             attempt = 1 + max((state["attempts"].get(id_, 0) for id_ in ids_), default=0)

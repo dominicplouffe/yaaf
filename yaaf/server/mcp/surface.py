@@ -92,6 +92,10 @@ REACHED = {
 #: Routes no tool reaches, and the reason. A reason is required: "we did not
 #: get to it" is a fine answer, but it has to be written down as one.
 WITHHELD = {
+    "POST /admin/projects/{project_id}/boardroom/messages/{message_id}/read_as":
+        "what the chairman meant by his own line, which decides whether the CEO "
+        "may act on it. A model client correcting that would be a model saying "
+        "what he meant, which is the reading this click exists to overrule.",
     "POST /admin/credential_checks":
         "the creation form's test of values typed into it before the project "
         "exists; a model client founds through the Founder and stores values "

@@ -82,6 +82,7 @@ from yaaf.server import (
     authority,
     briefing,
     file_index,
+    intent,
     metrics,
     policy,
     spend_rollup,
@@ -2371,6 +2372,9 @@ def _message_rows(session: Session, channel_id: str, rows: list[Message]) -> lis
                           else agents.get(m.sender_agent_id)),
             "thread_id": m.thread_id, "frozen": m.frozen_at is not None,
             "body": m.body, "at": m.created_at.isoformat(),
+            # What his line was read as, if anything has read it yet: shown
+            # under it, so a wrong reading costs him one click to correct.
+            "read_as": intent.label_line(intent.stored(m)),
         }
         for m in rows
     ]

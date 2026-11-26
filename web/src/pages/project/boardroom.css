@@ -163,3 +163,14 @@
 /* The platform's own words to the CEO, kept one click down. */
 .cr-why { margin-top: 6px; font-size: var(--t-small); color: var(--ink-2); }
 .cr-why > summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+
+/* How his line was read, under it: quiet until it lets the CEO act. */
+.cr-readas { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.cr-readas-b { background: none; border: 0; padding: 0; font: inherit; color: var(--muted);
+  text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.cr-readas-b.acts { color: var(--ink-2); }
+.cr-readas-menu { display: flex; flex-direction: column; align-items: stretch; gap: 4px;
+  padding: 6px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  box-shadow: var(--e2); max-width: min(320px, 90vw); text-align: left; }
+.cr-readas-menu button { text-align: left; }
+.cr-readas-menu button[aria-pressed="true"] { border-color: var(--accent); }

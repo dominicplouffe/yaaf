@@ -114,9 +114,18 @@ def last_word(session: Session, project_id: str) -> Message | None:
 
 
 def open_question(session: Session, project_id: str) -> Message | None:
-    """His newest message, when it asks something; else None."""
-    said = last_word(session, project_id)
-    return said if said is not None and asks(said.body) else None
+    """His newest message, when it is not an order or an approval; else None.
+
+    Read by yaaf.server.intent since 26 November 2026: this module's word test
+    alone read "you may not change anything" as leave to act."""
+    from yaaf.server import intent
+
+    standing = intent.standing(session, project_id)
+    if standing.acts or standing.reading is None or standing.reading.label == "info":
+        # A fact or a greeting asks nothing to be talked through; the talk
+        # lane still answers it without acting (yaaf.server.intent).
+        return None
+    return standing.message
 
 
 def max_words(session: Session, project_id: str) -> int:
@@ -127,13 +136,19 @@ def max_words(session: Session, project_id: str) -> int:
 
 def brief_open_question(session: Session, project_id: str) -> str | None:
     """Why a brief draft must wait, or None. Read before filing one."""
+    from yaaf.server import intent
+
     said = open_question(session, project_id)
     if said is None:
         return None
     opening = " ".join(_NOTE_PREFIX.sub("", said.body, count=1).split()[:12])
+    reading = intent.stored(said)
+    what = {"hold": "tells you to change nothing", "venting": "tells you how he feels",
+            "info": "tells you something"}.get(reading.label if reading else "",
+                                               "asks you something")
     return (
-        f"Not filed. His last message asks you something (\"{opening} …\"), and a "
-        "question is not a decision. Talk it through with him first. Say what you "
+        f"Not filed. His last message {what} (\"{opening} …\"), and that is not a "
+        "decision. Talk it through with him first. Say what you "
         "see, with the evidence: what got read and what did not, an example or two. "
         "Put two or three directions side by side and ask him the one thing you "
         "need to know. Give no deadline and no default for silence. When he tells "

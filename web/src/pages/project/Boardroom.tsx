@@ -8,6 +8,8 @@ import {
   get,
   MessageRow,
   OrgView,
+  ReadAs,
+  ReadAsLabel,
   patch,
   post,
   RunRow,
@@ -97,10 +99,66 @@ function dayLabel(iso: string): string {
     a capacity case, a need — is yaaf's, centred and labelled as such: it used
     to sit under the CEO's name and face, so the chairman read the platform's
     wording as the CEO talking. */
+/** What each reading means for what the CEO does next, in his words. */
+const READ_AS: Record<ReadAsLabel, { word: string; then: string }> = {
+  order: { word: "Order", then: "the CEO may act on it" },
+  approval: { word: "Approval", then: "the CEO may act on it" },
+  hold: { word: "Hold", then: "the CEO changes nothing" },
+  question: { word: "Question", then: "the CEO answers, and changes nothing" },
+  venting: { word: "Venting", then: "the CEO answers, and changes nothing" },
+  info: { word: "Info", then: "the CEO answers, and changes nothing" },
+};
+const READ_AS_ORDER: ReadAsLabel[] = ["order", "approval", "hold", "question", "venting", "info"];
+
+/** How your line was read, under it, and one click to say otherwise. A wrong
+ *  "venting" costs you a reply that asks; a wrong "order" costs a changed
+ *  site, so a reading the model was unsure of never lets the CEO act. */
+function ReadAsControl({ projectId, messageId, reading }: {
+  projectId: string; messageId: string; reading: ReadAs;
+}) {
+  const [open, setOpen] = useState(false);
+  const [mine, setMine] = useState<ReadAs | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const shown = mine ?? reading;
+  const unsure = (shown.label === "order" || shown.label === "approval") && !shown.acts;
+  const pick = async (label: ReadAsLabel) => {
+    setError(null);
+    try {
+      setMine(await post<ReadAs>(`/admin/projects/${projectId}/boardroom/messages/${messageId}/read_as`, { label }));
+      setOpen(false);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  return (
+    <span className="cr-readas">
+      <button type="button" className={`cr-readas-b${shown.acts ? " acts" : ""}`} aria-expanded={open}
+        title={unsure ? "Not sure enough to act on: the CEO answers and changes nothing"
+          : `Read as ${READ_AS[shown.label].word}: ${READ_AS[shown.label].then}`}
+        onClick={() => setOpen(!open)}>
+        Read as {READ_AS[shown.label].word.toLowerCase()}{unsure ? " (unsure)" : ""}
+        {shown.by === "chairman" ? " · yours" : ""}
+      </button>
+      {open && (
+        <span className="cr-readas-menu" role="group" aria-label="How should the CEO read this?">
+          {READ_AS_ORDER.map((label) => (
+            <button key={label} type="button" className="small" aria-pressed={shown.label === label}
+              onClick={() => pick(label)}>
+              <b>{READ_AS[label].word}</b> <span className="help">{READ_AS[label].then}</span>
+            </button>
+          ))}
+          {error && <span className="error" role="alert">Couldn't change it: {error}</span>}
+        </span>
+      )}
+    </span>
+  );
+}
+
 const MessageItem = memo(function MessageItem(
-  { body, at, mine, platform, who, team, runId, projectId, speaker }: {
+  { body, at, mine, platform, who, team, runId, projectId, speaker, messageId, readAs }: {
     body: string; at: string; mine: boolean; platform: boolean; who: string;
     team: string | null; runId?: string | null; projectId: string; speaker: string | null;
+    messageId: string; readAs?: ReadAs | null;
   },
 ) {
   const when = TIME.format(new Date(at));
@@ -122,8 +180,9 @@ const MessageItem = memo(function MessageItem(
           <span className="sr-only">{speaker && speaker !== "chairman" ? speaker : "You"}: </span>
           <div className="body"><Markdown>{body}</Markdown></div>
         </div>
-        <div className="cr-when" title={fmtWhen(at)}>
-          {speaker && speaker !== "chairman" ? `${speaker} · ` : ""}{when}
+        <div className="cr-when">
+          <span title={fmtWhen(at)}>{speaker && speaker !== "chairman" ? `${speaker} · ` : ""}{when}</span>
+          {readAs && <> · <ReadAsControl projectId={projectId} messageId={messageId} reading={readAs} /></>}
         </div>
       </div>
     );
@@ -901,6 +960,8 @@ export default function Boardroom({ projectId, dash, org }: {
                       runId={row.runId}
                       projectId={projectId}
                       speaker={speakerOf(row.m)}
+                      messageId={row.m.id}
+                      readAs={row.m.read_as}
                     />
                   ),
                 )}

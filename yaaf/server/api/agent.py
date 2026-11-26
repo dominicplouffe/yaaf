@@ -58,6 +58,7 @@ from yaaf.core.models import (
     ReviewStatus,
     Role,
     RoleVersion,
+    Run,
     RunKind,
     RunQueue,
     Secret,
@@ -72,7 +73,16 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import acting, activity, datasource_tools, policy, standing, typing_state, writing
+from yaaf.server import (
+    acting,
+    activity,
+    datasource_tools,
+    intent,
+    policy,
+    standing,
+    typing_state,
+    writing,
+)
 from yaaf.server.contextpack import _speaker
 from yaaf.server.deps import RunContext, db, run_auth
 from yaaf.server.notify import (
@@ -99,7 +109,49 @@ async def _the_agent_acts(ctx: RunContext = Depends(run_auth)) -> None:
     acting.bind(acting.agent(ctx.agent.id))
 
 
-router = APIRouter(dependencies=[Depends(_the_agent_acts)])
+#: What the talk lane may still do while his last word is not an order: answer
+#: him, ask him, show it is typing, book what it spent, keep its own notes, say
+#: a key is broken, answer his note. Data source calls go through, and the
+#: gateway refuses a write tool itself. `/messages` is held to the boardroom
+#: in `post_message`: telling the team to do something is acting.
+TALK_OPEN_PATHS = frozenset({
+    "/agent/typing", "/agent/chat_usage", "/agent/messages", "/agent/asks",
+    "/agent/asks/close", "/agent/memory", "/agent/heads_up", "/agent/model-token",
+    "/agent/credentials/report",
+})
+TALK_OPEN_PREFIXES = ("/agent/notes/", "/agent/mcp/")
+
+
+def waits_for_his_word(session: Session, run: Run) -> intent.Standing | None:
+    """Why the talk lane may not act now, or None: his newest line is not an
+    order or an approval (yaaf.server.intent). Only the talk lane. A work run
+    is doing what was already decided, whatever he last said in the room."""
+    from yaaf.server.dispatcher import TALK_RUN_KINDS
+
+    if run.kind not in TALK_RUN_KINDS:
+        return None
+    standing = intent.standing(session, run.project_id, keep=True)
+    return None if standing.acts else standing
+
+
+def _talk_waits_for_his_word(request: Request, ctx: RunContext = Depends(run_auth),
+                             session: Session = Depends(db)) -> None:
+    """26 November 2026: he vented about the blog's pictures, and the CEO answered
+    by drawing new ones on a paid key and uploading one to his site; he wrote
+    "you may not change anything", and it drafted a new brief. In the talk lane
+    a call that changes something waits for an order. The sandbox refuses the
+    other half — scripts and file writes — on the same reading (chat_entry)."""
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    path = request.url.path
+    if path in TALK_OPEN_PATHS or path.startswith(TALK_OPEN_PREFIXES):
+        return
+    held = waits_for_his_word(session, ctx.run)
+    if held is not None:
+        raise Refusal(intent.refusal(held), status_code=409)
+
+
+router = APIRouter(dependencies=[Depends(_the_agent_acts), Depends(_talk_waits_for_his_word)])
 
 WAKE_CHANNEL = "yaaf_wake"
 
@@ -902,6 +954,13 @@ def read_messages(
         session.add(ChannelRead(agent_id=ctx.agent.id, channel_id=channel_id, last_read_at=now))
     else:
         cursor.last_read_at = now
+    # His newest line is read for what it is before the talk lane answers it,
+    # so the session knows whether this turn may act (chat_entry); the older
+    # lines carry whatever reading they already have.
+    if channel.kind == ChannelKind.BOARDROOM:
+        newest = next((m for m in reversed(rows) if m.sender_user_id), None)
+        if newest is not None:
+            intent.read(session, newest)
     return [
         {
             "id": m.id,
@@ -911,6 +970,8 @@ def read_messages(
             "thread_id": m.thread_id,
             "body": m.body,
             "at": m.created_at.isoformat(),
+            # Only his lines are read; the talk lane reads `acts` off his newest.
+            **({"read_as": intent.label_line(intent.stored(m))} if m.sender_user_id else {}),
         }
         for m in rows
     ]
@@ -939,6 +1000,10 @@ def post_message(
     channel = session.get(Channel, body.channel_id)
     if channel is None:
         raise Refusal("Unknown channel.", status_code=404)
+    if channel.kind != ChannelKind.BOARDROOM:
+        held = waits_for_his_word(session, ctx.run)
+        if held is not None:
+            raise Refusal(intent.refusal(held, "Telling the team"), status_code=409)
     policy.check_agent_post(session, ctx.project, ctx.agent, channel)
     policy.check_thread_not_frozen(session, body.thread_id)
     policy.check_chairman_report(
@@ -3103,6 +3168,11 @@ def _gateway_answer(run_id: str, agent_id: str, project_id: str, source: str, me
                 arguments = params.get("arguments") if isinstance(params.get("arguments"),
                                                                   dict) else {}
                 decision = datasource_tools.decide(session, project, agent, source, tool)
+                if decision.row.kind != "read":
+                    held = waits_for_his_word(session, session.get(Run, run_id))
+                    if held is not None:
+                        raise Refusal(intent.refusal(held, f"{source}.{tool}"),
+                                      status_code=409)
                 try:
                     result = datasource_tools.forward(session, project, agent, decision,
                                                       arguments, run_id)
