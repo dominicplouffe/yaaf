@@ -1369,15 +1369,20 @@ table.csv .rownum {
   background: var(--surface-2); border: 1px solid var(--border);
   border-radius: 8px; padding: 12px 14px;
   display: flex; flex-direction: column; gap: 7px;
+  /* A crew is a <button>, and the base button centres its content on both
+     axes. Centred, the chip row is sized to its content, and WebKit then
+     stretches its wrapped lines into tall empty pills. Lay it out as a card. */
+  align-items: stretch; justify-content: flex-start;
 }
 .crew:hover:not(:disabled) { border-color: var(--accent); }
 .crew:disabled { opacity: 0.5; cursor: not-allowed; }
 .crew .cn { font-weight: 650; font-size: 14px; }
 .crew .co { font-size: 12px; color: var(--ink-2); line-height: 1.45; min-height: 3.2em; }
-.crew .cr { display: flex; gap: 5px; flex-wrap: wrap; }
+.crew .cr { display: flex; gap: 5px; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; }
 .crew .cf {
   display: flex; justify-content: space-between; gap: 8px; font-size: var(--t-micro); color: var(--muted);
   border-top: 1px solid var(--grid); padding-top: 7px;
+  margin-top: auto;
 }
 
 .hire-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
