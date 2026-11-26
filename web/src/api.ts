@@ -849,6 +849,36 @@ export interface MessageRow {
   at: string;
 }
 
+/** GET /observe/projects/:id/conversations — the Messages page: each room,
+    and each conversation in it with how it ended (yaaf/server/conversations.py). */
+export type ConversationOutcome = "handoff" | "answered" | "waiting" | "stuck" | "frozen" | "note";
+export interface ConversationPerson { id: string; name: string; role: string }
+export interface Conversation {
+  id: string;
+  room: string;
+  title: string;
+  outcome: ConversationOutcome;
+  started_by: string | null;
+  people: string[];
+  replies: number;
+  started_at: string;
+  last_at: string;
+  frozen: boolean;
+  to: string | null;
+  unread: string[];
+  read: string[];
+  /** Of `unread`, the ones with no run since the last word. */
+  asleep: string[];
+  refs: { kind: "task" | "goal" | "file"; id: string; label: string }[];
+  messages: { id: string; from: string | null; body: string; at: string }[];
+}
+export interface ConversationsView {
+  days: number;
+  rooms: { id: string; kind: string; name: string; members: string[]; last_at: string | null; open: number }[];
+  people: Record<string, ConversationPerson>;
+  conversations: Conversation[];
+}
+
 export interface ChannelRow {
   id: string;
   kind: string;
