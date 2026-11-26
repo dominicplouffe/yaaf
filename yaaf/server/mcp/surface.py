@@ -92,6 +92,10 @@ REACHED = {
 #: Routes no tool reaches, and the reason. A reason is required: "we did not
 #: get to it" is a fine answer, but it has to be written down as one.
 WITHHELD = {
+    "POST /admin/changes/{change_id}/approve":
+        "a Code Factory path the chairman marked as needing a person is approved "
+        "by that person, with the diff in front of him. A model client approving "
+        "it would be a model approving the change the rule keeps from models.",
     "POST /admin/credential_checks":
         "the creation form's test of values typed into it before the project "
         "exists; a model client founds through the Founder and stores values "

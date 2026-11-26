@@ -60,6 +60,13 @@ class RunJob:
     workspace_dir: str = ""
     # Success checks only:
     check_command: str | None = None
+    # Hidden scenarios only: [(scenario id, command)], the commit and branch
+    # they run on, and where that commit is fetched from. Never logged: the
+    # fetch URL carries the platform token for the length of one fetch.
+    scenarios: list = field(default_factory=list)
+    check_sha: str | None = None
+    check_branch: str | None = None
+    fetch_url: str | None = None
 
 
 @dataclass

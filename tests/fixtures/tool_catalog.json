@@ -319,9 +319,18 @@
     "name": "change_open"
   },
   {
-    "description": "Code Factory, challenge seats only. Sign somebody else's change, or return it with what is wrong. `verdict` is 'sign' or 'return'; `note` says what you read and what you found. Your signature is pinned to the commit you read; a later push clears it. You cannot sign your own change.",
+    "description": "Code Factory, challenge seats only. Sign somebody else's change, or return it with what is wrong. `verdict` is 'sign' or 'return'; `note` says what you read and what you found. Your signature is pinned to the commit you read; a later push clears it. You cannot sign your own change. When signing a change the platform holds for weaker tests, `allow_weaker_tests` is your reason (what the removed assertions checked and why that no longer matters); for new packages, `allow_packages` lists each one you checked by name. A credential in the diff cannot be signed through.",
     "input_schema": {
       "properties": {
+        "allow_packages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allow_weaker_tests": {
+          "type": "string"
+        },
         "change_id": {
           "type": "string"
         },
@@ -1195,6 +1204,38 @@
       "type": "object"
     },
     "name": "roster_activity"
+  },
+  {
+    "description": "Code Factory, challenge seats only. Write a hidden scenario for a requirement: a shell command the platform runs from the root of every change serving it, passing on exit 0. Builders never read it \u2014 so test what the requirement promises, including the cases a builder would not think to check. Keep the script outside the repo: put the whole check in the command.",
+    "input_schema": {
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "requirement_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requirement_id",
+        "name",
+        "command"
+      ],
+      "type": "object"
+    },
+    "name": "scenario_add"
+  },
+  {
+    "description": "Code Factory. Challenge seats read the hidden scenarios; any other seat reads only how many guard each requirement.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "scenarios_list"
   },
   {
     "description": "CEO only, and only where the constitution's authority dial grants it (your constitution prose says which verbs you hold; everything you don't hold is a 403 with the legitimate path named). Exercise a scope verb as YOUR OWN authority: {\"kind\": \"accept|cut|reopen|restage|reestimate|reword|unsequence|verdict\", \"requirement_key\": \"R-07\", plus for restage \"stage\", for reestimate \"est_runs\", for reword \"statement\", for unsequence \"depends_on_key\", for verdict \"ok\" (bool)}. verdict is for an UNVERIFIABLE observable in checking \u2014 judge it honestly and keep going; every self-judgment is disclosed to the chairman in full. Every use is audited and sent to the chairman with your reason \u2014 he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. All of it is reversible. Spend this authority the way you would want it audited. This is not the tool for executing a chairman boardroom order \u2014 that is directive_file, citing his message, and works in every mode.",

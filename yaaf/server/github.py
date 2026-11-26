@@ -187,3 +187,21 @@ def protect_main(session: Session, repo: str, branch: str = "main") -> dict:
         return {"ok": False, "detail": f"GitHub said {response.status_code}: "
                                        f"{response.text[:200]}"}
     return {"ok": True, "detail": f"{branch} accepts changes only through a pull request"}
+
+
+def list_pull_files(session: Session, repo: str, number: int) -> list[dict]:
+    """Every file in the pull request with its patch, as GitHub counts them —
+    up to 3,000, which is far past any change the size gate lets through."""
+    files: list[dict] = []
+    for page in range(1, 31):
+        response = _call(session, "GET",
+                         f"/repos/{repo}/pulls/{number}/files?per_page=100&page={page}")
+        if response.status_code != 200:
+            raise GithubError(f"GitHub could not list the files of #{number}: "
+                              f"{response.status_code}")
+        batch = response.json() or []
+        files.extend({"filename": f.get("filename"), "status": f.get("status"),
+                      "patch": f.get("patch")} for f in batch)
+        if len(batch) < 100:
+            break
+    return files

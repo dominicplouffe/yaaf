@@ -474,6 +474,10 @@ class ChangeReview(BaseModel):
     # Checked by `changes.review`, which says what the two words are rather
     # than returning a schema error an agent has to decode.
     verdict: str = Field(min_length=1, max_length=16)
+    # Signing only: what you accept on purpose. Weaker tests need a reason;
+    # each new package you checked, by name.
+    allow_weaker_tests: str | None = Field(default=None, max_length=2000)
+    allow_packages: list[str] = Field(default_factory=list, max_length=50)
     note: str = Field(min_length=1, max_length=4000)
 
 
@@ -489,7 +493,70 @@ def review_change(change_id: str, body: ChangeReview, ctx: RunContext = Depends(
     if change is None or change.project_id != ctx.project.id:
         raise Refusal("Unknown change.", status_code=404)
     return changes.review(session, ctx.project, change, ctx.agent,
-                          verdict=body.verdict, note=body.note)
+                          verdict=body.verdict, note=body.note,
+                          allow_weaker_tests=body.allow_weaker_tests,
+                          allow_packages=body.allow_packages)
+
+
+class ScenarioAdd(BaseModel):
+    requirement_id: str
+    name: str = Field(min_length=3, max_length=200)
+    command: str = Field(min_length=5, max_length=8000)
+
+
+@router.post("/scenarios")
+def add_scenario(body: ScenarioAdd, ctx: RunContext = Depends(run_auth),
+                 session: Session = Depends(db)) -> dict:
+    """A challenge seat writes a hidden scenario: a command the platform runs
+    against every change serving this requirement, from the repo root of the
+    change's commit, passing on exit 0. Builders never read it."""
+    from yaaf.core.models import Requirement, Scenario
+    from yaaf.server import changes
+
+    changes.require_factory(ctx.project)
+    if not policy.is_review_seat(session, ctx.agent):
+        raise Refusal("Hidden scenarios are written by a challenge seat. A seat that "
+                      "builds cannot write the test it will be judged by.", status_code=403)
+    requirement = session.get(Requirement, body.requirement_id)
+    if requirement is None or requirement.project_id != ctx.project.id:
+        raise Refusal("Unknown requirement.", status_code=404)
+    row = Scenario(id=ids.new_id(ids.SCENARIO), project_id=ctx.project.id,
+                   requirement_id=requirement.id, name=body.name.strip(),
+                   command=body.command.strip(), author_agent_id=ctx.agent.id)
+    session.add(row)
+    session.flush()
+    from yaaf.core.models import Change
+
+    for change in session.execute(
+        select(Change).where(Change.requirement_id == requirement.id,
+                             Change.status.in_(changes.LIVE[:2]))
+    ).scalars():
+        changes.queue_scenarios(session, ctx.project, change)
+        changes.evaluate(session, ctx.project, change)
+    return {"id": row.id, "requirement": requirement.key,
+            "hidden": len(changes.live_scenarios(session, requirement.id))}
+
+
+@router.get("/scenarios")
+def list_scenarios(ctx: RunContext = Depends(run_auth),
+                   session: Session = Depends(db)) -> dict:
+    """A challenge seat reads the scenarios. Any other seat reads how many
+    guard each requirement — and only that."""
+    from yaaf.core.models import Scenario
+    from yaaf.server import changes
+
+    changes.require_factory(ctx.project)
+    if not policy.is_review_seat(session, ctx.agent):
+        return {"counts": changes.scenario_counts(session, ctx.project),
+                "note": "Hidden on purpose: you are judged by these, so you do not "
+                        "read them. Make the requirement true and they pass."}
+    rows = session.execute(
+        select(Scenario).where(Scenario.project_id == ctx.project.id,
+                               Scenario.retired_at.is_(None))
+    ).scalars()
+    return {"scenarios": [{"id": r.id, "requirement_id": r.requirement_id, "name": r.name,
+                           "command": r.command} for r in rows],
+            "counts": changes.scenario_counts(session, ctx.project)}
 
 
 @router.post("/tasks/{task_id}/review")

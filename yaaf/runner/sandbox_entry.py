@@ -491,12 +491,44 @@ async def t_changes_list(args):
     "Code Factory, challenge seats only. Sign somebody else's change, or return it "
     "with what is wrong. `verdict` is 'sign' or 'return'; `note` says what you read "
     "and what you found. Your signature is pinned to the commit you read; a later "
-    "push clears it. You cannot sign your own change.",
-    {"change_id": str, "verdict": str, "note": str},
+    "push clears it. You cannot sign your own change. When signing a change the "
+    "platform holds for weaker tests, `allow_weaker_tests` is your reason (what the "
+    "removed assertions checked and why that no longer matters); for new packages, "
+    "`allow_packages` lists each one you checked by name. A credential in the diff "
+    "cannot be signed through.",
+    _schema({"change_id": str, "verdict": str, "note": str, "allow_weaker_tests": str,
+             "allow_packages": list[str]},
+            optional=("allow_weaker_tests", "allow_packages")),
 )
 async def t_change_review(args):
-    return _text(_call("POST", f"/agent/changes/{args['change_id']}/review",
-                       {"verdict": args["verdict"], "note": args["note"]}))
+    body = {"verdict": args["verdict"], "note": args["note"]}
+    if args.get("allow_weaker_tests"):
+        body["allow_weaker_tests"] = args["allow_weaker_tests"]
+    if args.get("allow_packages"):
+        body["allow_packages"] = list(args["allow_packages"])
+    return _text(_call("POST", f"/agent/changes/{args['change_id']}/review", body))
+
+
+@tool(
+    "scenario_add",
+    "Code Factory, challenge seats only. Write a hidden scenario for a requirement: "
+    "a shell command the platform runs from the root of every change serving it, "
+    "passing on exit 0. Builders never read it — so test what the requirement "
+    "promises, including the cases a builder would not think to check. Keep the "
+    "script outside the repo: put the whole check in the command.",
+    {"requirement_id": str, "name": str, "command": str},
+)
+async def t_scenario_add(args):
+    return _text(_call("POST", "/agent/scenarios", {
+        "requirement_id": args["requirement_id"], "name": args["name"],
+        "command": args["command"]}))
+
+
+@tool("scenarios_list",
+      "Code Factory. Challenge seats read the hidden scenarios; any other seat reads "
+      "only how many guard each requirement.", {})
+async def t_scenarios_list(args):
+    return _text(_call("GET", "/agent/scenarios"))
 
 
 @tool("task_block", "Block your claimed task with a reason; the CEO will re-plan.",
@@ -1854,7 +1886,7 @@ def _meta_of(obj) -> dict:
 ALL_TOOLS = [
     t_board, t_task_create, t_task_claim, t_task_complete, t_task_review,
     t_task_block, t_task_kill,
-    t_change_open, t_changes_list, t_change_review,
+    t_change_open, t_changes_list, t_change_review, t_scenario_add, t_scenarios_list,
     t_requirement_propose, t_requirement_depends_on,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_ask_chairman, t_ask_close,

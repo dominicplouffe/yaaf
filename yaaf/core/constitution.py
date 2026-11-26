@@ -634,6 +634,19 @@ class ConstitutionDoc(BaseModel):
              "it. Reviews of big changes miss what reviews of small ones catch, and a "
              "factory that ships large changes ships them unread.")
 
+    protected_paths: str = _rule(
+        "", group="Code Factory", label="Paths that need a person",
+        help="Code Factory only. Comma-separated file globs, e.g. billing/tax/**, "
+             "migrations/**. A change touching any of them merges only with your own "
+             "yes on the exact commit, whatever the authority dial says.")
+    hidden_scenarios: bool = _rule(
+        True, group="Code Factory", label="Hidden scenarios must pass",
+        help="Code Factory only. A change merges only when the hidden scenarios for "
+             "its requirement pass, run by the platform on its exact commit. A "
+             "challenge seat writes them; builders see how many exist and pass, never "
+             "what they say. Off, the gate is skipped and builders grade themselves "
+             "against tests they can read.")
+
     # Runs
     run_timeout_s: int = _rule(
         5400, ge=60, group="Runs", label="Run timeout (seconds)",

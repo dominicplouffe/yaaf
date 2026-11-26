@@ -94,7 +94,8 @@ PLAN_REFUSALS = ("you've hit your 5-hour limit", "you've hit your weekly limit",
 def _lane(run) -> str:
     if run.kind in TALK_RUN_KINDS:
         return "chat"
-    if run.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK):
+    if run.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK,
+                    RunKind.SCENARIO_CHECK):
         return "check"
     if run.kind in INBOX_RUN_KINDS:
         return "read"

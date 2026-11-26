@@ -51,7 +51,8 @@ GREEN = {"success", "neutral", "skipped"}
 #: Statuses a change can still move out of.
 LIVE = (ChangeStatus.OPEN, ChangeStatus.READY, ChangeStatus.MERGING)
 #: The order the gates are shown in, and the order a person reads them.
-GATES = ("serves", "size", "checks", "review")
+GATES = ("serves", "size", "secrets", "tests", "packages", "protected", "checks",
+         "scenarios", "review")
 #: How long a push to main may stay unexplained while a merge is in flight.
 RECONCILE_GRACE = timedelta(minutes=2)
 
@@ -136,6 +137,8 @@ def open_change(session: Session, project: Project, agent: Agent, *, task_id: st
     _take_pr(change, pr)
     session.add(change)
     session.flush()
+    scan(session, project, change)
+    queue_scenarios(session, project, change)
     _audit(session, project, "change.open", change, {"number": change.number,
                                                      "branch": branch})
     evaluate(session, project, change)
@@ -154,6 +157,7 @@ def _take_pr(change: Change, pr: dict) -> None:
     if head and head != change.head_sha:
         change.head_sha = head
         change.checks = {}
+        change.waivers = {}
         if change.review_verdict == "signed":
             change.review_verdict = None
             change.review_note = None
@@ -166,6 +170,22 @@ def _take_pr(change: Change, pr: dict) -> None:
 
 
 # ── the gates ───────────────────────────────────────────────────────────────────
+
+
+def scan(session: Session, project: Project, change: Change) -> None:
+    """Read the diff from GitHub and keep what it says about itself. A diff
+    the platform could not read fails closed: every gate that reads it waits."""
+    from yaaf.server import diffscan
+
+    cons = effective(session, project.id)
+    try:
+        files = github.list_pull_files(session, project.github_repo or "", change.number or 0)
+    except github.GithubError as exc:
+        change.findings = {"sha": change.head_sha, "error": str(exc)[:500]}
+        return
+    change.findings = {"sha": change.head_sha,
+                       **diffscan.inspect(files, diffscan.parse_globs(cons.protected_paths))}
+
 
 
 def gates_for(session: Session, project: Project, change: Change,
@@ -185,6 +205,49 @@ def gates_for(session: Session, project: Project, change: Change,
     lines = change.lines_added + change.lines_removed
     gates["size"] = {"ok": lines <= cons.max_change_lines,
                      "detail": f"{lines} lines of {cons.max_change_lines}"}
+
+    findings = change.findings or {}
+    unread = findings.get("sha") != change.head_sha or "error" in findings
+    why_unread = findings.get("error") or "the diff of this commit has not been read yet"
+    waivers = change.waivers if (change.waivers or {}).get("sha") == change.head_sha else {}
+
+    leaked = findings.get("secrets") or []
+    gates["secrets"] = {
+        "ok": not unread and not leaked,
+        "detail": (why_unread if unread
+                   else "a credential in the diff — rotate it; this cannot be waived: "
+                        + "; ".join(leaked[:3]) if leaked else "none found")}
+
+    weakened = findings.get("weakened_tests") or []
+    gates["tests"] = {
+        "ok": not unread and (not weakened or bool(waivers.get("weaker_tests"))),
+        "detail": (why_unread if unread
+                   else "none weakened" if not weakened
+                   else f"accepted by a challenge seat: {waivers['weaker_tests'][:200]}"
+                   if waivers.get("weaker_tests")
+                   else "weaker tests need a challenge seat's signed reason: "
+                        + "; ".join(weakened[:3]))}
+
+    packages = findings.get("new_packages") or []
+    cleared = set(waivers.get("packages") or [])
+    unchecked = [p for p in packages if p not in cleared]
+    gates["packages"] = {
+        "ok": not unread and not unchecked,
+        "detail": (why_unread if unread
+                   else "no new packages" if not packages
+                   else f"held for a challenge seat to check: {', '.join(unchecked)}"
+                   if unchecked else f"{len(packages)} new, each checked")}
+
+    touched = findings.get("protected") or []
+    approved = bool(change.chairman_sha) and change.chairman_sha == change.head_sha
+    gates["protected"] = {
+        "ok": not unread and (not touched or approved),
+        "detail": (why_unread if unread
+                   else "touches no path that needs a person" if not touched
+                   else "approved by the chairman on this commit" if approved
+                   else "needs the chairman's yes: " + ", ".join(touched[:5]))}
+
+    gates["scenarios"] = scenario_gate(session, change, cons)
 
     checks = change.checks or {}
     failed = sorted(name for name, c in checks.items() if c not in GREEN and c != "pending")
@@ -261,6 +324,8 @@ def pull_request_event(session: Session, project: Project, action: str, pr: dict
         _take_pr(change, pr)
         if change.status == ChangeStatus.READY:
             change.status = ChangeStatus.OPEN
+        scan(session, project, change)
+        queue_scenarios(session, project, change)
         evaluate(session, project, change)
         return {"change": change.id, "head": change.head_sha, "moved_from": was}
     if action == "closed" and change.status in (ChangeStatus.OPEN, ChangeStatus.READY):
@@ -312,7 +377,8 @@ def push_event(session: Session, project: Project, payload: dict) -> dict:
 
 
 def review(session: Session, project: Project, change: Change, agent: Agent, *,
-           verdict: str, note: str) -> dict:
+           verdict: str, note: str, allow_weaker_tests: str | None = None,
+           allow_packages: list[str] | None = None) -> dict:
     """A challenge seat signs the head it read, or returns it with a reason.
     The author can never sign, and neither can a seat whose job is to make
     rather than to attack — the read is only worth something from a distance."""
@@ -344,6 +410,15 @@ def review(session: Session, project: Project, change: Change, agent: Agent, *,
     change.reviewed_at = utcnow()
     if verdict == "sign":
         change.review_verdict = "signed"
+        reason = (allow_weaker_tests or "").strip()
+        if reason and len(reason) < 20:
+            raise Refusal("Accepting weaker tests needs a real reason — what the removed "
+                          "assertions checked, and why that no longer matters.",
+                          status_code=422)
+        change.waivers = {"sha": change.head_sha, "by": agent.id,
+                          "weaker_tests": reason or None,
+                          "packages": sorted({p.strip().lower() for p in allow_packages or []
+                                              if p.strip()})}
     else:
         change.review_verdict = "returned"
         change.returns = (change.returns or 0) + 1
@@ -354,6 +429,111 @@ def review(session: Session, project: Project, change: Change, agent: Agent, *,
            {"verdict": change.review_verdict, "by": agent.id, "sha": change.head_sha})
     gates = evaluate(session, project, change)
     return {"change": view(change), "gates": gates}
+
+
+# ── the chairman's own yes ──────────────────────────────────────────────────────
+
+
+def chairman_approve(session: Session, project: Project, change: Change) -> dict:
+    """The chairman says yes to a change touching a path that needs a person,
+    on the commit in front of him. A later push needs his yes again."""
+    require_factory(project)
+    if change.status not in (ChangeStatus.OPEN, ChangeStatus.READY) or not change.head_sha:
+        raise Refusal(f"Change #{change.number} is {change.status}; there is nothing to "
+                      "approve.", status_code=409)
+    change.chairman_sha = change.head_sha
+    _audit(session, project, "change.chairman_approved", change, {"sha": change.head_sha})
+    gates = evaluate(session, project, change)
+    return {"change": view(change), "gates": gates}
+
+
+# ── hidden scenarios ────────────────────────────────────────────────────────────
+
+
+def live_scenarios(session: Session, requirement_id: str | None) -> list:
+    from yaaf.core.models import Scenario
+
+    if requirement_id is None:
+        return []
+    return list(session.execute(
+        select(Scenario).where(Scenario.requirement_id == requirement_id,
+                               Scenario.retired_at.is_(None)).order_by(Scenario.created_at)
+    ).scalars())
+
+
+def scenario_gate(session: Session, change: Change, cons: ConstitutionDoc) -> dict:
+    if not cons.hidden_scenarios:
+        return {"ok": True, "detail": "off for this project"}
+    scenarios = live_scenarios(session, change.requirement_id)
+    if not scenarios:
+        return {"ok": False, "detail": "no hidden scenario has been written for this "
+                                       "requirement yet — a challenge seat writes them"}
+    run = change.scenario_results or {}
+    if run.get("sha") != change.head_sha:
+        return {"ok": False, "detail": f"{len(scenarios)} hidden, not yet run on this commit"}
+    results = run.get("results") or {}
+    passed = sum(1 for s in scenarios if results.get(s.id) is True)
+    pending = sum(1 for s in scenarios if s.id not in results)
+    return {"ok": passed == len(scenarios),
+            "detail": (f"{passed} of {len(scenarios)} pass"
+                       + (f", {pending} not yet run" if pending else ""))}
+
+
+def queue_scenarios(session: Session, project: Project, change: Change) -> bool:
+    """Ask the runner to run this change's hidden scenarios on its head. One
+    queued run per change and commit; a newer push supersedes an older one."""
+    from yaaf.core.models import RunKind, RunQueue
+
+    if not change.head_sha or not live_scenarios(session, change.requirement_id):
+        return False
+    if not effective(session, project.id).hidden_scenarios:
+        return False
+    for queued in session.execute(
+        select(RunQueue).where(RunQueue.project_id == project.id,
+                               RunQueue.kind == RunKind.SCENARIO_CHECK)
+    ).scalars():
+        trigger = queued.trigger or {}
+        if trigger.get("change_id") == change.id:
+            if trigger.get("sha") == change.head_sha:
+                return False
+            session.delete(queued)
+    session.add(RunQueue(
+        id=ids.new_id(ids.RUN), project_id=project.id, agent_id=None,
+        kind=RunKind.SCENARIO_CHECK, requirement_id=change.requirement_id,
+        trigger={"type": "scenario_check", "change_id": change.id, "sha": change.head_sha,
+                 "branch": change.branch}))
+    return True
+
+
+def record_scenarios(session: Session, change: Change, sha: str,
+                     results: dict[str, bool]) -> None:
+    """What the runner saw. Ignored when the change has moved on since: a pass
+    on an older commit is a pass on code that is no longer the change."""
+    project = session.get(Project, change.project_id)
+    if project is None or sha != change.head_sha:
+        return
+    change.scenario_results = {"sha": sha, "results": dict(results), "at": utcnow().isoformat()}
+    _audit(session, project, "change.scenarios", change,
+           {"sha": sha, "passed": sum(1 for ok in results.values() if ok),
+            "total": len(results)})
+    evaluate(session, project, change)
+
+
+def scenario_counts(session: Session, project: Project) -> list[dict]:
+    """What a seat that builds may know: how many scenarios guard each
+    requirement. Never the text, the command or the name."""
+    from yaaf.core.models import Scenario
+
+    counts: dict[str, int] = {}
+    for s in session.execute(
+        select(Scenario).where(Scenario.project_id == project.id,
+                               Scenario.retired_at.is_(None))
+    ).scalars():
+        counts[s.requirement_id] = counts.get(s.requirement_id, 0) + 1
+    keys = {r.id: r.key for r in session.execute(
+        select(Requirement).where(Requirement.id.in_(list(counts) or [""]))).scalars()}
+    return [{"requirement": keys.get(rid, rid), "requirement_id": rid, "hidden": n}
+            for rid, n in sorted(counts.items(), key=lambda kv: keys.get(kv[0], ""))]
 
 
 # ── merging ─────────────────────────────────────────────────────────────────────
@@ -482,6 +662,9 @@ def view(change: Change) -> dict:
             "note": change.review_note, "sha": change.reviewed_sha,
             "at": change.reviewed_at.isoformat() if change.reviewed_at else None,
             "returns": change.returns},
+        "findings": {k: v for k, v in (change.findings or {}).items() if k != "error"},
+        "waivers": change.waivers or {},
+        "chairman_sha": change.chairman_sha,
         "merged_sha": change.merged_sha,
         "merged_at": change.merged_at.isoformat() if change.merged_at else None,
         "created_at": change.created_at.isoformat() if change.created_at else None,

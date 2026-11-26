@@ -51,6 +51,9 @@ class FakeGitHub:
         self.size = (120, 30)
         self.merge_sha = "m" * 40
         self.merge_status = 200
+        self.files: list[dict] = [{"filename": "src/booking/hold.ts", "status": "modified",
+                                   "patch": "@@\n+export const HOLD_MINUTES = 10"}]
+        self.files_status = 200
 
     def __call__(self, method, path, token, json=None):
         self.calls.append((method, path, json))
@@ -65,6 +68,8 @@ class FakeGitHub:
             if self.merge_status != 200:
                 return httpx.Response(self.merge_status, json={"message": "Head moved"})
             return httpx.Response(200, json={"sha": self.merge_sha, "merged": True})
+        if method == "GET" and "/files" in path:
+            return httpx.Response(self.files_status, json=self.files)
         if method == "PUT" and path.endswith("/protection"):
             return httpx.Response(200, json={})
         return httpx.Response(200, json={})
@@ -85,7 +90,10 @@ def _agent(project, name):
     return next(a["id"] for t in project["teams"] for a in t["agents"] if a["name"] == name)
 
 
-def _factory(client, *, mode="code_factory", slug="slotwise") -> dict:
+def _factory(client, *, mode="code_factory", slug="slotwise", scenarios=False,
+             **rules) -> dict:
+    """Hidden scenarios are off unless a test asks: these tests attack the
+    gates around them, and `test_quality_gates.py` attacks the scenarios."""
     client.post("/admin/users", json=CHAIR, headers=ADMIN)
     seed_role(client, "ceo", is_ceo=True, category="leadership")
     seed_role(client, "engineer", category="build")
@@ -93,7 +101,8 @@ def _factory(client, *, mode="code_factory", slug="slotwise") -> dict:
     created = client.post("/admin/projects", json={
         "slug": slug, "name": "Slotwise", "goal": "A booking app for physio clinics.",
         "chairman_email": CHAIR["email"], "mode": mode,
-        "constitution": {"plan_authority": "chairman", "scope_authority": "chairman"},
+        "constitution": {"plan_authority": "chairman", "scope_authority": "chairman",
+                         "hidden_scenarios": scenarios, **rules},
         "teams": [{"role_slug": "engineer", "name": "Build", "employees": ["Mika", "Dev"],
                    "lead": "Mika"},
                   {"role_slug": "reviewer", "name": "Review", "employees": ["Rhea"]}],

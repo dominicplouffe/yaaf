@@ -6823,6 +6823,23 @@ class GithubAttach(BaseModel):
     repo: str = Field(min_length=1, max_length=200, pattern=r"^[\w.-]+(/[\w.-]+)?$")
 
 
+@router.post("/changes/{change_id}/approve", dependencies=[authority.STEER])
+def approve_change(change_id: str, session: Session = Depends(db)) -> dict:
+    """The chairman's own yes on a Code Factory change that touches a path he
+    said needs a person — on the commit in front of him, not on the branch."""
+    from yaaf.core.models import Change
+    from yaaf.server import changes
+
+    change = session.get(Change, change_id)
+    if change is None:
+        raise HTTPException(status_code=404, detail="unknown change")
+    project = _get_project(session, change.project_id)
+    try:
+        return changes.chairman_approve(session, project, change)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
 @router.post("/projects/{project_id}/github", dependencies=[authority.STEER])
 def attach_github(project_id: str, body: GithubAttach, session: Session = Depends(db)) -> dict:
     """Provision the project's private GitHub workspace repo. The platform

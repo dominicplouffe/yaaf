@@ -443,6 +443,9 @@ class RunKind(enum.StrEnum):
     # day's twelve runs were gone by 04:00, and the chairman's "hello" waited
     # until midnight UTC for an allowance that had never been his to spend.
     BOARDROOM_RUN = "boardroom_run"
+    # Code Factory: the platform runs a requirement's hidden scenarios against
+    # one change's head commit, in a checkout no agent's workspace shares.
+    SCENARIO_CHECK = "scenario_check"
 
 
 class ApprovalKind(enum.StrEnum):
@@ -2333,10 +2336,42 @@ class Change(Base):
     reviewed_sha: Mapped[str | None] = mapped_column(String(64))
     reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     returns: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # What the diff says about itself (`yaaf.server.diffscan`), for head_sha.
+    findings: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # What a signing challenge seat accepted on purpose, pinned to the sha it
+    # read: {"sha", "by", "weaker_tests": reason | None, "packages": [names]}.
+    waivers: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # The chairman's own yes on a change touching a path that needs a person.
+    chairman_sha: Mapped[str | None] = mapped_column(String(64))
+    # Hidden scenarios, run by the platform: {"sha", "results": {id: ok}, "at"}.
+    scenario_results: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     merged_sha: Mapped[str | None] = mapped_column(String(64))
     merged_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class Scenario(Base):
+    """A hidden acceptance scenario: a command the platform runs against a
+    change, written by a challenge seat, never shown to a seat that builds.
+
+    The point is the one StrongDM made of it: a builder optimising against a
+    test suite it can read will pass the suite. One it cannot read it has to
+    pass by making the requirement true. Builders see how many exist and how
+    many pass, never the text, the inputs or which one failed.
+    """
+
+    __tablename__ = "scenarios"
+    __table_args__ = (Index("ix_scenarios_requirement", "requirement_id"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
+    name: Mapped[str] = mapped_column(String(200))
+    command: Mapped[str] = mapped_column(Text)
+    author_agent_id: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    retired_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class SideEffect(Base):

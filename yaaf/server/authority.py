@@ -38,6 +38,7 @@ from yaaf.core.models import (
     Approval,
     AuditSample,
     BudgetOverrun,
+    Change,
     Channel,
     Commitment,
     Evidence,
@@ -97,6 +98,7 @@ ENTITY_PARAMS: dict[str, type] = {
     "commitment_id": Commitment,
     "channel_id": Channel,
     "run_id": Run,
+    "change_id": Change,
 }
 PROJECT_PARAMS = ("project_id", *ENTITY_PARAMS)
 

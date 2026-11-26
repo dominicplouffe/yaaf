@@ -238,7 +238,7 @@ def _plan_reopens(session: Session, project: Project, provider: str, shut: set[s
 def _queued_seat(session: Session, queued: RunQueue, project: Project):
     """The seat a queued run will execute on, or None for a run that calls no
     model (a check)."""
-    if queued.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK) or not queued.agent_id:
+    if queued.kind in CHECK_KINDS or not queued.agent_id:
         return None
     agent = session.get(Agent, queued.agent_id)
     if agent is None:
@@ -293,6 +293,9 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
         job.check_command = (task.success_test or {}).get("command", "")
         job.timeout_s = min(cons.run_timeout_s, 300)
         return job
+
+    if queued.kind == RunKind.SCENARIO_CHECK:
+        return _materialize_scenarios(session, queued, project, run, job, cons)
 
     if queued.kind == RunKind.REQUIREMENT_CHECK:
         requirement = session.get(Requirement, queued.requirement_id)
@@ -858,7 +861,9 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
         # a sandbox with no token, no prompt and no billing credential, which
         # dies as "Not logged in" and returns no exit code at all: the
         # requirement then fails a test that never ran, forever.
-        if job.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK):
+        if job.kind == RunKind.SCENARIO_CHECK:
+            result = _run_scenarios(job)
+        elif job.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK):
             result = _run_check_command(job)
         elif (refused := _mint_token(job)) is not None:
             result = refused
@@ -1054,6 +1059,8 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
             _finalize_success_check(session, job, result)
         elif job.kind == RunKind.REQUIREMENT_CHECK:
             _finalize_requirement_check(session, job, result)
+        elif job.kind == RunKind.SCENARIO_CHECK:
+            _finalize_scenario_check(session, job, result)
         elif run.status == RunStatus.FAILED:
             if project is not None and _looks_like_credential_failure(run):
                 _flag_credential_failure(session, project, run)
@@ -1633,6 +1640,92 @@ def _block_on_repeated_check_failure(
             + project_link(project.id, "tasks", "See the task"),
             attention=Attention.ALARM,
         )
+
+
+#: Runs the platform executes itself, reading exit codes — never model runs.
+CHECK_KINDS = (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK, RunKind.SCENARIO_CHECK)
+
+
+def _materialize_scenarios(session: Session, queued, project: Project, run, job: RunJob,
+                           cons) -> RunJob | None:
+    """A change's hidden scenarios, against its head commit. The checkout is
+    made fresh under a directory no agent's workspace contains, and removed
+    after: the scenarios must never be left where a builder's next run could
+    read them."""
+    from yaaf.core.models import Change
+    from yaaf.server import changes, github
+
+    trigger = queued.trigger or {}
+    change = session.get(Change, trigger.get("change_id"))
+    token = github.platform_token(session)
+    if change is None or change.head_sha != trigger.get("sha") or not project.github_repo \
+            or token is None:
+        run.status = RunStatus.FAILED
+        run.summary = "scenario check for a change that moved on, or with no repo to fetch"
+        run.finished_at = utcnow()
+        return None
+    job.scenarios = [(s.id, s.command) for s in changes.live_scenarios(session,
+                                                                       change.requirement_id)]
+    job.check_sha = change.head_sha
+    job.check_branch = change.branch
+    job.fetch_url = github.clone_url(project.github_repo, token)
+    job.workspace_dir = str(Path(settings().workspaces_root) / ".scenarios" / run.id)
+    job.timeout_s = min(cons.run_timeout_s, 600)
+    return job
+
+
+def _run_scenarios(job: RunJob) -> RunResult:
+    """Check out the change's exact commit, run each scenario from its root,
+    record pass/fail by exit code, and remove the checkout. The output kept is
+    a count: which scenario failed, and why, is the test seat's to read."""
+    import json
+    import shutil
+    import subprocess
+
+    from yaaf.runner.sandbox import run_check_command
+
+    where = Path(job.workspace_dir)
+    secret = job.fetch_url or ""
+    results: dict[str, bool] = {}
+    try:
+        where.mkdir(parents=True, exist_ok=True)
+        for step in (["git", "init", "-q", str(where)],
+                     ["git", "-C", str(where), "fetch", "-q", "--depth", "1", secret,
+                      job.check_branch or job.check_sha or ""],
+                     ["git", "-C", str(where), "checkout", "-q", job.check_sha or ""]):
+            proc = subprocess.run(step, capture_output=True, text=True, timeout=180)
+            if proc.returncode != 0:
+                said = (proc.stderr or "").replace(secret, "<repo>").strip()[:300]
+                return RunResult(ok=False, summary=f"could not check out the change: {said}")
+        per = max(30, job.timeout_s // max(1, len(job.scenarios)))
+        for scenario_id, command in job.scenarios:
+            code, _output = run_check_command(command=command, workspace_dir=str(where),
+                                              timeout_s=per)
+            results[scenario_id] = code == 0
+    except Exception as exc:
+        return RunResult(ok=False, summary=f"scenario run crashed: {type(exc).__name__}")
+    finally:
+        shutil.rmtree(where, ignore_errors=True)
+    passed = sum(results.values())
+    return RunResult(ok=True, summary=f"hidden scenarios {passed}/{len(results)}",
+                     check_exit_code=0 if passed == len(results) else 1,
+                     check_output=json.dumps({"sha": job.check_sha, "results": results}))
+
+
+def _finalize_scenario_check(session: Session, job: RunJob, result: RunResult) -> None:
+    import json
+
+    from yaaf.core.models import Change
+    from yaaf.server import changes
+
+    change = session.get(Change, (job.trigger or {}).get("change_id"))
+    if change is None or not result.ok or not result.check_output:
+        return
+    try:
+        data = json.loads(result.check_output)
+    except ValueError:
+        return
+    changes.record_scenarios(session, change, data.get("sha") or "", data.get("results") or {})
 
 
 def _run_check_command(job: RunJob) -> RunResult:
