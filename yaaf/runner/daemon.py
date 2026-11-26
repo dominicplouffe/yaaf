@@ -1761,7 +1761,7 @@ def _open_to_sandbox(where: Path) -> None:
     could not write its findings reads exactly like one that found none."""
     import os
 
-    for top, dirs, files in os.walk(where):
+    for top, _dirs, files in os.walk(where):
         os.chmod(top, 0o777)
         for name in files:
             path = os.path.join(top, name)
