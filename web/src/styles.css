@@ -3721,3 +3721,19 @@ button.gchip.tool-count:hover { border-color: var(--muted); color: var(--ink); }
 .factory table.gates td:first-child { width: 1.5em; text-align: center; color: var(--good); }
 .factory .timeline { margin: 0; padding-left: var(--s5); font-size: var(--t-small); }
 .factory .prewrap { white-space: pre-wrap; }
+
+/* The line on a Code Factory's home: each stage, then the factory's numbers. */
+.factory-line .row-between { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s3); }
+.factory-line .fl-rail { list-style: none; margin: var(--s3) 0; padding: 0; display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--s2); }
+.factory-line .fl-rail li { display: flex; flex-direction: column; gap: var(--s1); padding: var(--s2) var(--s3);
+  border-radius: var(--radius); background: var(--surface-2); border-top: 3px solid var(--border-strong);
+  font-size: var(--t-small); }
+.factory-line .fl-rail li span { color: var(--muted); }
+.factory-line .fl-rail li.fl-done { border-top-color: var(--good); }
+.factory-line .fl-rail li.fl-now { border-top-color: var(--accent); }
+.factory-line .fl-rail li.fl-waiting { border-top-color: var(--warning); }
+.factory-line .fl-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s3); }
+.factory-line .fl-tile { display: flex; flex-direction: column; gap: 2px; }
+.factory-line .fl-label { font-size: var(--t-micro); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.factory-line .fl-value { font-size: var(--t-h2); font-weight: 600; }

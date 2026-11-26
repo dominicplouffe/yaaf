@@ -1724,6 +1724,17 @@ def project_changes(project_id: str, session: Session = Depends(db)) -> dict:
             "branch_protection": (project.integrations or {}).get("branch_protection")}
 
 
+@router.get("/projects/{project_id}/factory", dependencies=[authority.READ])
+def project_factory(project_id: str, session: Session = Depends(db)) -> dict:
+    """A Code Factory's line, stage by stage, and its numbers."""
+    from yaaf.server import factory_view
+
+    project = _project(session, project_id)
+    if not shape.is_factory(project):
+        return {"phase": None, "rail": [], "vitals": {}}
+    return factory_view.summary(session, project)
+
+
 @router.get("/provenance_key", dependencies=[authority.SIGNED_IN])
 def provenance_key(session: Session = Depends(db)) -> dict:
     """The public half of the key this install signs release provenance with.

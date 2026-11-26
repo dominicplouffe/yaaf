@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { FactoryLine } from "./FactoryLine";
 import {
   AgendaView,
   ChannelRow,
@@ -1031,6 +1032,7 @@ export default function Overview({
           {!settingUp && <StatusLine dash={dash} vitals={vitals} fix={fix} idleWhy={idleWhy} />}
           {banner}
           <ProjectDecisions projectId={projectId} desk={desk} rows={rows} vitals={vitals} compact />
+          {dash.mode === "code_factory" && <FactoryLine projectId={projectId} base={base} />}
           <div className="ov-grid">
             <div className="ov-col">
               <GoalChecklist ctx={ctx} goals={goals} />
@@ -1055,6 +1057,7 @@ export default function Overview({
       {/* The project's home is what it needs from you first: this project's
           decisions, whole, from the one list the Inbox decides from. */}
       <ProjectDecisions projectId={projectId} desk={desk} rows={rows} vitals={vitals} />
+      {dash.mode === "code_factory" && <FactoryLine projectId={projectId} base={base} />}
 
       <ProgressRow ctx={ctx} verdicts={verdicts} vitals={vitals} />
 

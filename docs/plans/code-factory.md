@@ -182,22 +182,29 @@ All are computed by the platform, never by the crew:
 
 ## Status (built on this branch)
 
-| Phase | State | Where |
-|---|---|---|
-| 1. The mode | Done | `yaaf/core/shape.py`, `FactoryPhase`, hand-over in `admin.complete_delivery` |
-| 2. Changes and the merge gate | Done | `yaaf/server/changes.py`, GitHub webhook, `protect_main` |
-| 3. Quality gates | Done | `yaaf/server/diffscan.py`, hidden scenarios (`Scenario`, `scenario_check` runs) |
-| 4. Releases | Done | `yaaf/server/releases.py`, `deploy` runs, canary guard, incidents |
-| 5. Upkeep | Partly | Weekly cycles, standing promises and review-at-the-roll come from Operate. The promises are proposed by the tech lead as standing requirements; platform-measured checkers for "main green %", "issues answered" and "advisories open" are not built yet. |
-| 6. Adopt a repo | Done | An adopted factory starts in upkeep; its plan cannot hold until `intake-report.md` is published |
-| 7. Crew, docs, UI | Done | 6 roles, 3 crews, examples 13 and 14, Changes and Releases tabs, Settings → Environments, New Project card |
+Everything in this plan is built. Attack tests: `test_code_factory.py`,
+`test_merge_gate.py`, `test_quality_gates.py`, `test_releases.py`,
+`test_upkeep.py`, `test_repo_guidance.py`, `test_factory_view.py`.
 
-Attack tests: `test_code_factory.py`, `test_merge_gate.py`, `test_quality_gates.py`, `test_releases.py`.
+| Piece | Where |
+|---|---|
+| The mode, build → upkeep | `yaaf/core/shape.py`, `FactoryPhase`, hand-over in `admin.complete_delivery` |
+| Merge gate | `yaaf/server/changes.py`, GitHub webhook, `github.protect_main` |
+| Diff gates: secrets, weakened tests, new packages, protected paths, CI config | `yaaf/server/diffscan.py`, `changes.gates_for` |
+| Platform scan (osv-scanner, gitleaks), coverage floor, per-change preview | `change_scan` and `deploy` runs, `changes.scan_gate` / `coverage_gate` / `preview_gate` |
+| Hidden scenarios | `Scenario`, `scenario_check` runs |
+| Releases: staging first, approval per `release_authority`, canary, rollback, incidents | `yaaf/server/releases.py` |
+| SBOM and signed provenance | syft in the deploy job; `yaaf/server/provenance.py`; public key at `/observe/provenance_key` |
+| Upkeep promises, measured by the platform | `yaaf/server/upkeep.py`, `FactorySignal`, judged at the roll |
+| Adopted repos read first | `policy.intake_owed` (plan holds only after `intake-report.md`) |
+| The repo's AGENTS.md / CLAUDE.md, from main | `yaaf/server/repo_guidance.py` |
+| Crew | six roles, three crews, examples 13 and 14 |
+| Screens | New Project card, home-page line and numbers, Changes and Releases tabs, Settings → Environments |
 
-Not built yet, in order of value:
-1. Platform-measured upkeep checkers (main green %, issue answer time, advisories open, flaky count, package lag).
-2. Scanners in the sandbox image (Semgrep, gitleaks, OSV-Scanner, Syft). The gates read the diff today; the image does not yet ship scanners agents or checks can run.
-3. A changed-line coverage gate (needs coverage from CI, by commit).
-4. SBOM and signed provenance on a release. Not claimed anywhere until built.
-5. Staging as its own step before production, and preview builds per change driven by the platform.
-6. Overview screens from the mockups: the lifecycle rail and factory vitals on the project home.
+Known limits, said plainly:
+- The sandbox image's scanner layer is written and its download URLs checked
+  for x86-64, but the image was not built here. arm64 names follow the same
+  release pattern and were not checked. A runner without the scanners fails
+  the scan gate closed; turn `platform_scans` off to ship without them.
+- Upkeep reads Dependabot alerts for advisories: enable them on the repo.
+- GitHub only. Deploys are a command plus a health URL; no cloud adapters.
