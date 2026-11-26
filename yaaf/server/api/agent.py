@@ -3744,6 +3744,37 @@ class NoteAnswerIn(BaseModel):
     standing: bool
 
 
+class CredentialReportIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    worked: bool
+    detail: str = Field(default="", max_length=600)
+
+
+@router.post("/credentials/report")
+def credential_report(
+    body: CredentialReportIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db),
+) -> dict:
+    """An agent says a promised credential worked, or was refused, when it used
+    it. Its word, recorded as its word: yaaf cannot see the call itself. A
+    refusal turns the credential red on the chairman's screens at once."""
+    from yaaf.server import credential_needs
+
+    need = credential_needs.report_use(session, ctx.project, ctx.agent, body.name,
+                                       body.worked, body.detail)
+    if need is None:
+        return {"recorded": False,
+                "note": f"No credential the chairman promised is called {body.name!r}; nothing "
+                        "was recorded. Use the variable name you were given or the service's name."}
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id, actor=f"agent:{ctx.agent.id}",
+        action="credential_need.report", entity="credential_need", entity_id=need.id,
+        detail={"worked": body.worked, "detail": body.detail[:200]}))
+    return {"recorded": True,
+            "note": (f"Recorded: {need.label} worked." if body.worked else
+                     f"Recorded: {need.label} was refused. The chairman sees it as needing "
+                     "attention; carry on with work that does not need it.")}
+
+
 @router.post("/notes/{note_id}/answer")
 def note_answer(
     note_id: str, body: NoteAnswerIn, ctx: RunContext = Depends(run_auth),

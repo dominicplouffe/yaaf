@@ -124,6 +124,21 @@ is settled — none of them may be skipped:
   might involve email, ask — it is the difference between a project that
   starts today and one that waits for setup.
 
+- **Access he says he will give** — when he says he will give the project
+  access to something ("my WordPress login", "a Google Analytics service
+  account", "my AWS account", "Beehiiv"), add one entry per service to the
+  draft's `credentials_promised`: the `service`, its `purpose` in his words
+  (what the agents will do with it), and the `roles` that use it. For a
+  service you know, list the `fields` it takes — each with a variable-style
+  `key` (BEEHIIV_API_KEY), a `label`, `help` saying where he finds it, and
+  whether it is `secret` or a `file` — and a `check`: one read-only GET to the
+  service's own API that proves the values work, with `{KEY}` where a value
+  goes and `reads` saying in plain words what it reads. He sees the check in
+  full and runs it himself; it must not send, change or delete anything. If
+  you do not know the service's fields, leave `fields` empty: he adds his own.
+  When the purpose is vague ("access to AWS"), ask what the agents should do
+  with it — it decides what to ask him for. Never put a value in the draft.
+
 When the frontier is empty, call `ask` with `done: true`, no questions and
 the whole ledger, then `propose_bundle` with the final draft. The page shows
 him the ledger to confirm and takes him to review; your note says in one

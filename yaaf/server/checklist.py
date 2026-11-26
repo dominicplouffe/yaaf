@@ -148,15 +148,21 @@ def view(session: Session, project: Project) -> dict:
     """The checklist as the project's Inbox and the sidebar show it."""
     state = _state(project)
     skipped = set(state.get("skipped") or [])
+    needs = _needs(session, project)
     steps = []
     for step in steps_for(project):
+        if step.key == "secrets" and needs:
+            # Promised credentials are named, one step each, in place of the
+            # generic step that ticked itself off for any single secret.
+            steps.extend(needs)
+            continue
         done, detail = _done(session, project, step)
         steps.append({
             "key": step.key, "label": step.label, "section": step.section,
             "required": step.required, "detail": detail,
             "state": "done" if done else "skipped" if step.key in skipped else "todo",
         })
-    todo = [s for s in steps if s["state"] == "todo"]
+    todo = [s for s in steps if s["state"] in ("todo", "failed")]
     closed_at = state.get("closed_at")
     return {
         "open": bool(todo) and not closed_at,
@@ -169,6 +175,30 @@ def view(session: Session, project: Project) -> dict:
     }
 
 
+def _needs(session: Session, project: Project) -> list[dict]:
+    """One step per credential the chairman promised (CredentialNeed). A
+    broken one is "failed" — still to do, and drawn red — and one he said the
+    project does without is "skipped", like any skipped step."""
+    from yaaf.core.models import CredentialNeed
+
+    state = {"needed": "todo", "failed": "failed", "ok": "done", "saved": "done",
+             "waived": "skipped"}
+    out = []
+    for need in session.execute(
+            select(CredentialNeed).where(CredentialNeed.project_id == project.id)
+            .order_by(CredentialNeed.created_at)).scalars():
+        detail = {"needed": f"Needed: {need.purpose or 'you said you would give this'}.",
+                  "failed": (need.last_check or {}).get("summary")
+                  or (need.last_use or {}).get("detail") or "It stopped working.",
+                  "ok": "Works.", "saved": "Saved, not tested.",
+                  "waived": "You said the project does without it."}[need.status]
+        out.append({"key": f"cred:{need.id}", "label": need.label,
+                    "section": f"credentials&need={need.id}", "required": False,
+                    "detail": detail, "state": state.get(need.status, "todo"),
+                    "credential": need.status})
+    return out
+
+
 class Refused(ValueError):
     """A change to the checklist that the project's state does not allow."""
 
@@ -178,6 +208,22 @@ def act(session: Session, project: Project, action: str, step: str | None,
     """Skip or unskip one step, or close or reopen the whole list."""
     state = _state(project)
     skipped = list(state.get("skipped") or [])
+    if action in ("skip", "unskip") and step and step.startswith("cred:"):
+        # "I'm good without Beehiiv" is the need's own answer, kept on it.
+        from yaaf.core.models import CredentialNeed
+
+        need = session.get(CredentialNeed, step.removeprefix("cred:"))
+        if need is None or need.project_id != project.id:
+            raise Refused(f"there is no setup step called {step!r}")
+        if action == "skip":
+            need.status = "waived"
+        elif need.last_check:
+            need.status = "ok" if need.last_check.get("ok") else "failed"
+        else:
+            from yaaf.server.credential_needs import values_of
+
+            need.status = "saved" if values_of(session, need) else "needed"
+        return view(session, project)
     if action in ("skip", "unskip"):
         if step not in BY_KEY:
             raise Refused(f"there is no setup step called {step!r}")

@@ -91,8 +91,11 @@ def test_no_agent_route_serves_a_secret_value(client):
     paths = client.app.openapi()["paths"]
     assert "/admin/secrets/{secret_id}/value" in paths, "sanity: reveal is mounted"
 
-    # The only agent routes allowed to say 'credential' — both value-free.
-    roster_routes = {"/agent/credentials", "/agent/credentials/{name}/scope"}
+    # The only agent routes allowed to say 'credential' — each value-free. The
+    # report is an agent saying whether a promised credential worked; it takes
+    # a name and a yes/no and answers with a sentence, proven below.
+    roster_routes = {"/agent/credentials", "/agent/credentials/{name}/scope",
+                     "/agent/credentials/report"}
     agent_paths = [path for path in paths if path.startswith("/agent")]
     assert agent_paths, "sanity: the agent router is mounted"
     assert roster_routes <= set(agent_paths), "sanity: the roster is mounted"
@@ -145,3 +148,22 @@ def test_delete_refuses_the_credential_the_project_pays_with(client):
     client.patch(f"/admin/projects/{project['id']}",
                  json={"billing_secret_id": spare["id"]}, headers=ADMIN)
     assert client.delete(f"/admin/secrets/{billing['id']}", headers=ADMIN).status_code == 200
+
+
+def test_a_credential_report_never_answers_with_a_value(client):
+    """The report route says 'credential' in its path, so it carries its own
+    proof: it is told a name and whether it worked, and answers with a
+    sentence that names the service — never what was stored."""
+    project = make_project(client, slug="report",
+                           credentials_promised=[{"service": "Beehiiv", "purpose": "newsletter",
+                                                  "fields": [{"key": "BEEHIIV_API_KEY"}]}])
+    need = client.get(f"/observe/projects/{project['id']}/credential_needs", headers=ADMIN).json()[0]
+    client.put(f"/admin/projects/{project['id']}/credential_needs/{need['id']}",
+               json={"values": {"BEEHIIV_API_KEY": "s3cret-value"}}, headers=ADMIN)
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    for name in ("BEEHIIV_API_KEY", "Beehiiv", "nothing-by-this-name"):
+        answer = client.post("/agent/credentials/report", headers=bearer(token),
+                             json={"name": name, "worked": False, "detail": "401"})
+        assert answer.status_code == 200
+        assert set(answer.json()) == {"recorded", "note"}, "the report must stay value-free"
+        assert "s3cret-value" not in answer.text

@@ -2729,6 +2729,51 @@ class PlanReading(Base):
     seen_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
+class CredentialNeed(Base):
+    """Access the chairman promised the project, by name, until it is given.
+
+    "I'll give you my WordPress login and a Google Analytics service account"
+    used to survive founding only as a sentence in the brief, and the one
+    setup step that could have caught it ticked itself off for any single
+    secret. So each promise is a row: the service, what the agents will do
+    with it, the fields it takes (from yaaf's catalog when it knows the
+    service, as the Founder's suggestion when it does not, or added by the
+    chairman), the values once given (as ordinary project Secrets), and how
+    far it has been proven — a verified test, a suggested call he chose to
+    run, or an agent's report of using it.
+    """
+
+    __tablename__ = "credential_needs"
+    __table_args__ = (Index("ix_credential_needs_project", "project_id"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    #: The catalog key when yaaf knows the service ("wordpress"), else a slug.
+    service: Mapped[str] = mapped_column(String(64))
+    #: How it is named on screen: "WordPress", "Beehiiv".
+    label: Mapped[str] = mapped_column(String(120))
+    #: What the agents will do with it, in the chairman's words.
+    purpose: Mapped[str] = mapped_column(Text, default="")
+    #: "creation" (he promised it while founding) or "ceo" (the CEO asked).
+    source: Mapped[str] = mapped_column(String(16), default="creation")
+    #: [{key, label, help, secret, file, origin, secret_id}] — origin is
+    #: "catalog" | "suggested" | "user"; key is the agents' variable name.
+    fields: Mapped[list] = mapped_column(JSONVariant, default=list)
+    #: Role slugs that receive the values. Empty: every role on the project.
+    roles: Mapped[list] = mapped_column(JSONVariant, default=list)
+    #: The Founder's proposed read-only call for a service yaaf does not know:
+    #: {"method": "GET", "url": ..., "headers": {...}} with {FIELD} templates.
+    check: Mapped[dict | None] = mapped_column(JSONVariant)
+    #: needed | saved | ok | failed | waived
+    status: Mapped[str] = mapped_column(String(16), default="needed")
+    #: {"at", "ok", "kind": verified|suggested, "summary", "fix"}
+    last_check: Mapped[dict | None] = mapped_column(JSONVariant)
+    #: {"at", "ok", "by", "detail"} — an agent's report of using it.
+    last_use: Mapped[dict | None] = mapped_column(JSONVariant)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
 class PlanReadingHistory(Base):
     """Every plan reading, kept for a month — the meter's past.
 

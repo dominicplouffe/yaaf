@@ -657,7 +657,34 @@ export interface SetupStep {
   section: string;
   required: boolean;
   detail: string;
-  state: "done" | "skipped" | "todo";
+  /** "failed": a promised credential that was given and does not work. */
+  state: "done" | "skipped" | "todo" | "failed";
+  /** Set on a promised credential's step: its own status. */
+  credential?: "needed" | "saved" | "ok" | "failed" | "waived";
+}
+
+/** One field a promised credential takes. `origin` says who decided it:
+    yaaf's catalog, the Founder's suggestion, or the chairman. */
+export interface CredentialField {
+  key: string; label: string; help: string; secret: boolean; file: boolean;
+  origin: "catalog" | "suggested" | "user"; given?: boolean;
+}
+export interface CredentialResult {
+  ok: boolean; summary: string; fix: string[]; kind: "verified" | "suggested" | "none"; at?: string;
+}
+/** GET /observe/projects/{id}/credential_needs — see yaaf/server/credential_needs.py. */
+export interface CredentialNeedView {
+  id: string; service: string; label: string; purpose: string; source: string;
+  status: "needed" | "saved" | "ok" | "failed" | "waived";
+  /** In yaaf's catalog: exact fields and a verified test. */
+  known: boolean;
+  fields: CredentialField[];
+  roles: string[]; used_by: string[];
+  /** The suggested call, as he is shown it before pressing Run. */
+  check: { method: string; url: string; headers: Record<string, string>; reads: string } | null;
+  last_check: CredentialResult | null;
+  last_use: { at: string; ok: boolean; by: string; detail: string } | null;
+  complete: boolean;
 }
 export interface SetupView {
   /** Shown at all: a step is left and nobody closed the list. */
@@ -1650,6 +1677,9 @@ export interface ProjectBundle {
     github_repo?: string | null;
     /** Its work runs through email: created now, started once its mailbox is on. */
     needs_mail?: boolean;
+    /** Access the chairman promised while founding (yaaf/server/credential_needs.py). */
+    credentials_promised?: { service: string; label?: string; purpose: string; roles?: string[];
+      fields?: Record<string, unknown>[]; check?: Record<string, unknown> | null }[];
     /** Explore's window, ISO-dated; may already be in the past. */
     deadline?: string | null;
     constitution: Record<string, unknown>;

@@ -11,6 +11,7 @@ import "./newproject.css";
 import { CrewSummary, get, McpServerEntry, post, ProjectBundle,
   RehearsalReport, RoleSummary, SlackProvision } from "../api";
 import Drill from "../drill";
+import { BLANK_DRAFT, PromiseCard, PromiseDraft, PromisedSection, storePromised } from "../credentialNeeds";
 import {
   BLANK_DATA_SOURCE,
   DataSourceDraft,
@@ -428,6 +429,17 @@ export default function NewProject() {
   // the whole form; the file's full constitution/config and any role
   // definitions the library lacks ride along at submit time.
   const [bundle, setBundle] = useState<ProjectBundle | null>(null);
+  // Access he promised while founding: one card each, tested here before the
+  // project exists, stored on its promises once it does.
+  const [promiseCards, setPromiseCards] = useState<PromiseCard[]>([]);
+  const [promiseDrafts, setPromiseDrafts] = useState<PromiseDraft[]>([]);
+  useEffect(() => {
+    const promised = bundle?.project.credentials_promised ?? [];
+    if (!promised.length) { setPromiseCards([]); return; }
+    post<PromiseCard[]>("/admin/credential_promises/resolve", { promised })
+      .then((cards) => { setPromiseCards(cards); setPromiseDrafts(cards.map(() => ({ ...BLANK_DRAFT }))); })
+      .catch(() => setPromiseCards([]));
+  }, [bundle]);
   // Only for the cost line under the run presets: what a run has cost here.
   const [status, setStatus] = useState<FounderStatus | null>(null);
   const [solo, setSolo] = useState(false);
@@ -1106,6 +1118,8 @@ export default function NewProject() {
             ? { credentials: Object.fromEntries(
                 Object.entries(otherCredentials).filter(([, id]) => id)) } : {}),
           ...(fallbackId && billingCredentialId ? { fallback_secret_id: fallbackId } : {}),
+          ...(bundle?.project.credentials_promised?.length
+            ? { credentials_promised: bundle.project.credentials_promised } : {}),
           mode,
           ...(mode === "explore" && exploreDeadline
             ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
@@ -1281,6 +1295,13 @@ export default function NewProject() {
                      generic: { url: string; secret: string } };
       }>("/admin/projects", body);
       if (created.webhooks) setWebhooks({ projectId: created.id, ...created.webhooks });
+      if (promiseCards.length) {
+        const unstored = await storePromised(created.id, promiseCards, promiseDrafts);
+        if (unstored.length) {
+          alert(`Project created, but storing ${unstored.length === 1 ? "a credential" : "credentials"} failed: ` +
+                `${unstored.join("; ")}. Add ${unstored.length === 1 ? "it" : "them"} in Settings › Credentials.`);
+        }
+      }
       if (created.slack) setSlack(created.slack);
       try {
         for (const cred of credentials) {
@@ -2357,6 +2378,9 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         {/* Optional, so folded: open only when a hire needs a key or one was
             already added — otherwise two paragraphs of plumbing sat between
             the summary and the button that creates the project. */}
+        <PromisedSection cards={promiseCards} drafts={promiseDrafts}
+          setDraft={(i, next) => setPromiseDrafts((all) => all.map((d, j) => (j === i ? next : d)))} />
+
         <details className="opt-sec" open={requiredScopes.length > 0 || credentials.length > 0}>
         <summary><h2>Secrets &amp; variables (optional)</h2>
           <span className="help">keys for WordPress, GitHub, Stripe… — or add them later in Settings</span></summary>
@@ -2528,6 +2552,9 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           <div className="spacer" />
           {missing.length > 0 && (
             <span className="help serious">Still needed: {missing.join("; ")}.</span>
+          )}
+          {missing.length === 0 && promiseCards.some((c, i) => !c.fields.every((f) => promiseDrafts[i]?.values[f.key])) && (
+            <span className="help">You can create it without the access you promised; it stays on the setup strip until it's in.</span>
           )}
           {/* The one blocker with a one-click answer that is not on this step. */}
           {rolesLoaded && needsReviewSeat && !reviewer && (

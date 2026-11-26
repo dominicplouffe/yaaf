@@ -312,6 +312,24 @@ PROPOSE_SCHEMA = {
                 "deadline": {"type": "string"},
                 "deadline_source": {"type": "object"},
                 "needs_mail": {"type": "boolean"},
+                "credentials_promised": {
+                    "type": "array",
+                    "description": "access he said he will give: one per service",
+                    "items": {"type": "object", "properties": {
+                        "service": {"type": "string"},
+                        "purpose": {"type": "string"},
+                        "roles": {"type": "array", "items": {"type": "string"}},
+                        "fields": {"type": "array", "items": {"type": "object", "properties": {
+                            "key": {"type": "string"}, "label": {"type": "string"},
+                            "help": {"type": "string"}, "secret": {"type": "boolean"},
+                            "file": {"type": "boolean"}}}},
+                        "check": {"type": "object", "properties": {
+                            "method": {"type": "string", "enum": ["GET"]},
+                            "url": {"type": "string"},
+                            "headers": {"type": "object",
+                                        "additionalProperties": {"type": "string"}},
+                            "reads": {"type": "string"}}},
+                    }, "required": ["service", "purpose"]}},
             },
             "required": ["slug", "name", "goal", "mode", "teams"],
         },

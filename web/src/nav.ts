@@ -48,6 +48,7 @@ export const SETTINGS_NAV = [
   { key: "money", label: "Money", words: "budget billing key credential pay fallback" },
   { group: "Connections" },
   { key: "sources", label: "Data sources", words: "mcp database api connect" },
+  { key: "credentials", label: "Credentials", words: "access promised wordpress google analytics aws test" },
   { key: "secrets", label: "Secrets & variables", words: "credentials api key token env" },
   { key: "integrations", label: "Integrations", words: "slack github webhooks" },
   { key: "mail", label: "Email", words: "mailbox smtp imap correspondence recipients send" },

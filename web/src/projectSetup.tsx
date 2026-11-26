@@ -9,7 +9,7 @@
 // somebody who steers the project puts it away.
 
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { post, SetupStep } from "./api";
 import { ProjectCtx } from "./projectCtx";
 
@@ -84,4 +84,68 @@ export function ProjectSetup({ ctx }: { ctx: ProjectCtx }) {
       </ol>
     </section>
   );
+}
+
+/** The same steps as one strip: a chip per step, the current one ringed, and
+    "I'm good" for a step the project can run without. The chairman liked it
+    on Settings and asked for it as soon as he opens a project, so it sits at
+    the top of the project home too; there the step it acts on is the next one
+    still to do. "Skip" read as dodging a chore — what he is saying is that
+    the project is fine without it, and the step stays in Settings for later.
+
+    `section` is the Settings section on screen, when there is one. */
+export function SetupStrip({ ctx, section }: { ctx: ProjectCtx; section?: string }) {
+  const { setup, projectId, dash } = ctx;
+  const [busy, setBusy] = useState(false);
+  const [params] = useSearchParams();
+  if (!setup?.open) return null;
+  // A promised credential's step opens its own card in Settings › Credentials,
+  // so on that page the one in view is the one named in the link.
+  const need = params.get("need");
+  const current = section === "credentials" && need ? `credentials&need=${need}` : section ?? setup.next?.section;
+  const step = setup.steps.find((s) => s.section === current);
+  const canWave = !!step && step.state === "todo" && !step.required && dash.can_steer !== false;
+  const failed = setup.steps.find((s) => s.state === "failed");
+  return (
+    <nav className="setup-strip" aria-label="Setup steps">
+      <span className="setup-strip-t">Setup {setup.settled} of {setup.total}</span>
+      {setup.steps.map((st) => (
+        <Link key={st.key} to={`/projects/${projectId}/settings?s=${st.section}`} replace={!!section}
+          className={`setup-chip ${st.credential === "saved" ? "saved" : st.state}${current === st.section ? " on" : ""}`}
+          aria-current={current === st.section ? "step" : undefined}
+          title={st.detail}>
+          {chipText(st)}
+          <span className="sr-only">{st.state === "todo" ? " — to do" : ` — ${st.state}`}</span>
+        </Link>
+      ))}
+      {canWave && (
+        <button className="small setup-skip" disabled={busy}
+          title={`The project is fine without ${step!.label}. It stays in Settings if you want it later.`}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await post(`/admin/projects/${projectId}/setup`, { action: "skip", step: step!.key });
+              ctx.reloadSetup();
+            } finally {
+              setBusy(false);
+            }
+          }}>
+          I'm good without {step!.label}
+        </button>
+      )}
+      {failed && (
+        <Link className="btnlink small" to={`/projects/${projectId}/settings?s=${failed.section}`}>Fix {failed.label}</Link>
+      )}
+    </nav>
+  );
+}
+
+/** A step's chip text. A promised credential says where it stands in words:
+    "✗ Needed: Beehiiv", "○ Beehiiv · not tested", "! Google Analytics stopped
+    working". */
+function chipText(st: SetupStep): string {
+  if (st.credential === "failed") return `! ${st.label} stopped working`;
+  if (st.credential === "saved") return `○ ${st.label} · not tested`;
+  if (st.credential === "needed") return `✗ Needed: ${st.label}`;
+  return `${st.state === "done" ? "✓ " : ""}${st.label}`;
 }
