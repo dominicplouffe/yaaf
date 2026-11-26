@@ -98,6 +98,57 @@ export interface Item {
   actions?: ReactNode;
 }
 
+/** Inline one-time extension: date + reason, recorded and disclosed.
+    The chairman's single lever over a dead bet — never a window.prompt().
+    Here rather than on the bets list alone, because the Inbox card that says
+    "you hold the one extension" has to be able to hand it to him. */
+export function ExtendOnce({ hypothesisId, onDone }: { hypothesisId: string; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!open) {
+    return (
+      <button className="small" onClick={() => setOpen(true)}>
+        Extend once…
+      </button>
+    );
+  }
+  async function go() {
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/admin/hypotheses/${hypothesisId}/extend`, {
+        new_kill_date: new Date(date + "T23:59:59Z").toISOString(),
+        reason: reason.trim(),
+      });
+      setOpen(false);
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <span className="note-action">
+      <input type="date" style={{ width: 140 }} value={date} onChange={(e) => setDate(e.target.value)} />
+      <input
+        value={reason}
+        placeholder="Why? — recorded, disclosed to the CEO"
+        onChange={(e) => setReason(e.target.value)}
+      />
+      <button className="small primary" disabled={busy || !date || reason.trim().length < 3} onClick={go}>
+        Extend
+      </button>
+      <button className="small" onClick={() => setOpen(false)}>cancel</button>
+      {error && <span className="help" style={{ color: "var(--critical)" }}>{error}</span>}
+    </span>
+  );
+}
+
 const NEVER = Number.MAX_SAFE_INTEGER;
 
 /** Reopen a frozen email thread where the row is drawn. Not a typed
@@ -279,7 +330,11 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
         </>
       ),
       consequence: "The CEO pivots. You hold the one extension.",
-      to: `${to}/details/tasks`, toLabel: "Decide on the Tasks page",
+      // The decision itself, on the card: the page this used to send him to
+      // opened on the board, where bets are not drawn, so there was nothing
+      // there to decide with.
+      actions: <ExtendOnce hypothesisId={bet.id} onDone={reload} />,
+      to: `${to}/details/tasks?view=list&bet=${encodeURIComponent(bet.id)}`, toLabel: "See the bet",
     });
   }
   if (p.frozen_threads > 0) {
@@ -430,7 +485,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
       title: `A bet expires ${fmtSoon(bet.kill_date)}: “${clip(bet.statement, 70)}”`,
       what: <>“{clip(bet.statement, 160)}”</>,
       consequence: "Then its tasks block and the CEO re-plans.",
-      to: `${to}/details/tasks`, toLabel: "See the bet",
+      to: `${to}/details/tasks?view=list&bet=${encodeURIComponent(bet.id)}`, toLabel: "See the bet",
     });
   }
 

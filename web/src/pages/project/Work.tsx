@@ -1,6 +1,6 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { plainStatus } from "../../ui/kit";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { EvidenceRow, get, HypothesisRow, post, TaskRow } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import {
@@ -12,6 +12,7 @@ import {
   Skeleton,
 } from "../../ui";
 import type { ProjectCtx } from "../Project";
+import { ExtendOnce } from "../../desk";
 
 interface SpotAudit {
   evidence: { id: string; kind: string; provenance: string; verification: string;
@@ -77,55 +78,6 @@ const FILTERS = [
   { key: "killed", label: "Dropped", match: (s: string) => s === "killed" },
   { key: "all", label: "Everything", match: () => true },
 ] as const;
-
-/** Inline one-time extension: date + reason, recorded and disclosed.
-    The chairman's single lever over a dead bet — never a window.prompt(). */
-function ExtendOnce({ hypothesis, onDone }: { hypothesis: HypothesisRow; onDone: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [date, setDate] = useState("");
-  const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  if (!open) {
-    return (
-      <button className="small" onClick={() => setOpen(true)}>
-        extend (once)…
-      </button>
-    );
-  }
-  async function go() {
-    setBusy(true);
-    setError(null);
-    try {
-      await post(`/admin/hypotheses/${hypothesis.id}/extend`, {
-        new_kill_date: new Date(date + "T23:59:59Z").toISOString(),
-        reason: reason.trim(),
-      });
-      setOpen(false);
-      onDone();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <span className="note-action">
-      <input type="date" style={{ width: 140 }} value={date} onChange={(e) => setDate(e.target.value)} />
-      <input
-        value={reason}
-        placeholder="Why? — recorded, disclosed to the CEO"
-        onChange={(e) => setReason(e.target.value)}
-      />
-      <button className="small primary" disabled={busy || !date || reason.trim().length < 3} onClick={go}>
-        extend
-      </button>
-      <button className="small" onClick={() => setOpen(false)}>cancel</button>
-      {error && <span className="help" style={{ color: "var(--critical)" }}>{error}</span>}
-    </span>
-  );
-}
 
 /** The plan and its proof, as one page. A bet owns tasks; a task produces
     evidence. These were two tabs, so answering "has this bet been proven?"
@@ -235,6 +187,16 @@ function TaskDetails({ task }: { task: TaskRow }) {
 
 export default function Work({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, hypotheses } = ctx;
+  // A link to one bet (the Inbox's "See the bet") lands on it, not at the top
+  // of a list it then has to be found in.
+  const [params] = useSearchParams();
+  const focusBet = params.get("bet");
+  useEffect(() => {
+    if (!focusBet) return;
+    const timer = setTimeout(() => document.getElementById(`bet-${focusBet}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+    return () => clearTimeout(timer);
+  }, [focusBet, hypotheses.length]);
   const { data: tasks, error } = usePoll(
     () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
     6000,
@@ -292,8 +254,13 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
   }
   // Every live bet gets a card even with no tasks on it — a bet nobody is
   // working, with a kill date approaching, is exactly what must not be silent.
+  // And so does an expired bet still waiting on the chairman: its one
+  // extension lives on this card, and a bet whose tasks are all done had no
+  // card under the default filter, so the decision the Inbox asked for could
+  // not be made anywhere.
+  const awaiting = (h: HypothesisRow) => h.status === "expired" && !h.extended_once;
   for (const h of hypotheses) {
-    if (h.status === "active" && !byHypothesis.has(h.id)) byHypothesis.set(h.id, []);
+    if ((h.status === "active" || awaiting(h)) && !byHypothesis.has(h.id)) byHypothesis.set(h.id, []);
   }
   const hypothesisById = new Map(hypotheses.map((h) => [h.id, h]));
   const groups = [...byHypothesis.entries()].sort(([a], [b]) => {
@@ -301,7 +268,7 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
     if (!b) return -1;
     const ha = hypothesisById.get(a);
     const hb = hypothesisById.get(b);
-    const rank = (h?: HypothesisRow) => (h?.status === "active" ? 0 : 1);
+    const rank = (h?: HypothesisRow) => (h && awaiting(h) ? -1 : h?.status === "active" ? 0 : 1);
     if (rank(ha) !== rank(hb)) return rank(ha) - rank(hb);
     return (ha?.kill_date ?? "").localeCompare(hb?.kill_date ?? "");
   });
@@ -507,7 +474,8 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
         groups.map(([hypothesisId, groupTasks]) => {
           const h = hypothesisId ? hypothesisById.get(hypothesisId) : null;
           return (
-            <div className="bet" key={hypothesisId ?? "standing"}>
+            <div className={`bet${hypothesisId && hypothesisId === focusBet ? " bet-focus" : ""}`}
+              key={hypothesisId ?? "standing"} id={hypothesisId ? `bet-${hypothesisId}` : undefined}>
               <div className="bh">
                 <div className="top">
                   <span className="tag">{h ? "BET" : "STANDING WORK"}</span>
@@ -521,7 +489,7 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
                     <div className="conseq">
                       If it dies: {h.kill_condition}
                       {h.status === "expired" && !h.extended_once && (
-                        <> <ExtendOnce hypothesis={h} onDone={ctx.reload} /></>
+                        <> <ExtendOnce hypothesisId={h.id} onDone={ctx.reload} /></>
                       )}
                       {h.extended_once && <span className="help"> · extension used</span>}
                     </div>
