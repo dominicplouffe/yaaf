@@ -1,4 +1,12 @@
+<div align="center">
+
 # Deployment
+
+[← README](../README.md) · [Install](INSTALL.md) · [Configuration](CONFIGURATION.md) · **Deployment** · [Architecture](ARCHITECTURE.md) · [Providers](PROVIDERS.md) · [CLI](CLI.md)
+
+</div>
+
+---
 
 How yaaf runs on a server, and how to keep it running. To install it the first
 time, start with [INSTALL.md](INSTALL.md).
@@ -297,3 +305,11 @@ Notes:
   yourself.
 - `docker compose exec api yaaf seed-roles roles/` does nothing: the image has
   no `roles/` folder. Load roles from the checkout, as above.
+
+---
+
+<div align="center">
+
+[← Back to README](../README.md) · [Report a problem](https://github.com/dominicplouffe/yaaf/issues)
+
+</div>

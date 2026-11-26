@@ -1,4 +1,12 @@
+<div align="center">
+
 # Architecture
+
+[← README](../README.md) · [Install](INSTALL.md) · [Configuration](CONFIGURATION.md) · [Deployment](DEPLOYMENT.md) · **Architecture** · [Providers](PROVIDERS.md) · [CLI](CLI.md)
+
+</div>
+
+---
 
 yaaf has two programs, one database, and one sandbox per agent run.
 
@@ -186,3 +194,11 @@ Vite, Docker, bubblewrap.
 - [PROVIDERS.md](PROVIDERS.md): models, keys, harnesses and prices.
 - [CLI.md](CLI.md): every `yaaf` command.
 - [SECURITY.md](../SECURITY.md): what contains an agent and what does not.
+
+---
+
+<div align="center">
+
+[← Back to README](../README.md) · [Report a problem](https://github.com/dominicplouffe/yaaf/issues)
+
+</div>
