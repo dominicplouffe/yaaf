@@ -216,3 +216,20 @@ def create_release(session: Session, repo: str, *, tag: str, sha: str, name: str
                            "body": body})
     if response.status_code not in (200, 201):
         raise GithubError(f"GitHub refused the release tag: {response.status_code}")
+
+
+def read_file(session: Session, repo: str, path: str, ref: str | None = None) -> str | None:
+    """One file's text from the repo (main unless `ref`), or None if absent."""
+    import base64
+
+    suffix = f"?ref={ref}" if ref else ""
+    response = _call(session, "GET", f"/repos/{repo}/contents/{path}{suffix}")
+    if response.status_code == 404:
+        return None
+    if response.status_code != 200:
+        raise GithubError(f"GitHub could not read {path}: {response.status_code}")
+    body = response.json() or {}
+    try:
+        return base64.b64decode(body.get("content") or "").decode("utf-8", "replace")
+    except ValueError:
+        return None

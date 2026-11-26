@@ -192,7 +192,12 @@ def test_completing_the_build_hands_over_to_upkeep_and_keeps_running(client):
         plan = policy.plan_requirement(session, project["id"])
         assert plan.status == RequirementStatus.PENDING
         assert session.get(Requirement, rid).cycle_id is None
-        assert policy.scope_requirements(session, project["id"]) == []
+        from yaaf.server import upkeep
+
+        cycle_scope = policy.scope_requirements(session, project["id"])
+        assert rid not in {r.id for r in cycle_scope}
+        assert all(upkeep.is_upkeep_promise(r) for r in cycle_scope), \
+            "cycle 1 opens owing only the upkeep promises"
         # The same receipt Deliver writes.
         assert session.query(Decision).filter(
             Decision.project_id == project["id"],

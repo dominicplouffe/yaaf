@@ -123,6 +123,7 @@ GROUP_THEMES = {
     "The review": "Rhythm & reporting",
     "The commitment": "Rhythm & reporting",
     "Code Factory": "How work is run",
+    "Code Factory upkeep": "Rhythm & reporting",
 }
 
 #: Tab order on the rules screen — money first, because that is what a stuck
@@ -664,6 +665,40 @@ class ConstitutionDoc(BaseModel):
         help="Code Factory only. This many failed reads of the health URL during the "
              "watch, and the platform deploys the previous release again and opens an "
              "incident. Nobody is asked first.")
+
+    # Upkeep. Each becomes a standing promise the platform writes when a
+    # factory enters upkeep and judges at every roll from what the repo
+    # reported — 0 leaves that promise out.
+    upkeep_main_green_pct: int = _rule(
+        95, ge=0, le=100, group="Code Factory upkeep", label="Main green, % of the week",
+        help="Code Factory only. The share of the cycle main's CI was green, from the "
+             "check runs GitHub reported on main's head. 0 leaves this promise out.")
+    upkeep_issue_hours: int = _rule(
+        24, ge=0, le=720, group="Code Factory upkeep", label="New issues answered within, hours",
+        help="Code Factory only. The longest any new issue waited for a reply from "
+             "someone with write access. 0 leaves this promise out.")
+    upkeep_critical_days: int = _rule(
+        2, ge=0, le=90, group="Code Factory upkeep", label="Critical advisories fixed within, days",
+        help="Code Factory only. Counted from GitHub's own Dependabot alert. 0 leaves "
+             "advisories out of upkeep.")
+    upkeep_high_days: int = _rule(
+        7, ge=0, le=180, group="Code Factory upkeep", label="High advisories fixed within, days",
+        help="Code Factory only. Counted from GitHub's own Dependabot alert.")
+    upkeep_flaky_max: int = _rule(
+        3, ge=0, le=100, group="Code Factory upkeep", label="Most flaky checks allowed",
+        help="Code Factory only. A check on main that both failed and passed on the same "
+             "commit this cycle is flaky. Set it to 0 to promise none. Off with "
+             "upkeep_flaky_enabled.")
+    upkeep_flaky_enabled: bool = _rule(
+        True, group="Code Factory upkeep", label="Promise on flaky checks",
+        help="Code Factory only. Off leaves flaky checks out of upkeep.")
+    upkeep_majors_behind: int = _rule(
+        1, ge=0, le=20, group="Code Factory upkeep", label="Most major versions behind",
+        help="Code Factory only. For each direct dependency on main, how many major "
+             "versions it trails the registry's latest. Off with upkeep_packages_enabled.")
+    upkeep_packages_enabled: bool = _rule(
+        True, group="Code Factory upkeep", label="Promise on package age",
+        help="Code Factory only. Off leaves package lag out of upkeep.")
 
     # Runs
     run_timeout_s: int = _rule(

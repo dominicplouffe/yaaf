@@ -75,6 +75,7 @@ CHANGE = "chg"  # one pull request in a Code Factory, as the platform sees it
 SCENARIO = "scen"  # a hidden acceptance scenario builders never read
 RELEASE = "rel"  # one Code Factory version going to production
 INCIDENT = "inc"  # production went wrong, as the platform recorded it
+FACTORY_SIGNAL = "fsig"  # one fact a factory's repo reported, written by the platform
 
 
 def new_id(prefix: str) -> str:

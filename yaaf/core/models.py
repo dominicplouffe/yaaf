@@ -172,6 +172,9 @@ class MetricSourceKind(enum.StrEnum):
 
     HTTP_JSON = "http_json"  # GET a JSON document, read one path out of it
     LEDGER = "ledger"        # sum a LedgerKind over the project's own ledger
+    # A Code Factory's upkeep, read from what its repo reported through signed
+    # webhooks and what package registries say — `yaaf.server.upkeep`.
+    FACTORY = "factory"
 
 
 class ProjectMode(enum.StrEnum):
@@ -2448,6 +2451,24 @@ class Incident(Base):
     postmortem: Mapped[str | None] = mapped_column(Text)
     opened_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class FactorySignal(Base):
+    """One fact about a Code Factory's repo, written only by the platform: from
+    a signed GitHub webhook (main's CI, an issue opened or answered, a
+    Dependabot alert) or from a registry the platform read itself (how far a
+    package is behind). The upkeep promises are measured from these rows and
+    nothing else, so no agent's account of the week enters its verdict."""
+
+    __tablename__ = "factory_signals"
+    __table_args__ = (Index("ix_factory_signals", "project_id", "kind", "at"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    kind: Mapped[str] = mapped_column(String(32))
+    key: Mapped[str] = mapped_column(String(200))
+    data: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class SideEffect(Base):

@@ -92,6 +92,7 @@ from yaaf.server import (
     scorecard,
     staffing,
     standing,
+    upkeep,
     writing,
 )
 from yaaf.server.notify import (
@@ -231,6 +232,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     changes.reconcile_main(session, project)
     changes.merge_ready(session, project)
     releases.watch(session, project)
+    upkeep.refresh_packages(session, project)
     warn_drought(session, project, cons)
     warn_stall(session, project, cons)
     warn_memory_pressure(session, project, cons)
@@ -982,6 +984,9 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
         return
 
     scope = policy.scope_requirements(session, project.id)  # the open cycle's
+    # A Code Factory's upkeep promises get their week's verdict now, from the
+    # repo's own reports, before the scorecard reads them.
+    upkeep.judge_at_roll(session, project, cycle, scope, now)
     card = scorecard.build(session, cycle, scope, cons.timezone, now)
     # What is in force: cut scope was decided, not missed, and is not in the
     # denominator. Three cut versions of one daily report rode along in it for
@@ -1085,6 +1090,7 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
         ))
 
     new = _open_cycle(session, project, cycle.ordinal + 1)
+    upkeep.write_promises(session, project, new)
     carried = [r for r in unsettled if r.recurrence != Recurrence.STANDING] + [
         r for r in scope if r.status == RequirementStatus.PROPOSED]
     for requirement in carried:

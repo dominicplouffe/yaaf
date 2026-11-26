@@ -127,6 +127,12 @@ def validate_metric_test(success_test: dict) -> None:
                 "number you can move by spending money, which is a status report with "
                 "extra steps."
             )
+    elif kind == MetricSourceKind.FACTORY:
+        from yaaf.server.upkeep import MEASURES
+
+        if source.get("measure") not in MEASURES:
+            raise Refusal(f"metric source.measure must be one of {', '.join(MEASURES)} — "
+                          "what a Code Factory's repo reports, read by the platform.")
     else:
         raise Refusal(
             f"Unknown metric source kind {kind!r}. Available: "
@@ -206,6 +212,17 @@ def read_value(session: Session, requirement: Requirement, fetch=None) -> tuple[
     spec = requirement.acceptance_test or {}
     source = spec.get("source") or {}
     kind = source.get("kind")
+
+    if kind == MetricSourceKind.FACTORY:
+        from yaaf.core.models import Cycle, CycleStatus
+        from yaaf.server import upkeep
+
+        project = session.get(Project, requirement.project_id)
+        cycle = session.execute(
+            select(Cycle).where(Cycle.project_id == requirement.project_id,
+                                Cycle.status == CycleStatus.OPEN)).scalars().first()
+        start = cycle.opened_at if cycle is not None else utcnow() - timedelta(days=7)
+        return upkeep.measure(session, project, source["measure"], start, utcnow())
 
     if kind == MetricSourceKind.LEDGER:
         rows = session.execute(
@@ -441,6 +458,9 @@ def settle_metrics(session: Session, project_id: str) -> int:
             continue
         if requirement.status == RequirementStatus.PROPOSED:
             continue  # not scope yet; the chairman has not accepted it
+        if ((requirement.acceptance_test or {}).get("source") or {}).get("kind") \
+                == MetricSourceKind.FACTORY:
+            continue  # an upkeep promise is about the whole week: judged at the roll
         last = latest(session, requirement.id)
         if last is None or last.error is not None or not met(requirement, last.value):
             continue

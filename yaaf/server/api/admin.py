@@ -3666,8 +3666,14 @@ def start_project(project_id: str, session: Session = Depends(db)) -> dict:
         last = session.execute(
             select(func.max(Cycle.ordinal)).where(Cycle.project_id == project.id)
         ).scalar_one() or 0
-        session.add(Cycle(id=ids.new_id(ids.CYCLE), project_id=project.id,
-                          ordinal=last + 1))
+        opened = Cycle(id=ids.new_id(ids.CYCLE), project_id=project.id, ordinal=last + 1)
+        session.add(opened)
+        session.flush()
+        if shape.is_factory(project):
+            from yaaf.server import upkeep
+
+            # An adopted repo is kept from day one: its promises start now.
+            upkeep.write_promises(session, project, opened)
     _audit(session, project.id, "project.start", "project", project.id)
     notify(session, WAKE_CHANNEL, project.id)
     return {"id": project.id, "status": project.status}
@@ -3814,6 +3820,9 @@ def _hand_over_to_upkeep(session: Session, project: Project, receipt: dict) -> N
     cycle = Cycle(id=ids.new_id(ids.CYCLE), project_id=project.id, ordinal=last + 1)
     session.add(cycle)
     session.flush()
+    from yaaf.server import upkeep
+
+    upkeep.write_promises(session, project, cycle)
     plan = policy.plan_requirement(session, project.id)
     if plan is not None and plan.status == RequirementStatus.MET:
         plan.status = RequirementStatus.PENDING
