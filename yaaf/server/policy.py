@@ -2047,7 +2047,7 @@ UNDELEGABLE_APPROVALS = frozenset({"spend", "legal", "tool_request", "assist", "
 #: (`tool_request`) or every call from now on (`tool_permission`) — and a
 #: denied tool is let through by the chairman's decision, never by his being
 #: away. Under "approve on silence" these expire to no like everywhere else.
-NEVER_BY_SILENCE = frozenset({"tool_request", "tool_permission"})
+NEVER_BY_SILENCE = frozenset({"tool_request", "tool_permission", "release"})
 
 
 def silence_approves(cons: ConstitutionDoc, kind: str) -> bool:

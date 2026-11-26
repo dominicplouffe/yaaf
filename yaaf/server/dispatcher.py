@@ -214,6 +214,7 @@ UNMETERED_RUN_KINDS = (
     RunKind.SUCCESS_CHECK,
     RunKind.REQUIREMENT_CHECK,
     RunKind.SCENARIO_CHECK,
+    RunKind.DEPLOY,
 )
 
 # Kinds that spend the INBOX allowance instead of the work allowance. Same

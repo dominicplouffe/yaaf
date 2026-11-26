@@ -647,6 +647,24 @@ class ConstitutionDoc(BaseModel):
              "what they say. Off, the gate is skipped and builders grade themselves "
              "against tests they can read.")
 
+    release_authority: str = _rule(
+        "approve_first", choices=["approve_first", "autonomous"], group="Code Factory",
+        label="Releases to production",
+        help="Code Factory only. 'approve_first': you approve the first production "
+             "release and every major one; after that the crew ships minor and patch "
+             "releases. 'autonomous': the crew ships every release, and you are told "
+             "after. Either way a release points at a commit the platform merged, the "
+             "canary guard watches it, and a broken guard rolls it back without asking.")
+    canary_minutes: int = _rule(
+        30, ge=1, le=1440, group="Code Factory", label="Canary watch, in minutes",
+        help="Code Factory only. How long the platform reads production health after "
+             "a deploy before it calls the release live.")
+    canary_max_failures: int = _rule(
+        3, ge=1, le=100, group="Code Factory", label="Failed health reads that roll back",
+        help="Code Factory only. This many failed reads of the health URL during the "
+             "watch, and the platform deploys the previous release again and opens an "
+             "incident. Nobody is asked first.")
+
     # Runs
     run_timeout_s: int = _rule(
         5400, ge=60, group="Runs", label="Run timeout (seconds)",

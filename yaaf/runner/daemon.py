@@ -296,6 +296,8 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
 
     if queued.kind == RunKind.SCENARIO_CHECK:
         return _materialize_scenarios(session, queued, project, run, job, cons)
+    if queued.kind == RunKind.DEPLOY:
+        return _materialize_deploy(session, queued, project, run, job, cons)
 
     if queued.kind == RunKind.REQUIREMENT_CHECK:
         requirement = session.get(Requirement, queued.requirement_id)
@@ -863,6 +865,8 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
         # requirement then fails a test that never ran, forever.
         if job.kind == RunKind.SCENARIO_CHECK:
             result = _run_scenarios(job)
+        elif job.kind == RunKind.DEPLOY:
+            result = _run_deploy(job)
         elif job.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK):
             result = _run_check_command(job)
         elif (refused := _mint_token(job)) is not None:
@@ -1061,6 +1065,8 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
             _finalize_requirement_check(session, job, result)
         elif job.kind == RunKind.SCENARIO_CHECK:
             _finalize_scenario_check(session, job, result)
+        elif job.kind == RunKind.DEPLOY:
+            _finalize_deploy(session, job, result)
         elif run.status == RunStatus.FAILED:
             if project is not None and _looks_like_credential_failure(run):
                 _flag_credential_failure(session, project, run)
@@ -1643,7 +1649,8 @@ def _block_on_repeated_check_failure(
 
 
 #: Runs the platform executes itself, reading exit codes — never model runs.
-CHECK_KINDS = (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK, RunKind.SCENARIO_CHECK)
+CHECK_KINDS = (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK, RunKind.SCENARIO_CHECK,
+               RunKind.DEPLOY)
 
 
 def _materialize_scenarios(session: Session, queued, project: Project, run, job: RunJob,
@@ -1680,23 +1687,15 @@ def _run_scenarios(job: RunJob) -> RunResult:
     a count: which scenario failed, and why, is the test seat's to read."""
     import json
     import shutil
-    import subprocess
 
     from yaaf.runner.sandbox import run_check_command
 
     where = Path(job.workspace_dir)
-    secret = job.fetch_url or ""
     results: dict[str, bool] = {}
     try:
-        where.mkdir(parents=True, exist_ok=True)
-        for step in (["git", "init", "-q", str(where)],
-                     ["git", "-C", str(where), "fetch", "-q", "--depth", "1", secret,
-                      job.check_branch or job.check_sha or ""],
-                     ["git", "-C", str(where), "checkout", "-q", job.check_sha or ""]):
-            proc = subprocess.run(step, capture_output=True, text=True, timeout=180)
-            if proc.returncode != 0:
-                said = (proc.stderr or "").replace(secret, "<repo>").strip()[:300]
-                return RunResult(ok=False, summary=f"could not check out the change: {said}")
+        failed = _checkout(job, where)
+        if failed:
+            return RunResult(ok=False, summary=f"could not check out the change: {failed}")
         per = max(30, job.timeout_s // max(1, len(job.scenarios)))
         for scenario_id, command in job.scenarios:
             code, _output = run_check_command(command=command, workspace_dir=str(where),
@@ -1710,6 +1709,113 @@ def _run_scenarios(job: RunJob) -> RunResult:
     return RunResult(ok=True, summary=f"hidden scenarios {passed}/{len(results)}",
                      check_exit_code=0 if passed == len(results) else 1,
                      check_output=json.dumps({"sha": job.check_sha, "results": results}))
+
+
+def _checkout(job: RunJob, where: Path) -> str | None:
+    """A fresh checkout of exactly `job.check_sha`, or why not. The fetch URL
+    carries the platform token for this one fetch and is scrubbed from
+    anything said about a failure."""
+    import subprocess
+
+    secret = job.fetch_url or ""
+    where.mkdir(parents=True, exist_ok=True)
+    for step in (["git", "init", "-q", str(where)],
+                 ["git", "-C", str(where), "fetch", "-q", "--depth", "1", secret,
+                  job.check_branch or job.check_sha or ""],
+                 ["git", "-C", str(where), "checkout", "-q", job.check_sha or ""]):
+        proc = subprocess.run(step, capture_output=True, text=True, timeout=180)
+        if proc.returncode != 0:
+            return (proc.stderr or "").replace(secret, "<repo>").strip()[:300]
+    return None
+
+
+def _materialize_deploy(session: Session, queued, project: Project, run, job: RunJob,
+                        cons) -> RunJob | None:
+    """Production, deployed by the platform: the environment's command, at the
+    release's commit, with the secrets granted to the reserved scope "deploy"
+    — which no role can be named, so no seat's sandbox has ever held them."""
+    from yaaf.core.models import Release
+    from yaaf.server import github, releases
+
+    trigger = queued.trigger or {}
+    release = session.get(Release, trigger.get("release_id"))
+    env = releases.environment(project)
+    token = github.platform_token(session)
+    if release is None or env is None or not project.github_repo or token is None:
+        run.status = RunStatus.FAILED
+        run.summary = "deploy with no release, no production environment, or no repo"
+        run.finished_at = utcnow()
+        return None
+    job.deploy_action = trigger.get("action") or "deploy"
+    job.check_sha = trigger.get("sha") or release.sha
+    job.check_branch = job.check_sha
+    job.check_command = env["deploy"]
+    job.fetch_url = github.clone_url(project.github_repo, token)
+    job.deploy_env = _scoped_secret_env(session, project, releases.DEPLOY_SCOPE)
+    job.workspace_dir = str(Path(settings().workspaces_root) / ".deploys" / run.id)
+    job.timeout_s = min(cons.run_timeout_s, 1800)
+    releases.deploy_started(session, release, job.deploy_action)
+    return job
+
+
+def _scoped_secret_env(session: Session, project: Project, scope: str) -> dict:
+    """Secrets granted to `scope`, as env vars — for a platform command."""
+    from sqlalchemy import or_
+
+    from yaaf.core.crypto import decrypt
+
+    env: dict = {}
+    for secret in session.execute(
+        select(Secret).where(or_(Secret.project_id == project.id, Secret.project_id.is_(None)))
+        .order_by(Secret.project_id.is_(None))
+    ).scalars():
+        if secret.kind in ("billing", "mailbox") or scope not in (secret.role_scopes or []):
+            continue
+        var = _env_var_name(secret.name)
+        if var in env:
+            continue
+        try:
+            env[var] = decrypt(secret.ciphertext)
+        except Exception:
+            log.warning("could not decrypt deploy secret %s", secret.id)
+    return env
+
+
+def _run_deploy(job: RunJob) -> RunResult:
+    import shutil
+
+    from yaaf.runner.sandbox import run_check_command
+
+    where = Path(job.workspace_dir)
+    try:
+        failed = _checkout(job, where)
+        if failed:
+            return RunResult(ok=True, summary=f"deploy checkout failed: {failed}",
+                             check_exit_code=1, check_output=f"checkout failed: {failed}")
+        code, output = run_check_command(command=job.check_command or "",
+                                         workspace_dir=str(where), timeout_s=job.timeout_s,
+                                         env=job.deploy_env)
+        for value in job.deploy_env.values():
+            if value:
+                output = output.replace(value, "<secret>")
+    except Exception as exc:
+        return RunResult(ok=False, summary=f"deploy crashed: {type(exc).__name__}")
+    finally:
+        shutil.rmtree(where, ignore_errors=True)
+    return RunResult(ok=True, summary=f"{job.deploy_action} exit={code}",
+                     check_exit_code=code, check_output=output[-8000:])
+
+
+def _finalize_deploy(session: Session, job: RunJob, result: RunResult) -> None:
+    from yaaf.core.models import Release
+    from yaaf.server import releases
+
+    release = session.get(Release, (job.trigger or {}).get("release_id"))
+    if release is None:
+        return
+    releases.deployed(session, release, job.deploy_action or "deploy",
+                      result.ok and result.check_exit_code == 0,
+                      result.check_output or result.summary or "")
 
 
 def _finalize_scenario_check(session: Session, job: RunJob, result: RunResult) -> None:

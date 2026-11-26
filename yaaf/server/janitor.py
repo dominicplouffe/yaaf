@@ -88,6 +88,7 @@ from yaaf.server import (
     metrics,
     plain,
     policy,
+    releases,
     scorecard,
     staffing,
     standing,
@@ -229,6 +230,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     # before this tick merges anything on top of it.
     changes.reconcile_main(session, project)
     changes.merge_ready(session, project)
+    releases.watch(session, project)
     warn_drought(session, project, cons)
     warn_stall(session, project, cons)
     warn_memory_pressure(session, project, cons)

@@ -531,6 +531,37 @@ async def t_scenarios_list(args):
     return _text(_call("GET", "/agent/scenarios"))
 
 
+@tool(
+    "release_propose",
+    "Code Factory only. Propose releasing everything merged since the last release "
+    "as `version` (MAJOR.MINOR.PATCH). The platform decides whether it waits for the "
+    "chairman, deploys it itself with credentials no seat holds, watches production "
+    "health, and rolls it back on its own if the guard breaks. One release at a time.",
+    {"version": str, "title": str},
+)
+async def t_release_propose(args):
+    return _text(_call("POST", "/agent/releases",
+                       {"version": args["version"], "title": args["title"]}))
+
+
+@tool("releases_list", "Code Factory only. Releases and incidents, as the platform "
+      "recorded them.", {})
+async def t_releases_list(args):
+    return _text(_call("GET", "/agent/releases"))
+
+
+@tool(
+    "incident_postmortem",
+    "CEO only, Code Factory. Close an incident with its postmortem: what happened, "
+    "why, and what changes so it cannot happen the same way again. Causes, not blame. "
+    "The platform's timeline stays beside it and you cannot edit that.",
+    {"incident_id": str, "text": str},
+)
+async def t_incident_postmortem(args):
+    return _text(_call("POST", f"/agent/incidents/{args['incident_id']}/postmortem",
+                       {"text": args["text"]}))
+
+
 @tool("task_block", "Block your claimed task with a reason; the CEO will re-plan.",
       {"task_id": str, "reason": str})
 async def t_task_block(args):
@@ -1887,6 +1918,7 @@ ALL_TOOLS = [
     t_board, t_task_create, t_task_claim, t_task_complete, t_task_review,
     t_task_block, t_task_kill,
     t_change_open, t_changes_list, t_change_review, t_scenario_add, t_scenarios_list,
+    t_release_propose, t_releases_list, t_incident_postmortem,
     t_requirement_propose, t_requirement_depends_on,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_ask_chairman, t_ask_close,
@@ -1922,7 +1954,7 @@ ALL_TOOLS = [
 CEO_ONLY_TOOLS = frozenset({
     "ask_chairman", "ask_close",
     "brief_propose", "capacity_request", "heads_up", "need_request", "note_answer",
-    "commitment_propose", "commitment_reset",
+    "commitment_propose", "commitment_reset", "incident_postmortem",
     "credential_scope", "credentials_list",
     "cycle_goal",
     "directive_file",

@@ -67,6 +67,10 @@ class RunJob:
     check_sha: str | None = None
     check_branch: str | None = None
     fetch_url: str | None = None
+    # Deploys only: "deploy" or "rollback", and the env the command runs with
+    # (secrets granted to the reserved "deploy" scope). Never logged.
+    deploy_action: str | None = None
+    deploy_env: dict = field(default_factory=dict)
 
 
 @dataclass

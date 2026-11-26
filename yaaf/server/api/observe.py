@@ -1724,6 +1724,17 @@ def project_changes(project_id: str, session: Session = Depends(db)) -> dict:
             "branch_protection": (project.integrations or {}).get("branch_protection")}
 
 
+@router.get("/projects/{project_id}/releases", dependencies=[authority.READ])
+def project_releases(project_id: str, session: Session = Depends(db)) -> dict:
+    """A Code Factory's releases and incidents, as the platform recorded them."""
+    from yaaf.server import releases
+
+    project = _project(session, project_id)
+    if not shape.is_factory(project):
+        return {"releases": [], "incidents": [], "production": False}
+    return releases.listing(session, project)
+
+
 @router.get("/projects/{project_id}/plan", dependencies=[authority.READ])
 def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
     """Everything the Plan screen draws, in one request.

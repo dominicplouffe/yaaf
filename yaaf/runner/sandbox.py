@@ -70,8 +70,11 @@ def _host_holds_the_keys() -> bool:
     return any(Path(p).exists() for p in HOST_ESCALATION_PATHS)
 
 
-def run_check_command(command: str, workspace_dir: str, timeout_s: int) -> tuple[int, str]:
-    """Run a task's success-test command; return (exit_code, output)."""
+def run_check_command(command: str, workspace_dir: str, timeout_s: int,
+                      env: dict[str, str] | None = None) -> tuple[int, str]:
+    """Run a task's success-test command; return (exit_code, output). `env` is
+    for the platform's own commands only — a Code Factory deploy — and is
+    never given to anything an agent wrote and a check runs."""
     if not command.strip():
         return 1, "empty success-test command"
     mode = getattr(settings(), "sandbox_mode", "docker")
@@ -80,6 +83,8 @@ def run_check_command(command: str, workspace_dir: str, timeout_s: int) -> tuple
         # host's, so the command cannot reach the socket it guards against.
         from yaaf.runner import host_jail
 
+        if env:
+            return host_jail.run_check(command, workspace_dir, timeout_s, env=env)
         return host_jail.run_check(command, workspace_dir, timeout_s)
     if mode == "subprocess":
         if _host_holds_the_keys() and not getattr(settings(), "allow_host_success_tests", False):
@@ -96,22 +101,30 @@ def run_check_command(command: str, workspace_dir: str, timeout_s: int) -> tuple
                 "stack in docker mode (the default), or set "
                 "YAAF_ALLOW_HOST_SUCCESS_TESTS=1 if you meant it."
             )
+        if env:
+            return _subprocess_check(command, workspace_dir, timeout_s, env=env)
         return _subprocess_check(command, workspace_dir, timeout_s)
+    if env:
+        return _docker_check(command, workspace_dir, timeout_s, env=env)
     return _docker_check(command, workspace_dir, timeout_s)
 
 
-def _subprocess_check(command: str, workspace_dir: str, timeout_s: int) -> tuple[int, str]:
+def _subprocess_check(command: str, workspace_dir: str, timeout_s: int,
+                      env: dict[str, str] | None = None) -> tuple[int, str]:
     try:
         if workspace_dir:
             from pathlib import Path
 
             Path(workspace_dir).mkdir(parents=True, exist_ok=True)
+        import os
+
         proc = subprocess.run(
             ["bash", "-lc", command],
             cwd=workspace_dir or None,
             capture_output=True,
             text=True,
             timeout=timeout_s,
+            env={**os.environ, **env} if env else None,
         )
         return proc.returncode, (proc.stdout + proc.stderr)[-8000:]
     except subprocess.TimeoutExpired:
@@ -120,7 +133,8 @@ def _subprocess_check(command: str, workspace_dir: str, timeout_s: int) -> tuple
         return 125, f"could not run success test: {exc!r}"
 
 
-def _docker_check(command: str, workspace_dir: str, timeout_s: int) -> tuple[int, str]:
+def _docker_check(command: str, workspace_dir: str, timeout_s: int,
+                  env: dict[str, str] | None = None) -> tuple[int, str]:
     import docker
 
     client = docker.from_env()
@@ -130,6 +144,7 @@ def _docker_check(command: str, workspace_dir: str, timeout_s: int) -> tuple[int
         labels=_stack_labels(),
         volumes={workspace_dir: {"bind": "/workspace", "mode": "rw"}},
         working_dir="/workspace",
+        environment=env or {},
         network=settings().sandbox_network,
         mem_limit="1g",
         nano_cpus=1_000_000_000,

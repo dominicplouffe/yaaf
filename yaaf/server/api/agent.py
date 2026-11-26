@@ -498,6 +498,56 @@ def review_change(change_id: str, body: ChangeReview, ctx: RunContext = Depends(
                           allow_packages=body.allow_packages)
 
 
+class ReleasePropose(BaseModel):
+    version: str = Field(min_length=5, max_length=32)
+    title: str = Field(min_length=3, max_length=300)
+
+
+@router.post("/releases")
+def propose_release(body: ReleasePropose, ctx: RunContext = Depends(run_auth),
+                    session: Session = Depends(db)) -> dict:
+    """Code Factory: propose shipping everything merged since the last release.
+    The platform decides whether it waits for the chairman, deploys it itself,
+    watches it, and rolls it back itself if the guard breaks."""
+    from yaaf.server import releases
+
+    release = releases.propose(session, ctx.project, ctx.agent, version=body.version,
+                               title=body.title)
+    return releases.view(release)
+
+
+@router.get("/releases")
+def list_releases(ctx: RunContext = Depends(run_auth),
+                  session: Session = Depends(db)) -> dict:
+    from yaaf.server import changes, releases
+
+    changes.require_factory(ctx.project)
+    return releases.listing(session, ctx.project)
+
+
+class PostmortemIn(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+
+
+@router.post("/incidents/{incident_id}/postmortem")
+def incident_postmortem(incident_id: str, body: PostmortemIn,
+                        ctx: RunContext = Depends(run_auth),
+                        session: Session = Depends(db)) -> dict:
+    """The CEO writes what happened, why, and what changes — beside the
+    platform's own timeline, which it cannot edit — and the incident closes."""
+    from yaaf.core.models import Incident
+    from yaaf.server import releases
+
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("The CEO writes the postmortem: it is the project's account of "
+                      "itself, not one desk's.", status_code=403)
+    incident = session.get(Incident, incident_id)
+    if incident is None or incident.project_id != ctx.project.id:
+        raise Refusal("Unknown incident.", status_code=404)
+    releases.write_postmortem(session, ctx.project, incident, body.text)
+    return releases.incident_view(incident)
+
+
 class ScenarioAdd(BaseModel):
     requirement_id: str
     name: str = Field(min_length=3, max_length=200)
@@ -4073,6 +4123,14 @@ def credential_scope(
             "permission — so there is no grant to re-scope. Who gets a source is the "
             "chairman's tick on Data sources; what it may be called with is his too: "
             "ask with tool_permission_request.", status_code=403)
+    if "deploy" in (row.role_scopes or []) or "deploy" in body.add_roles:
+        # Production's deploy credentials are the platform's to use, after a
+        # release passes its rules. Re-scoped by an agent, they would be one
+        # `curl` away from shipping around every one of them.
+        raise Refusal(
+            f"{name!r} is a production deploy credential. The platform deploys with "
+            "it; no seat holds it, and no agent may change who does. The chairman "
+            "manages it in Settings.", status_code=403)
     scopes = list(row.role_scopes or [])
     was = list(scopes)
     for slug in body.add_roles:

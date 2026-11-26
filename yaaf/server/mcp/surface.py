@@ -92,6 +92,10 @@ REACHED = {
 #: Routes no tool reaches, and the reason. A reason is required: "we did not
 #: get to it" is a fine answer, but it has to be written down as one.
 WITHHELD = {
+    "PUT /admin/projects/{project_id}/environments":
+        "where a Code Factory deploys production, and with what command, is set by "
+        "the chairman on his own screen; a model client writing the deploy command "
+        "would be a model choosing what runs with production credentials.",
     "POST /admin/changes/{change_id}/approve":
         "a Code Factory path the chairman marked as needing a person is approved "
         "by that person, with the diff in front of him. A model client approving "

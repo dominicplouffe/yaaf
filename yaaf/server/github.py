@@ -205,3 +205,14 @@ def list_pull_files(session: Session, repo: str, number: int) -> list[dict]:
         if len(batch) < 100:
             break
     return files
+
+
+def create_release(session: Session, repo: str, *, tag: str, sha: str, name: str,
+                   body: str) -> None:
+    """Tag the commit that went live, with its notes. The record of what
+    shipped is the platform's; the tag is where people look for it."""
+    response = _call(session, "POST", f"/repos/{repo}/releases",
+                     json={"tag_name": tag, "target_commitish": sha, "name": name,
+                           "body": body})
+    if response.status_code not in (200, 201):
+        raise GithubError(f"GitHub refused the release tag: {response.status_code}")

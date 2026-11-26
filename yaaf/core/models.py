@@ -446,6 +446,9 @@ class RunKind(enum.StrEnum):
     # Code Factory: the platform runs a requirement's hidden scenarios against
     # one change's head commit, in a checkout no agent's workspace shares.
     SCENARIO_CHECK = "scenario_check"
+    # Code Factory: the platform runs an environment's deploy (or rollback)
+    # command at one release's commit, with the secrets granted to "deploy".
+    DEPLOY = "deploy"
 
 
 class ApprovalKind(enum.StrEnum):
@@ -464,6 +467,9 @@ class ApprovalKind(enum.StrEnum):
     # "if we ever want genuinely more runs in a day, that's a separate dial and
     # I'd come to you with what it buys before asking." It had no way to come.
     CAPACITY = "capacity"
+    # A Code Factory release to production that the authority dial leaves with
+    # the chairman. Never granted by silence: shipping is not a default.
+    RELEASE = "release"
     # The human-assist protocol (CEO Charter, stage E): a step only a human
     # can do — a captcha, a 2FA code, a KYC form, an account only he can
     # touch. Any agent may file one; the chairman's answer rides the decision
@@ -606,6 +612,10 @@ class NoticeKind(enum.StrEnum):
     # who otherwise learns only by polling a page.
     CHANGE_RETURNED = "change_returned"
     CHANGE_MERGED = "change_merged"
+    # Code Factory releases: decided, live, or rolled back by the guard. The
+    # last opens an incident; the CEO is told so it can write the postmortem.
+    RELEASE_UPDATE = "release_update"
+    INCIDENT_OPENED = "incident_opened"
     # The chairman took a completed delivery back: something is missing. Urgent
     # in the ordinary sense — the project is running again for this reason.
     DELIVERY_REOPENED = "delivery_reopened"
@@ -2372,6 +2382,72 @@ class Scenario(Base):
     author_agent_id: Mapped[str] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     retired_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class ReleaseStatus(enum.StrEnum):
+    PROPOSED = "proposed"        # waiting on the chairman's yes
+    APPROVED = "approved"        # the deploy is queued
+    DEPLOYING = "deploying"      # the platform is running the deploy command
+    WATCHING = "watching"        # deployed; the canary guard is reading health
+    LIVE = "live"                # the window passed clean
+    ROLLED_BACK = "rolled_back"  # the guard broke; the previous release is back
+    FAILED = "failed"            # the deploy command itself failed
+    REFUSED = "refused"          # the chairman said no
+
+
+class Release(Base):
+    """One version of a Code Factory's software going to production.
+
+    Proposed by a seat, approved by whoever the dial says, deployed by the
+    platform with credentials no seat holds, watched by the platform, and
+    rolled back by the platform when the guard breaks — nobody asked first.
+    It always points at a commit the platform merged."""
+
+    __tablename__ = "releases"
+    __table_args__ = (Index("ix_releases_project", "project_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    version: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(300))
+    sha: Mapped[str] = mapped_column(String(64))
+    notes: Mapped[str] = mapped_column(Text, default="")
+    change_ids: Mapped[list] = mapped_column(JSONVariant, default=list)
+    proposed_by_agent_id: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(16), default=ReleaseStatus.PROPOSED)
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    approval_id: Mapped[str | None] = mapped_column(String(40))
+    previous_release_id: Mapped[str | None] = mapped_column(String(40))
+    # {"ok": n, "failed": n, "last": {...}} while the canary guard reads health.
+    probes: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    deploy_output: Mapped[str | None] = mapped_column(Text)
+    deployed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    live_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    rolled_back_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Incident(Base):
+    """Production went wrong, written down by the platform as it happened.
+    Opened by the canary guard (or a signed alert), closed by a postmortem
+    the CEO writes and the chairman can read beside the platform's timeline."""
+
+    __tablename__ = "incidents"
+    __table_args__ = (Index("ix_incidents_project", "project_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    release_id: Mapped[str | None] = mapped_column(String(40))
+    number: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(300))
+    severity: Mapped[int] = mapped_column(Integer, default=2)
+    status: Mapped[str] = mapped_column(String(16), default="open")  # open | resolved
+    opened_by: Mapped[str] = mapped_column(String(40))  # canary | alert
+    # [{"at", "what"}], appended by the platform only.
+    timeline: Mapped[list] = mapped_column(JSONVariant, default=list)
+    postmortem: Mapped[str | None] = mapped_column(Text)
+    opened_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class SideEffect(Base):

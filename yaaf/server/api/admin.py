@@ -494,6 +494,12 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
     # follows every project that pins the role — the ghost that broke a live
     # project which had never heard of the source it "declared". Data sources
     # are project-owned and assigned to roles (Settings → Data sources).
+    if body.slug == "deploy":
+        # The secret scope a Code Factory deploys production with. A role of
+        # that name would put the production credentials in a seat's sandbox.
+        raise HTTPException(status_code=422,
+                            detail="'deploy' is reserved: it is the scope production "
+                                   "deploy credentials are granted to, and no seat holds it")
     if "mcp_servers" in body.tool_permissions:
         raise HTTPException(
             status_code=422,
@@ -4318,6 +4324,16 @@ def decide_approval(
         return _decide_capacity(session, approval, project, body)
     if approval.kind == ApprovalKind.TOOL_PERMISSION and approval.tool_permission:
         return _decide_tool_permission(session, approval, project, body)
+    if approval.kind == ApprovalKind.RELEASE:
+        from yaaf.server import releases
+
+        _apply_decision(
+            session, approval, project, body.approve, body.note,
+            notice_body=(f"The chairman {'approved' if body.approve else 'refused'} "
+                         f"'{approval.title}'" + (f": {body.note}" if body.note else ".")))
+        release = releases.decided(session, project, approval, body.approve, body.note)
+        return {"id": approval.id, "status": approval.status,
+                "release": releases.view(release) if release else None}
     if body.approve and approval.kind == ApprovalKind.TOOL_REQUEST and approval.grant:
         # A one-call grant past a denied tool. Retired: a yes would let nothing
         # through (the gateway reads only the switch), and saying it did would
@@ -6823,6 +6839,35 @@ class GithubAttach(BaseModel):
     repo: str = Field(min_length=1, max_length=200, pattern=r"^[\w.-]+(/[\w.-]+)?$")
 
 
+class EnvironmentIn(BaseModel):
+    deploy: str = Field(min_length=3, max_length=2000)
+    health_url: str = Field(pattern=r"^https?://", max_length=2000)
+
+
+class EnvironmentsIn(BaseModel):
+    production: EnvironmentIn | None = None
+    staging: EnvironmentIn | None = None
+
+
+@router.put("/projects/{project_id}/environments", dependencies=[authority.STEER])
+def set_environments(project_id: str, body: EnvironmentsIn,
+                     session: Session = Depends(db)) -> dict:
+    """Where a Code Factory's software runs: per environment, the command the
+    platform deploys with and the URL its canary guard reads. Wiring, not a
+    rule — the credentials the command needs are secrets granted to the
+    reserved scope "deploy", which no seat's role can be."""
+    project = _get_project(session, project_id)
+    if not shape.is_factory(project):
+        raise HTTPException(status_code=422,
+                            detail="environments belong to a Code Factory project")
+    environments = {name: env.model_dump() for name, env in
+                    (("production", body.production), ("staging", body.staging)) if env}
+    project.integrations = {**(project.integrations or {}), "environments": environments}
+    _audit(session, project.id, "project.environments", "project", project.id,
+           {"names": sorted(environments)})
+    return {"environments": environments}
+
+
 @router.post("/changes/{change_id}/approve", dependencies=[authority.STEER])
 def approve_change(change_id: str, session: Session = Depends(db)) -> dict:
     """The chairman's own yes on a Code Factory change that touches a path he
@@ -7386,7 +7431,16 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
     # was not asking it at all: the Settings table offered all thirty-one
     # library roles and stored whichever were ticked, including roles this
     # project never hired.
-    if body.role_scopes:
+    if body.role_scopes and "deploy" in body.role_scopes:
+        # The reserved Code Factory scope: the platform deploys production with
+        # this credential, and no seat ever receives it — so it is granted to
+        # "deploy" alone, never alongside a role.
+        if len(set(body.role_scopes)) > 1:
+            raise HTTPException(
+                status_code=422,
+                detail="a deploy credential is granted to 'deploy' alone; adding a role "
+                       "would put production's keys in that seat's sandbox")
+    elif body.role_scopes:
         try:
             policy.check_roles_on_project(session, body.project_id, body.role_scopes)
         except policy.Refusal as exc:
