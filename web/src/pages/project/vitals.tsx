@@ -69,7 +69,7 @@ const STATE: Record<string, [string, Tone]> = {
   coalescing: ["Waiting a moment to batch messages", "ok"],
   concurrency: ["Working: every run slot is busy", "ok"],
   agents_busy: ["Working", "ok"],
-  inbox_runs: ["Paused: message reading is used up for today", "warn"],
+  inbox_runs: ["Waiting: agents read messages on their next work wake", "idle"],
   scheduled: ["Waiting for work scheduled later", "idle"],
   awaiting_chairman: ["Waiting on you", "warn"],
   awaiting_ceo: ["Waiting on the CEO", "idle"],
@@ -101,7 +101,7 @@ function gates(dash: Dashboard, vitals: VitalsView | null): Gate[] {
     { key: "slot", label: `Run slots ${a.concurrency.in_flight}/${a.concurrency.cap}`,
       state: b === "concurrency" ? "busy" : "ok" },
   ];
-  if (b === "inbox_runs") list.splice(2, 0, { key: "inbox", label: "Message reads", state: "stop" });
+  if (b === "inbox_runs") list.splice(2, 0, { key: "inbox", label: "Reading off", state: "stop" });
   if (vitals?.plan) list.push({ key: "plan", label: "Claude plan", state: planShut ? "stop" : "ok" });
   return list;
 }
@@ -111,8 +111,7 @@ export function resumesAt(dash: Dashboard, vitals: VitalsView | null): string | 
   const a = dash.activity;
   switch (a.blocked_by) {
     case "daily_runs":
-    case "governance_reserve":
-    case "inbox_runs": return a.daily_runs.resets_at;
+    case "governance_reserve": return a.daily_runs.resets_at;
     case "pacing": return a.pacing.frees_at;
     case "wake_ceiling": return a.wake_ceiling.frees_at;
     case "coalescing": return a.coalescing.ripe_at;
@@ -169,7 +168,7 @@ export function StatusLine({ dash, vitals, fix, idleWhy }: {
   const behind = [
     w.claimable_tasks ? `${w.claimable_tasks} task${w.claimable_tasks === 1 ? "" : "s"} ready` : null,
     w.gated_tasks ? `${w.gated_tasks} scheduled` : null,
-    reading && w.unread ? `${w.unread} message${w.unread === 1 ? "" : "s"} between agents wait${w.unread === 1 ? "s" : ""} to be read` : null,
+    reading && w.unread ? `${w.unread} message${w.unread === 1 ? "" : "s"} between agents waiting` : null,
   ].filter(Boolean).join(" · ");
   const at = tone === "ok" ? null : resumesAt(dash, vitals);
   const cost = a.brief.chip === "work waiting" ? a.brief.headline : null;
@@ -200,11 +199,12 @@ export function StatusLine({ dash, vitals, fix, idleWhy }: {
         </div>
       ) : fix ? <div className="vt-resume">{fix}</div> : null}
       {reading && (
-        // The one wall that had no way out on the page: agents' mail to each
-        // other has an allowance of its own, separate from the daily runs.
+        // Reading has no ceiling any more; past its allowance it is read on
+        // the daily runs. Mail waits only where reading is switched off,
+        // which is a choice, so the line says how to switch it back on.
         <div className="vt-cost">
-          <span><b>Why:</b> agents get a separate daily allowance for waking up just to read each other's messages ({vitals ? `${a.daily_runs.used} of ${vitals.today.wall} work runs used` : "work runs are separate"}). It's used up, so those messages wait until {at ? time(at) : "tomorrow"}. Ready tasks still run.</span>
-          <Link to={`/projects/${dash.id}/settings?s=rules&t=${encodeURIComponent("Pace & brakes")}`}>Allow more message reads</Link>
+          <span><b>Why:</b> this project doesn't wake agents just to read messages. They read them the next time they wake up for work.</span>
+          <Link to={`/projects/${dash.id}/settings?s=rules&t=${encodeURIComponent("Pace & brakes")}`}>Let agents wake up to read</Link>
         </div>
       )}
       {cost && (

@@ -69,7 +69,7 @@ from yaaf.server.contextpack import (
     wake_attempts,
     wake_read_from,
 )
-from yaaf.server.dispatcher import MODEL_RUN_KINDS, NON_WORK_RUN_KINDS
+from yaaf.server.dispatcher import MODEL_RUN_KINDS, refundable
 
 log = logging.getLogger("yaaf.runner")
 
@@ -1002,7 +1002,7 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         # `metered=True` it was born with. And only for the work lane — an
         # inbox run producing nothing is the ordinary case, and refunding those
         # would leave that lane with no ceiling at all.
-        if run.kind not in NON_WORK_RUN_KINDS and not run.produced:
+        if refundable(run.kind, run.produced, run.trigger):
             run.metered = False
 
         # Every model run is evidence about its credential's provider: enough

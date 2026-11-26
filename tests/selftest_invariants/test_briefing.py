@@ -893,7 +893,7 @@ def test_a_rule_he_changed_is_named_the_way_his_settings_page_names_it(client):
     # the fourth are counted rather than hidden behind an ellipsis.
     assert line["text"] == (
         "you changed 5 rules (hard stop, as a multiple of the budget; hours between "
-        "planning wakes; inbox runs per hour, whole project; open tasks at once; "
+        "planning wakes; message reads per hour that don't use runs; open tasks at once; "
         "and 1 more)")
 
 

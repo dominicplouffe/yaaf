@@ -220,6 +220,31 @@ UNMETERED_RUN_KINDS = (
 # RunKind.INBOX_RUN for why reading had to stop being billed as work.
 INBOX_RUN_KINDS = (RunKind.INBOX_RUN,)
 
+#: Marks a wake that only reads mail and was queued on the WORK allowance
+#: because the reading allowance was spent. The chairman asked for no ceiling
+#: on reading: a message can be a handoff, and mail held until midnight
+#: stalled a project with most of its runs unused. Such a run is never
+#: refunded (see the runner), so the daily runs still bound it.
+READ_ON_WORK = "read_on_work"
+
+def reading_off(cons: ConstitutionDoc) -> bool:
+    """A reading allowance of 0 is not a ceiling but a choice — the
+    few-times-daily pace ships it — that agents read their mail on the next
+    wake they were having anyway. It is the one case where mail still waits."""
+    return cons.inbox_runs_per_project_per_day == 0 or cons.inbox_runs_per_project_per_hour == 0
+
+
+def refundable(kind: str, produced: int | None, trigger: dict | None) -> bool:
+    """Whether a finished run stops counting against the work allowance.
+
+    Only a work run that changed nothing. Never a reading run, whichever purse
+    paid for it — reading and finding nothing to act on is its ordinary
+    outcome, and refunding it would leave reading with no ceiling at all.
+    """
+    return (kind not in NON_WORK_RUN_KINDS and not produced
+            and not (trigger or {}).get(READ_ON_WORK))
+
+
 #: Neither work nor inbox: everything the work allowance must ignore.
 NON_WORK_RUN_KINDS = (*UNMETERED_RUN_KINDS, *INBOX_RUN_KINDS)
 
@@ -432,6 +457,33 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     in_flight = _in_flight(session, project)
 
     enqueued = enqueued_work = 0
+    overflow: list[tuple[Agent, list[dict]]] = []
+
+    def enqueue(agent: Agent, kind: str, reasons: list[dict], read_on_work: bool = False) -> None:
+        nonlocal enqueued, enqueued_work
+        task_id = _primary_task(reasons)
+        trigger: dict = {"type": "wake", "reasons": reasons}
+        if read_on_work:
+            trigger[READ_ON_WORK] = True
+        session.add(
+            RunQueue(
+                id=ids.new_id(ids.RUN),
+                project_id=project.id,
+                agent_id=agent.id,
+                kind=kind,
+                trigger=trigger,
+                task_id=task_id,
+                # What this run is FOR, resolved at wake time. 62% of runs in
+                # the audit carried no task id and consumed half the spend, so
+                # cost per deliverable was not computable — and an estimate you
+                # cannot compare with an actual is a number nobody is held to.
+                requirement_id=_requirement_for_wake(session, project, agent, task_id),
+            )
+        )
+        notify(session, "yaaf_run_queue", project.id)
+        enqueued += 1
+        enqueued_work += kind != RunKind.BOARDROOM_RUN
+
     agents = list(
         session.execute(
             select(Agent).where(Agent.project_id == project.id,
@@ -490,6 +542,11 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
             # broadcast makes every agent unread in the same instant — exactly
             # the case the hourly ceiling exists for.
             if inbox_blocked or inbox_hour >= cons.inbox_runs_per_project_per_hour:
+                # The reading allowance is spent, and the mail is not left until
+                # midnight: a message can be a handoff, and a project stalled
+                # all afternoon with 136 work runs unused waiting on one. It is
+                # read on the work allowance instead — after the work, below.
+                overflow.append((agent, reasons))
                 continue
             inbox_hour += 1
             inbox_today += 1
@@ -500,25 +557,19 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
             # not. The run carries the boardroom and nothing behind it, so a
             # spent day cannot be worked through the chairman's message.
             reasons, kind = talk, RunKind.BOARDROOM_RUN
-        task_id = _primary_task(reasons)
-        session.add(
-            RunQueue(
-                id=ids.new_id(ids.RUN),
-                project_id=project.id,
-                agent_id=agent.id,
-                kind=kind,
-                trigger={"type": "wake", "reasons": reasons},
-                task_id=task_id,
-                # What this run is FOR, resolved at wake time. 62% of runs in
-                # the audit carried no task id and consumed half the spend, so
-                # cost per deliverable was not computable — and an estimate you
-                # cannot compare with an actual is a number nobody is held to.
-                requirement_id=_requirement_for_wake(session, project, agent, task_id),
-            )
-        )
-        notify(session, "yaaf_run_queue", project.id)
-        enqueued += 1
-        enqueued_work += kind != RunKind.BOARDROOM_RUN
+        enqueue(agent, kind, reasons)
+
+    # Mail past the reading allowance, read on the work allowance. Only after
+    # every agent with work has been queued this tick, so reading still never
+    # crowds out a ready task; never from the reserve kept for reviews; and
+    # never past the run slots. Such a run always counts against the day
+    # (`READ_ON_WORK`), because a read that changed nothing is the ordinary
+    # case and refunding it would leave reading with no ceiling at all.
+    for agent, reasons in overflow:
+        if (reading_off(cons) or work_blocked or governance_only
+                or in_flight + enqueued_work >= max_concurrent):
+            break
+        enqueue(agent, RunKind.AGENT_RUN, reasons, read_on_work=True)
     return enqueued
 
 
@@ -1472,17 +1523,15 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
         # on the board that nobody can reach — and those two used to render
         # identically, as an empty, reassuring sentence.
         blocked_by = board["unreachable"]
-    elif (inbox_today >= cons.inbox_runs_per_project_per_day
-          or inbox_hour >= cons.inbox_runs_per_project_per_hour) and all(
+    elif reading_off(cons) and all(
               not r["busy"] and r["pending_detail"]["unread"] and not (
                   r["pending_detail"]["work"] or r["pending_detail"]["notices"]
                   or r["pending_detail"]["heartbeat"])
               for r in with_work):
-        # Everyone holding anything is idle, holding only unread mail, and the
-        # lane that reads mail is spent. `_dispatch_project` refuses every one
-        # of those runs; this ladder had no rung for it, so a project with
-        # sixty-five unread messages and no way to read any of them reported
-        # that a run should start on the next tick, for the rest of the day.
+        # Everyone holding anything is idle, holding only unread mail, and
+        # reading is switched off. A SPENT allowance has no rung any more:
+        # that mail is read on the work allowance (`READ_ON_WORK`), so it waits
+        # only when the work does, and the rungs around this one say why.
         # `not busy` matters: a run still in flight means the project is
         # working, and `agents_busy` below is the honest sentence for that.
         blocked_by = "inbox_runs"

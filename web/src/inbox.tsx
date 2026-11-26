@@ -174,15 +174,15 @@ export function InboxExplainer({ projectId, reading, onInbox }: {
           <>
             <dt>What happens when they're used up?</dt>
             <dd>
-              This project allows {reading.cap_today} inbox reads a day and{" "}
-              {reading.cap_this_hour} an hour. Once they're used, messages wait until the count
-              resets — daily at 00:00 UTC, hourly as the hour rolls on — or until the agent wakes
-              up for real work.
+              Nothing waits. This project has {reading.cap_today} inbox reads a day (and{" "}
+              {reading.cap_this_hour} an hour) that don't count against its daily runs. Past
+              that, agents still wake up to read, and each read counts as one of the day's runs.
+              Real work always goes first, and the runs kept for reviews are never used for reading.
             </dd>
             <dt>Should I change it?</dt>
             <dd>
-              Raise it if agents need to answer each other quickly. If they run out every day,
-              it is also worth asking why the project talks so much instead of working.
+              Usually not. If reads use up a lot of the daily runs, it is worth asking why the
+              project talks so much instead of working.
             </dd>
           </>
         )}
