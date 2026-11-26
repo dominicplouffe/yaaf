@@ -91,7 +91,7 @@ function ModeStrip({ ctx }: { ctx: ProjectCtx }) {
   const [error, setError] = useState<string | null>(null);
   const ceo = firstName(ctx.ceoName);
 
-  if (dash.mode === "deliver" && dash.status === "completed") {
+  if (dash.shape === "deliver" && dash.status === "completed") {
     // Completing is automatic only because it can be taken back.
     return (
       <div className="strip good double-ruled">
@@ -119,7 +119,7 @@ function ModeStrip({ ctx }: { ctx: ProjectCtx }) {
       </div>
     );
   }
-  if (dash.mode === "explore" && dash.deadline) {
+  if (dash.shape === "explore" && dash.deadline) {
     return (
       <div className="strip serious">
         <div className="grow">
@@ -134,7 +134,7 @@ function ModeStrip({ ctx }: { ctx: ProjectCtx }) {
     );
   }
   const c = dash.cycle;
-  if (dash.mode === "operate" && c?.due_at && c.capacity) {
+  if (dash.shape === "operate" && c?.due_at && c.capacity) {
     return (
       <div className="strip serious">
         <div className="grow">
@@ -201,11 +201,11 @@ function topBanner(ctx: ProjectCtx, early: ReturnType<typeof runHealth>): ReactN
   const base = `/projects/${projectId}`;
   if (dash.fallback?.active) return <FailoverBanner dash={dash} settingsLink={`${base}/settings?s=money`} />;
   if (deliveryVerdict(dash, plan).daysLate !== null) return <LateBanner ctx={ctx} />;
-  if (dash.mode === "deliver" && dash.status === "completed") return <ModeStrip ctx={ctx} />;
-  if (dash.mode === "explore" && dash.deadline && new Date(dash.deadline).getTime() <= Date.now()) {
+  if (dash.shape === "deliver" && dash.status === "completed") return <ModeStrip ctx={ctx} />;
+  if (dash.shape === "explore" && dash.deadline && new Date(dash.deadline).getTime() <= Date.now()) {
     return <ModeStrip ctx={ctx} />;
   }
-  if (dash.mode === "operate" && dash.cycle?.due_at && dash.cycle.capacity && !dash.cycle.capacity.feasible) {
+  if (dash.shape === "operate" && dash.cycle?.due_at && dash.cycle.capacity && !dash.cycle.capacity.feasible) {
     return <ModeStrip ctx={ctx} />;
   }
   return null;
@@ -227,7 +227,7 @@ function ProgressRow({ ctx, verdicts, vitals }: { ctx: ProjectCtx; verdicts: Set
 
   // ── goals ──
   let goals: ReactNode;
-  if (dash.mode === "explore") {
+  if (dash.shape === "explore") {
     const bets = hypotheses.filter((h) => h.status !== "killed");
     const expired = bets.filter((h) => h.status === "expired").length;
     const next = bets.filter((h) => h.status === "active").map((h) => h.kill_date).sort()[0];
@@ -287,7 +287,7 @@ function ProgressRow({ ctx, verdicts, vitals }: { ctx: ProjectCtx; verdicts: Set
   let value = v.label;
   let pill: string | null = null;
   let sub = v.sub;
-  if (dash.mode === "operate" && dash.cycle) {
+  if (dash.shape === "operate" && dash.cycle) {
     label = "This cycle";
     value = `Cycle ${dash.cycle.ordinal}`;
     pill = v.label === value ? null : v.label;
@@ -298,7 +298,7 @@ function ProgressRow({ ctx, verdicts, vitals }: { ctx: ProjectCtx; verdicts: Set
     sub = c.projected_done_at && c.status !== "met" && v.daysLate === null
       ? `Expected to finish ${fmtDay(c.projected_done_at)}`
       : c.status === "proposed" ? `${ceo} proposed this date. Confirm it in your decisions.` : v.sub;
-  } else if (dash.mode === "explore" && dash.deadline) {
+  } else if (dash.shape === "explore" && dash.deadline) {
     label = "Review date";
     const days = Math.ceil((new Date(dash.deadline).getTime() - Date.now()) / 86_400_000);
     value = fmtDay(dash.deadline);
@@ -410,7 +410,7 @@ function LatestResults({ ctx }: { ctx: ProjectCtx }) {
   if (!data) return null;
   const met = (plan?.requirements ?? []).filter((r) => r.status === "met").length;
   const delivered = dash.status === "completed"
-    || (dash.mode === "deliver" && dash.delivery_outstanding !== null && dash.delivery_outstanding.length === 0);
+    || (dash.shape === "deliver" && dash.delivery_outstanding !== null && dash.delivery_outstanding.length === 0);
   if (!data.results.length && !(delivered && met)) return null;
   return (
     <section className="card ov-card">
@@ -956,7 +956,7 @@ export default function Overview({
   }
   // A Deliver project's goals, worked out once for the hero, the checklist
   // and the chart, so the three cannot disagree.
-  const goals = dash.mode === "deliver" ? goalsOf(ctx, verdicts) : null;
+  const goals = dash.shape === "deliver" ? goalsOf(ctx, verdicts) : null;
   const unstarted = goals?.list.filter((g) => g.state === "todo" && !g.after.length && !g.r.tasks.length) ?? [];
   const idleWhy = unstarted.length
     ? `${unstarted.map((g) => g.key).join(", ")} ${unstarted.length === 1 ? "has" : "have"} no tasks yet` : null;

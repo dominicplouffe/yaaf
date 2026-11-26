@@ -358,7 +358,8 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
         # schedule and bill the credential named above" without ever saying how
         # often. A chairman learning that from an invoice is the bad way.
         "tempo": _tempo_line(body.get("mode") or "explore",
-                             body.get("constitution") or {}),
+                             body.get("constitution") or {},
+                             factory_start=body.get("factory_start")),
         "billing": llm_credentials.describe(billing) if billing else None,
         "also_paying": {p: llm_credentials.describe(row) for p, row in paying.items()} or None,
         "start_immediately": bool(arguments.get("start")) and not body.get("needs_mail"),
@@ -583,14 +584,18 @@ def clone_project(principal: Principal, session: Session, arguments: dict) -> di
     return _record(session, principal, cloned.get("id"), "clone_project", arguments, cloned)
 
 
-def _tempo_line(mode: str, constitution: dict) -> str:
+def _tempo_line(mode: str, constitution: dict, *, factory_start: str | None = None) -> str:
     """One sentence naming the pace this spec will actually be created at, and
     whether the spec asked for it or the platform derived it from the mode."""
     # Merged over the field defaults, not read raw: `default_tempo` stands the
     # bundle down as soon as one pace rule is named, so `filled` can be a single
     # key — and reading a run ceiling out of it raised KeyError and killed this
     # tool before its own confirm gate.
-    filled = {**ConstitutionDoc().model_dump(), **default_tempo(mode, constitution)}
+    from yaaf.core import shape
+
+    filled = {**ConstitutionDoc().model_dump(),
+              **default_tempo(shape.behaves_as(mode, shape.initial_phase(mode, factory_start)),
+                              constitution)}
     # What the spec CHOSE, which is not what the project ends up equalling:
     # `live` is the field defaults, so a spec naming `queue_ceiling: 8` and
     # nothing else produces a live project without anyone picking live.
@@ -599,7 +604,7 @@ def _tempo_line(mode: str, constitution: dict) -> str:
         else tempo_name(filled))
     stated = any(rule in constitution for rule in TEMPO_RULES)
     source = ("as this spec asks" if stated
-              else f"derived from the {str(mode).title()} shape — this spec did not say")
+              else f"derived from the {shape.label(mode)} shape — this spec did not say")
     if name is None:
         rules = ", ".join(f"{k}: {constitution[k]}"
                           for k in TEMPO_RULES if k in constitution)

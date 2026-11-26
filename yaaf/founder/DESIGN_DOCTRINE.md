@@ -49,8 +49,14 @@ hang off it. These are the branches, roughly in the order they unlock:
    - *What exists at the end, and where you go to check* (`finish_line`).
    - *Who reads this, and what would they compare it to* (`beneficiary`,
      `standard`).
-   - *The shape* — Explore, Deliver or Operate. Frozen at creation, so it is
-     asked even when the brief makes it obvious.
+   - *The shape* — Explore, Deliver, Operate or Code Factory. Frozen at
+     creation, so it is asked even when the brief makes it obvious. Code
+     Factory is for software that will be kept after it is built: it is a
+     Deliver while it is built and an Operate once it is handed over, without
+     being rebuilt. A one-off tool nobody will maintain is still a Deliver. A
+     factory also asks where it starts — from nothing, or from a repo that
+     already exists (`factory_start: repo` with `github_repo`), which starts in
+     upkeep and owes no date.
    - *Who pays*, when there is more than one credential.
    - *Is there a date the world imposes* — a fact, not a wish.
 2. **Hanging off the roots:**
@@ -223,7 +229,7 @@ Derive the team from the goal, not from a catalogue. Work in this order:
    as work nobody did.
 
    **One exception, and it survives the cut on purpose: `plan-adversary`.**
-   Staff it on every Deliver and Operate project. It is the only role whose job
+   Staff it on every Deliver, Operate and Code Factory project. It is the only role whose job
    is to attack the SCOPE rather than the output — to go and find what the
    profession covers that this brief does not, and hand the CEO a ranked list
    of requirements that should exist. It looks like a role you could cut
@@ -288,7 +294,8 @@ it whole; a card counts as chosen only when every rule of it is written down,
 
 An Operate project on a weekly, monthly or quarterly cycle almost never wants
 `live`. A Deliver project usually does — it ends, so the fast card is also the
-cheap one in total.
+cheap one in total. A Code Factory being built is paced like a Deliver; one
+that adopts a repo is paced like an Operate from day one.
 
 **Never invent the numbers.** This is the one place where the rule against
 tightening brakes (below) and the rule against defaulting collide, and the card

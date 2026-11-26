@@ -23,6 +23,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from yaaf.core import shape
 from yaaf.core.constitution import (
     TEMPO_PRESETS,
     TEMPO_RULES,
@@ -282,7 +283,11 @@ PROPOSE_SCHEMA = {
                 "slug": {"type": "string", "description": "^[a-z0-9-]{2,64}$"},
                 "name": {"type": "string"},
                 "goal": {"type": "string"},
-                "mode": {"type": "string", "enum": ["explore", "deliver", "operate"]},
+                "mode": {"type": "string",
+                         "enum": ["explore", "deliver", "operate", "code_factory"]},
+                "factory_start": {"type": "string", "enum": ["new", "repo"],
+                                  "description": "code_factory only: build from "
+                                  "nothing, or adopt the repo named in github_repo"},
                 "ceo_role_slug": {"type": "string"},
                 "ceo_name": {"type": "string"},
                 "teams": {"type": "array", "items": {
@@ -970,7 +975,7 @@ def stakes_problems(project: dict) -> list[str]:
 
     Any of the three values passes. What is refused is silence.
     """
-    if (project.get("mode") or "").lower() not in ("deliver", "operate"):
+    if not shape.has_scope(str(project.get("mode") or "explore").lower()):
         return []
     if (project.get("constitution") or {}).get("stakes"):
         return []
@@ -1040,7 +1045,7 @@ def tempo_problems(project: dict) -> list[str]:
     scope against a clock, the platform's own answer is the right one, and a
     question with no decision behind it is friction.
     """
-    if (project.get("mode") or "").lower() not in ("deliver", "operate"):
+    if not shape.has_scope(str(project.get("mode") or "explore").lower()):
         return []
     constitution = project.get("constitution") or {}
     named = [rule for rule in TEMPO_RULES if rule in constitution]
@@ -1084,7 +1089,7 @@ def roster_problems(project: dict, session=None) -> list[str]:
     Any `challenge` role satisfies it. The requirement is that somebody's job is
     to attack the work, not that a particular slug appears.
     """
-    if (project.get("mode") or "").lower() not in ("deliver", "operate"):
+    if not shape.has_scope(str(project.get("mode") or "explore").lower()):
         return []
     teams = project.get("teams") or []
     if not teams:
@@ -1130,11 +1135,14 @@ def date_problems(project: dict) -> list[str]:
     if not project.get("deadline"):
         return []
     mode = project.get("mode") or "explore"
-    if mode == "operate":
-        return ["deadline: Operate runs on cycles; a cycle carries its own due-by "
+    phase = shape.initial_phase(mode, project.get("factory_start"))
+    if shape.runs_on_cycles(mode, phase):
+        return ["deadline: " + ("a Code Factory that adopts a repo starts in upkeep, "
+                                "which" if shape.is_factory(mode) else "Operate")
+                + " runs on cycles; a cycle carries its own due-by "
                 "and its source. Do not put a second date on the project."]
     source = project.get("deadline_source")
-    if mode == "deliver" and not source:
+    if shape.ships_once(mode, phase) and not source:
         return ["deadline_source: a Deliver date needs its provenance — "
                 "{'kind': 'external', 'url'/'note': ...} for a date the world imposes, "
                 "or {'kind': 'chairman', 'note': why} for one he wants. If it is "

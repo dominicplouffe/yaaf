@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { AgendaView, Dashboard, HypothesisRow, PlanView, VitalsView } from "../../api";
 import { fmtSoon, fmtUnit } from "../../ui";
 import { Icon } from "../../ui/Icon";
-import { fmtRoll } from "../../ui/project";
+import { fmtRoll, kindLabel } from "../../ui/project";
 
 /** The project home's pictures. Each of these replaced a sentence that held
     a number with a limit: "out of runs for today (40 of 40)", "537,922,038 of
@@ -31,11 +31,12 @@ const minutes = (s: number | null) =>
     leaves the reader to guess what "on track" is measured against. */
 export function ModePill({ dash, plan }: { dash: Dashboard; plan: PlanView | null }) {
   let rhythm: string;
-  if (dash.mode === "operate") {
+  if (dash.shape === "operate") {
     const c = dash.cycle;
+    // A factory in upkeep says so: its rhythm is the scorecard, not the work.
     const days = c ? Math.max(1, Math.round((new Date(c.rolls_at).getTime() - new Date(c.opened_at).getTime()) / DAY_MS)) : null;
     rhythm = days ? `Repeats every ${days === 7 ? "week" : `${days} days`}` : "Repeats on a rhythm";
-  } else if (dash.mode === "deliver") {
+  } else if (dash.shape === "deliver") {
     const by = plan?.commitment?.deliver_by;
     rhythm = by ? `Ships once · due ${new Date(by).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : "Ships once, then finishes";
   } else {
@@ -44,8 +45,8 @@ export function ModePill({ dash, plan }: { dash: Dashboard; plan: PlanView | nul
       : "Open-ended · ideas tested against evidence";
   }
   return (
-    <span className={`vt-mode vt-mode-${dash.mode}`}>
-      <b>{dash.mode.toUpperCase()}</b>
+    <span className={`vt-mode vt-mode-${dash.shape}`}>
+      <b>{kindLabel(dash).toUpperCase()}</b>
       <span>{rhythm}</span>
     </span>
   );
@@ -304,14 +305,14 @@ export function SpendTile({ vitals, base }: { vitals: VitalsView; base: string }
     marked, a Deliver date's time used so far, an Explore window's days. */
 export function TimeVisual({ dash, plan }: { dash: Dashboard; plan: PlanView | null }) {
   const now = Date.now();
-  if (dash.mode === "operate" && dash.cycle) {
+  if (dash.shape === "operate" && dash.cycle) {
     const c = dash.cycle;
     const opened = new Date(c.opened_at).getTime();
     const days = Math.max(1, Math.round((new Date(c.due_at ?? c.rolls_at).getTime() - opened) / DAY_MS));
     const today = Math.min(days - 1, Math.max(0, Math.floor((now - opened) / DAY_MS)));
     return <Segments total={days} done={today} now={today} />;
   }
-  const end = dash.mode === "deliver" ? plan?.commitment?.deliver_by : dash.mode === "explore" ? dash.deadline : null;
+  const end = dash.shape === "deliver" ? plan?.commitment?.deliver_by : dash.shape === "explore" ? dash.deadline : null;
   if (!end) return null;
   const start = new Date(dash.created_at).getTime();
   const used = Math.min(1, Math.max(0, (now - start) / Math.max(new Date(end).getTime() - start, 1)));
@@ -359,7 +360,7 @@ export function ModePanel({ dash, plan, hypotheses, base, vitals }: {
   dash: Dashboard; plan: PlanView | null; hypotheses: HypothesisRow[]; base: string; vitals: VitalsView | null;
 }) {
   const now = Date.now();
-  if (dash.mode === "operate" && dash.cycle) {
+  if (dash.shape === "operate" && dash.cycle) {
     const c = dash.cycle;
     const cap = c.capacity;
     const pub = vitals?.published;
@@ -398,7 +399,7 @@ export function ModePanel({ dash, plan, hypotheses, base, vitals }: {
       </section>
     );
   }
-  if (dash.mode === "deliver") {
+  if (dash.shape === "deliver") {
     const c = plan?.commitment;
     if (!c) return null;
     const start = new Date(dash.created_at).getTime();
@@ -427,7 +428,7 @@ export function ModePanel({ dash, plan, hypotheses, base, vitals }: {
       </section>
     );
   }
-  if (dash.mode === "explore") {
+  if (dash.shape === "explore") {
     const live = hypotheses.filter((h) => h.status === "active" || h.status === "expired");
     return (
       <section className="card ov-card">

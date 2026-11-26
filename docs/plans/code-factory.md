@@ -172,7 +172,7 @@ All are computed by the platform, never by the crew:
 1. **GitHub only at launch.** Decided. GitLab and Bitbucket later.
 2. **Deploys are a command plus a health URL.** Decided. No per-cloud adapters in v1; teams with a pipeline keep it.
 3. **Release button.** Decided: a choice per project, "approve first" or "fully autonomous".
-4. **Upkeep rhythm.** Open. Recommended: weekly. The crew works every day; the scorecard and review close every Monday. Daily and monthly are offered too.
+4. **Upkeep rhythm.** Decided: weekly by default. The crew works every day; the scorecard and review close every Monday. Daily and monthly are offered too.
 
 ## Verification
 

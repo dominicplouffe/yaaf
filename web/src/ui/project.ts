@@ -55,6 +55,17 @@ export function chairmanDecides(
 /** True when nothing on this project is the chairman's to decide any more —
     every Autonomy rule has been handed to the CEO. The desk says so out loud
     rather than leaving a reader to infer it from an empty list. */
+/** A project's kind in words. "code_factory" is a value, not a name. */
+export function modeLabel(mode: string): string {
+  return mode === "code_factory" ? "Code Factory" : mode.charAt(0).toUpperCase() + mode.slice(1);
+}
+
+/** The kind, and for a factory which half of its life it is in. */
+export function kindLabel(dash: Pick<Dashboard, "mode" | "factory_phase">): string {
+  const label = modeLabel(dash.mode);
+  return dash.factory_phase ? `${label} · ${dash.factory_phase}` : label;
+}
+
 export function fullyAutonomous(dash: Dashboard): boolean {
   return !chairmanDecides(dash, "plan_authority")
     && !chairmanDecides(dash, "scope_authority")
@@ -197,7 +208,7 @@ export function deliveryVerdict(dash: Dashboard, plan: PlanView | null): Verdict
 
   // Everything true, the chairman's Complete unpressed. It said "On track"
   // here, beside a banner saying "delivered" and a chip saying "Running".
-  if (dash.mode === "deliver" && dash.delivery_outstanding !== null
+  if (dash.shape === "deliver" && dash.delivery_outstanding !== null
       && dash.delivery_outstanding.length === 0) {
     return { tone: "good", label: "Finished", sub: "waiting for your sign-off",
       headline: "Everything in scope is true. Only your sign-off is left.", daysLate: null };
@@ -206,7 +217,7 @@ export function deliveryVerdict(dash: Dashboard, plan: PlanView | null): Verdict
   // Work that comes round again has no finish line, so no delivery date: it is
   // judged a turn at a time. Asked "is this on track?", an Operate project
   // answers for the cycle it is in.
-  if (dash.mode === "operate") return cycleVerdict(dash);
+  if (dash.shape === "operate") return cycleVerdict(dash);
 
   const c = plan?.commitment;
   if (c && c.projected_done_at && c.deliver_by) {
@@ -254,7 +265,7 @@ export function deliveryVerdict(dash: Dashboard, plan: PlanView | null): Verdict
     return { tone: "good", label: fmtDate(dash.deadline), sub: "the window you set for this",
       headline: `This runs until ${fmtDate(dash.deadline)}.`, daysLate: null };
   }
-  if (dash.mode === "explore") {
+  if (dash.shape === "explore") {
     return { tone: "good", label: "Open-ended", sub: "no fixed end, by design",
       headline: "This one runs until you decide it has earned its keep.", daysLate: null };
   }

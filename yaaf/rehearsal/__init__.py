@@ -717,7 +717,9 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
     # Deliver and Operate own requirements; Explore does not. The drill knows
     # which from the spec, so it tells the crew rather than making it infer —
     # see the note in `crew.ceo`.
-    scope_project = project_spec.get("mode", "explore") in ("deliver", "operate")
+    from yaaf.core import shape
+
+    scope_project = shape.has_scope(project_spec.get("mode", "explore"))
 
     # And which verbs the dial actually handed the CEO, read off the project
     # the platform just created rather than off the spec — a spec that says

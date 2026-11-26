@@ -581,7 +581,8 @@ class ConstitutionDoc(BaseModel):
     cycle_frequency: str = _rule(
         "weekly", group="Operate rhythm", label="How often a cycle rolls",
         choices=["hourly", "daily", "weekly", "monthly", "quarterly"],
-        help="Operate projects only. Each roll closes the cycle, carries unfinished "
+        help="Operate projects, and a Code Factory once it is in upkeep. Each roll "
+             "closes the cycle, carries unfinished "
              "scope forward, reopens the plan gate, and hands the CEO the last three "
              "cycles' narratives verbatim. 'hourly' is for rhythms shorter than a day "
              "— an inbox swept every morning, an order queue checked on the hour. A "

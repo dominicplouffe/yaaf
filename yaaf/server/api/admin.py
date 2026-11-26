@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import credential_files, ids, model_policy, platform, prices, web_search
+from yaaf.core import credential_files, ids, model_policy, platform, prices, shape, web_search
 from yaaf.core.constitution import (
     GROUP_THEMES,
     THEME_ORDER,
@@ -69,7 +69,6 @@ from yaaf.core.models import (
     Project,
     ProjectLlmCredential,
     ProjectMember,
-    ProjectMode,
     ProjectStatus,
     Requirement,
     RequirementEdge,
@@ -903,8 +902,12 @@ class ProjectCreate(BaseModel):
     # Explore chases a goal with no fixed end; Deliver ships one thing and
     # finishes; Operate is a Deliver that starts again on a rhythm. Outside
     # Explore a task must serve a requirement, and the project starts owing a
-    # plan.
-    mode: str = Field(default="explore", pattern="^(explore|deliver|operate)$")
+    # plan. Code Factory builds software and then keeps it — a Deliver while it
+    # is built, an Operate once it is in upkeep (`yaaf.core.shape`).
+    mode: str = Field(default="explore", pattern=shape.MODE_PATTERN)
+    # Code Factory only: start from nothing ("new", built first) or from a repo
+    # that already exists ("repo", which starts in upkeep and needs github_repo).
+    factory_start: str | None = Field(default=None, pattern="^(new|repo)$")
     controlled_domains: list[str] = Field(default_factory=list)
     # The repo evidence webhooks attest against. Part of the design, so a
     # setup file carries it and a restore does not come back half-wired.
@@ -1538,6 +1541,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     if body.ceo_model_override and (bad := catalog.valid_ref(body.ceo_model_override)):
         raise HTTPException(status_code=422, detail=f"the CEO's model: {bad}")
     body.ceo_harness_override = canonical_harness(body.ceo_harness_override)
+    phase = _factory_phase_at_create(body)
     # The constitution freezes at creation. Overrides are validated against the
     # schema; a spec with no opinion about the authority dial — or about how
     # often the project should think — is given one here, so the form, the
@@ -1557,7 +1561,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     try:
         doc = ConstitutionDoc.model_validate(
             {**ConstitutionDoc().model_dump(),
-             **default_tempo(body.mode,
+             **default_tempo(shape.behaves_as(body.mode, phase),
                              default_briefing(default_autonomy(body.constitution)))})
     except ValidationError as exc:
         # A rule that cannot hold — a 29th of every month — is the founder's to
@@ -1571,10 +1575,12 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     deadline = body.deadline
     deadline_source = None
     if deadline is not None:
-        if body.mode == "operate":
+        if shape.runs_on_cycles(body.mode, phase):
             raise HTTPException(
                 status_code=422,
-                detail="Operate runs on cycles, and a cycle carries its own due-by "
+                detail=("A Code Factory that adopts a repo starts in upkeep, which "
+                        if shape.is_factory(body.mode) else "Operate ")
+                       + "runs on cycles, and a cycle carries its own due-by "
                        "with the source it came from — set that with cycle_goal "
                        "rather than a second date on the project.",
             )
@@ -1602,10 +1608,12 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         billing_mode=billing.llm_mode if billing else (body.billing_mode or "api_key"),
         billing_secret_id=billing.id if billing else None,
         mode=body.mode,
+        factory_phase=phase,
         controlled_domains=body.controlled_domains,
         github_repo=body.github_repo,
         needs_mail=body.needs_mail,
-        integrations=_without_mail(body.integrations),
+        integrations=_factory_start_recorded(
+            _without_mail(body.integrations), body.mode, body.factory_start),
         deadline=deadline,
         deadline_source=deadline_source,
         topology=topology,
@@ -1970,6 +1978,36 @@ def export_project(project_id: str, include_values: bool = False,
     }
 
 
+def _factory_phase_at_create(body: ProjectCreate) -> str | None:
+    """Where a Code Factory starts, refused rather than guessed when the spec
+    contradicts itself. A start is a factory's word only — on any other mode it
+    would be a sentence the platform silently ignored — and adopting a repo
+    with no repo named would start a crew in upkeep of nothing. A setup file
+    carries the start in its wiring, so a restore starts where its source did."""
+    if body.factory_start is None and shape.is_factory(body.mode):
+        body.factory_start = (body.integrations or {}).get("factory_start")
+    if body.factory_start is not None and not shape.is_factory(body.mode):
+        raise HTTPException(
+            status_code=422,
+            detail="factory_start belongs to a Code Factory project; this one is "
+                   f"{body.mode}.")
+    if body.factory_start == "repo" and not body.github_repo:
+        raise HTTPException(
+            status_code=422,
+            detail="a Code Factory that adopts a repo needs the repo: pass "
+                   "github_repo as owner/name.")
+    return shape.initial_phase(body.mode, body.factory_start)
+
+
+def _factory_start_recorded(integrations: dict | None, mode: str,
+                            factory_start: str | None) -> dict | None:
+    """Kept with the wiring so a setup file and a clone carry where the factory
+    started, which its phase alone stops saying once a build reaches upkeep."""
+    if not shape.is_factory(mode):
+        return integrations
+    return {**(integrations or {}), "factory_start": factory_start or "new"}
+
+
 def _without_mail(integrations: dict | None) -> dict | None:
     """A new project starts without a mailbox, whatever its spec says. The one
     way in is PUT /admin/projects/{id}/mail, which checks the recipient list and
@@ -2062,6 +2100,10 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         # the new chairman can add them in a click.
         chairman_user_id=acting.user_id() or source.chairman_user_id,
         mode=source.mode,
+        # A twin starts where its source started, not where it got to: a
+        # factory that was built and is now kept is cloned to be built again.
+        factory_phase=shape.initial_phase(
+            source.mode, (source.integrations or {}).get("factory_start")),
         # The org shape, for the same reason mode is here: the twin rebuilds the
         # source's teams and people exactly, so the source's recorded shape is
         # true of it by construction — but omitting it let the model default
@@ -3417,10 +3459,12 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
         # date on the project would be exactly the ambiguity this all exists to
         # remove. Deliver is now allowed one, with a source (see
         # `_deadline_source`); Explore's bare window is unchanged.
-        if project.mode == ProjectMode.OPERATE:
+        if shape.runs_on_cycles(project):
             raise HTTPException(
                 status_code=422,
-                detail="Operate runs on cycles, and a cycle carries its own due-by "
+                detail=("A Code Factory in upkeep " if shape.is_factory(project)
+                        else "Operate ")
+                       + "runs on cycles, and a cycle carries its own due-by "
                        "with the source it came from — set that with cycle_goal "
                        "rather than a second date on the project.",
             )
@@ -3611,7 +3655,7 @@ def start_project(project_id: str, session: Session = Depends(db)) -> dict:
     # Opened here rather than waiting a janitor tick, so the first proposal
     # lands inside it; on a resume after a long pause this is also what makes
     # it ONE new cycle, never one per missed boundary.
-    if project.mode == ProjectMode.OPERATE and \
+    if shape.runs_on_cycles(project) and \
             policy.current_cycle(session, project.id) is None:
         last = session.execute(
             select(func.max(Cycle.ordinal)).where(Cycle.project_id == project.id)
@@ -3707,10 +3751,18 @@ def complete_delivery(session: Session, project: Project, *, by_user_id: str | N
         } if commitment is not None else None),
         "completed_at": now.isoformat(),
     }
-    project.status = ProjectStatus.COMPLETED
-    project.status_reason = f"delivered: {receipt['met']} requirement(s) true"
-    revoked = _revoke_running(session, project.id)
-    voided = _void_pending_approvals(session, project.id, "the project was completed")
+    if shape.is_factory(project):
+        # A factory's finish line is the hand-over, not the end: the receipt is
+        # written exactly as Deliver's, and the project keeps running into its
+        # first cycle of upkeep. Nothing in flight is revoked and nothing the
+        # chairman is deciding is voided — the work did not stop.
+        _hand_over_to_upkeep(session, project, receipt)
+        revoked, voided = 0, 0
+    else:
+        project.status = ProjectStatus.COMPLETED
+        project.status_reason = f"delivered: {receipt['met']} requirement(s) true"
+        revoked = _revoke_running(session, project.id)
+        voided = _void_pending_approvals(session, project.id, "the project was completed")
 
     lines = []
     for r in rows:
@@ -3735,7 +3787,37 @@ def complete_delivery(session: Session, project: Project, *, by_user_id: str | N
                  f"promised {receipt['commitment']['deliver_by'][:10]}."
                  if receipt["commitment"] else "")),
     ))
-    return {"receipt": receipt, "revoked_runs": revoked, "voided_approvals": voided}
+    return {"receipt": receipt, "revoked_runs": revoked, "voided_approvals": voided,
+            "handed_over": shape.is_factory(project)}
+
+
+def _hand_over_to_upkeep(session: Session, project: Project, receipt: dict) -> None:
+    """Build → upkeep, once and one way. The build's requirements stay where
+    they are as history (no cycle id, so no cycle counts them); cycle 1 opens
+    now and R-00 reopens, so the CEO's first act in upkeep is the same as an
+    Operate project's first act in any cycle: plan it — the standing promises
+    above all."""
+    from yaaf.core.models import FactoryPhase
+
+    project.factory_phase = FactoryPhase.UPKEEP
+    project.status_reason = (f"built: {receipt['met']} requirement(s) true; "
+                             "now in upkeep")
+    last = session.execute(
+        select(func.max(Cycle.ordinal)).where(Cycle.project_id == project.id)
+    ).scalar_one() or 0
+    cycle = Cycle(id=ids.new_id(ids.CYCLE), project_id=project.id, ordinal=last + 1)
+    session.add(cycle)
+    session.flush()
+    plan = policy.plan_requirement(session, project.id)
+    if plan is not None and plan.status == RequirementStatus.MET:
+        plan.status = RequirementStatus.PENDING
+        plan.met_at = None
+        plan.cycle_id = cycle.id
+        policy.record_requirement_event(
+            session, plan, RequirementStatus.PENDING, "platform",
+            note="built and handed over; upkeep cycle 1 plans fresh",
+            from_status=RequirementStatus.MET)
+    notify(session, WAKE_CHANNEL, project.id)
 
 
 @router.post("/projects/{project_id}/reopen", dependencies=[authority.STEER])
@@ -3792,11 +3874,14 @@ def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
     from yaaf.server.janitor import delivery_outstanding
 
     project = _get_project(session, project_id)
-    if project.mode != ProjectMode.DELIVER:
+    if not shape.ships_once(project):
         raise HTTPException(
             status_code=422,
-            detail="only a Deliver project completes: Explore is judged and stopped, "
-                   "Operate finishes and starts again.",
+            detail=("this Code Factory has already been built and handed over to "
+                    "upkeep; it runs on cycles now." if shape.is_factory(project) else
+                    "only a Deliver project completes: Explore is judged and stopped, "
+                    "Operate finishes and starts again. A Code Factory completes its "
+                    "build and carries on into upkeep."),
         )
     if project.status == ProjectStatus.COMPLETED:
         raise HTTPException(status_code=409, detail="already completed")
@@ -6211,7 +6296,7 @@ def finish_review(session: Session, project: Project, review: Review, *,
     # narrative — platform-composed from the frozen numbers, the CEO's own
     # words, and the chairman's decisions. The next cycle's pack carries the
     # last three of these verbatim.
-    if project.mode == ProjectMode.OPERATE:
+    if shape.runs_on_cycles(project):
         cycle = policy.current_cycle(session, project.id)
         if cycle is not None:
             numbers = review.numbers or {}

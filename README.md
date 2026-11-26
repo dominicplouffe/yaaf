@@ -243,13 +243,14 @@ from the team.
 
 Flow: `Goal → CEO plans → you accept scope → teams claim work → the platform verifies → you sign off`
 
-### Three kinds of project
+### Four kinds of project
 
 | Mode | For |
 |---|---|
 | **deliver** | A finished thing by a date: a report, a tool, a game |
 | **operate** | A standing job that runs every day or week: a triage desk, a digest, an overnight crew |
 | **explore** | An open question with a time box: find one idea worth building, and prove it |
+| **code_factory** | Software, built and then kept: from an empty repo to v1.0 by a date, then weekly upkeep. Or adopt a repo you already have and keep it patched and shipping |
 
 ### Guardrails that hold
 

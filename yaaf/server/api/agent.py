@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, shape
 from yaaf.core.constitution import ConstitutionDoc, effective, propose_amendment
 from yaaf.core.db import notify
 from yaaf.core.models import (
@@ -1601,10 +1601,14 @@ def propose_requirement(
     policy.check_proposals_after_delivery(session, ctx.project, cons)
     policy.check_plan_affordable(session, ctx.project, cons, body.est_runs or 0)
     if (body.recurrence == Recurrence.STANDING
-            and ctx.project.mode != ProjectMode.OPERATE):
+            and not shape.runs_on_cycles(ctx.project)):
         raise Refusal(
-            "A standing requirement is owed again every cycle, and only Operate runs "
-            f"on cycles — this project is {ctx.project.mode}. Here a requirement is a "
+            "A standing requirement is owed again every cycle, and only Operate — and "
+            "a Code Factory once it is in upkeep — runs on cycles; this project is "
+            f"{shape.label(ctx.project.mode)}"
+            + (" and still being built. Propose it after the hand-over, when upkeep "
+               "starts counting it" if shape.is_factory(ctx.project) else "")
+            + ". Here a requirement is a "
             "thing that must be true at the end, so one that never closed would be one "
             "the project could never satisfy.",
             status_code=422,
@@ -1984,11 +1988,13 @@ def set_cycle_goal(
             "suggestion survives your run.",
             status_code=403,
         )
-    if ctx.project.mode != ProjectMode.OPERATE:
+    if not shape.runs_on_cycles(ctx.project):
         raise Refusal(
-            f"Cycles belong to Operate projects; this one is {ctx.project.mode}. "
-            "Deliver promises a date through a commitment, and Explore has a window "
-            "rather than a rhythm.",
+            "Cycles belong to Operate projects and to a Code Factory in upkeep; this "
+            f"one is {shape.label(ctx.project.mode)}"
+            + (", still being built. " if shape.is_factory(ctx.project) else ". ")
+            + ("Deliver, and a factory being built, promise a date through a "
+               "commitment; Explore has a window rather than a rhythm."),
             status_code=422,
         )
     cycle = policy.current_cycle(session, ctx.project.id)
@@ -2273,7 +2279,7 @@ def _report_serves(session: Session, project: Project) -> dict[str, str]:
         for r in policy.scope_requirements(session, project.id):
             if r.status in policy.OPEN_REQUIREMENT_STATUSES:
                 allowed[r.key.upper()] = r.key
-        if project.mode == ProjectMode.OPERATE and policy.current_cycle(session, project.id):
+        if shape.runs_on_cycles(project) and policy.current_cycle(session, project.id):
             allowed["CYCLE"] = "cycle"
     return allowed
 
@@ -2399,7 +2405,7 @@ def file_review_report(
             what = (
                 "a live bet, by id" if ctx.project.mode == ProjectMode.EXPLORE
                 else "an open requirement, by key"
-                + (", or `cycle`" if ctx.project.mode == ProjectMode.OPERATE else "")
+                + (", or `cycle`" if shape.runs_on_cycles(ctx.project) else "")
             )
             raise Refusal(
                 f"`next` item {item.what[:80]!r} serves {item.serves!r}, which is not "

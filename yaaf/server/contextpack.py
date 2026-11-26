@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
+from yaaf.core import shape
 from yaaf.core.constitution import ConstitutionDoc, effective
 from yaaf.core.models import (
     Agent,
@@ -210,7 +211,7 @@ def _authority_clause(cons: ConstitutionDoc, project: Project) -> str:
                     "reword, unsequence (scope_act)")
     # Deliver only: an Operate project refuses a delivery date, so telling its
     # CEO it may sign one is an invitation to a refusal.
-    if cons.commitment_authority == "ceo" and project.mode == ProjectMode.DELIVER:
+    if cons.commitment_authority == "ceo" and shape.ships_once(project):
         held.append("sign the delivery date: commitment_propose adopts the platform's "
                     "projection as the promise immediately, and commitment_reset "
                     "re-adopts it when the promise stops holding — you never write a "
@@ -1091,7 +1092,7 @@ def _capacity(session: Session, project: Project, cons: ConstitutionDoc) -> dict
     from yaaf.server.capacity import capacity_forecast
 
     target = None
-    if project.mode == ProjectMode.OPERATE:
+    if shape.runs_on_cycles(project):
         cycle = policy.current_cycle(session, project.id)
         if cycle is not None and cycle.due_at is not None:
             target = cycle.due_at
@@ -1726,7 +1727,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         # lesson still true several cycles out spends a memory slot; the rest
         # lives here, and clipping it would amputate exactly the specifics
         # that make a lesson usable.
-        if project.mode == ProjectMode.OPERATE:
+        if shape.runs_on_cycles(project):
             from yaaf.core.models import Cycle, CycleStatus
 
             cycle = policy.current_cycle(session, project.id)
@@ -1770,7 +1771,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             serves = (
                 "a live bet, by id" if project.mode == ProjectMode.EXPLORE
                 else "an open requirement, by key"
-                + (", or `cycle`" if project.mode == ProjectMode.OPERATE else "")
+                + (", or `cycle`" if shape.runs_on_cycles(project) else "")
             )
             pack["review"] = {
                 "number": review.number,

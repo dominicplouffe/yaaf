@@ -30,6 +30,7 @@ import { MembersPanel } from "./Members";
 import { SETTINGS_NAV } from "../../nav";
 import { ConfirmModal, fmtUnit, SecretInput, StoredSecret } from "../../ui";
 import { choiceLabel, humanizeHelp, Lede, splitLead, Why } from "../../settingsCopy";
+import { modeLabel } from "../../ui/project";
 
 /** "amazon-audit-v2" → "amazon-audit-v3"; "Acme" → "Acme (clone)". Twins come
     in numbered runs far more often than they come in ones. */
@@ -562,8 +563,10 @@ function dormantReason(key: string, dash: Dashboard): string | null {
     return "Not enforced right now — this project bills by subscription, so the token cap is the live budget.";
   if (key === "monthly_token_cap" && dash.billing_mode === "api_key")
     return "Not enforced right now — this project bills by API key, so the USD cap is the live budget.";
-  if ((key === "cycle_frequency" || key === "cycle_day") && dash.mode !== "operate")
-    return `Operate projects only — this one is in ${dash.mode} mode, so no cycle rolls.`;
+  if ((key === "cycle_frequency" || key === "cycle_day") && dash.shape !== "operate")
+    return dash.mode === "code_factory"
+      ? "Takes effect once the build is handed over to upkeep — until then no cycle rolls."
+      : `Operate projects only — this one is in ${dash.mode} mode, so no cycle rolls.`;
   return null;
 }
 
@@ -1621,7 +1624,7 @@ export default function Settings({
           project&apos;s history.
         </Lede>
         <p className="s-must warn">
-          ⚠ Mode ({dash.mode}) and teams are frozen at creation. To change them, download the
+          ⚠ Kind ({modeLabel(dash.mode)}) and teams are frozen at creation. To change them, download the
           setup file below and use the New Project page instead.
         </p>
         <p className="s-must warn">

@@ -393,7 +393,7 @@ async def t_task_create(args):
     "how many runs it will take, and it is compared against what it actually costs. "
     "depends_on lists requirement ids that must be settled first. "
     "recurrence is 'terminal' (met once) or 'standing' (owed again every cycle; "
-    "Operate only). A standing obligation owed EVERY DAY puts its deadline in the "
+    "Operate, or a Code Factory in upkeep). A standing obligation owed EVERY DAY puts its deadline in the "
     "command test — {type: command, command: ..., due_daily_at: 'HH:MM'} in the "
     "project's timezone — and the platform runs the test after each deadline, "
     "whatever work is open, and reports the cycle in days. ALWAYS fill meta — it is what the project's OWNER sees: "
@@ -631,8 +631,8 @@ async def t_scope_act(args):
 
 @tool(
     "commitment_propose",
-    "CEO only, Deliver projects only — an Operate project runs on cycles and has no "
-    "single date to promise. Ask to commit to a delivery date. You do not and cannot "
+    "CEO only, Deliver projects and a Code Factory being built — an Operate project, "
+    "or a factory in upkeep, runs on cycles and has no single date to promise. Ask to commit to a delivery date. You do not and cannot "
     "write the date: "
     "the platform stamps its own projection from pace and scope, and the chairman "
     "accepts it (with that date or his own) or declines. Nothing binds until he does. "
@@ -729,7 +729,7 @@ async def t_evidence_add(args):
 
 @tool(
     "cycle_goal",
-    "CEO only, Operate projects only. Say what THIS cycle is for — one outcome, in "
+    "CEO only, Operate projects and a Code Factory in upkeep. Say what THIS cycle is for — one outcome, in "
     "words the chairman would recognise — and, when the outside world sets a "
     "deadline for this turn's work (a gameweek deadline, a filing date, a carrier "
     "cutoff), when it is due. due_at is an ISO datetime and is a fact you found, "

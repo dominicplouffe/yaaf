@@ -35,7 +35,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, shape
 from yaaf.core.constitution import ConstitutionDoc, effective
 from yaaf.core.models import (
     Agent,
@@ -45,7 +45,6 @@ from yaaf.core.models import (
     Notice,
     NoticeKind,
     Project,
-    ProjectMode,
     Requirement,
     RequirementStatus,
     Role,
@@ -182,7 +181,7 @@ def check_stand_down(session: Session, project: Project, team: Team, *,
                 "replacement first, or ask the chairman — he can do this one.",
                 status_code=409,
             )
-        if project.mode in (ProjectMode.DELIVER, ProjectMode.OPERATE):
+        if shape.has_scope(project):
             raise Refusal(
                 f"{team.name} is the last seat on this project whose job is to attack "
                 "the work rather than produce it, and you wrote the plan it attacks. "

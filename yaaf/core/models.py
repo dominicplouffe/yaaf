@@ -179,7 +179,10 @@ class ProjectMode(enum.StrEnum):
 
     EXPLORE is the open-ended arm — a goal, bets, evidence, and the chairman's
     judgement on when it has earned its keep. DELIVER ships one thing and then
-    finishes. OPERATE is a DELIVER that starts again on a rhythm.
+    finishes. OPERATE is a DELIVER that starts again on a rhythm. CODE_FACTORY
+    builds software and then keeps it: a DELIVER while it is built, an OPERATE
+    once it is in upkeep (`FactoryPhase`), without being rebuilt in between —
+    the yes/no questions each phase answers live in `yaaf.core.shape`.
 
     The field exists from the first stage of the rebuild because the rules
     differ by mode: outside EXPLORE a task must serve a requirement. What later
@@ -190,6 +193,19 @@ class ProjectMode(enum.StrEnum):
     EXPLORE = "explore"
     DELIVER = "deliver"
     OPERATE = "operate"
+    CODE_FACTORY = "code_factory"
+
+
+class FactoryPhase(enum.StrEnum):
+    """Where a Code Factory is in its life. BUILD ships to a date the way
+    Deliver does; UPKEEP runs on cycles the way Operate does. The move is one
+    way, and it is the delivery's completion — the receipt is written and the
+    project keeps running, with its whole history, into its first cycle. A
+    factory that adopts an existing repo starts in UPKEEP: its code already
+    has users before the crew writes a line."""
+
+    BUILD = "build"
+    UPKEEP = "upkeep"
 
 
 class FlagKind(enum.StrEnum):
@@ -739,6 +755,9 @@ class Project(Base):
     # behaviour; outside it, a task must serve a requirement.
     mode: Mapped[str] = mapped_column(String(16), default=ProjectMode.EXPLORE,
                                       server_default=ProjectMode.EXPLORE)
+    # Code Factory only: build, then upkeep (FactoryPhase). Null for every
+    # other mode, so no reader can mistake an Operate project for a factory.
+    factory_phase: Mapped[str | None] = mapped_column(String(16))
     chairman_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     # "api_key" | "subscription" — decides the budget's native unit (usd vs tokens)
     billing_mode: Mapped[str] = mapped_column(String(16), default="api_key")

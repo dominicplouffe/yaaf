@@ -268,7 +268,9 @@ def render(data: dict) -> str:
     req, ev, audit = ver["requirements"], ver["evidence"], ver["audit"]
     accepted = req["met"] + req["open"] + req["cut"]
 
-    head = (f'{p["name"]} — {p["mode"]} · {p["days"]} days · '
+    from yaaf.core import shape
+
+    head = (f'{p["name"]} — {shape.label(p["mode"]).lower()} · {p["days"]} days · '
             f'{p["teams"]} teams, {p["seats"]} seats')
 
     left = [

@@ -43,7 +43,7 @@ export default function Details({ ctx }: { ctx: ProjectCtx }) {
   const base = `/projects/${projectId}/details`;
   // An Explore project has no roadmap to show — it runs on bets, which live
   // on the task board — so it opens on Tasks instead.
-  const tabs = DETAIL_TABS.filter((t) => !(dash.mode === "explore" && t.path === "roadmap"));
+  const tabs = DETAIL_TABS.filter((t) => !(dash.shape === "explore" && t.path === "roadmap"));
   const { pathname, search } = useLocation();
   const here = pathname.slice(base.length + 1).replace(/\/$/, "");
   const tab = tabs.find((t) => here === t.path || here.startsWith(`${t.path}/`));

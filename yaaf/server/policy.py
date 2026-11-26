@@ -34,7 +34,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, aliased
 
-from yaaf.core import ids
+from yaaf.core import ids, shape
 from yaaf.core.constitution import (
     CADENCE_FIELDS,
     ConstitutionDoc,
@@ -1054,7 +1054,7 @@ def requires_requirements(project: Project) -> bool:
     """Explore has no scope by design — it is the open-ended arm, and demanding
     a requirement there would be demanding a plan for work whose whole point is
     that the plan is not known yet."""
-    return project.mode != ProjectMode.EXPLORE
+    return shape.has_scope(project)
 
 
 def check_requirement_propose(
@@ -1325,7 +1325,7 @@ def scope_requirements(session: Session, project_id: str, *,
     if all_cycles:
         return rows
     project = session.get(Project, project_id)
-    if project is not None and project.mode == ProjectMode.OPERATE:
+    if project is not None and shape.runs_on_cycles(project):
         cycle = current_cycle(session, project_id)
         if cycle is not None:
             rows = [r for r in rows if r.cycle_id == cycle.id]
@@ -1372,7 +1372,7 @@ def delivered_awaiting_confirmation(session: Session, project: Project) -> bool:
     reviewing each other's citation indexes, because the only thing that ever
     stopped it was the daily inbox ceiling, and that re-arms at midnight.
     """
-    return (project.mode == ProjectMode.DELIVER
+    return (shape.ships_once(project)
             and project.status == ProjectStatus.RUNNING
             and not delivery_outstanding(session, project))
 
@@ -1910,9 +1910,11 @@ def check_commitment_propose(
             "delivery date could be a promise about. Its shape is bets and evidence.",
             status_code=422,
         )
-    if project.mode == ProjectMode.OPERATE:
+    if shape.runs_on_cycles(project):
         raise Refusal(
-            "This is an Operate project: it runs on a rhythm and never finishes, so "
+            ("This Code Factory is in upkeep" if shape.is_factory(project)
+             else "This is an Operate project")
+            + ": it runs on a rhythm and never finishes, so "
             "there is no finish line for one delivery date to promise. Its dates "
             "belong to its cycles: each turn rolls on the constitution's rhythm, or on "
             "the due-by the world sets for that turn, and what is owed is judged at "
