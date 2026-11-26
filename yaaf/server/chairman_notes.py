@@ -165,6 +165,14 @@ def link_answer(session: Session, project_id: str, reply: Message,
     return linked
 
 
+class AlreadyAnswered(Exception):
+    """The note was answered before; the caller says so and refuses nothing."""
+
+    def __init__(self, note) -> None:
+        super().__init__("already answered")
+        self.note = note
+
+
 def answer(session: Session, project_id: str, note_id: str, reply: str,
            standing: bool, *, agent_id: str, say_it: bool) -> tuple[ChairmanNote, bool]:
     """Close his note, saying whether it applies beyond the one item.
@@ -179,7 +187,11 @@ def answer(session: Session, project_id: str, note_id: str, reply: str,
     if note is None or note.project_id != project_id:
         raise NoteError(f"{note_id!r} is not one of the chairman's notes on this project.")
     if note.answered_at is not None:
-        raise NoteError(f"You already answered that note: {note.reply}")
+        # A repeat, not a breach: the note is closed and nothing the second
+        # call wanted is missing. Refusing it put a warning in the chairman's
+        # chat ("A project rule stopped something the CEO tried") over a
+        # bookkeeping echo that cost him nothing.
+        raise AlreadyAnswered(note)
     if standing and not _brief_since(session, project_id, note):
         raise NoteError(
             "You called this note standing — it applies beyond the one item it was "

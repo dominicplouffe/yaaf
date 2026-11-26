@@ -2391,6 +2391,9 @@ def runs(project_id: str, limit: int = 50, agent_id: str | None = None,
             "model": r.model, "effort": r.effort, "cost_usd": r.cost_usd,
             "priced_usd": r.priced_usd, "harness": r.harness,
             "refusals": r.refusal_count, "last_refusal": r.last_refusal,
+            # Which call was refused, so a screen can say what was stopped in
+            # plain words instead of quoting what the platform told the agent.
+            "last_refusal_route": r.last_refusal_route,
             "last_refusal_at": r.last_refusal_at.isoformat() if r.last_refusal_at else None,
             "last_refusal_cleared_at": (r.last_refusal_cleared_at.isoformat()
                                         if r.last_refusal_cleared_at else None),

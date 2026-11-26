@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { Dashboard, post } from "../api";
-import { InboxExplainer, RaiseInboxReads } from "../inbox";
 import { useProjectFrame } from "../projectCtx";
-import { clip, statusBrief } from "../ui";
+import { clip } from "../ui";
 import { Btn } from "../ui/kit";
 import { Icon } from "../ui/Icon";
 import Overview from "./project/Overview";
+import { StatusLine } from "./project/vitals";
+import "./project/vitals.css";
 import Boardroom from "./project/Boardroom";
 import Details from "./project/Details";
 import Member from "./project/Member";
@@ -126,93 +127,6 @@ function StandingNotice({ dash }: { dash: Dashboard }) {
   );
 }
 
-/** The "why is nothing happening?" brief, with a way to put it down.
-
-    Two of these briefs are waits on a clock — the daily run cap and the hourly
-    wake ceiling — and both clear themselves. That was already true and it did
-    not help: the banner had no falsifiable time in it, so a chairman who had
-    already dealt with the throttle had no way to tell a live warning from a
-    stuck one, and no way to say "I know". Dismissing now hides the brief only
-    until the moment the platform said it would clear. If the wait outlives its
-    own promise the brief comes back on its own, because at that point it has
-    become news again. Paused and stopped are not waits and have no dismiss.
-
-    Kept in sessionStorage, per project and per condition: a dismissal is a
-    reading of right now, not a preference worth surviving a browser restart. */
-function StatusBriefBox({ dash, projectId, reload }: {
-  dash: Dashboard; projectId: string; reload: () => void;
-}) {
-  const brief = statusBrief(dash);
-  const key = brief?.sig ? `yaaf.brief.${projectId}.${brief.sig}` : null;
-  const [, tick] = useState(0);
-  // The inbox page carries the same button and explainer at its head; the
-  // banner over it says the sentence and leaves the rest to the page.
-  const onInbox = useLocation().pathname.endsWith("/activity/inbox");
-
-  // The hide expires on a wall clock, so the box has to re-check itself even
-  // when no poll lands — otherwise a brief could stay hidden past its moment.
-  useEffect(() => {
-    const timer = setInterval(() => tick((n) => n + 1), 20_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  if (!brief) return null;
-  if (key) {
-    const until = sessionStorage.getItem(key);
-    if (until && Date.now() < Number(until)) return null;
-  }
-
-  return (
-    <div className="notice-box">
-      <div className="brief-head">
-        <div>
-          <span className={`chip ${brief.tone}`}>{brief.chip}</span>{" "}
-          <b>{brief.headline}</b>
-        </div>
-        {key && (
-          <button
-            className="small"
-            title={
-              brief.clearsAt
-                ? `Hidden until ${new Date(brief.clearsAt).toLocaleTimeString()} — it returns if the wait outlives that.`
-                : "Hidden for an hour, then shown again if it is still true."
-            }
-            onClick={() => {
-              const until = brief.clearsAt
-                ? new Date(brief.clearsAt).getTime()
-                : Date.now() + 3_600_000;
-              // A clearsAt already in the past would hide nothing at all; give
-              // the dismissal a floor so the click always does something.
-              sessionStorage.setItem(key, String(Math.max(until, Date.now() + 60_000)));
-              tick((n) => n + 1);
-            }}
-          >
-            dismiss
-          </button>
-        )}
-      </div>
-      <div className="help" style={{ marginTop: 4 }}>
-        {brief.detail}
-      </div>
-      {/* The one brief whose cure is a setting the reader may not know exists,
-          and whose subject — the messages — had nowhere to be read. */}
-      {dash.status === "running" && dash.activity.blocked_by === "inbox_runs" && !onInbox && (
-        <>
-          <div className="brief-actions">
-            {dash.can_steer && (
-              <RaiseInboxReads projectId={projectId} reading={dash.activity.inbox_runs} onDone={reload} />
-            )}
-            <NavLink to={`/projects/${projectId}/details/activity/inbox`}>
-              <Btn small icon="inbox">See the unread messages</Btn>
-            </NavLink>
-          </div>
-          <InboxExplainer projectId={projectId} reading={dash.activity.inbox_runs} />
-        </>
-      )}
-    </div>
-  );
-}
-
 /** A review opens on a schedule, costs nothing to run, and is the one meeting
     the platform holds whether or not the board has anything on it — so when
     one is open it is said on the pages it is about, not only on its own. */
@@ -289,12 +203,13 @@ export default function ProjectPage() {
           go to the Overview to learn the project ran out of runs at 01:22. */}
       {/* The chat says this itself, in its presence and the one strip above
           the conversation — a second box about the same wait was noise. */}
-      {/* The box is up only when something is being lost (the server's
-          `banner`). On the project home the status line already draws an
-          ordinary wait, so there the box shows only for the cost it adds:
-          ready work held up by the day's limit. */}
-      {sub !== "chat" && (!onOverview || dash.activity.brief.chip === "work waiting") && (
-        <StatusBriefBox dash={dash} projectId={projectId} reload={ctx.reload} />
+      {/* The same status line the project home opens with: what it is doing,
+          the gate that is shut, when it opens, and, when ready work is held
+          up, what is waiting and the two ways to start it. It replaced a box
+          of prose that said each of those in a paragraph. The home page draws
+          its own. */}
+      {sub !== "chat" && !onOverview && (
+        <div style={{ marginBottom: "var(--s4)" }}><StatusLine dash={dash} vitals={null} /></div>
       )}
       <PinSuggestion projectId={projectId} />
       {ctx.error && (

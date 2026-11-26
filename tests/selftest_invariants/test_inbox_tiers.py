@@ -140,6 +140,38 @@ def test_a_note_on_an_approval_is_held_too(client):
     assert rows[0]["held_note"]["note"] == "yes, and go ahead every month"
 
 
+def test_answering_a_note_twice_is_a_repeat_not_a_refusal(client):
+    """A CEO that marks the same note answered twice has broken nothing: the
+    note is closed and the reply is already under it. As a refusal it put a
+    warning in the chairman's chat, quoting the platform's words to the CEO,
+    over a bookkeeping echo that cost him nothing."""
+    from yaaf.core.models import Run
+
+    project = make_project(client)
+    with_order(project)
+    heads_id = heads_up(client, project).json()["heads_up_id"]
+    client.post(f"/admin/heads_up/{heads_id}/ack",
+                json={"note": "Send it by 8pm, not 10pm."}, headers=ADMIN)
+    note_id = pack(client, project)["chairman_notes"]["notes"][0]["id"]
+    token = ceo(project)
+    first = client.post(f"/agent/notes/{note_id}/answer",
+                        json={"reply": "Moved tonight's send to 8pm.", "standing": False},
+                        headers=bearer(token))
+    assert first.status_code == 200, first.text
+
+    again = client.post(f"/agent/notes/{note_id}/answer",
+                        json={"reply": "Moved it to 8pm.", "standing": False},
+                        headers=bearer(token))
+    assert again.status_code == 200, again.text
+    assert "Already answered" in again.json()["note"]
+    with db_session() as session:
+        runs = session.query(Run).filter(Run.project_id == project["id"],
+                                         Run.refusal_count > 0).all()
+        assert runs == [], [r.last_refusal for r in runs]
+    listed = client.get(f"/observe/projects/{project['id']}/heads_ups", headers=ADMIN).json()
+    assert listed[0]["note"]["reply"] == "Moved tonight's send to 8pm."
+
+
 def test_a_standing_note_must_be_in_a_brief_first(client):
     project = make_project(client)
     with_order(project)
