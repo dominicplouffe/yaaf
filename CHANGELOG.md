@@ -16,6 +16,7 @@ end says how the counting is done and where the week boundary falls.
 
 | Release | Week | Changes | In one line |
 |---|---|---|---|
+| **0.8.0** | 19-25 Nov 2026 | 11 | The project home draws its numbers as gauges, and the chat reads like a chat |
 | **0.7.0** | 12-18 Nov 2026 | 9 | The dashboard opens from the command line, a quick project starts from one brief, and yaaf has a new look |
 | **0.6.0** | 5-11 Nov 2026 | 21 | Each data source tool needs your permission, projects get mailboxes, and yaaf runs on your own desktop |
 | **0.5.0** | 29 Oct – 4 Nov 2026 | 23 | One honest meter for what a run costs, and runs that stop being cut short |
@@ -26,6 +27,25 @@ end says how the counting is done and where the week boundary falls.
 | **0.1.0** | none | none | The starting point: the last commit before 1 October 2026 |
 
 Releases are listed newest first.
+
+## [0.8.0] - 2026-11-25
+
+### Changed
+
+- **The review of a period shows a status, the plan against the actual numbers, and what did not go to plan.** Recurring work makes one row instead of thirty. Deliverables lists published work only, and the agent working files no longer show in the web app. A stall raises one alarm with its reason, not one alarm for each window. ([#131](https://github.com/dominicplouffe/yaaf/pull/131))
+- **The project Inbox answers three questions in order.** It says what needs you, then whether the project is on track, then what is new. At most one banner shows, and it names the worst problem. Mode, autonomy and role moved off the page to Details and Settings. ([#132](https://github.com/dominicplouffe/yaaf/pull/132))
+- **The CEO chat reads as one column of conversation.** A refused action now appears in the conversation at the moment it happens. A question shows under the message that asked it, with its buttons. A send that fails keeps your words and says so. One presence word says when the CEO will reply. Search covers the whole conversation. ([#133](https://github.com/dominicplouffe/yaaf/pull/133))
+- **The project home draws each number with its limit.** The state of the project is gauges and charts now, not sentences. A status line marks the shut gate and the time when it opens. The new read-only endpoint `/observe/projects/{id}/vitals` carries the series, and the MCP project reader reaches it as `view=vitals`. ([#136](https://github.com/dominicplouffe/yaaf/pull/136))
+- **The Runs page counts the day the way the limit counts it.** The day starts at 00:00 UTC. Each run sits in one lane: counted, given back, message read, check or chat. The page answers who used the day's runs, why each one woke and what went wrong. Plan readings stay for 30 days, so a refusal by Claude can say how full the shared window was. ([#137](https://github.com/dominicplouffe/yaaf/pull/137))
+- **Each run in the Runs log that recorded a trace or a context has a labelled `Details` button.** The whole row opens the run as well, and a highlight on hover says so. ([#138](https://github.com/dominicplouffe/yaaf/pull/138))
+- **`yaaf update` names the branch that it follows.** When that branch is not `main`, the command says how far `main` has moved and how to follow it. It never switches the branch for you. ([0171674e5](https://github.com/dominicplouffe/yaaf/commit/0171674e5))
+- **A brief draft waits while your newest boardroom message asks a question.** A question is not a decision, so the CEO talks it through first. It gives the evidence and two or three directions side by side. It says its lean and puts one question to you. A reply to a question may run to 300 words. One draft covers one thing that you said. ([2e2ae09ca](https://github.com/dominicplouffe/yaaf/commit/2e2ae09ca))
+
+### Fixed
+
+- **The chat says `Can't reply` only when the CEO cannot reply.** A serious activity banner no longer turns the presence word into a refusal. That word shows only when the reply lane is held after three failed replies in ten minutes. ([#135](https://github.com/dominicplouffe/yaaf/pull/135))
+- **The chat keeps its room on a phone.** The header holds one line, and the suggestions take one row that you can swipe. ([#134](https://github.com/dominicplouffe/yaaf/pull/134))
+- **The out-of-runs banner appears only when a ready task cannot start.** The banner names the task, how long it waits and the setting that starts it sooner. A day that is spent with nothing ready shows a quiet line instead. ([#139](https://github.com/dominicplouffe/yaaf/pull/139))
 
 ## [0.7.0] - 2026-11-18
 
@@ -793,6 +813,7 @@ short and each one carries one idea. The voice is active. There is no semicolon 
 An interface label quoted in backticks keeps its exact spelling, because it is a name and not prose.
 `Couldn't` in the 0.4.0 section is a former label of that kind, and it stays.
 
+[0.8.0]: https://github.com/dominicplouffe/yaaf/releases/tag/v0.8.0
 [0.7.0]: https://github.com/dominicplouffe/yaaf/releases/tag/v0.7.0
 [0.6.0]: https://github.com/dominicplouffe/yaaf/releases/tag/v0.6.0
 [0.5.0]: https://github.com/dominicplouffe/yaaf/releases/tag/v0.5.0
