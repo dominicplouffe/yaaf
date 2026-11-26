@@ -23,6 +23,7 @@ import DataSources from "./DataSources";
 import { MailboxSettings } from "./Mailbox";
 import Secrets, { pendingNeeds } from "./Secrets";
 import { ProjectCtx, useProject } from "../../projectCtx";
+import { SetupStrip } from "../../projectSetup";
 import { PinButton } from "../../shortcuts";
 import { MembersPanel } from "./Members";
 import { SETTINGS_NAV } from "../../nav";
@@ -2020,7 +2021,7 @@ export default function Settings({
     in a strip across the top, so moving from one to the next is one click
     and never a trip back to the Inbox. */
 export function SettingsPage({ ctx }: { ctx: ProjectCtx }) {
-  const { projectId, dash, setup } = ctx;
+  const { projectId, dash } = ctx;
   const [params] = useSearchParams();
   const asked = params.get("s") ?? "brief";
   const section = asked === "data" ? "secrets" : asked;
@@ -2032,41 +2033,9 @@ export function SettingsPage({ ctx }: { ctx: ProjectCtx }) {
         actions={label && "key" in label
           ? <PinButton projectId={projectId} to={`settings?s=${section}`} label={label.label} />
           : undefined} />
-      {setup?.open && (
-        <nav className="setup-strip" aria-label="Setup steps">
-          <span className="setup-strip-t">Setup {setup.settled} of {setup.total}</span>
-          {setup.steps.map((st) => (
-            <Link key={st.key} to={`/projects/${projectId}/settings?s=${st.section}`} replace
-              className={`setup-chip ${st.state}${section === st.section ? " on" : ""}`}
-              aria-current={section === st.section ? "step" : undefined}
-              title={st.detail}>
-              {st.state === "done" ? "✓ " : ""}{st.label}
-              <span className="sr-only">{st.state === "todo" ? " — to do" : ` — ${st.state}`}</span>
-            </Link>
-          ))}
-          <SetupSkip ctx={ctx} section={section} />
-        </nav>
-      )}
+      <SetupStrip ctx={ctx} section={section} />
       <Settings projectId={projectId} dash={dash} org={ctx.org} reload={() => { ctx.reload(); ctx.reloadSetup(); }} />
     </>
   );
 }
 
-/** "Skip this step" for the setup step this section is, while it is still to
-    do and not one the project cannot run without. */
-function SetupSkip({ ctx, section }: { ctx: ProjectCtx; section: string }) {
-  const step = ctx.setup?.steps.find((s) => s.section === section);
-  const [busy, setBusy] = useState(false);
-  if (!step || step.state !== "todo" || step.required || ctx.dash.can_steer === false) return null;
-  return (
-    <button className="small setup-skip" disabled={busy} onClick={async () => {
-      setBusy(true);
-      try {
-        await post(`/admin/projects/${ctx.projectId}/setup`, { action: "skip", step: step.key });
-        ctx.reloadSetup();
-      } finally {
-        setBusy(false);
-      }
-    }}>Skip {step.label}</button>
-  );
-}

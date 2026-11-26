@@ -39,7 +39,7 @@ import {
   WeekTimeline, YouPanel,
 } from "./vitals";
 import { DecisionCard } from "../Inbox";
-import { ProjectSetup } from "../../projectSetup";
+import { ProjectSetup, SetupStrip } from "../../projectSetup";
 
 /** A project's Inbox answers three questions, in the order they are asked:
 
@@ -608,7 +608,7 @@ function ComingUp({ projectId, vitals, pausedUntil }: { projectId: string; vital
     true forever and was read on the first day. Dismissed rows stay on the
     card, dimmed, with a way back; a problem has no such button. `id` is the
     target the header's setup link scrolls to. */
-function HealthLine({ ctx, setupLeft, onSetup }: { ctx: ProjectCtx; setupLeft: number; onSetup: () => void }) {
+function HealthLine({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, health: data, reloadHealth, reloadOrg } = ctx;
   const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -625,10 +625,6 @@ function HealthLine({ ctx, setupLeft, onSetup }: { ctx: ProjectCtx; setupLeft: n
       <div className="vt-setup" id="setup-health">
         <span className="vt-k" style={{ margin: 0 }}>Setup</span>
         {ok > 0 && <span className="vt-tag good">{ok} OK</span>}
-        {setupLeft > 0 && (
-          <span><span className="vt-tag warn">To do</span>
-            <button className="linkish" onClick={onSetup}>Finish setting up · {setupLeft} step{setupLeft === 1 ? "" : "s"}</button></span>
-        )}
         {open.slice(0, 3).map((c) => (
           <span key={c.key}>
             <span className={`vt-tag ${c.status === "fail" ? "bad" : "warn"}`}>{c.status === "fail" ? "Fix" : "Suggestion"}</span>
@@ -807,7 +803,6 @@ export default function Overview({
   const { projectId, dash } = ctx;
   const desk = useDesk();
   const [brief, setBrief] = useState(false);
-  const [showSetup, setShowSetup] = useState(false);
   // Start can be refused (a check the server runs that the page cannot); the
   // reason is said beside the button rather than leaving it to look unpressed.
   const [starting, setStarting] = useState(false);
@@ -913,7 +908,6 @@ export default function Overview({
   // scope now (MemoryCard), so it is not a line under "handling" as well.
 
   const verdicts = new Set((deskProject?.awaiting_you.verdicts ?? []).map((v) => v.key));
-  const setupLeft = ctx.setup?.open ? ctx.setup.steps.filter((st) => st.state === "todo").length : 0;
   const settingUp = unpaid || (!!dash.mail_start_refusal && dash.status !== "running");
   const verdict = deskProject?.status_line?.verdict;
   const fix = verdict && verdict !== "capped" && FIX_AT[verdict]
@@ -998,7 +992,10 @@ export default function Overview({
           is a link in the header: on a running — or finished — project, a
           six-step checklist above the decisions was configuration outranking
           state. When setup is the reason, it is the one banner. */}
-      {(settingUp || showSetup) && <ProjectSetup ctx={ctx} />}
+      {/* Setup reads first: the whole checklist when it is why nothing can
+          run, the strip of steps (each one click from its section) while the
+          project is only unfinished. */}
+      {settingUp ? <ProjectSetup ctx={ctx} /> : <SetupStrip ctx={ctx} />}
       {!settingUp && <StatusLine dash={dash} vitals={vitals} fix={fix} />}
       {banner}
 
@@ -1023,7 +1020,7 @@ export default function Overview({
         </aside>
       </div>
 
-      <HealthLine ctx={ctx} setupLeft={settingUp ? 0 : setupLeft} onSetup={() => setShowSetup(!showSetup)} />
+      <HealthLine ctx={ctx} />
       <AsOf at={ctx.asOf} error={ctx.error} />
     </>
   );
