@@ -463,3 +463,31 @@ def test_a_preview_per_change_gates_the_merge_and_never_gets_production_keys(cli
     with db_session() as session:
         env = daemon._scoped_secret_env(session, session.get(Project, project["id"]), "preview")
     assert list(env.values()) == ["preview-key"]
+
+
+def test_a_deploy_lost_mid_flight_fails_its_release_instead_of_wedging_it(client, gh, health):
+    """A runner rebuilt during a deploy reaped the run; its release stayed in
+    DEPLOYING, in flight, and every later release was refused."""
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Run, RunStatus
+    from yaaf.server import janitor
+
+    project = _factory(client)
+    _shipped_change(client, project, gh)
+    _with_prod(client, project)
+    body = _propose(client, project, "0.1.0").json()
+    client.post(f"/admin/approvals/{body['approval_id']}/decide", headers=ADMIN,
+                json={"approve": True})
+    (queued,) = _deploys(project)
+    with db_session() as session:
+        release = session.get(Release, queued.trigger["release_id"])
+        releases.deploy_started(session, release, "deploy")
+        session.add(Run(id=queued.id, project_id=project["id"], kind=RunKind.DEPLOY,
+                        trigger=queued.trigger, status=RunStatus.RUNNING,
+                        started_at=utcnow() - timedelta(hours=3),
+                        heartbeat_at=utcnow() - timedelta(hours=3)))
+        session.delete(session.get(RunQueue, queued.id))
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        janitor.reap_stale_runs(session, row, effective(session, row.id))
+    assert _release(queued.trigger["release_id"]).status == ReleaseStatus.FAILED

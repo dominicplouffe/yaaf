@@ -1890,6 +1890,22 @@ def expire_audit_samples(session: Session, project: Project) -> int:
 # ── reaping ─────────────────────────────────────────────────────────────────────
 
 
+def _deploy_lost(session: Session, run, why: str) -> None:
+    """A production deploy or rollback that never reported is a failed one.
+    Left alone, its release sat in DEPLOYING — in flight, so every later
+    release was refused — and a rollback that died raised no alarm while
+    production stayed on the release being rolled back."""
+    from yaaf.core.models import Release
+    from yaaf.server import releases
+
+    trigger = run.trigger or {}
+    if trigger.get("environment") == "preview":
+        return
+    release = session.get(Release, trigger.get("release_id"))
+    if release is not None:
+        releases.deployed(session, release, trigger.get("action") or "deploy", False, why)
+
+
 def reap_stale_runs(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     """A run whose lease heartbeat went stale is dead. Mark it reaped, release
     its task claim, and requeue the work once. Side effects are never erased —
@@ -1919,6 +1935,8 @@ def reap_stale_runs(session: Session, project: Project, cons: ConstitutionDoc) -
         policy.charge_failure(session, run)
         _harvest_reaped_usage(session, project, run)
         _release_claims_of_run(session, run.id, "run reaped: lease expired")
+        if run.kind == RunKind.DEPLOY:
+            _deploy_lost(session, run, "the deploy run died mid-flight and was reaped")
         if run.agent_id is not None and run.kind != RunKind.CHAT_SESSION:
             # A dead chat session is restarted quietly by its supervisor — a
             # "your run died, re-check your work" notice would only confuse.

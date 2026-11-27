@@ -207,3 +207,22 @@ def test_a_scenario_run_that_died_is_run_again(client, gh):
         assert changes.requeue_lost_jobs(session, session.get(Project, project["id"])) == 1
         assert session.query(RunQueue).filter_by(project_id=project["id"],
                                                  kind=RunKind.SCENARIO_CHECK).count() == 1
+
+
+def test_a_signature_does_not_erase_another_seats_return(client, gh):
+    from tests.conftest import ADMIN, bearer, live_token
+
+    project = _factory(client)
+    added = client.post(f"/admin/projects/{project['id']}/teams", headers=ADMIN, json={
+        "role_slug": "reviewer", "name": "Security", "employees": ["Sasha"]})
+    assert added.status_code == 200, added.text
+    sasha = next(a["id"] for a in added.json()["agents"])
+    change = _open(client, project, _claimed_task(client, project)).json()
+    _green(client, project, change["head_sha"])
+    _, token = live_token(project["id"], sasha)
+    returned = client.post(f"/agent/changes/{change['id']}/review", headers=bearer(token),
+                           json={"verdict": "return", "note": "The hold leaks across tabs."})
+    assert returned.status_code == 200, returned.text
+    signed = _sign(client, project, change["id"])
+    assert signed.status_code == 409 and "Sasha returned this commit" in signed.json()["error"]
+    assert _change(change["id"]).status == ChangeStatus.OPEN

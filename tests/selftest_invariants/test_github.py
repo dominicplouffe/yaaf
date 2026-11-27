@@ -363,3 +363,34 @@ def test_a_requirement_is_judged_on_mains_latest_commit(client, monkeypatch, tmp
     assert "mid-change" in (shared / "README.md").read_text() \
         and not (shared / "later.txt").exists(), \
         "a tree holding uncommitted work is left as it is"
+
+
+def test_a_changes_health_is_measured_from_where_its_branch_left_main(monkeypatch, tmp_path):
+    """Compared with main's tip, every file main changed since the branch was cut
+    counted as the change's own, and was judged against code it never saw."""
+    bare = _seed_bare_repo(tmp_path)
+    work = tmp_path / "work"
+    subprocess.run(["git", "clone", "-q", str(bare), str(work)], check=True)
+    ident = ["-c", "user.email=t@e", "-c", "user.name=T"]
+    _git(work, "checkout", "-q", "-b", "feature")
+    (work / "mine.py").write_text("def mine():\n    return 1\n")
+    _git(work, *ident, "add", ".")
+    _git(work, *ident, "commit", "-qm", "mine")
+    _git(work, "checkout", "-q", "-")
+    (work / "theirs.py").write_text("def theirs():\n    return 2\n")
+    _git(work, *ident, "add", ".")
+    _git(work, *ident, "commit", "-qm", "theirs")
+    _git(work, "push", "-q", "origin", "HEAD")
+    _git(work, "checkout", "-q", "feature")
+    measured: list[list[str]] = []
+    monkeypatch.setattr(daemon, "_measure_health",
+                        lambda where, files, job: measured.append(sorted(files)) or {})
+    monkeypatch.setattr(daemon.health, "compare", lambda base, head: {"worse": False})
+    branch = _git(work, "rev-parse", "--abbrev-ref", "origin/HEAD").split("/")[-1]
+    job = RunJob(run_id="run_h", project_id="p", agent_id=None, kind=RunKind.CHANGE_SCAN,
+                 task_id=None,
+                 trigger={"base": branch}, workspace_dir=str(work))
+    job.fetch_url = f"file://{bare}"
+    job.timeout_s = 60
+    daemon._change_health(job, work)
+    assert measured and all(files == ["mine.py"] for files in measured)

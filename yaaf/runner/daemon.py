@@ -2118,20 +2118,26 @@ def _change_health(job: RunJob, where: Path) -> dict:
     import subprocess
 
     base_ref = (job.trigger or {}).get("base") or "main"
-    fetch = subprocess.run(["git", "-C", str(where), "fetch", "-q", "--depth", "1",
+    # Enough history on both sides to find where the branch left main. Against
+    # main's tip instead, every file main changed since then counted as this
+    # change's: improved there, it read as this change making it worse.
+    fetch = subprocess.run(["git", "-C", str(where), "fetch", "-q", "--depth", "200",
                             job.fetch_url or "", base_ref], capture_output=True, text=True,
                            timeout=180)
     if fetch.returncode != 0:
         return {"error": "could not fetch the base branch to compare against"}
-    changed = health.code_files(_git_lines(where, ["diff", "--name-only", "FETCH_HEAD",
-                                                   "HEAD"]))
+    tip = (_git_lines(where, ["rev-parse", "FETCH_HEAD"]) or ["FETCH_HEAD"])[0]
+    subprocess.run(["git", "-C", str(where), "fetch", "-q", "--deepen", "200",
+                    job.fetch_url or "", "HEAD"], capture_output=True, text=True, timeout=180)
+    base = (_git_lines(where, ["merge-base", tip, "HEAD"]) or [tip])[0]
+    changed = health.code_files(_git_lines(where, ["diff", "--name-only", base, "HEAD"]))
     if not changed:
         return {"worse": False, "detail": "touches no code", "available": {"lizard": True},
                 "files": 0}
     base_dir = Path(str(where) + "-base")
     base_dir.mkdir(parents=True, exist_ok=True)
     for path in changed:
-        shown = subprocess.run(["git", "-C", str(where), "show", f"FETCH_HEAD:{path}"],
+        shown = subprocess.run(["git", "-C", str(where), "show", f"{base}:{path}"],
                                capture_output=True, timeout=60)
         if shown.returncode == 0:
             target = base_dir / path
@@ -2193,6 +2199,11 @@ def _materialize_deploy(session: Session, queued, project: Project, run, job: Ru
         run.status = RunStatus.FAILED
         run.summary = f"deploy with no target, no {name} environment, or no repo"
         run.finished_at = utcnow()
+        if not preview and target is not None:
+            # Said, not dropped: the release would otherwise stay approved and
+            # in flight, refusing every later release.
+            releases.deployed(session, target, trigger.get("action") or "deploy", False,
+                              run.summary)
         return None
     job.deploy_action = trigger.get("action") or "deploy"
     job.check_sha = trigger.get("sha")

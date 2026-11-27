@@ -554,6 +554,18 @@ def review(session: Session, project: Project, change: Change, agent: Agent, *,
     if len(note) < 10:
         raise Refusal("Say what you read and what you found; a verdict without a reason "
                       "teaches the author nothing and cannot be audited.", status_code=422)
+    if verdict == "sign" and change.review_verdict == "returned" \
+            and change.reviewed_sha == change.head_sha and change.reviewer_agent_id != agent.id:
+        # One verdict slot per change: a signature here used to overwrite
+        # another seat's return on the very commit it returned, and the change
+        # merged without the fix (the Split app: security returned #2, the
+        # code reviewer then signed a head security never re-read).
+        returner = session.get(Agent, change.reviewer_agent_id)
+        raise Refusal(
+            f"{returner.name if returner else 'Another seat'} returned this commit: "
+            f"{(change.review_note or '')[:300]} It waits on the author's push, which "
+            "every seat then reads fresh. Add what you found to the thread instead.",
+            status_code=409)
     change.reviewer_agent_id = agent.id
     change.review_note = note[:4000]
     change.reviewed_sha = change.head_sha
