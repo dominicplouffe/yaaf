@@ -468,12 +468,12 @@ export function HirePanel({
                   title={crew.missing_role_slugs.length
                     ? `This install's library has no ${crew.missing_role_slugs.join(", ")}`
                     : undefined}>
-                  <span className="cn">{crew.name}</span>
-                  <span className="co" title={crew.outcome}>{purposeOf(crew.outcome, 90)}</span>
+                  <span className="crew-name">{crew.name}</span>
+                  <span className="crew-outcome" title={crew.outcome}>{purposeOf(crew.outcome, 90)}</span>
                   {/* The rail is one grid row, so every card is as tall as the
                       tallest crew in it, scrolled out of view or not. Capping
                       the chips keeps one big crew from padding all the others. */}
-                  <span className="cr">
+                  <span className="crew-roles">
                     {crew.teams.slice(0, CREW_CHIPS).map((t, i) => (
                       <span className="chip" key={i}>
                         {t.role_name ?? t.role_slug}
@@ -487,7 +487,7 @@ export function HirePanel({
                       </span>
                     )}
                   </span>
-                  <span className="cf">
+                  <span className="crew-foot">
                     <span>{crew.teams.length} team{crew.teams.length === 1 ? "" : "s"}</span>
                     <span>{crew.missing_role_slugs.length
                       ? "needs roles you don't have"
