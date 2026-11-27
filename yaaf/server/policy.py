@@ -1675,8 +1675,17 @@ def affordable_runs(session: Session, project: Project, cons: ConstitutionDoc) -
 
     if project.billing_mode != "api_key":
         return {"known": False, "why": "subscription billing prices no individual run"}
-    spent, _ = month_to_date(session, project.id)
-    remaining = max(0.0, cons.monthly_usd_cap - spent)
+    from yaaf.server import budget as budget_lib
+
+    # Against the job budget when there is one: it is the wall, and the month
+    # is set to match it, so "left this month" would quote the same pot as if
+    # it refilled on the first.
+    job = budget_lib.job_budget(session, project, cons)
+    if job is not None:
+        remaining = job.left
+    else:
+        spent, _ = month_to_date(session, project.id)
+        remaining = max(0.0, cons.monthly_usd_cap - spent)
     per_run = avg_usd_per_run(session, project.id)
     if per_run is None:
         return {"known": False, "why": f"fewer than {MIN_PRICED_RUNS} priced runs so far",
@@ -1765,7 +1774,7 @@ INTAKE_REPORT = "intake-report.md"
 def intake_owed(session: Session, project: Project) -> bool:
     """A Code Factory that adopted a repo, with no intake report published."""
     if not shape.is_factory(project) or \
-            (project.integrations or {}).get("factory_start") != "repo":
+            not shape.adopts_repo((project.integrations or {}).get("factory_start")):
         return False
     from yaaf.core.models import Artifact
 

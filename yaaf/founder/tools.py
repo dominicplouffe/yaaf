@@ -285,9 +285,10 @@ PROPOSE_SCHEMA = {
                 "goal": {"type": "string"},
                 "mode": {"type": "string",
                          "enum": ["explore", "deliver", "operate", "code_factory"]},
-                "factory_start": {"type": "string", "enum": ["new", "repo"],
+                "factory_start": {"type": "string", "enum": ["new", "repo", "repo_build"],
                                   "description": "code_factory only: build from "
-                                  "nothing, or adopt the repo named in `repo`"},
+                                  "nothing, adopt the repo named in `repo` to keep it, "
+                                  "or adopt it to build something on it first"},
                 "repo": {"type": "string",
                          "description": "code_factory only: a new build's repo — a bare "
                                         "name makes a new private repo, owner/name uses an "
@@ -313,6 +314,9 @@ PROPOSE_SCHEMA = {
                 "constitution": {"type": "object",
                                  "description": "only the rules you can justify; never "
                                                 "pace rules — name `tempo` instead"},
+                "stakes_quote": {"type": "string",
+                                 "description": "the phrase of the goal, copied exactly, "
+                                                "that constitution.stakes rests on"},
                 "controlled_domains": {"type": "array", "items": {"type": "string"}},
                 "billing_secret_id": {"type": "string"},
                 "credentials": {"type": "object", "additionalProperties": {"type": "string"},
@@ -592,7 +596,7 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         if quick:
             # Who pays a quick project was decided before the turn began.
             project.setdefault("billing_secret_id", quick["billing_id"])
-        problems = stamp_tempo(project, args.get("tempo"))
+        problems = stamp_tempo(project, args.get("tempo")) + stamp_quality(project)
         bundle = as_bundle(project)
         problems += (validate(bundle) + billing_problems(bundle["project"], session)
                      + doctrine_problems(bundle.get("project") or {}, session))
@@ -778,7 +782,7 @@ def _place_repo(project: dict) -> dict:
     project = {k: v for k, v in project.items() if k != "repo"}
     if not repo or project.get("mode") != "code_factory":
         return project
-    if project.get("factory_start") == "repo":
+    if shape.adopts_repo(project.get("factory_start")):
         return {**project, "github_repo": repo}
     return {**project, "integrations": {**(project.get("integrations") or {}),
                                         "repo_wanted": repo}}
@@ -1049,6 +1053,36 @@ def stakes_problems(project: dict) -> list[str]:
         "model. `normal` is often right — say so on purpose, in one line, with what "
         "it buys and what it costs."
     ]
+
+
+def stamp_quality(project: dict) -> list[str]:
+    """Turn the Founder's stakes and the phrase it rests on into the same
+    reading the new-project form sends (`bar_reading`), held to the same check.
+
+    The chairman asked that the brief decide how good the work has to be, on
+    the form and here alike. The form asks a small model and gets a quote back;
+    the Founder IS the model reading the brief, so it is asked for the quote
+    directly — and refused if the quote is not the chairman's own words, which
+    is the one thing that makes "the brief decided" checkable rather than
+    asserted. Without a stakes there is nothing to stamp; `stakes_problems`
+    asks for one.
+    """
+    from yaaf.server import bar_reading
+
+    quote = project.pop("stakes_quote", None)
+    constitution = project.get("constitution") or {}
+    stakes = constitution.get("stakes") if isinstance(constitution, dict) else None
+    if not stakes:
+        return []
+    if problem := bar_reading.quote_problem(str(project.get("goal") or ""), quote):
+        return [problem.replace("quote:", "stakes_quote:", 1)]
+    project["quality"] = {
+        "stakes": stakes,
+        "proof": bool(constitution.get("require_evidence_verification")),
+        "quote": " ".join(str(quote).split()),
+        "by": "founder",
+    }
+    return []
 
 
 def stamp_tempo(project: dict, card: str | None) -> list[str]:

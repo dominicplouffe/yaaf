@@ -58,6 +58,7 @@ from yaaf.core.models import (
     Team,
     utcnow,
 )
+from yaaf.server import budget as budget_lib
 from yaaf.server import policy
 from yaaf.server.rows import chairman_time
 
@@ -86,6 +87,7 @@ MESSAGE_COALESCE_COUNT = 3
 # this agent can restart it; MEMORY_PRESSURE deliberately is not — a nearly-full
 # store is not worth a full-price wake, so it coalesces and rides the next one.
 URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
+                       NoticeKind.BUDGET_RESERVE,
                        NoticeKind.APPROVAL_DECIDED, NoticeKind.AUDIT_FAILED,
                        NoticeKind.MEMORY_FULL, NoticeKind.EXTERNAL_EVENT,
                        # Somebody outside answered the CEO's email and is
@@ -395,6 +397,12 @@ def run_walls(cons: ConstitutionDoc) -> tuple[int, int]:
     return wall, min(cons.reserved_governance_runs, wall // 2)
 
 
+def _in_hand_in(session: Session, project: Project, cons: ConstitutionDoc) -> bool:
+    """Is this project's job budget into its hand-in reserve?"""
+    job = budget_lib.job_budget(session, project, cons)
+    return job is not None and job.in_reserve
+
+
 def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     now = utcnow()
     start = day_start(now)
@@ -433,9 +441,14 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     # and — the case this was written for — a project whose hourly ceiling went
     # to four agents acknowledging a broadcast may still run the two agents
     # holding ready tasks.
+    # A spread job budget's share for today: past it, ordinary work waits for
+    # midnight exactly as it does at the run wall — the same lane, the same
+    # exemptions for the chairman's own messages.
+    share = budget_lib.daily_share(session, project, cons, now)
     work_blocked = (today >= wall
                     or hourly_runs_used(session, project, now)
-                    >= cons.runs_per_project_per_hour)
+                    >= cons.runs_per_project_per_hour
+                    or (share is not None and share.spent))
 
     inbox_today = inbox_runs_used(session, project, start)
     inbox_hour = inbox_runs_used(session, project, now - timedelta(hours=1))
@@ -458,6 +471,13 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
 
     max_concurrent = _max_concurrent(cons)
     in_flight = _in_flight(session, project)
+
+    # The job budget's hand-in reserve: past it only the CEO runs, so the last
+    # of the money goes on saying what was done rather than on a task the
+    # money cannot finish. Every CEO wake passes, not just the governance
+    # kinds — the notice that the reserve began is itself what wakes it, and
+    # a reserve the hand-in cannot reach is a reserve for nothing.
+    hand_in = _in_hand_in(session, project, cons)
 
     enqueued = enqueued_work = 0
     overflow: list[tuple[Agent, list[dict]]] = []
@@ -497,7 +517,7 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
         full = in_flight + enqueued_work >= max_concurrent
         # Only the CEO sits in the boardroom, so on a spent or full project
         # nobody else has anything a run could still be for.
-        if (talk_only or full) and agent.kind != AgentKind.CEO:
+        if (talk_only or full or hand_in) and agent.kind != AgentKind.CEO:
             continue
         if _talk_busy(session, agent, boardroom_ids):
             continue
@@ -569,7 +589,7 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     # (`READ_ON_WORK`), because a read that changed nothing is the ordinary
     # case and refunding it would leave reading with no ceiling at all.
     for agent, reasons in overflow:
-        if (reading_off(cons) or work_blocked or governance_only
+        if (reading_off(cons) or work_blocked or governance_only or hand_in
                 or in_flight + enqueued_work >= max_concurrent):
             break
         enqueue(agent, RunKind.AGENT_RUN, reasons, read_on_work=True)
@@ -1183,6 +1203,38 @@ def _activity_brief(state: dict) -> dict:
             # a line, not a box.
             banner=False, sig=None)
 
+    if gate == "daily_money":
+        m = state["daily_money"]
+        money = (lambda v: f"${v:,.2f}") if m["unit"] == "USD" else (lambda v: f"{v:,.0f} tokens")
+        ready = waiting["claimable_tasks"]
+        return brief(
+            "serious", "today's share",
+            f"today's share of the budget is spent ({money(m['spent_today'])} of "
+            f"{money(m['share'])}), resumes {_midnight(state)}",
+            f"Today's share of the job budget is spent: {money(m['spent_today'])} of "
+            f"{money(m['share'])}.",
+            f"The budget is spread over the {m['days_left']} day(s) left to the deadline, "
+            f"so work resumes at {_midnight(state)} with a new share."
+            + (f" {ready} ready task(s) wait for it." if ready else " Nothing ready is held up.")
+            + " To go faster, turn off spreading in Settings and the project sprints; "
+            "your messages in the boardroom are still answered.",
+            # A banner only when ready work waits, the run wall's own ruling.
+            banner=bool(ready), sig="daily_money", clears_at=m["resets_at"])
+
+    if gate == "budget_reserve":
+        j = state["job_budget"]
+        money = (lambda v: f"${v:,.2f}") if j["unit"] == "USD" else (lambda v: f"{v:,.0f} tokens")
+        return brief(
+            "serious", "hand-in",
+            f"the job budget is down to its hand-in reserve, {money(j['left'])} left",
+            f"The job budget is nearly spent: {money(j['spent'])} of {money(j['budget'])}.",
+            f"The last {money(j['left'])} is kept for the CEO to hand in what it has — "
+            "what is finished, what is not, and what more money would buy. Everyone "
+            "else has stopped. Raise the job budget in Settings if the work should go "
+            "on; otherwise the project pauses when it is spent.",
+            # Not dismissible: no clock ends it, only his raising the budget.
+            sig=None)
+
     if gate == "governance_reserve":
         # The last few runs of the day are kept for a status review or a
         # re-forecast, so the day the work runs out is not also the day the
@@ -1435,6 +1487,8 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     # work is done for the day and only governance may still spend.
     run_wall, reserved = run_walls(cons)
     governance_only = used >= run_wall - reserved
+    job = budget_lib.job_budget(session, project, cons)
+    share = budget_lib.daily_share(session, project, cons, now)
 
     agents = list(
         session.execute(
@@ -1511,6 +1565,8 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             if not r["busy"] and r["wakes_last_hour"] < r["wake_cap"]]
     if used >= run_wall:
         blocked_by = "daily_runs"
+    elif share is not None and share.spent:
+        blocked_by = "daily_money"
     elif used_hour >= cons.runs_per_project_per_hour:
         blocked_by = "pacing"
     elif in_flight >= max_concurrent:
@@ -1544,6 +1600,12 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
         blocked_by = "wake_ceiling"
     elif free and all(r["batching_until"] for r in free):
         blocked_by = "coalescing"
+    elif job is not None and job.in_reserve:
+        # The job budget is down to the money kept for the CEO's hand-in.
+        # Above governance_reserve because it outlasts the day: that one
+        # clears at midnight, this one only when the chairman raises the
+        # budget.
+        blocked_by = "budget_reserve"
     elif governance_only:
         # Ordinary work is done for the day; only a review, a cycle plan or a
         # re-forecast may still spend. Nothing said this out loud before, so
@@ -1573,6 +1635,19 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
 
     state = {
         "blocked_by": blocked_by,
+        # The job budget, when the project has one: the line its hand-in
+        # reserve starts at is a gate like the others, and the Overview has to
+        # be able to say how much is left without asking a second endpoint.
+        "daily_money": None if share is None else {
+            "share": round(share.share, 4), "spent_today": round(share.spent_today, 4),
+            "days_left": share.days_left, "unit": job.unit if job else "USD",
+            "resets_at": (start + timedelta(days=1)).isoformat(),
+        },
+        "job_budget": None if job is None else {
+            "budget": job.budget, "spent": round(job.spent, 4), "unit": job.unit,
+            "left": round(job.left, 4), "reserve_line": round(job.reserve_line, 4),
+            "in_reserve": job.in_reserve,
+        },
         "daily_runs": {
             "used": used,
             "cap": cons.runs_per_project_per_day,

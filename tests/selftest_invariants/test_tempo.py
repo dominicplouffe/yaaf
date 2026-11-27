@@ -79,7 +79,11 @@ def test_a_tempo_card_writes_only_real_rules(name, rules):
     it."""
     assert not unknown_rules(rules), name
     assert set(rules) == set(TEMPO_RULES)
-    ConstitutionDoc.model_validate({**ConstitutionDoc().model_dump(), **rules})
+    # Sprint is the one card that cannot stand alone: it is refused without a
+    # budget for the whole job (test_sprint_without_a_job_budget_is_refused),
+    # so it is validated the way it is always written — with one.
+    pot = {"project_usd_budget": 500.0} if name == "sprint" else {}
+    ConstitutionDoc.model_validate({**ConstitutionDoc().model_dump(), **rules, **pot})
 
 
 @pytest.mark.parametrize("name,rules", sorted(BAR_PRESETS.items()))
@@ -126,7 +130,7 @@ def test_a_bar_card_round_trips(name, rules):
 
 def test_hand_tuned_rules_are_reported_as_hand_tuned():
     """None is the honest answer and the screens must show it as such. A
-    chairman who edited four rules by hand is not "on Working hours"; telling
+    chairman who edited four rules by hand is not "on Steady"; telling
     him he is, is how he reads a card's blurb as a description of his own
     project and believes something untrue about what it costs."""
     mixed = {**ConstitutionDoc().model_dump(), **TEMPO_PRESETS["working_hours"],
@@ -463,7 +467,7 @@ def test_a_rhythm_that_moves_without_the_pace_is_reported(client):
     check = _checks(client, project).get("tempo-vs-rhythm")
     assert check and check["status"] == "warn"
     # Named the way the Settings cards name them, with what each one does.
-    assert "hourly" in check["detail"] and "Live" in check["detail"]
+    assert "hourly" in check["detail"] and "Heavy" in check["detail"]
     assert "150 runs a day" in check["detail"] and "12 runs a day" in check["detail"]
     # Told, never applied: the pace rules are exactly where they were.
     assert tempo_name(_rules(client, project)) == "few_times_daily"
@@ -502,11 +506,11 @@ def test_the_pace_row_carries_both_answers(client):
     check = _checks(client, project)["tempo-vs-rhythm"]
     action = check["action"]
     assert action["kind"] == "tempo" and action["to"] == "few_times_daily"
-    assert (action["to_label"], action["keep_label"]) == ("A few times a day", "Live")
-    assert "weekly cycle" in check["detail"] and "Paced “Live”" in check["detail"]
+    assert (action["to_label"], action["keep_label"]) == ("Light", "Heavy")
+    assert "weekly cycle" in check["detail"] and "Paced “Heavy”" in check["detail"]
 
     switched = _amend(client, project, action["changes"],
-                      reason="Pace set to A few times a day from Setup & health.")
+                      reason="Pace set to Light from Setup & health.")
     assert switched.status_code == 200, switched.text
     assert tempo_name(_rules(client, project)) == "few_times_daily"
     assert "tempo-vs-rhythm" not in _checks(client, project)
@@ -789,7 +793,7 @@ def test_the_brief_names_both_cards(client):
 
 
 def test_one_problem_is_one_row(client):
-    """A weekly desk on Live with a $75 budget had two rows quoting the same
+    """A weekly desk on Heavy with a $75 budget had two rows quoting the same
     $855: the pace and the budget. Switching the pace answers both, so it is
     one row that says so, and the budget row stays for a budget the switch
     would not fix."""

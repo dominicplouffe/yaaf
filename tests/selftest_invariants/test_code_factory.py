@@ -28,6 +28,7 @@ from tests.selftest_invariants.test_daily_obligations import DAILY
 from tests.selftest_invariants.test_modes import fabricate_met, run_mode_tick
 from tests.selftest_invariants.test_requirements import accept, ceo_token, propose
 from yaaf.core import shape
+from yaaf.core.constitution import effective, tempo_name
 from yaaf.core.db import db_session
 from yaaf.core.models import (
     Cycle,
@@ -416,3 +417,28 @@ def test_a_factorys_setup_steps_open_its_own_settings_section(client):
     nav = (pathlib.Path(__file__).resolve().parents[2] / "web" / "src" / "nav.ts").read_text()
     sections = set(re.findall(r'key: "([a-z]+)", label:', nav))
     assert set(steps.values()) <= sections, set(steps.values()) - sections
+
+
+def test_a_repo_can_be_adopted_to_build_something_on_it_first(client):
+    """The third start. Adopting to KEEP starts in upkeep; adopting to BUILD a
+    feature, a rewrite or a launch starts in build — paced like a delivery, to
+    a budget for the job — and still owes the intake report every adopting
+    factory owes, because the code already has users. Without it the only way
+    to ask a kept repo for something big was a second project on one repo."""
+    make_project(client, slug="seed", start=False)
+    no_repo = client.post("/admin/projects", json=_body(
+        "no-repo-build", mode="code_factory", factory_start="repo_build"), headers=ADMIN)
+    assert no_repo.status_code == 422
+    assert "github_repo" in no_repo.json()["detail"]
+
+    project = make_project(client, slug="checkout-v2", mode="code_factory",
+                           factory_start="repo_build", github_repo="acme/shop",
+                           constitution={"project_usd_budget": 800.0})
+    assert shape.initial_phase("code_factory", "repo_build") == FactoryPhase.BUILD
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        assert row.factory_phase == FactoryPhase.BUILD
+        assert row.github_repo == "acme/shop"
+        assert policy.intake_owed(session, row)
+        # A finishing factory with a job budget sprints, like any delivery.
+        assert tempo_name(effective(session, row.id).model_dump()) == "sprint"

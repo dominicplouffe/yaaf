@@ -26,15 +26,18 @@ from sqlalchemy.orm import Session
 from yaaf.core import credential_files, ids, model_policy, platform, prices, shape, web_search
 from yaaf.core.constitution import (
     GROUP_THEMES,
+    SPREAD_NEEDS_A_DATE,
     THEME_ORDER,
     ConstitutionDoc,
     create_initial,
     default_autonomy,
     default_briefing,
     default_factory_floors,
+    default_job_month,
     default_tempo,
     effective,
     effective_version,
+    job_budget_problem,
     propose_amendment,
     rule_label,
 )
@@ -99,7 +102,7 @@ from yaaf.runtimes.harnesses import canonical as canonical_harness
 from yaaf.runtimes.harnesses import find as find_harness
 from yaaf.runtimes.seats import choosable, class_role_refusal
 from yaaf.runtimes.seats import refusal as seat_refusal
-from yaaf.server import acting, authority, briefing, policy, unread
+from yaaf.server import acting, authority, bar_reading, briefing, policy, unread
 from yaaf.server.api.agent import WAKE_CHANNEL
 from yaaf.server.deps import db
 from yaaf.server.identity import Person, person_auth, signed_in
@@ -915,7 +918,7 @@ class ProjectCreate(BaseModel):
     mode: str = Field(default="explore", pattern=shape.MODE_PATTERN)
     # Code Factory only: start from nothing ("new", built first) or from a repo
     # that already exists ("repo", which starts in upkeep and needs github_repo).
-    factory_start: str | None = Field(default=None, pattern="^(new|repo)$")
+    factory_start: str | None = Field(default=None, pattern="^(new|repo|repo_build)$")
     controlled_domains: list[str] = Field(default_factory=list)
     # The repo evidence webhooks attest against. Part of the design, so a
     # setup file carries it and a restore does not come back half-wired.
@@ -948,6 +951,12 @@ class ProjectCreate(BaseModel):
     # it does not start without one.
     coding_secret_id: str | None = None
     teams: list[TeamSpec] = Field(default_factory=list)
+    # How good the work has to be, as read from the goal: {stakes, proof,
+    # quote, by} (yaaf.server.bar_reading). Optional — a spec file or an older
+    # client sends none — but when sent it is held to the brief: the quote must
+    # be the chairman's own words and the constitution must carry the stakes
+    # it claims. Recorded at creation so the reason outlives the form.
+    quality: dict | None = None
     # Solo mode (the M2 single-agent arm): the CEO is placed as the sole member
     # — hence derived lead — of the only team, so one brain plans AND executes
     # under byte-identical policy. Requires exactly one team with no employees.
@@ -1680,8 +1689,9 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         doc = ConstitutionDoc.model_validate(
             {**ConstitutionDoc().model_dump(),
              **default_tempo(shape.behaves_as(body.mode, phase),
-                             default_factory_floors(body.mode, default_briefing(
-                                 default_autonomy(body.constitution))))})
+                             default_job_month(default_factory_floors(
+                                 body.mode, default_briefing(
+                                     default_autonomy(body.constitution)))))})
     except ValidationError as exc:
         # A rule that cannot hold — a 29th of every month — is the founder's to
         # fix, not a 500. It reached here unchecked for as long as the suite's
@@ -1690,6 +1700,13 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         raise HTTPException(status_code=422, detail="; ".join(
             f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()
         )) from None
+    if problem := job_budget_problem(
+            billing.llm_mode if billing else (body.billing_mode or "api_key"), doc):
+        raise HTTPException(status_code=422, detail=f"constitution: {problem}")
+    if problem := bar_reading.reading_problem(body.goal, doc.model_dump(), body.quality):
+        raise HTTPException(status_code=422, detail=problem)
+    if doc.spread_job_budget and body.deadline is None:
+        raise HTTPException(status_code=422, detail=f"constitution: {SPREAD_NEEDS_A_DATE}")
     _check_review_seat(session, doc, body.teams, solo=body.solo)
     deadline = body.deadline
     deadline_source = None
@@ -1743,6 +1760,11 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     session.add(ProjectMember(project_id=project.id, user_id=chairman.id, role="chairman"))
 
     create_initial(session, project.id, doc)
+    if body.quality is not None:
+        # The reason the stakes are what they are, in the chairman's words.
+        # The Settings page reads it back beside the rule it set.
+        _audit(session, project.id, "bar.read", "project", project.id,
+               {k: body.quality.get(k) for k in ("stakes", "proof", "quote", "by")})
 
     # Webhook secrets exist from birth. The platform_attested path was never
     # the missing piece — provisioning was: 315 of 315 evidence rows in the
@@ -2117,7 +2139,7 @@ def _factory_phase_at_create(body: ProjectCreate) -> str | None:
             status_code=422,
             detail="factory_start belongs to a Code Factory project; this one is "
                    f"{body.mode}.")
-    if body.factory_start == "repo" and not body.github_repo:
+    if shape.adopts_repo(body.factory_start) and not body.github_repo:
         raise HTTPException(
             status_code=422,
             detail="a Code Factory that adopts a repo needs the repo: pass "
@@ -5465,6 +5487,54 @@ def _amend(project_id: str, body: AmendmentIn, session: Session, *,
         ],
         "note": " ".join(note_parts) + " Everything is disclosed to the CEO.",
     }
+
+
+class BriefRead(BaseModel):
+    goal: str = Field(min_length=10, max_length=20_000)
+    billing_secret_id: str | None = None
+
+
+@router.post("/brief/bar", dependencies=[authority.SIGNED_IN])
+def read_the_bar(body: BriefRead, session: Session = Depends(db)) -> dict:
+    """How good the work has to be, read from a brief that has no project yet.
+
+    The form asks this once, when the chairman leaves the brief, and shows the
+    answer as one line with the phrase it rests on. Read on the credential he
+    chose so the call is paid by what will pay the project; the cost is one
+    Fast-model call, about a cent, and is not booked to a project that does not
+    exist yet. Where no model can be called the word rules answer, labelled.
+    """
+    secret = session.get(Secret, body.billing_secret_id) if body.billing_secret_id else None
+    if secret is not None and (secret.kind != "billing" or secret.hidden_at is not None):
+        # Not `assigned_credential`: that locks the row, and this holds it
+        # across a model call. The same two refusals, without the lock.
+        raise HTTPException(status_code=422, detail="that credential cannot pay for a reading")
+    reading = bar_reading.read_brief(session, body.goal, secret)
+    return {**reading.as_dict(), "rules": bar_reading.settle(reading)}
+
+
+@router.post("/projects/{project_id}/job-budget/keep", dependencies=[authority.STEER])
+def keep_monthly_budget(project_id: str, session: Session = Depends(db)) -> dict:
+    """Answer the job-budget row with "keep": this finishing project stays on
+    its monthly budget, on purpose. Switching is an ordinary amendment; keeping
+    changes no rule, so it is recorded, and the row stays away for good."""
+    from yaaf.core.constitution import has_job_budget
+
+    project = _get_project(session, project_id)
+    if has_job_budget(effective(session, project.id).model_dump()):
+        raise HTTPException(status_code=409,
+                            detail="This project already has a budget for the whole job.")
+    _audit(session, project.id, "job_budget.keep", "project", project.id, {})
+    return {"ok": True}
+
+
+@router.post("/projects/{project_id}/upkeep-budget/keep", dependencies=[authority.STEER])
+def keep_job_budget_in_upkeep(project_id: str, session: Session = Depends(db)) -> dict:
+    """Answer the upkeep-budget row with "keep": this kept project stays on the
+    budget for the whole job — a fixed pot for its upkeep too — on purpose."""
+    _get_project(session, project_id)
+    _audit(session, project_id, "upkeep_budget.keep", "project", project_id, {})
+    return {"ok": True}
 
 
 @router.post("/projects/{project_id}/tempo/keep", dependencies=[authority.STEER])

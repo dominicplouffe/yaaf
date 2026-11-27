@@ -270,6 +270,123 @@ def month_to_date(session: Session, project_id: str) -> tuple[float, int]:
     return float(usd), int(tokens)
 
 
+def job_to_date(session: Session, project_id: str) -> tuple[float, int]:
+    """Spend since the project began, both units — the job budget's own sum.
+
+    From creation rather than from whenever the budget was set: "the whole
+    job" means the whole job, and a start date nobody can see is how a total
+    stops adding up. A project switched onto a job budget mid-way is shown its
+    spend so far when it is asked for the total, rather than having it hidden.
+    """
+    usd, tokens = session.execute(
+        select(
+            func.coalesce(func.sum(LedgerEntry.usd), 0.0),
+            func.coalesce(
+                func.sum(LedgerEntry.tokens_in + LedgerEntry.tokens_out
+                         + LedgerEntry.cache_creation_tokens
+                         + LedgerEntry.cache_read_tokens),
+                0,
+            ),
+        ).where(LedgerEntry.project_id == project_id,
+                LedgerEntry.kind != LedgerKind.REVENUE)
+    ).one()
+    return float(usd), int(tokens)
+
+
+class JobBudget(NamedTuple):
+    """The job budget, in the unit this project bills in, with its two lines."""
+
+    budget: float
+    unit: str
+    spent: float
+    #: Past this, ordinary work stops and only the CEO runs (the hand-in).
+    reserve_line: float
+
+    @property
+    def left(self) -> float:
+        return max(0.0, self.budget - self.spent)
+
+    @property
+    def in_reserve(self) -> bool:
+        return self.spent >= self.reserve_line
+
+    @property
+    def spent_out(self) -> bool:
+        return self.spent >= self.budget
+
+
+def job_budget(session: Session, project: Project, cons: ConstitutionDoc) -> JobBudget | None:
+    """This project's job budget, or None when it has none in its billing unit.
+
+    The unit follows billing exactly as `budget_of` does: a dollar budget on a
+    subscription project cannot be measured, so it is not a wall there, and
+    the create and amend paths refuse that combination before it is stored
+    (`job_budget_problem`).
+    """
+    usd_mode = project.billing_mode == "api_key"
+    budget = float(cons.project_usd_budget if usd_mode else cons.project_token_budget)
+    if budget <= 0:
+        return None
+    usd, tokens = job_to_date(session, project.id)
+    spent = usd if usd_mode else float(tokens)
+    return JobBudget(budget=budget, unit="USD" if usd_mode else "tokens", spent=spent,
+                     reserve_line=budget * (1.0 - cons.budget_reserve_ratio))
+
+
+class DailyShare(NamedTuple):
+    """Today's share of a spread job budget, and what today has spent of it."""
+
+    share: float
+    spent_today: float
+    days_left: int
+
+    @property
+    def spent(self) -> bool:
+        return self.spent_today >= self.share
+
+
+def daily_share(session: Session, project: Project, cons: ConstitutionDoc,
+                now=None) -> DailyShare | None:
+    """Today's share of the job budget when it is spread to the deadline, or
+    None when it is not (no job budget, spreading off, no date).
+
+    Recomputed every day from what is actually left, so a slow day leaves
+    more for the days after it and a fast one less — a share, not a quota
+    that was fixed at creation and is wrong by the first Tuesday. Measured on
+    the UTC day the run allowance already uses. Against the reserve line,
+    not the total: the hand-in's money is never anybody's share. On the last
+    day, or past the date, the share is everything left.
+    """
+    if not cons.spread_job_budget or project.deadline is None:
+        return None
+    job = job_budget(session, project, cons)
+    if job is None:
+        return None
+    now = now or utcnow()
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    usd_mode = project.billing_mode == "api_key"
+    usd, tokens = session.execute(
+        select(
+            func.coalesce(func.sum(LedgerEntry.usd), 0.0),
+            func.coalesce(
+                func.sum(LedgerEntry.tokens_in + LedgerEntry.tokens_out
+                         + LedgerEntry.cache_creation_tokens
+                         + LedgerEntry.cache_read_tokens),
+                0,
+            ),
+        ).where(LedgerEntry.project_id == project.id,
+                LedgerEntry.at >= today,
+                LedgerEntry.kind != LedgerKind.REVENUE)
+    ).one()
+    spent_today = float(usd) if usd_mode else float(tokens)
+    deadline = project.deadline
+    days_left = max(1, -(-(deadline - today).total_seconds() // 86400))
+    before_today = job.spent - spent_today
+    spendable = max(0.0, job.reserve_line - before_today)
+    return DailyShare(share=spendable / days_left, spent_today=spent_today,
+                      days_left=int(days_left))
+
+
 def proposed_budget(session: Session, project: Project,
                     cons: ConstitutionDoc) -> dict | None:
     """What the last three months say the budget should be.

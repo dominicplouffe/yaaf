@@ -689,10 +689,16 @@ def _money(session: Session, project: Project, cons: ConstitutionDoc,
         )
     ).one()
     usd_mode = project.billing_mode == "api_key"
+    from yaaf.server import budget as budget_lib
     from yaaf.server.janitor import month_to_date
 
     mtd_usd, mtd_tokens = month_to_date(session, project.id)
+    job = budget_lib.job_budget(session, project, cons)
     return {
+        # The job's own line when it has one: on such a project "of $2,000
+        # this month" reads as a pot that refills on the first, and it does not.
+        "job": None if job is None else {"spent": round(job.spent, 4),
+                                         "budget": job.budget},
         "unit": "usd" if usd_mode else "tokens",
         "window": (round(float(usd), 4) if usd_mode
                    else int(tokens_in) + int(tokens_out)
@@ -1644,7 +1650,13 @@ def render_text(brief: dict) -> str:
         body.append(f"  · {pulse['open_tasks']} task(s) open, {pulse['running']} run(s) "
                     f"in flight, last run "
                     + (when(pulse["last_run_at"]) if pulse["last_run_at"] else "never"))
-    body += ["", f"Money: {spent} this window; {mtd} of {cap} this month."]
+    job = money.get("job")
+    if job:
+        so_far = (f"${job['spent']:,.2f} of ${job['budget']:,.0f}" if money["unit"] == "usd"
+                  else f"{job['spent']:,.0f} of {job['budget']:,.0f} tokens")
+        body += ["", f"Money: {spent} this window; {so_far} for the whole job."]
+    else:
+        body += ["", f"Money: {spent} this window; {mtd} of {cap} this month."]
 
     # The fifth question, and the one that used to go unanswered: a quiet
     # window reads as a dead project unless something says when it moves next.

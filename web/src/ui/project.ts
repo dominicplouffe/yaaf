@@ -134,6 +134,12 @@ export const FLAG_PLAIN: Record<string, { title: string; means: string }> = {
     means: "The work may still be right; the estimate it was planned against was "
       + "not, and everything planned from that estimate inherits the error.",
   },
+  teams_idle: {
+    title: "Teams are sitting with nothing to do",
+    means: "There is scope left to do, at least one team has no task, and nothing "
+      + "is stopping it. Giving every team work is your CEO's job, and it has been "
+      + "woken to do it.",
+  },
   seat_idle: {
     title: "Somebody you are paying for has had nothing to do",
     means: "A seat on the org chart has gone unused. Either the work has not "

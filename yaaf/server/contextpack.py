@@ -63,11 +63,15 @@ UNTRUSTED_NOTE = (
 
 
 def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
+    job = _job_amount(cons, project)
     budget = (
+        (f"${job:,.0f} for the whole job" if project.billing_mode == "api_key"
+         else f"{int(job):,} tokens for the whole job") if job else
         f"${cons.monthly_usd_cap:,.0f}/month"
         if project.billing_mode == "api_key"
         else f"{cons.monthly_token_cap:,} tokens/month"
     )
+    clause = _job_budget_clause(cons, job) if job else _budget_clause(cons, project)
     return (
         "THE CONSTITUTION (enforced by the platform as refusals — these are not requests):\n"
         f"- Work is pulled from the board, never invented. Queue ceiling {cons.queue_ceiling}; "
@@ -89,7 +93,7 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         "fulfills it in one motion. Unanswered it expires to no, so plan the work that "
         "does not depend on it. Anyone else: tell the CEO what you are missing — a "
         "suggestion survives.\n"
-        f"- Budget: {budget}. {_budget_clause(cons, project)}\n"
+        f"- Budget: {budget}. {clause}\n"
         # The wake-loop brakes were the one enforced group never stated here,
         # so a project that had spent its daily runs by 01:22 had a CEO with no
         # way to know why it went quiet — and a chairman who asked got an
@@ -128,6 +132,37 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         "that, move a stage, change an estimate — EXECUTE it with directive_file citing "
         "his message, rather than asking him to press the button himself. His word is the "
         "authority; the citation proves it; the echo lets him correct you."
+    )
+
+
+def _job_amount(cons: ConstitutionDoc, project: Project) -> float:
+    """The job budget in this project's billing unit, or 0 when it has none."""
+    return float(cons.project_usd_budget if project.billing_mode == "api_key"
+                 else cons.project_token_budget)
+
+
+def _job_budget_clause(cons: ConstitutionDoc, job: float) -> str:
+    """What a budget for the whole job means — the opposite instruction to the
+    monthly plan's, in the same place.
+
+    The monthly sentence below exists because a plan that was fatal to cross
+    taught CEOs to hoard and lowball. This budget IS a wall, and the same
+    lesson says what has to come with one: it must be the planned end of the
+    money, not a cliff to stand back from, and spending it on the job has to
+    be the instruction rather than an unspoken risk. So it says both.
+    """
+    reserve = job * cons.budget_reserve_ratio
+    return (
+        "This is a budget for the WHOLE JOB, set by the chairman to be spent on it — "
+        "not a monthly plan, and not a number to come in under. Spend it on the work: "
+        "parallelise what can run in parallel, hire the seat a task needs, and do not "
+        "save money the job could use. It is also the wall: at the full amount the "
+        "project pauses. "
+        + (f"The last {reserve:,.0f} is held back: once only that is left, ordinary work "
+           "stops and only you run, to hand in — what is finished, what is not, where "
+           "the rest stands, and what more money would buy. "
+           if reserve else "")
+        + "Finishing with money unspent while scope is unmet is a miss, not thrift."
     )
 
 
@@ -1443,6 +1478,11 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
             "spend a run — a project where several agents show pending is a "
             "project about to spend, whatever the board says."
         ),
+        # The budget for the whole job, when there is one: spent since the
+        # project began, what is left, and where the hand-in reserve starts.
+        # The monthly `budget` below still reports the month; on a project
+        # with a job budget the job's is the number that ends the work.
+        "job_budget": state["job_budget"],
         "budget": {
             "unit": "usd" if usd_mode else "tokens",
             "spent": round(usd, 2) if usd_mode else tokens,

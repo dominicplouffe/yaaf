@@ -139,6 +139,19 @@ WITHHELD = {
         "model can read the list through `project` view=setup and do any step "
         "itself through `configure` and `credential`; doing a step ticks it off, "
         "which is the only way a model should make one go away.",
+    "POST /admin/projects/{project_id}/job-budget/keep":
+        "keeping a finishing project on a monthly budget is the chairman declining "
+        "advice about how his own money is shaped, for the whole project at once — "
+        "the same answer `tempo/keep` is, withheld for the same reason. Switching is "
+        "an ordinary amendment, which `amend` already reaches.",
+    "POST /admin/projects/{project_id}/upkeep-budget/keep":
+        "the same decision for a factory handed over to upkeep: keep the build's "
+        "pot or not. His to answer; switching is an amendment `amend` reaches.",
+    "POST /admin/brief/bar":
+        "the new-project form's reading of a brief before any project exists. A "
+        "model founding a project over MCP is the Founder or `create_project`, and "
+        "both are held to the same reading at the create door (`quality`, "
+        "`stakes_quote`) — a second door onto a paid model call adds nothing.",
     "POST /admin/projects/{project_id}/tempo/keep":
         "keeping the pace is the chairman declining advice about how often his "
         "own money is spent, for everyone on the project at once. A model "

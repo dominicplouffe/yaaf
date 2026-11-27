@@ -33,9 +33,24 @@ def _mode_phase(project: Any, phase: str | None = None) -> tuple[str, str | None
     return str(project.mode), getattr(project, "factory_phase", None)
 
 
+#: How a Code Factory may start. `repo_build` adopts a repo the way `repo`
+#: does — same intake, same crew's eyes on code that already has users — but
+#: owes a build first: a feature, a rewrite, a launch, paced by a budget for
+#: that job, and handed over to upkeep the way a new build is. Without it the
+#: only way to ask a kept repo for something big was a second project on the
+#: same repo, two crews and two code-health ratchets fighting over one main.
+FACTORY_STARTS = ("new", "repo", "repo_build")
+ADOPTING_STARTS = ("repo", "repo_build")
+
+
+def adopts_repo(factory_start: str | None) -> bool:
+    return factory_start in ADOPTING_STARTS
+
+
 def initial_phase(mode: str, factory_start: str | None) -> str | None:
-    """A factory that starts from nothing is built first; one that adopts a
-    repo already has users, so it starts in upkeep. Other modes have none."""
+    """A factory that starts from nothing is built first, and so is one that
+    adopts a repo to build something on it; one that adopts a repo to keep it
+    already has users, so it starts in upkeep. Other modes have none."""
     if str(mode) != ProjectMode.CODE_FACTORY:
         return None
     return FactoryPhase.UPKEEP if factory_start == "repo" else FactoryPhase.BUILD

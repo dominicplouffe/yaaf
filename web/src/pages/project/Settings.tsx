@@ -1000,6 +1000,9 @@ function DialSummary({
 }) {
   const cap = Number(usd ? cons.monthly_usd_cap : cons.monthly_token_cap) || 0;
   const wall = cap * (Number(cons.hard_stop_multiple) || 1);
+  // A budget for the whole job, when the project has one: then it is the
+  // money that ends the work, and the month is only matched to it.
+  const job = Number(usd ? cons.project_usd_budget : cons.project_token_budget) || 0;
   const amount = (n: number) => usd ? fmtUnit(Math.round(n), "usd") : `${fmtUnit(n, "tokens")} tokens`;
   // Two lines ask him about a purchase — the threshold (at or over) and the
   // per-purchase line (over, when set) — and the lower one is the one he meets.
@@ -1020,8 +1023,13 @@ function DialSummary({
       <div className="dial-row">
         <span className="dial-name">Money</span>
         <span className="dial-value">
-          <b>{amount(cap)} a month</b>
-          <span className="help"> · pauses itself at {amount(wall)}
+          {job
+            ? <><b>{amount(job)} for the whole job</b>
+                <span className="help"> · stops when it is spent, the last
+                  {" "}{Math.round(Number(cons.budget_reserve_ratio ?? 0.05) * 100)}% kept for the hand-in</span></>
+            : <><b>{amount(cap)} a month</b>
+                <span className="help"> · pauses itself at {amount(wall)}</span></>}
+          <span className="help">
             {asksAt.usd > 0
               ? ` · asks you before any purchase ${asksAt.words} $${asksAt.usd.toLocaleString()}`
               : " · asks you before every purchase"}</span>
@@ -1854,10 +1862,11 @@ export default function Settings({
         )}
         {activeTheme === "The bar" && presets && (
           <CardPicker
-            title="How good does it have to be, and what may it spend?"
-            help={"What the work is worth: the budget and the wall behind it, which model "
-              + "the writing and checking seats are hired on, and whether evidence has to "
-              + "be verified before it counts."}
+            title="How good does it have to be?"
+            help={"Which model the writing and checking seats are hired on, who reads the "
+              + "work before you do, and whether evidence has to be verified before it "
+              + "counts. Set from the brief at creation; the money is under Money and no "
+              + "card here moves it."}
             cards={presets.bar} cons={cons} edits={edits} setEdits={setEdits} />
         )}
         {activeTheme === "Autonomy" && presets && (

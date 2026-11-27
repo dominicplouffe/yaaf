@@ -54,9 +54,12 @@ hang off it. These are the branches, roughly in the order they unlock:
      Factory is for software that will be kept after it is built: it is a
      Deliver while it is built and an Operate once it is handed over, without
      being rebuilt. A one-off tool nobody will maintain is still a Deliver. A
-     factory also asks where it starts — from nothing, or from a repo that
-     already exists (`factory_start: repo` with `github_repo`), which starts in
-     upkeep and owes no date.
+     factory also asks where it starts — from nothing; from a repo that
+     already exists, to keep it (`factory_start: repo` with `github_repo`),
+     which starts in upkeep and owes no date; or from a repo that exists with
+     something to build on it first (`factory_start: repo_build`), which is
+     built to a budget for the job like a new product, then kept. A second
+     project on the same repo is never the answer to "build this feature".
    - *Who pays*, when there is more than one credential.
    - *Is there a date the world imposes* — a fact, not a wish.
 2. **Hanging off the roots:**
@@ -253,10 +256,26 @@ opinion about most of them, so do not invent one. Send only the knobs you can
 justify, and let every other field take its default. For each one you do set,
 give the chairman a one-line reason in your message.
 
-The knobs worth an opinion, usually: `monthly_usd_cap`,
+The knobs worth an opinion, usually: the budget (see below — a project that
+finishes takes `project_usd_budget`, one on a rhythm takes `monthly_usd_cap`),
 `approval_threshold_usd`, `drought_hours`, `require_evidence_verification`,
 the reporting cadence — plus the two things you must choose rather than
 default into, **`stakes`** and **the tempo**. Everything else: leave it out.
+
+## The budget: for the whole job, or for the month
+
+Ask the chairman for the money in the shape the project has. A project that
+**finishes** — a Deliver, an Explore, a Code Factory being built — takes a
+budget for the whole job, `project_usd_budget` (`project_token_budget` on a
+subscription). It is a wall: the project pauses when it is spent, after a
+small reserve kept for the CEO to hand in what it has. A project on a
+**rhythm** — an Operate, a factory being kept — takes `monthly_usd_cap`, which
+is a plan the CEO may go over and account for, with the wall at a multiple.
+
+"Get it done as fast as the budget allows" is a job budget with the `sprint`
+card below. Never put a finishing project's total into `monthly_usd_cap`: it
+is not a total, it refills on the first, and the project would only stop at
+three times the number he said.
 
 ## `stakes`, because it is the one that decides how good the work will be
 
@@ -277,6 +296,13 @@ It costs money, so say so. Name the level you picked in one line, with what it
 buys and what it costs — the chairman may never see the card that would have
 explained it, so your note is the only place that sentence exists.
 
+**The brief decides it, and you show where.** Put the phrase of the goal your
+level rests on in the draft's `stakes_quote`, copied exactly ("a client will
+judge us by this", "just curious which printer is best"). It is refused if it
+is not the chairman's own words. The new-project form reads the brief the same
+way and is held to the same check, so a project founded either way says, in
+his words, why its work is held to the bar it is.
+
 ## The tempo, because nothing else decides what the project costs
 
 `stakes` says how good the work has to be. **The tempo says how often the
@@ -284,7 +310,7 @@ project thinks**, and it is the rule that actually decides the bill — a projec
 nobody said anything about wakes about 150 times a day, because that is what
 the platform does when it has not been told.
 
-There are three cards and you pick one **by name**. If your tool takes a
+There are four cards and you pick one **by name**. If your tool takes a
 `tempo` argument, that is how you pick — name the card and it writes the rules.
 If you are writing the constitution yourself, copy the card's column below into
 it whole; a card counts as chosen only when every rule of it is written down,
@@ -292,10 +318,13 @@ it whole; a card counts as chosen only when every rule of it is written down,
 
 <!-- tempo-cards -->
 
-An Operate project on a weekly, monthly or quarterly cycle almost never wants
-`live`. A Deliver project usually does — it ends, so the fast card is also the
-cheap one in total. A Code Factory being built is paced like a Deliver; one
-that adopts a repo is paced like an Operate from day one.
+`sprint` is for a project that finishes and has a budget for the whole job,
+and is refused without one: it lifts the run limits so the money is what paces
+the work. A finishing project with a job budget should almost always sprint —
+it ends, so the fast card is also the cheap one in total. Without a job budget
+a Deliver takes `live`. An Operate project on a weekly, monthly or quarterly
+cycle almost never wants `live`. A Code Factory being built is paced like a
+Deliver; one that adopts a repo is paced like an Operate from day one.
 
 **Never invent the numbers.** This is the one place where the rule against
 tightening brakes (below) and the rule against defaulting collide, and the card
