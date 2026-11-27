@@ -315,12 +315,16 @@ def make_project(
                 headers=ADMIN)
     seed_role(client, "ceo", is_ceo=True)
     seed_role(client, "worker")
+    factory = project_overrides.get("mode") == "code_factory"
+    if factory:
+        # Unnamed on purpose: a factory's lead is the server's to fill.
+        seed_role(client, "tech-lead", is_ceo=True)
     body = {
         "slug": slug,
         "name": slug.title(),
         "goal": "Prove the framework works end to end.",
         "chairman_email": "chair@example.com",
-        "ceo_role_slug": "ceo",
+        **({} if factory else {"ceo_role_slug": "ceo"}),
         "ceo_name": "CEO",
         "constitution": {**AUTONOMY_PRESETS["supervised"], **(constitution or {})},
         "teams": teams

@@ -2002,7 +2002,30 @@ def _factory_phase_at_create(body: ProjectCreate) -> str | None:
             status_code=422,
             detail="a Code Factory that adopts a repo needs the repo: pass "
                    "github_repo as owner/name.")
+    _factory_lead_at_create(body)
     return shape.initial_phase(body.mode, body.factory_start)
+
+
+def _factory_lead_at_create(body: ProjectCreate) -> None:
+    """A Code Factory has one lead, and nothing else has it. The kind already
+    answers who runs it: a generic CEO has none of the factory's verbs in its
+    brief, and the Tech Lead has nothing but. Asking the chairman to pick
+    between them was a question with one right answer, so an unnamed lead is
+    filled and a different one refused."""
+    if shape.is_factory(body.mode):
+        if "ceo_role_slug" not in body.model_fields_set:
+            body.ceo_role_slug = shape.FACTORY_LEAD_ROLE
+        elif body.ceo_role_slug != shape.FACTORY_LEAD_ROLE:
+            raise HTTPException(
+                status_code=422,
+                detail=f"a Code Factory is led by the Tech Lead "
+                       f"({shape.FACTORY_LEAD_ROLE}), not {body.ceo_role_slug}: it is "
+                       "the lead whose brief is the factory's spec, gates and releases.")
+    elif body.ceo_role_slug == shape.FACTORY_LEAD_ROLE:
+        raise HTTPException(
+            status_code=422,
+            detail=f"the Tech Lead ({shape.FACTORY_LEAD_ROLE}) leads Code Factory "
+                   f"projects only; this one is {body.mode}.")
 
 
 def _factory_start_recorded(integrations: dict | None, mode: str,

@@ -34,6 +34,27 @@ import type { FounderStatus, PresetCard } from "./StartProject";
     and short enough to read in a run log. */
 const SEAT_NAMES = ["Ada", "Juno", "Iris", "Theo", "Noor", "Kai", "Mira", "Sol", "Wren", "Otto"];
 
+/** The one lead a Code Factory has (`yaaf.core.shape.FACTORY_LEAD_ROLE`). The
+    server fills it and refuses any other, so the form does not ask. */
+export const FACTORY_LEAD = "tech-lead";
+
+/** The crew a Code Factory starts with, by where it starts. A crew is a
+    factory's when the Tech Lead leads it. */
+const FACTORY_CREW: Record<"new" | "repo", string> = {
+  new: "build-a-product",
+  repo: "keep-a-repo-healthy",
+};
+
+function crewTeams(crew: CrewSummary): TeamDraft[] {
+  return crew.teams.map((t) => ({
+    role_slug: t.role_slug,
+    name: t.name,
+    employees: t.employees.join(", "),
+    lead: t.lead ?? "",
+    schedules: t.schedules,
+  }));
+}
+
 interface TeamDraft {
   role_slug: string;
   name: string;
@@ -412,6 +433,13 @@ export default function NewProject() {
   // Which team row is choosing a role, or null. One panel, reused per row.
   const [hireOpen, setHireOpen] = useState<number | null>(null);
   const [crews, setCrews] = useState<CrewSummary[]>([]);
+  const factory = mode === "code_factory";
+  // The crew the form filled in for a factory, as it filled it. While the
+  // teams still read exactly so, they are the form's and follow the start
+  // (a new build or an adopted repo); once the chairman edits one, they are
+  // his and nothing here touches them again.
+  const autoCrew = useRef<string | null>(null);
+
 
   // Four steps, because there are four decisions here that need the
   // chairman's judgement: what the project is for, who does the work, what it
@@ -435,6 +463,31 @@ export default function NewProject() {
   // the whole form; the file's full constitution/config and any role
   // definitions the library lacks ride along at submit time.
   const [bundle, setBundle] = useState<ProjectBundle | null>(null);
+
+  useEffect(() => {
+    if (bundle) return; // a setup file says who leads and who is hired
+    const blank = teams.length === 1 && !teams[0].role_slug && !teams[0].name.trim()
+      && !teams[0].employees.trim();
+    const ours = blank || JSON.stringify(teams) === autoCrew.current;
+    if (factory) {
+      setCeoSlug(FACTORY_LEAD);
+      const crew = crews.find((c) => c.slug === FACTORY_CREW[factoryStart]);
+      if (ours && crew && crew.missing_role_slugs.length === 0) {
+        const filled = crewTeams(crew);
+        autoCrew.current = JSON.stringify(filled);
+        setTeams(filled);
+      }
+    } else {
+      setCeoSlug((current) => (current === FACTORY_LEAD
+        ? (roles.find((r) => r.slug === "ceo")?.slug ?? "") : current));
+      if (autoCrew.current && JSON.stringify(teams) === autoCrew.current) {
+        setTeams([{ role_slug: "", name: "", employees: "", lead: "" }]);
+      }
+      autoCrew.current = null;
+    }
+    // teams is read, not watched: an edit must never re-fill the crew.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [factory, factoryStart, crews, roles, bundle]);
   // Access he promised while founding: one card each, tested here before the
   // project exists, stored on its promises once it does.
   const [promiseCards, setPromiseCards] = useState<PromiseCard[]>([]);
@@ -1778,9 +1831,30 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           </Why>
         </div>
         <div className="card" style={{ marginBottom: 10 }}>
-          <CeoPicker roles={roles} value={ceoSlug} onChange={setCeoSlug} />
+          {factory ? (
+            <p style={{ margin: 0 }}>
+              <strong>{roles.find((r) => r.slug === FACTORY_LEAD)?.name ?? "Tech Lead"}</strong>
+              {" "}— a Code Factory is always led by its Tech Lead, who turns your goal into a
+              spec you accept, plans it in stages and staffs it.
+              {rolesLoaded && !roles.some((r) => r.slug === FACTORY_LEAD) && (
+                <> This install's library has no Tech Lead yet: run{" "}
+                  <code>deploy/update_single_server.sh --no-pull</code>.</>
+              )}
+            </p>
+          ) : (
+            <CeoPicker roles={roles.filter((r) => r.slug !== FACTORY_LEAD)}
+              value={ceoSlug} onChange={setCeoSlug} />
+          )}
         </div>
         <h2>Teams</h2>
+        {factory && !bundle && autoCrew.current !== null && (
+          <p className="subtitle">
+            Filled with the{" "}
+            <strong>{crews.find((c) => c.slug === FACTORY_CREW[factoryStart])?.name}</strong> crew,
+            which covers every gate: builders, a reviewer who signs each change, hidden tests,
+            security and releases. Change any of it, here or later.
+          </p>
+        )}
         {missingRoleSlugs.length > 0 && (
           <div className="np-note">
             This setup file hires {missingRoleSlugs.length === 1 ? "a role" : "roles"} this
@@ -2606,7 +2680,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         {hireOpen !== null && (
           <HirePanel
             roles={roles}
-            crews={crews}
+            crews={crews.filter((c) => (c.ceo_role_slug === FACTORY_LEAD) === factory)}
             loaded={rolesLoaded}
             selected={teams[hireOpen]?.role_slug ? [teams[hireOpen].role_slug] : []}
             goal={goal}
@@ -2628,13 +2702,9 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               // employees, leads and schedules come from the worked example
               // it was lifted from, so it lands as a project rather than a
               // list of job titles.
-              setTeams(crew.teams.map((t) => ({
-                role_slug: t.role_slug,
-                name: t.name,
-                employees: t.employees.join(", "),
-                lead: t.lead ?? "",
-                schedules: t.schedules,
-              })));
+              const filled = crewTeams(crew);
+              autoCrew.current = factory ? JSON.stringify(filled) : null;
+              setTeams(filled);
               if (crew.ceo_role_slug) setCeoSlug(crew.ceo_role_slug);
               setHireOpen(null);
             }}

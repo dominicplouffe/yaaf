@@ -128,6 +128,7 @@ Every phase ships on its own, with its attack tests, and leaves the suite green.
 **7. Crew and docs (S).**
 - Six roles: tech-lead, architect, test-engineer, code-reviewer, security-engineer, release-engineer.
 - Three crews: build a product, keep a repo healthy, solo engineer.
+- The kind picks the lead and the crew. A factory is always led by tech-lead (the server fills it and refuses any other, and refuses tech-lead on any other kind). The form fills in build a product for a new build or keep a repo healthy for an adopted repo, and offers only the factory crews.
 - Two `examples/` bundles.
 - Founder doctrine for the shape call.
 - README "Four kinds of project", CLI, MCP read surface, golden evals re-recorded and explained.

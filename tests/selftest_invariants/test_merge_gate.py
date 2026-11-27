@@ -97,6 +97,7 @@ def _factory(client, *, mode="code_factory", slug="slotwise", scenarios=False,
     the scenarios and the scan."""
     client.post("/admin/users", json=CHAIR, headers=ADMIN)
     seed_role(client, "ceo", is_ceo=True, category="leadership")
+    seed_role(client, "tech-lead", is_ceo=True, category="leadership")
     seed_role(client, "engineer", category="build")
     seed_role(client, "reviewer", category="challenge")
     created = client.post("/admin/projects", json={
