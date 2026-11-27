@@ -251,7 +251,7 @@ class GithubKeyIn(BaseModel):
     token: str = Field(min_length=8, max_length=400)
 
 
-@router.get("/github")
+@router.get("/github", dependencies=[authority.SIGNED_IN])
 def github_status(session: Session = Depends(db)) -> dict:
     """Whether this install can act on GitHub: the platform's key, which
     creates a Code Factory's repo, opens its pull requests and merges them."""
