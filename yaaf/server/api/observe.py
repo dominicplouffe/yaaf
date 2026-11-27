@@ -1244,14 +1244,26 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     # before the seat's next run is refused for it (yaaf.core.model_upkeep).
     from yaaf.core import model_upkeep
 
-    resolved: dict[str, list[str]] = {}
+    # Asked per key, not per provider: a Code Factory's repo seats are served
+    # by its coding key, which may be a second key for the billing provider
+    # and be given a different list of models than the first.
+    paying = {name: secret.id for name, secret in project_credentials.held(session, project).items()}
+    lanes: dict[str, tuple[dict[str, str], dict[str, list[str]]]] = {"": (paying, {})}
     for agent in _project_agents(session, project.id):
         seat = model_policy.seat(session, project, agent, base=context)
-        if seat.model:
-            resolved.setdefault(seat.model, []).append(agent.name)
-    paying = {name: secret.id for name, secret in project_credentials.held(session, project).items()}
-    for model, found in model_upkeep.not_served(session, sorted(resolved), paying).items():
-        names = resolved[model]
+        if not seat.model:
+            continue
+        coder = project_credentials.codes(session, project, agent)
+        if coder is not None and (coder.provider or "") == seat.provider:
+            lane = lanes.setdefault("coding", ({**paying, seat.provider: coder.id}, {}))
+        else:
+            lane = lanes[""]
+        lane[1].setdefault(seat.model, []).append(agent.name)
+    unserved = [(lane, model, found, resolved[model])
+                for lane, (keys, resolved) in lanes.items()
+                for model, found in model_upkeep.not_served(
+                    session, sorted(resolved), keys).items()]
+    for lane, model, found, names in unserved:
         seats = (f"{', '.join(names[:3])}"
                  f"{f' and {len(names) - 3} more' if len(names) > 3 else ''}")
         listed = f"{model} is not in the models {found['provider']} listed for its key on " \
@@ -1271,7 +1283,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             f"{listed} — {seats} would be refused by the provider. Check the key's "
             "access, or move the class to a model it lists (its card in Settings → "
             "Providers).")
-        add(f"model-served:{model}", "warn", detail, "providers")
+        add(f"model-served:{model}{':coding' if lane else ''}", "warn", detail, "providers")
     for gap in price_gaps(session, sorted(metered)):
         price = catalog.price(gap["model"])
         over = gap["drift"] > 0

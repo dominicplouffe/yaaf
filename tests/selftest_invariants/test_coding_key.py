@@ -306,6 +306,32 @@ def test_a_run_answers_to_the_key_it_was_leased_on_after_the_key_is_replaced(wor
     assert other not in struck and world["billing"] not in struck, struck
 
 
+def test_a_coding_seat_is_checked_against_the_models_its_own_key_lists(world):
+    """Two keys of one provider can be given different models. The warning
+    that a seat's model is gone from its key's list reads the coding key for
+    the repo seats — not the billing key that happens to share its provider."""
+    from yaaf.core import model_policy, model_upkeep
+    from yaaf.core.models import Agent, Project, Secret
+    from yaaf.runtimes import catalog
+
+    assert _name(world, world["coding"]).status_code == 200
+    with db_session() as session:
+        project = session.get(Project, world["project"]["id"])
+        models = {name: model_policy.seat(session, project, session.get(Agent, agent_id)).model
+                  for name, agent_id in world["agents"].items()}
+        every = sorted({catalog.api_name(m) for m in models.values()})
+        # The billing key lists all of it; the coding key was never given
+        # the model its seat resolves to.
+        model_upkeep.record(session, session.get(Secret, world["billing"]), every)
+        model_upkeep.record(session, session.get(Secret, world["coding"]), ["claude-other"])
+    checks = world["client"].get(
+        f"/observe/projects/{world['project']['id']}/health", headers=ADMIN).json()["checks"]
+    warned = {c["key"]: c for c in checks if c["key"].startswith("model-served:")}
+    assert list(warned) == [f"model-served:{models['Ada']}:coding"], warned
+    detail = warned[f"model-served:{models['Ada']}:coding"]["detail"]
+    assert "Ada" in detail and "Sam" not in detail and "Lead" not in detail
+
+
 # ── the Founder ─────────────────────────────────────────────────────────────────
 
 
@@ -346,3 +372,37 @@ def test_a_draft_that_names_a_coding_key_carries_it_to_create(world):
         with db_session() as session:
             problems = tools._provider_credential_problems(bad, session)
         assert problems and "coding_secret_id" not in bad, (bad, problems)
+
+
+def test_a_draft_judges_its_repo_seats_on_the_coding_key(client):
+    """A factory that talks on DeepSeek and codes on Claude: the engineers'
+    Claude model is paid by the coding key and nothing else is."""
+    from yaaf.founder import tools
+
+    _roles(client)
+    for slug, extra in (("claude-builder", {"secret_scopes": ["github"]}), ("claude-scribe", {})):
+        assert client.post("/admin/roles", headers=ADMIN, json={
+            "slug": slug, "name": slug.title(), **ROLE_MIN, "model": "claude-opus-5-5",
+            **extra}).status_code == 200
+    _credential(client, "DeepSeek", "deepseek", "sk-deepseek-selftest")
+    coding = _credential(client, "Claude Max", "anthropic", OAT, mode="subscription")
+
+    def problems(**extra):
+        draft = {"mode": "code_factory", "ceo_role_slug": "tech-lead",
+                 "ceo_model_override": "deepseek-chat", "coding_secret_id": coding,
+                 "teams": [{"role_slug": "claude-builder", "name": "Build",
+                            "employees": ["Ada"]}], **extra}
+        with db_session() as session:
+            return tools.seat_payment_problems(draft, session, "deepseek")
+
+    assert problems() == []
+    # Without the key, the same seat is one nothing pays.
+    unpaid = problems(coding_secret_id=None)
+    assert len(unpaid) == 1 and "Ada" in unpaid[0]
+    # And the key pays the repo seats only: a talker on its provider is still unpaid.
+    leaked = problems(teams=[{"role_slug": "claude-scribe", "name": "Notes",
+                              "employees": ["Sam"]}])
+    assert len(leaked) == 1 and "Sam" in leaked[0]
+    # A repo seat on a class runs the coding provider's best, not DeepSeek's.
+    assert problems(teams=[{"role_slug": "builder", "name": "Build",
+                            "employees": ["Ada"]}]) == []

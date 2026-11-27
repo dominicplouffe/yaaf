@@ -923,26 +923,69 @@ def seat_payment_problems(project: dict, session: Session, billing_provider: str
     primary = billing_provider or model_policy.default_provider(session)
     context = model_policy.context(session, provider=primary)
     paid = sorted({primary, *(project.get("credentials") or {})})
+    # A Code Factory's repo seats are judged where they will run: on the
+    # coding key's provider, at its best model unless the seat or its role
+    # names one (model_policy.seat_context does the same for a real seat).
+    # Judged on the billing provider, a factory talking on DeepSeek and coding
+    # on Claude was told its engineers had no model.
+    coding = _coding_context(project, session)
     seats = [("the CEO", project.get("ceo_model_override")
-              or _role_model(session, project.get("ceo_role_slug")))]
+              or _role_model(session, project.get("ceo_role_slug")), False)]
     for team in project.get("teams") or []:
         overrides = team.get("model_overrides") or {}
+        codes = coding is not None and _role_holds_repo(session, team.get("role_slug"))
         for person in team.get("employees") or []:
-            seats.append((f"{person} ({team.get('name')})",
-                          overrides.get(person) or _role_model(session, team.get("role_slug"))))
+            ref = overrides.get(person) or _role_model(session, team.get("role_slug"))
+            if codes and not overrides.get(person) and ref in (None, catalog.DEFAULT_MODEL):
+                ref = model_policy.CODING_MODEL
+            seats.append((f"{person} ({team.get('name')})", ref, codes))
     problems = []
-    for who, ref in seats:
+    for who, ref, codes in seats:
         if not ref:
             continue
         named, cls = catalog.parse(ref)
-        model = context.resolve(ref)
+        where = coding if codes else context
+        model = where.resolve(ref)
         if model is None:
-            problems.append(f"{who}: {unmodelled(catalog.class_ref(cls or '', named or primary))}")
+            problems.append(
+                f"{who}: {unmodelled(catalog.class_ref(cls or '', named or where.provider))}")
+        elif codes and catalog.provider_of(model) == coding.provider:
+            continue
         elif catalog.provider_of(model) not in paid:
             problems.append(unpaid(who, model, paid) + " — in a draft: ceo_model_override, or a "
                             "team's model_overrides keyed by name, or a `credentials` entry "
                             "for it")
     return problems
+
+
+def _coding_context(project: dict, session: Session):
+    """The context a draft factory's repo seats resolve in, or None when the
+    draft names no coding key (or is not a factory). The key was resolved to
+    an id before this is asked (`_provider_credential_problems`)."""
+    from yaaf.core import llm_credentials, model_policy, shape
+
+    if not shape.is_factory(str(project.get("mode") or "")) \
+            or not project.get("coding_secret_id"):
+        return None
+    row = llm_credentials.resolve(session, credential_id=project["coding_secret_id"])
+    if row is None:
+        return None
+    return model_policy.context(session, provider=row.provider)
+
+
+def _role_holds_repo(session: Session, slug: str | None) -> bool:
+    """Whether seats hired on this role are handed the repo — what makes one a
+    coding seat (project_credentials.holds_repo, asked of a role not yet hired)."""
+    from yaaf.core.project_credentials import REPO_SCOPE
+
+    role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none() \
+        if slug else None
+    if role is None:
+        return False
+    version = session.execute(
+        select(RoleVersion).where(RoleVersion.role_id == role.id)
+        .order_by(RoleVersion.version.desc())).scalars().first()
+    return version is not None and REPO_SCOPE in (version.secret_scopes or [])
 
 
 def _role_model(session: Session, slug: str | None) -> str | None:
