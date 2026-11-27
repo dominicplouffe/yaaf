@@ -140,6 +140,7 @@ def library(session: Session | None) -> str:
         f"credentials: {tools.to_json(tools.list_credentials(session, with_plan=True))}\n"
         f"roles: {tools.to_json(tools.search_roles(session))}\n"
         f"crews: {tools.to_json(tools.search_crews(session))}\n"
+        f"github: {tools.to_json(tools.github_status(session))}\n"
         "</install>"
     )
 
