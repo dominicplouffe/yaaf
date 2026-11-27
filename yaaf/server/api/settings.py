@@ -575,6 +575,7 @@ def _llm_summary(session: Session, row: Secret, projects: list | None = None,
     # either way (it cannot be deleted from under either), said apart.
     out = [{"id": p.id, "name": p.name, "status": p.status, "live": p.status not in TERMINAL,
             "as": "fallback" if p.fallback_secret_id == row.id and p.billing_secret_id != row.id
+            else "codes" if p.coding_secret_id == row.id and p.billing_secret_id != row.id
             else "pays"}
            for p in projects]
     if groups is None:
@@ -1212,14 +1213,12 @@ def _seat_models(session: Session) -> dict[str, tuple[str, str | None]]:
 
     from yaaf.core import model_policy
     from yaaf.core.models import Agent, Project
-    from yaaf.runtimes.seats import seat_for
-    from yaaf.server.contextpack import role_version_for
 
     out: dict[str, tuple[str, str | None]] = {}
     for project in session.scalars(select(Project).where(Project.status.in_(("running", "paused")))):
         context = model_policy.context(session, project)
         for agent in session.scalars(select(Agent).where(Agent.project_id == project.id)):
-            seat = seat_for(agent, role_version_for(session, agent), context=context)
+            seat = model_policy.seat(session, project, agent, base=context)
             out[agent.id] = (project.name, seat.model if seat.resolved else None)
     return out
 

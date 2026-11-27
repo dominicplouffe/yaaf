@@ -72,7 +72,8 @@ def hard_stop_of(project: Project, cons: ConstitutionDoc) -> float:
     return budget * max(1.0, cons.hard_stop_multiple)
 
 
-def paid_in(session: Session, project: Project, provider: str | None) -> str | None:
+def paid_in(session: Session, project: Project, provider: str | None, *,
+            agent=None) -> str | None:
     """How the credential paying `provider` on this project bills — "usd" or
     "tokens" — or None when nothing names one: no provider, no credential, or
     a provider this install does not have (a row a newer release wrote, then
@@ -81,7 +82,7 @@ def paid_in(session: Session, project: Project, provider: str | None) -> str | N
     from yaaf.core import project_credentials
     from yaaf.runtimes.providers import PROVIDERS
 
-    payer = project_credentials.seat_credential(session, project, provider) \
+    payer = project_credentials.seat_credential(session, project, provider, agent=agent) \
         if provider else None
     if payer is None or payer[0] not in PROVIDERS:
         return None

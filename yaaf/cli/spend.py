@@ -35,8 +35,6 @@ from yaaf.core.models import (
 )
 from yaaf.runtimes import catalog
 from yaaf.runtimes.providers import PROVIDERS
-from yaaf.runtimes.seats import seat_for
-from yaaf.server.contextpack import role_version_for
 from yaaf.server.dispatcher import TALK_RUN_KINDS, heartbeat_only
 
 TOKENS_CAVEAT = "input tokens exclude cache tokens for runs recorded before the metering fix"
@@ -137,8 +135,7 @@ def _agent_model(session: Session, agent: Agent) -> str:
     from yaaf.core import model_policy
 
     project = session.get(Project, agent.project_id)
-    return seat_for(agent, role_version_for(session, agent),
-                    context=model_policy.context(session, project)).model
+    return model_policy.seat(session, project, agent).model
 
 
 def _run_model(run, model_by_agent: dict[str, str]) -> tuple[str, bool]:

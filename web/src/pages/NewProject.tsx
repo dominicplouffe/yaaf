@@ -1,5 +1,6 @@
 import { CredentialPicker, resolveCredential } from "../llmCredentials";
 import { ProviderReadinessInline } from "../readiness";
+import { CodingPicker } from "../coding";
 import { FallbackPicker } from "../fallback";
 import {
   CLASS_ORDER, DEFAULT_PROVIDER, isPriced, ModelSelect, parseRef, providerOf as refProvider,
@@ -370,6 +371,8 @@ export default function NewProject() {
   // Where class seats move while the billing provider is failing. Optional,
   // and refused at create unless every class seat could run there.
   const [fallbackId, setFallbackId] = useState("");
+  // A Code Factory's second key: what its repo seats code with.
+  const [codingId, setCodingId] = useState("");
   const [otherProvider, setOtherProvider] = useState("");
   const registry = useProviders();
   // Which provider the billing credential pays — the project's own provider,
@@ -934,7 +937,9 @@ export default function NewProject() {
   const paid = runtime === "mock" || !!billingCredentialId.trim();
   // And a project whose work runs through email starts once its mailbox is
   // on, which can only happen after it exists: the server refuses the start.
-  const canStartNow = paid && !needsMail;
+  // A Code Factory does not start without its coding key; the server refuses.
+  const coded = mode !== "code_factory" || runtime === "mock" || !!codingId;
+  const canStartNow = paid && !needsMail && coded;
 
   /** Fill the whole form from a setup bundle.
    *
@@ -1009,6 +1014,12 @@ export default function NewProject() {
       if (p.fallback_credential_name) {
         resolveCredential(null, p.fallback_credential_name).then((found) => {
           if (found) setFallbackId(found.id);
+        });
+      }
+      setCodingId("");
+      if (p.coding_credential_name) {
+        resolveCredential(null, p.coding_credential_name).then((found) => {
+          if (found) setCodingId(found.id);
         });
       }
       // The file's whole job here is review-and-supply-keys, so land on the
@@ -1253,6 +1264,7 @@ export default function NewProject() {
             ? { credentials: Object.fromEntries(
                 Object.entries(otherCredentials).filter(([, id]) => id)) } : {}),
           ...(fallbackId && billingCredentialId ? { fallback_secret_id: fallbackId } : {}),
+          ...(mode === "code_factory" && codingId ? { coding_secret_id: codingId } : {}),
           ...(bundle?.project.credentials_promised?.length
             ? { credentials_promised: bundle.project.credentials_promised } : {}),
           mode,
@@ -2117,6 +2129,18 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               team names — the project is refused at create otherwise, with the reason.
             </Why>
           </div>}
+          {mode === "code_factory" && runtime !== "mock" && <div className="wiz-fallback">
+            <label className="field" htmlFor="wiz-coding">Coding key <span className="help">required to start</span></label>
+            <CodingPicker id="wiz-coding" value={codingId} onChange={setCodingId} />
+            <p className="np-line">The seats that hold the repo code with this. The credential above pays
+              for everything else: the lead, the boardroom, every message.</p>
+            <Why>
+              An Anthropic, OpenAI or Google credential, driven by that provider&apos;s own coding
+              tool, so the model that writes the code is not also the price of every message. It
+              may be a second credential for the same provider. Without one the project is saved
+              as a draft and cannot start.
+            </Why>
+          </div>}
           {Object.entries(otherCredentials).map(([provider]) => (
             <div key={provider} style={{ marginTop: 6 }}>
               <CredentialPicker provider={provider} value={otherCredentials[provider]}
@@ -2803,6 +2827,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             Start immediately
             {!paid ? (
               <span className="help">— needs the billing key above (agents cannot run keyless)</span>
+            ) : !coded ? (
+              <span className="help">— a Code Factory needs its coding key above</span>
             ) : needsMail ? (
               <span className="help">— it starts once its email is set up, after creating</span>
             ) : null}

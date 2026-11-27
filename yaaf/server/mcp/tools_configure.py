@@ -55,20 +55,24 @@ def _schema(required_args: list[str], **properties) -> dict:
         "(provider, credential — a stored credential's name) for seats on its models; "
         "`stop_paying_provider` removes one; `set_fallback` names the credential (of "
         "another provider) class seats move to while the billing one's provider is "
-        "failing — empty credential removes it."
+        "failing — empty credential removes it; `set_coding_key` names the credential a "
+        "Code Factory's repo seats code with (Anthropic, OpenAI or Google — a factory "
+        "does not start without one)."
     ),
     input_schema=_schema([],
                          verb={"type": "string", "enum": ["settings", "add_team", "repin",
                                                           "set_seat", "pay_provider",
                                                           "stop_paying_provider",
-                                                          "set_fallback"]},
+                                                          "set_fallback",
+                                                          "set_coding_key"]},
                          provider={"type": "string",
                                    "description": "pay_provider / stop_paying_provider: "
                                                   "e.g. openai, google, deepseek, "
                                                   "openrouter, moonshot, qwen, mistral, "
                                                   "xai, custom"},
                          credential={"type": "string",
-                                     "description": "pay_provider / set_fallback: a stored "
+                                     "description": "pay_provider / set_fallback / "
+                                                    "set_coding_key: a stored "
                                                     "credential's name"},
                          name={"type": "string"},
                          goal={"type": "string"},
@@ -149,6 +153,19 @@ def project_configure(principal: Principal, session: Session, arguments: dict) -
             return preview
         outcome = _call(principal, admin.set_fallback_credential, project_id=project.id,
                         body=admin.FallbackIn(credential_id=named.id if named else None),
+                        session=session)
+    elif verb == "set_coding_key":
+        named = _billing_secret(session, arguments.get("credential") or None)
+        preview = confirm.gate(session, principal, "project_configure", arguments, {
+            "verb": verb, "project": project.slug,
+            "credential": named.name if named else None,
+            "warning": "This Code Factory's repo seats will code with this credential and "
+                       "bill against it; every other seat stays on the billing credential."
+            if named else "A Code Factory with no coding key cannot be started."})
+        if preview:
+            return preview
+        outcome = _call(principal, admin.set_coding_credential, project_id=project.id,
+                        body=admin.CodingIn(credential_id=named.id if named else None),
                         session=session)
     elif verb == "repin":
         team = _owned(session, project, Team, str(arguments.get("team") or ""), "team")

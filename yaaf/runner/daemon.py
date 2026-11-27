@@ -60,7 +60,7 @@ from yaaf.runtimes.providers import (
     failure_markers,
 )
 from yaaf.runtimes.providers import spec as provider_spec
-from yaaf.runtimes.seats import effective_harness, seat_for
+from yaaf.runtimes.seats import effective_harness
 from yaaf.server import budget, policy
 from yaaf.server.contextpack import (
     build_context_pack,
@@ -192,7 +192,8 @@ def lease_and_prepare(limit: int = 1) -> list[RunJob]:
             # seconds. A held row keeps its agent "busy" (dispatcher), so
             # nothing piles up behind it, and it runs the moment the plan opens.
             if provider and shut:
-                reopens = _plan_reopens(session, project, provider, shut)
+                reopens = _plan_reopens(session, project, provider, shut,
+                                        session.get(Agent, queued.agent_id))
                 if reopens is not None:
                     queued.not_before = reopens
                     continue
@@ -221,13 +222,14 @@ def _running_by_provider(session: Session) -> dict[str, int]:
     return {provider: count for provider, count in rows}
 
 
-def _plan_reopens(session: Session, project: Project, provider: str, shut: set[str]):
+def _plan_reopens(session: Session, project: Project, provider: str, shut: set[str],
+                  agent: Agent | None = None):
     """When the plan paying `provider` on this project takes work again, or
     None if it is not shut (or is not a plan)."""
     from yaaf.core import project_credentials
     from yaaf.core.crypto import decrypt
 
-    payer = project_credentials.credential_for(session, project, provider)
+    payer = project_credentials.credential_for(session, project, provider, agent=agent)
     if payer is None:
         return None
     token = decrypt(payer.ciphertext)
@@ -244,9 +246,8 @@ def _queued_seat(session: Session, queued: RunQueue, project: Project):
     agent = session.get(Agent, queued.agent_id)
     if agent is None:
         return None
-    return seat_for(agent, role_version_for(session, agent),
-                    runtime=(project.integrations or {}).get("runtime"),
-                    context=model_policy.context(session, project))
+    return model_policy.seat(session, project, agent,
+                             runtime=(project.integrations or {}).get("runtime"))
 
 
 def _materialize(session: Session, queued: RunQueue, project: Project,
@@ -365,19 +366,19 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
         run.summary = f"seat cannot run: {problem}"
         run.finished_at = utcnow()
         return None
-    _pin_seat(session, run, job, seat or seat_for(
-        agent, role_version, runtime=(project.integrations or {}).get("runtime"),
-        context=model_policy.context(session, project)))
+    _pin_seat(session, run, job, seat or model_policy.seat(
+        session, project, agent, runtime=(project.integrations or {}).get("runtime")),
+        agent=agent)
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     job.agent_kind = agent.kind
     _offer_mail(project, agent, job)
     source_specs = _merge_project_data_sources(session, project, role_version, job)
     _talk_only_if_held(session, run, job)
     role_secrets = _role_secret_env(session, project, role_version)
-    job.billing_env = {**_billing_env(session, project, job.provider), **role_secrets,
+    job.billing_env = {**_billing_env(session, project, job.provider, agent), **role_secrets,
                        **_search_env(session, job)}
-    job.provider_spec = _provider_spec(session, project, job.provider)
-    job.mint_secret_id = _mint_secret_id(session, project, job.provider)
+    job.provider_spec = _provider_spec(session, project, job.provider, agent)
+    job.mint_secret_id = _mint_secret_id(session, project, job.provider, agent)
     # Credentials are capabilities: each variable arrives with what it is and
     # how to use it, where the recognizer library knows.
     from yaaf.core.naming import announced_credentials
@@ -399,7 +400,7 @@ def _seat_problem(session: Session, project: Project, agent: Agent) -> str | Non
     return problem.removeprefix(f"{agent.name}: ") if problem else None
 
 
-def _pin_seat(session: Session, run: Run, job: RunJob, seat) -> None:
+def _pin_seat(session: Session, run: Run, job: RunJob, seat, agent: Agent | None = None) -> None:
     """What this run executes on, onto the job and the row. Pinned at lease
     time, not finalize: reaped and killed runs stay attributed to the model,
     provider and harness that actually ran — and priced at what the install
@@ -426,7 +427,8 @@ def _pin_seat(session: Session, run: Run, job: RunJob, seat) -> None:
     # How the credential paying this seat bills, while it is the one paying:
     # what finalize books the run by, whatever pays by then.
     project = session.get(Project, run.project_id)
-    run.paid_in = budget.paid_in(session, project, seat.provider) if project else None
+    run.paid_in = budget.paid_in(session, project, seat.provider, agent=agent) \
+        if project else None
 
 
 def _dial(seat, row, seller) -> bool:
@@ -459,13 +461,14 @@ def _search_env(session: Session, job: RunJob) -> dict:
     return {}
 
 
-def _mint_secret_id(session: Session, project: Project, provider: str) -> str | None:
+def _mint_secret_id(session: Session, project: Project, provider: str,
+                    agent: Agent | None = None) -> str | None:
     from yaaf.core import project_credentials
 
     seller = PROVIDERS.get(provider)
     if seller is None or not seller.mints_tokens:
         return None
-    secret = project_credentials.credential_for(session, project, provider)
+    secret = project_credentials.credential_for(session, project, provider, agent=agent)
     return secret.id if secret is not None else None
 
 
@@ -954,14 +957,17 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
     return env
 
 
-def _billing_env(session: Session, project: Project, provider: str = DEFAULT_PROVIDER) -> dict:
+def _billing_env(session: Session, project: Project, provider: str = DEFAULT_PROVIDER,
+                 agent: Agent | None = None) -> dict:
     """The model credential a seat on `provider` pays with, as the one variable
     its kind is injected under — the billing credential where it pays that
     provider, else the project's credential for it (R5 refuses a seat with
-    neither, at every door and at lease)."""
+    neither, at every door and at lease). A Code Factory's coding seat is
+    handed the coding credential and never the billing one: one sandbox, one
+    model key."""
     from yaaf.core import project_credentials
 
-    secret = project_credentials.credential_for(session, project, provider)
+    secret = project_credentials.credential_for(session, project, provider, agent=agent)
     if secret is None:
         return {}
     from yaaf.core.crypto import decrypt
@@ -981,7 +987,7 @@ def _billing_env(session: Session, project: Project, provider: str = DEFAULT_PRO
         log.warning("billing secret %s pays provider %r, which this install does not "
                     "have; refusing to inject it", secret.id, secret.provider)
         return {}
-    mode = project.billing_mode if secret.id == project.billing_secret_id else secret.llm_mode
+    mode = project_credentials.mode_of(project, secret)
     if PROVIDERS[secret.provider].mints_tokens:
         # The key file never enters a sandbox: a token minted from it does,
         # just before the container starts (execute_job).
@@ -989,7 +995,8 @@ def _billing_env(session: Session, project: Project, provider: str = DEFAULT_PRO
     return credential_env(secret.provider, mode, decrypt(secret.ciphertext))
 
 
-def _provider_spec(session: Session, project: Project, provider: str) -> dict:
+def _provider_spec(session: Session, project: Project, provider: str,
+                   agent: Agent | None = None) -> dict:
     """What a harness that calls the provider's API itself needs to know about
     it, for a sandbox that cannot import the registry: its wire, where it is,
     how its key is presented and under which variable, whether it states its
@@ -1001,9 +1008,8 @@ def _provider_spec(session: Session, project: Project, provider: str) -> dict:
     seller = PROVIDERS.get(provider)
     if seller is None:
         return {}
-    secret = project_credentials.credential_for(session, project, provider)
-    mode = (project.billing_mode if secret is not None and secret.id == project.billing_secret_id
-            else secret.llm_mode if secret is not None else None)
+    secret = project_credentials.credential_for(session, project, provider, agent=agent)
+    mode = project_credentials.mode_of(project, secret) if secret is not None else None
     return provider_spec(seller, mode, secret.base_url if secret is not None else None)
 
 
@@ -1232,7 +1238,8 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
             # The credential that paid this run's provider — which, on a
             # project paying two, is not always the billing one.
             billing = project_credentials.credential_for(
-                session, project, job.provider or DEFAULT_PROVIDER)
+                session, project, job.provider or DEFAULT_PROVIDER,
+                agent=session.get(Agent, job.agent_id) if job.agent_id else None)
             if billing is not None:
                 try:
                     plan_usage.record(session, decrypt(billing.ciphertext), result.plan)
@@ -1279,7 +1286,9 @@ def _record_breaker(session: Session, project: Project, job: RunJob, run: Run) -
     from yaaf.core import breakers, project_credentials
     from yaaf.core.models import AuditLog
 
-    secret = project_credentials.credential_for(session, project, job.provider)
+    secret = project_credentials.credential_for(
+        session, project, job.provider,
+        agent=session.get(Agent, job.agent_id) if job.agent_id else None)
     if secret is None:
         return
     # In a savepoint, and never raised: a breaker that cannot be written is a

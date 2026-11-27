@@ -208,6 +208,46 @@ def failover(session: Session, project: Project | None) -> Secret | None:
     return fallback
 
 
+#: What a coding seat runs when neither it nor its role names a model: the
+#: best the coding provider sells. The install's default model is the price of
+#: the talking; a factory that named a coding credential asked for the other
+#: thing. A seat or a role that names a model keeps it.
+CODING_MODEL = catalog.class_ref("frontier")
+
+
+def seat_context(session: Session, project: Project | None, agent,
+                 base: ModelContext | None = None) -> ModelContext:
+    """The ModelContext one seat resolves in. Every seat's is the project's
+    (`base`, when the caller already built it) — except a Code Factory's
+    coding seat, whose classes resolve on the coding credential's provider, in
+    its mode, on that provider's coding CLI."""
+    from dataclasses import replace
+
+    from yaaf.core import project_credentials
+
+    base = base or context(session, project)
+    coding = project_credentials.codes(session, project, agent)
+    if coding is None:
+        return base
+    name = coding.provider or DEFAULT_PROVIDER
+    return replace(base, provider=name,
+                   modes={**base.modes, name: project_credentials.mode_of(project, coding)},
+                   app_model=CODING_MODEL,
+                   app_harness=project_credentials.coding_harness(name))
+
+
+def seat(session: Session, project: Project | None, agent, *, runtime: str | None = None,
+         base: ModelContext | None = None):
+    """What `agent` runs on here: `seats.seat_for`, in the seat's own context.
+    Every reader that resolves a project's seats asks this, so a coding seat
+    is the same seat on the Team page, in the spend report and at the lease."""
+    from yaaf.runtimes.seats import seat_for
+    from yaaf.server.contextpack import role_version_for
+
+    return seat_for(agent, role_version_for(session, agent), runtime=runtime,
+                    context=seat_context(session, project, agent, base))
+
+
 def context(session: Session, project: Project | None = None, *,
             provider: str | None = None, modes: dict[str, str] | None = None,
             fallback: bool | None = None) -> ModelContext:

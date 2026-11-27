@@ -386,6 +386,23 @@ export interface BreakerState {
   last_error: string | null;
 }
 
+/** A Code Factory's coding key: what its repo seats code with. */
+export interface CodingView {
+  /** False on every project that is not a Code Factory. */
+  applies: boolean;
+  credential_id: string | null;
+  name: string | null;
+  provider: string | null;
+  label: string | null;
+  bills: string | null;
+  /** The coding tool those seats are driven by. */
+  harness: string | null;
+  /** The seats that code with it. */
+  seats: string[];
+  /** Why the project will not start as it stands, in the server's words. */
+  refusal: string | null;
+}
+
 export interface FallbackView {
   credential_id: string | null;
   name: string | null;
@@ -503,6 +520,8 @@ export interface Dashboard {
   /** Where class seats move while the billing credential's provider is
       failing, and whether they are there now. */
   fallback?: FallbackView;
+  /** A Code Factory's coding key, and whether it may start without one. */
+  coding?: CodingView;
   /** Drought-clock anchors: the UI counts toward the refusal. */
   created_at: string;
   last_countable_evidence_at: string | null;
@@ -1750,6 +1769,8 @@ export interface ProjectBundle {
     credential_names?: Record<string, string>;
     /** Where class seats moved while the billing provider failed, by name. */
     fallback_credential_name?: string | null;
+    /** A Code Factory's coding key, by name. */
+    coding_credential_name?: string | null;
     ceo_role_slug: string;
     ceo_name: string;
     ceo_daily_at?: string | null;

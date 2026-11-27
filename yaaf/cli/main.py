@@ -617,8 +617,9 @@ def _project_from(client: httpx.Client, spec) -> dict:
         wanted = project.pop("billing_secret_name", None)
         others = project.pop("credential_names", None) or {}
         backup = project.pop("fallback_credential_name", None)
+        coder = project.pop("coding_credential_name", None)
         listed = (_json_or_die(client.get("/admin/settings/llm-credentials"))
-                  if wanted or others or backup else [])
+                  if wanted or others or backup or coder else [])
 
         def named(name: str) -> dict | None:
             return next((c for c in listed
@@ -650,6 +651,14 @@ def _project_from(client: httpx.Client, spec) -> dict:
                 typer.echo(f"no LLM credential called {backup!r} — the project is "
                            "created with no fallback; name one in its Settings → Money",
                            err=True)
+        if coder:
+            match = named(coder)
+            if match:
+                project["coding_secret_id"] = match["id"]
+            else:
+                typer.echo(f"no LLM credential called {coder!r} — the Code Factory is "
+                           "created unable to start; name a coding key in its "
+                           "Settings → Money", err=True)
         spec = project
     return spec
 
@@ -1284,6 +1293,18 @@ def pay_provider(project: str, provider: str, credential_id: str) -> None:
         project_id = _resolve_project(client, project)
         _show(client.put(f"/admin/projects/{project_id}/credentials/{provider}",
                          json={"credential_id": credential_id}))
+
+
+@app.command()
+def set_coding_key(project: str, credential_id: str = typer.Argument("")) -> None:
+    """Name the credential a Code Factory's repo seats code with — an
+    Anthropic, OpenAI or Google one, driven by that provider's coding CLI.
+    Every other seat stays on the billing credential. A factory does not start
+    without one; no credential id removes it."""
+    with _client() as client:
+        project_id = _resolve_project(client, project)
+        _show(client.put(f"/admin/projects/{project_id}/coding-credential",
+                         json={"credential_id": credential_id or None}))
 
 
 @app.command()

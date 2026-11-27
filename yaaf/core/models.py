@@ -796,6 +796,13 @@ class Project(Base):
     # The credential class seats move to while the billing one's provider is
     # failing (yaaf.core.breakers): another provider, metered the same way.
     fallback_secret_id: Mapped[str | None] = mapped_column(ForeignKey("secrets.id"))
+    # Code Factory only: what the seats that hold the repo code with — an
+    # Anthropic, OpenAI or Google credential, driven by that provider's own
+    # coding CLI. Everything else (the lead, the boardroom, seats that never
+    # touch the repo) stays on the billing credential, so the model that
+    # writes the code is not also the price of every message
+    # (yaaf.core.project_credentials.codes).
+    coding_secret_id: Mapped[str | None] = mapped_column(ForeignKey("secrets.id"))
     # Domains/accounts the project controls; evidence from these can never be external.
     controlled_domains: Mapped[list] = mapped_column(JSONVariant, default=list)
     github_repo: Mapped[str | None] = mapped_column(String(255))

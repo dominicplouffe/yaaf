@@ -78,6 +78,8 @@ REACHED = {
         "project_configure (stop_paying_provider)",
     "PUT /admin/projects/{project_id}/fallback-credential":
         "project_configure (set_fallback) — by credential name, never a value",
+    "PUT /admin/projects/{project_id}/coding-credential":
+        "project_configure (set_coding_key) — by credential name, never a value",
     "POST /admin/teams/{team_id}/stand_down": "lifecycle (stand_down)",
     "POST /admin/teams/{team_id}/recall": "lifecycle (recall)",
     "POST /admin/projects/{project_id}/mcp_servers": "data_source (add)",
