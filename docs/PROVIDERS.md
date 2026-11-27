@@ -118,6 +118,13 @@ you can replace it, and you can remove it only after pausing.
 yaaf set-coding-key my-factory <credential-id>
 ```
 
+**What the spend screens show.** With a dollar budget and a subscription
+coding key, the coding runs move no money. The cap still counts them, at the
+model's list price, so it can see them. The factory's Cost card, the project's
+Spend page and `yaaf spend-report` show the total the cap is held against and,
+beside it, how much was billed by API keys and how much stands for
+subscription usage.
+
 The coding key pays the repo seats and nothing else. A talking seat put on
 the coding key's provider is refused unless the project also pays that
 provider in the usual way.

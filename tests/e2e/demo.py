@@ -82,7 +82,8 @@ from yaaf.server.app import create_app  # noqa: E402
 EMAIL = "dominic@example.com"
 PASSWORD = "demo-password-123"
 CREDENTIAL_KEYS = ("billing_secret_id", "billing_secret_name", "credentials", "credential_names",
-                   "fallback_secret_id", "fallback_credential_name")
+                   "fallback_secret_id", "fallback_credential_name",
+                   "coding_secret_id", "coding_credential_name")
 AUTHORITY = ("plan_authority", "scope_authority", "commitment_authority", "verdict_policy",
              "capability_authority")
 
@@ -310,6 +311,24 @@ def factory(http: TestClient) -> dict:
                 gates={**green, **failing}, review_verdict=verdict,
                 reviewed_sha=head if verdict else None,
                 created_at=utcnow() - timedelta(minutes=30 * n)))
+        # What a factory with both keys spends: the lead talking on an API
+        # key, which is billed, and a builder coding on a subscription, which
+        # the dollar cap counts at list price. Written as the runner books
+        # them, so the Cost card and the Spend page have both halves to show.
+        for agent_id, paid_in, usd, tokens in ((project["ceo_agent_id"], "usd", 0.42, 21_000),
+                                               (mika, "tokens", 3.18, 240_000)):
+            run = Run(id=ids.new_id(ids.RUN), project_id=project["id"], agent_id=agent_id,
+                      kind="agent_run", trigger={"type": "demo"}, status="done",
+                      provider="anthropic", paid_in=paid_in, cost_usd=usd, priced_usd=usd,
+                      tokens_in=tokens, tokens_out=tokens // 10,
+                      started_at=utcnow() - timedelta(minutes=50),
+                      finished_at=utcnow() - timedelta(minutes=45))
+            session.add(run)
+            session.add(LedgerEntry(
+                id=ids.new_id(ids.LEDGER), project_id=project["id"], kind="model_usage",
+                tokens_in=tokens, tokens_out=tokens // 10, usd=usd, run_id=run.id,
+                note="agent_run done" + ("" if paid_in == "usd" else
+                                         " (subscription, counted at its catalog price)")))
     return project
 
 

@@ -165,6 +165,11 @@ test("a Code Factory names its own lead and crew", async ({ page }) => {
   await expect(page.getByText(/Connect this install to GitHub first/)).toBeVisible();
   await expect(page.locator(".orgline", { hasText: "Factory rules" }))
     .toContainText(/you approve the first release.*hidden tests, security scans, code-health checks/);
+  // A factory codes with a key of its own. The demo install holds none, which
+  // the form says where the key is asked for, and it will not offer to start.
+  await expect(page.getByLabel(/^Coding key/)).toBeVisible();
+  await expect(page.getByText(/a Code Factory cannot start without one/)).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: /Start immediately/ })).toBeDisabled();
 
   // Adopting a repo swaps the crew the form chose; it is still the form's.
   await page.getByRole("radio", { name: /A repo I already have/ }).click();
@@ -197,5 +202,32 @@ test("a Code Factory's home shows each change and what it waits on", async ({ pa
 
   await page.goto("/app/#/inbox");
   await expect(page.getByText(/Approve change #1/).first()).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("a Code Factory's cost says what was billed and what a subscription stands for", async ({ page }) => {
+  /* The seeded factory's lead talked on an API key and a builder coded on a
+     subscription. The cap counts both; the chairman asking what the month
+     cost is shown the halves, here and on the Spend page, adding up. */
+  const errors = failOnPageErrors(page);
+  const factory = await row(page.request, "A booking app");
+  await page.goto(`/app/#/projects/${factory.id}`);
+  const cost = page.locator("section", { has: page.getByRole("heading", { name: "Cost", exact: true }) });
+  await expect(cost.locator(".fh-big b")).toHaveText("$3.60");
+  const line = (label: string) => cost.locator(".fh-dl div", { has: page.locator("dt", { hasText: label }) });
+  await expect(line("Billed").locator("dd")).toHaveText("$0.42");
+  await expect(line("On subscription").locator("dd")).toHaveText("~$3.18 at list price");
+  await expect(line("Biggest seat")).toContainText("$0.00 billed");
+  await expect(cost).toContainText(/Subscription runs cost nothing extra and count against the cap/);
+
+  await cost.getByRole("link", { name: "Spend" }).click();
+  await expect(page.getByText(/Billed by API keys this month:/)).toContainText("$0.42");
+  await expect(page.getByText(/Billed by API keys this month:/)).toContainText("~$3.18");
+
+  // And where the coding key is named: its own card, saying it is owed.
+  await page.goto(`/app/#/projects/${factory.id}/settings?s=money`);
+  const key = page.getByLabel("Coding key", { exact: true });
+  await expect(key.getByRole("heading", { name: /Coding key/ })).toContainText("required to start");
+  await expect(key).toContainText(/a Code Factory cannot start without one/);
   expect(errors).toEqual([]);
 });
