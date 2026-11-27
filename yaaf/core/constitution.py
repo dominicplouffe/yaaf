@@ -1095,7 +1095,7 @@ def tempo_name(constitution: dict[str, Any]) -> str | None:
     """Which tempo preset this constitution *is*, or None for a hand-tuned one.
 
     None is the honest answer and callers must show it as such. A chairman who
-    edited four rules by hand is not "on Working hours"; telling him he is, is
+    edited four rules by hand is not "on Steady"; telling him he is, is
     how he later reads a card blurb as a description of his own project and
     believes something untrue about what it costs.
     """
@@ -1239,9 +1239,14 @@ BAR_COPY = {
     },
 }
 
+# The labels name the workload, the keys keep their old names. "Live" sat next
+# to "Full send" on the form and a chairman read the pair as one speed dial;
+# neither card was. The keys are what the Founder's `tempo` argument, setup
+# files and the audit log say, so they stay put — a card is still recognised
+# by its rules (`tempo_name`), never by what it is called.
 TEMPO_COPY = {
     "live": {
-        "label": "Live",
+        "label": "Heavy",
         "headline": "about 150 runs a day",
         "blurb": "Something happens during the day and the project should notice. Agents "
                  "wake on each other's messages, the CEO plans every six hours, and work "
@@ -1250,7 +1255,7 @@ TEMPO_COPY = {
                    "correct when there is no long tail to pay for.",
     },
     "working_hours": {
-        "label": "Working hours",
+        "label": "Steady",
         "headline": "about 40 runs a day",
         "blurb": "Wakes when there is work, quiet at night. Two planning wakes a day plus "
                  "a morning standup, and the inbox lane narrowed so the project's own "
@@ -1259,7 +1264,7 @@ TEMPO_COPY = {
                    "one rule at a time, because this card did not exist.",
     },
     "few_times_daily": {
-        "label": "A few times a day",
+        "label": "Light",
         "headline": "about 12 runs a day",
         "blurb": "Wakes on a schedule and otherwise sleeps. Message-only wakes are off "
                  "entirely — agents read their channels on the next wake they were having "

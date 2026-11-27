@@ -2268,7 +2268,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             // Runs, not dollars. The break-even inversion the rehearsal report
             // already uses: this box knows what a run has cost it and cannot
             // know what this project's runs will cost. Both lanes count — the
-            // inbox ceiling is a SEPARATE additive allowance, so a Live
+            // inbox ceiling is a SEPARATE additive allowance, so a Heavy
             // project's real ceiling is 190 runs a day and not 150.
             const work = Number(tempoKnobs.runs_per_project_per_day ?? 0);
             const perDay = work + Number(tempoKnobs.inbox_runs_per_project_per_day ?? 0);
@@ -2328,11 +2328,27 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 selected subscription; the plan&apos;s own session and weekly windows apply first.
               </p>;
             }
-            const perRun = usdCap / Math.max(1, queueCeiling * 8);
+            // Divided by the runs the pace card above actually allows in a
+            // month, both lanes counted. It used to divide by the open-task
+            // ceiling times eight, which named a break-even ninety times too
+            // generous on the fastest card and did not move when the pace did.
+            // The second half answers the misreading this pair of cards
+            // invites: a big budget on a capped pace is money the project
+            // cannot reach, and nothing else on the form says so.
+            const perDay = Number(tempoKnobs.runs_per_project_per_day ?? 0)
+              + Number(tempoKnobs.inbox_runs_per_project_per_day ?? 0);
+            if (!perDay) return null;
+            const perRun = usdCap / (perDay * 30);
             const seen = status?.avg_usd_per_run;
+            const reach = seen ? Math.round(perDay * 30 * seen) : 0;
+            const pace = tempoPresets.find((p) => p.value === tempo)?.label ?? "this pace";
             return <p className="np-line">
-              Your ${usdCap.toLocaleString()} cap holds if a run averages under ${perRun.toFixed(2)}
-              {seen ? `; runs on this install have averaged $${seen.toFixed(2)}.` : "."}
+              Your ${usdCap.toLocaleString()} budget holds if a run averages under
+              ${perRun.toFixed(2)}
+              {seen ? `; runs on this install have averaged $${seen.toFixed(2)}` : ""}
+              {seen && reach < usdCap
+                ? `, so at ${pace} it can spend about $${reach.toLocaleString()} of it a month.`
+                : "."}
             </p>;
           })()}
           <Compare cards={barPresets}>
