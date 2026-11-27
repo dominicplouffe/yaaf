@@ -1774,7 +1774,7 @@ INTAKE_REPORT = "intake-report.md"
 def intake_owed(session: Session, project: Project) -> bool:
     """A Code Factory that adopted a repo, with no intake report published."""
     if not shape.is_factory(project) or \
-            (project.integrations or {}).get("factory_start") != "repo":
+            not shape.adopts_repo((project.integrations or {}).get("factory_start")):
         return False
     from yaaf.core.models import Artifact
 

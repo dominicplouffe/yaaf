@@ -33,6 +33,20 @@ import type { FounderStatus, PresetCard } from "./StartProject";
 
 /** Names for a seat the chairman hired without naming. Plain, distinct,
     and short enough to read in a run log. */
+type Stakes = "low" | "normal" | "high";
+/** POST /admin/brief/bar — how good the work has to be, read from the brief. */
+interface BarReading { stakes: Stakes; proof: boolean; quote: string | null; by: string }
+/** Which bar bundle each stakes level stands for (yaaf.server.bar_reading). */
+const BUNDLE_FOR: Record<Stakes, string> = { high: "full_send", normal: "balanced", low: "frugal" };
+/** The quality rules a reading carries that have no field of their own. */
+const CRAFT_KEYS = ["stakes", "deliverable_review", "max_usd_per_run", "run_timeout_s",
+  "hard_stop_multiple"];
+const STAKES_WORDS: Record<Stakes, string> = {
+  high: "High — the writing and checking seats run on the strongest model, with room for long runs",
+  normal: "Normal — a reviewer reads the work before you do",
+  low: "Low — cheap models, a wall close behind the budget",
+};
+
 const SEAT_NAMES = ["Ada", "Juno", "Iris", "Theo", "Noor", "Kai", "Mira", "Sol", "Wren", "Otto"];
 
 /** The one lead a Code Factory has (`yaaf.core.shape.FACTORY_LEAD_ROLE`). The
@@ -41,9 +55,13 @@ export const FACTORY_LEAD = "tech-lead";
 
 /** The crew a Code Factory starts with, by where it starts. A crew is a
     factory's when the Tech Lead leads it. */
-const FACTORY_CREW: Record<"new" | "repo", string> = {
+type FactoryStart = "new" | "repo" | "repo_build";
+const FACTORY_CREW: Record<FactoryStart, string> = {
   new: "build-a-product",
   repo: "keep-a-repo-healthy",
+  // Something to build on code that already has users: a build crew, which
+  // reads the repo first (the intake report) like any adopting factory.
+  repo_build: "build-a-product",
 };
 
 function crewTeams(crew: CrewSummary): TeamDraft[] {
@@ -400,7 +418,7 @@ export default function NewProject() {
   const [modeNotice, setModeNotice] = useState<string | null>(null);
   const [exploreDeadline, setExploreDeadline] = useState("");
   // Code Factory: build from nothing, or adopt a repo that already exists.
-  const [factoryStart, setFactoryStart] = useState<"new" | "repo">("new");
+  const [factoryStart, setFactoryStart] = useState<FactoryStart>("new");
   const [factoryRepo, setFactoryRepo] = useState("");
   // Autonomous unless the chairman says otherwise — the same default the
   // server applies to a spec that never mentions the dial.
@@ -418,9 +436,16 @@ export default function NewProject() {
 
   // Constitution knobs surfaced in the wizard — a card fills them, every one
   // stays editable, and all of them can change later in Settings.
-  const [barPreset, setBarPreset] = useState("balanced");
+  // How good the work has to be, read from the brief (POST /admin/brief/bar)
+  // instead of picked from a card. The four quality cards sat beside the pace
+  // cards and a chairman read "Full send" next to "Live" as one speed dial;
+  // what they asked is a question the brief already answers. `quote` is the
+  // phrase the reading rests on, and the server refuses one not in the goal.
+  const [quality, setQuality] = useState<BarReading | null>(null);
+  // The goal the reading above was made for, so an edit to it reads again.
+  const [qualityFor, setQualityFor] = useState("");
   // The bar's craft half. No form fields of their own — the same choice
-  // `max_usd_per_run` has always made here — so they ride the card and are
+  // `max_usd_per_run` has always made here — so they ride the reading and are
   // edited in Settings → Rules in force afterwards.
   const [craft, setCraft] = useState<Record<string, unknown>>({
     stakes: "normal", deliverable_review: "independent_read",
@@ -444,6 +469,17 @@ export default function NewProject() {
   // is never consulted, so the form shows and posts whichever one applies.
   const [monthlyTokenCap, setMonthlyTokenCap] = useState(200_000_000);
   const tokensMode = billingMode === "subscription";
+  // A project that finishes is asked for a budget for the whole job — a wall,
+  // with Sprint pacing it — rather than a monthly estimate it only stopped at
+  // three times over. One on a rhythm is asked for a month. Either can take
+  // the other shape; the link under the budget switches it.
+  const finishes = mode === "deliver" || mode === "explore"
+    || (mode === "code_factory" && factoryStart !== "repo");
+  const adopts = factoryStart === "repo" || factoryStart === "repo_build";
+  const [monthlyInstead, setMonthlyInstead] = useState(false);
+  const jobMode = finishes && !monthlyInstead;
+  const [jobBudget, setJobBudget] = useState(500);
+  const [jobTokens, setJobTokens] = useState(100_000_000);
   const [approvalThreshold, setApprovalThreshold] = useState(250);
   const [requireVerification, setRequireVerification] = useState(false);
   const [reportHours, setReportHours] = useState(1);
@@ -517,6 +553,25 @@ export default function NewProject() {
     localStorage.setItem(ONE_PAGE_KEY, one ? "yes" : "no");
   }
   const on = (n: number) => onePage || step === n;
+
+  // Read the brief for its bar once the chairman has left it — on the guided
+  // view that is reaching the money step, on one page a pause in typing. His
+  // own choice, or a setup file's, is never read over.
+  useEffect(() => {
+    if (quality?.by === "chairman" || goal.trim().length < 10 || goal === qualityFor) return;
+    if (!onePage && step < 3) return;
+    const timer = setTimeout(() => {
+      post<BarReading & { rules: Record<string, unknown> }>("/admin/brief/bar",
+        { goal, billing_secret_id: billingCredentialId.trim() || null })
+        .then((read) => {
+          setQualityFor(goal);
+          applyReading({ stakes: read.stakes, proof: read.proof, quote: read.quote, by: read.by },
+                       read.rules);
+        })
+        .catch(() => {});
+    }, onePage ? 1500 : 0);
+    return () => clearTimeout(timer);
+  }, [goal, step, onePage, billingCredentialId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A setup file downloaded from a project's Settings. Loading one prefills
   // the whole form; the file's full constitution/config and any role
@@ -600,7 +655,6 @@ export default function NewProject() {
       pendingBundle.current = null;
       if (waiting) return cardsFromBundle(waiting, found.presets);
       if (bundleSeen.current) return;
-      applyBarPreset("balanced", found.presets.bar);
       applyTempoPreset(derivedTempo(), found.presets.tempo, false);
     }).catch(() => {});
     get<RoleSummary[]>("/admin/roles")
@@ -679,8 +733,10 @@ export default function NewProject() {
   function derivedTempo(): string {
     // A factory that adopts a repo is kept from day one, so it paces like
     // Operate; one built from nothing paces like Deliver (`shape.behaves_as`).
+    // A finishing project with a budget for the whole job sprints: the money
+    // is what paces it (`constitution.tempo_for`).
     const cycles = mode === "operate" || (mode === "code_factory" && factoryStart === "repo");
-    if (!cycles) return "live";
+    if (!cycles) return jobMode ? "sprint" : "live";
     const frequency = String(
       (bundle?.project.constitution as Record<string, unknown> | undefined)
         ?.cycle_frequency ?? "weekly");
@@ -701,8 +757,16 @@ export default function NewProject() {
     const rules = parsed.project.constitution as Record<string, unknown>;
     const matches = (card: PresetCard) =>
       Object.entries(card.constitution).every(([k, v]) => rules[k] === v);
-    const statedBar = presets.bar.find(matches);
-    if (statedBar) applyBarPreset(statedBar.value, presets.bar);
+    // A file's stakes were somebody's decision: they stand, and the brief is
+    // not read over them. Its money keeps the shape it had.
+    if (typeof rules.stakes === "string") {
+      setQuality({ stakes: rules.stakes as Stakes, quote: null, by: "chairman",
+                   proof: Boolean(rules.require_evidence_verification) });
+    }
+    if (rules.project_usd_budget) setJobBudget(Number(rules.project_usd_budget));
+    if (rules.project_token_budget) setJobTokens(Number(rules.project_token_budget));
+    setMonthlyInstead(!rules.project_usd_budget && !rules.project_token_budget
+                      && rules.monthly_usd_cap !== undefined);
     const statedTempo = presets.tempo.find(matches);
     if (statedTempo) applyTempoPreset(statedTempo.value, presets.tempo);
     // A file that names ANY pace rule has answered the tempo question — the
@@ -744,16 +808,32 @@ export default function NewProject() {
     }
   }
 
-  function applyBarPreset(value: string, cards: PresetCard[] = barPresets) {
-    setBarPreset(value);
-    const rules = cards.find((p) => p.value === value)?.constitution;
-    if (!rules) return;
-    setDroughtHours(Number(rules.drought_hours));
-    setUsdCap(Number(rules.monthly_usd_cap));
-    setApprovalThreshold(Number(rules.approval_threshold_usd));
+  /** A reading of the brief, and the quality rules it writes. Money is not
+      among them: the budget is the chairman's number, typed above. */
+  function applyReading(reading: BarReading, rules: Record<string, unknown>) {
+    setQuality(reading);
+    setCraft((prev) => {
+      const next: Record<string, unknown> = { ...prev };
+      for (const key of CRAFT_KEYS) if (rules[key] !== undefined) next[key] = rules[key];
+      return next;
+    });
+    if (rules.drought_hours !== undefined) setDroughtHours(Number(rules.drought_hours));
     setRequireVerification(Boolean(rules.require_evidence_verification));
-    setReportHours(Number(rules.chairman_report_interval_hours));
-    setCraft(rules);
+    if (rules.chairman_report_interval_hours !== undefined) {
+      setReportHours(Number(rules.chairman_report_interval_hours));
+    }
+  }
+
+  /** The chairman overruling the reading: his choice, with no quote needed. */
+  function pickStakes(stakes: Stakes, proof: boolean) {
+    const bundle = barPresets.find((p) => p.value === BUNDLE_FOR[stakes])?.constitution ?? {};
+    const rules: Record<string, unknown> = { ...bundle };
+    if (proof) {
+      rules.require_evidence_verification = true;
+      rules.drought_hours = barPresets.find((p) => p.value === "show_me_proof")
+        ?.constitution.drought_hours ?? rules.drought_hours;
+    }
+    applyReading({ stakes, proof, quote: null, by: "chairman" }, rules);
   }
 
   /** `touched` is false only for the automatic follow-the-mode call below. */
@@ -799,12 +879,9 @@ export default function NewProject() {
       { role_slug: reviewer.slug, name: "Review", employees: "Juno", lead: "" }]);
   }
 
-  // The card's own answer, so skipping the check can be undone without
-  // re-picking the card and losing every number edited since.
-  const cardWantsRead = barPresets.find((p) => p.value === barPreset)
-    ?.constitution.deliverable_review === "independent_read";
-  const checkSkipped = cardWantsRead && !solo
-    && craft.deliverable_review !== "independent_read";
+  // Every bar asks for an independent read, so a project without one is one
+  // whose check was skipped — undoable without losing anything edited since.
+  const checkSkipped = !solo && craft.deliverable_review !== "independent_read";
   const skipCheck = () => setCraft((prev) => ({ ...prev, deliverable_review: "none" }));
   const restoreCheck = () =>
     setCraft((prev) => ({ ...prev, deliverable_review: "independent_read" }));
@@ -889,8 +966,9 @@ export default function NewProject() {
       // was the only word a chairman used to get about a bad address.
       if (!SLUG_OK.test(slug)) return "The address takes 2 to 64 lower-case letters, numbers or dashes";
       if (existingSlugs.includes(slug)) return "Another project already uses this address";
-      if (factory && factoryStart === "repo" && !factoryRepo.includes("/")) {
-        return "Name the repo to keep, as owner/name";
+      if (factory && adopts && !factoryRepo.includes("/")) {
+        return factoryStart === "repo" ? "Name the repo to keep, as owner/name"
+          : "Name the repo to build on, as owner/name";
       }
       if (factory && githubConnected === false) {
         return "Connect this install to GitHub, so it can make the repo";
@@ -965,7 +1043,7 @@ export default function NewProject() {
           // draft. Unread, a draft that adopts a repo was posted as a new build.
           const wiring = (p.integrations ?? {}) as Record<string, unknown>;
           const start = (p as { factory_start?: string }).factory_start ?? wiring["factory_start"];
-          setFactoryStart(start === "repo" ? "repo" : "new");
+          setFactoryStart(start === "repo" || start === "repo_build" ? start : "new");
           const named = p.github_repo ?? wiring["repo_wanted"];
           if (typeof named === "string") setFactoryRepo(named);
         }
@@ -1096,11 +1174,15 @@ export default function NewProject() {
   // shape of the work, and until now it bought nothing at all. Switching from
   // Deliver to Operate moves the tempo with it — until he answers the tempo
   // question himself, at which point his answer stands and this stops firing.
+  //
+  // The budget's shape overrides a pick, in one direction each: Sprint is
+  // refused without a job budget, and a workload card means nothing to one.
   useEffect(() => {
-    if (tempoTouched || !tempoPresets.length) return;
+    if (!tempoPresets.length) return;
+    if (tempoTouched && (tempo === "sprint") === jobMode) return;
     applyTempoPreset(derivedTempo(), tempoPresets, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, factoryStart, tempoPresets.length, tempoTouched]);
+  }, [mode, factoryStart, tempoPresets.length, tempoTouched, jobMode]);
 
   // Once, on arrival. A draft is a proposal to review, so it fills the form
   // and stops there — the chairman still presses Create.
@@ -1271,7 +1353,7 @@ export default function NewProject() {
           ...(mode === "explore" && exploreDeadline
             ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
           ...(mode === "code_factory" ? { factory_start: factoryStart } : {}),
-          ...(mode === "code_factory" && factoryStart === "repo" && factoryRepo.trim()
+          ...(mode === "code_factory" && adopts && factoryRepo.trim()
             ? { github_repo: factoryRepo.trim() } : {}),
           controlled_domains: factory ? [] : controlledDomains
             .split(",")
@@ -1293,8 +1375,14 @@ export default function NewProject() {
             queue_ceiling: queueCeiling,
             // A factory's is the server's (FACTORY_FLOORS): sized to a first merge.
             ...(factory ? {} : { drought_hours: droughtHours }),
-            monthly_usd_cap: usdCap,
-            monthly_token_cap: monthlyTokenCap,
+            // A job budget sets the month to match, so the monthly plan never
+            // speaks before the job's own lines (`default_job_month`).
+            ...(jobMode
+              ? (tokensMode
+                ? { project_token_budget: jobTokens, monthly_token_cap: jobTokens }
+                : { project_usd_budget: jobBudget, monthly_usd_cap: jobBudget })
+              : { monthly_usd_cap: usdCap, monthly_token_cap: monthlyTokenCap,
+                  project_usd_budget: 0, project_token_budget: 0 }),
             approval_threshold_usd: approvalThreshold,
             require_evidence_verification: requireVerification,
             chairman_report_interval_hours: reportHours,
@@ -1315,6 +1403,7 @@ export default function NewProject() {
               ? { repo_wanted: factoryRepo.trim() || slug } : {}),
           },
           ...(bundle?.project.github_repo ? { github_repo: bundle.project.github_repo } : {}),
+          ...(quality ? { quality } : {}),
           ceo_role_slug: chosenCeo,
           ceo_name: bundle?.project.ceo_name ?? "CEO",
           ...(bundle?.project.ceo_daily_at ? { ceo_daily_at: bundle.project.ceo_daily_at } : {}),
@@ -1880,22 +1969,25 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <div style={{ marginTop: 14 }}>
               <label className="field">Start from</label>
               <Cards label="Start from" value={factoryStart}
-                onPick={(value) => setFactoryStart(value as "new" | "repo")}
+                onPick={(value) => setFactoryStart(value as FactoryStart)}
                 options={[
                   { value: "new", label: "Nothing yet",
                     line: "A new repo. CI, branch rules and hidden tests come before any feature." },
                   { value: "repo", label: "A repo I already have",
                     line: "The crew reads first: a read-only report and a proposed upkeep charter." },
+                  { value: "repo_build", label: "A repo I have, and something to build on it",
+                    line: "Read first, then built to a budget like a new product, then kept." },
                 ]} />
               <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "baseline",
                 flexWrap: "wrap" }}>
                 <label className="field" style={{ margin: 0 }} htmlFor="np-repo">Repository</label>
                 <input id="np-repo" value={factoryRepo}
-                  placeholder={factoryStart === "repo" ? "owner/name" : slug || "a new repo name"}
+                  placeholder={adopts ? "owner/name" : slug || "a new repo name"}
                   onChange={(e) => setFactoryRepo(e.target.value)} style={{ width: 260 }} />
                 <span className="help">
-                  {factoryStart === "repo"
-                    ? "The repo to keep, as owner/name."
+                  {adopts
+                    ? (factoryStart === "repo" ? "The repo to keep, as owner/name."
+                      : "The repo to build on, as owner/name.")
                     : `Blank creates a new private repo named ${slug || "after the project"}; ` +
                       "owner/name uses an empty one you already made."}
                 </span>
@@ -2098,7 +2190,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         </button>
         {rolesLoaded && (needsReviewSeat || checkSkipped) && (
           <ReviewSeat
-            card={barPresets.find((p) => p.value === barPreset)?.label ?? "This quality card"}
+            card="This quality bar"
             reader={reviewerName} skipped={checkSkipped}
             onAdd={addReviewTeam} onSkip={skipCheck} onUndo={restoreCheck} />
         )}
@@ -2254,112 +2346,145 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               from the next agent call. Turning the dial up or back is always yours.</p>
           </Compare>
         </div>
-        {/* How often it thinks. Its own card, and its own question, because
-            for as long as these were one card the answer to "make it cheaper"
-            was a smaller budget attached to a project that woke exactly as
-            often as before. Every number here has always existed; not one of
-            them has ever been asked about at creation. */}
+        {/* What it may spend, in the shape the project has. A project that
+            finishes is asked for the whole job's money — a wall, with Sprint
+            pacing it — because "do it as fast as this budget allows" had no
+            rule to live in: the old card offered a monthly estimate it only
+            stopped at three times over, beside a pace that could reach a
+            fifth of it. A project on a rhythm is asked for a month. */}
         <div className="card" style={{ marginBottom: 10 }}>
-          <label className="field">How often should it think?</label>
-          <Cards label="How often should it think?" value={tempo}
-            onPick={(value) => applyTempoPreset(value)}
-            options={tempoPresets.map((p) => ({ value: p.value, label: p.label, headline: p.headline }))} />
-          {(() => {
-            // Runs, not dollars. The break-even inversion the rehearsal report
-            // already uses: this box knows what a run has cost it and cannot
-            // know what this project's runs will cost. Both lanes count — the
-            // inbox ceiling is a SEPARATE additive allowance, so a Heavy
-            // project's real ceiling is 190 runs a day and not 150.
-            const work = Number(tempoKnobs.runs_per_project_per_day ?? 0);
-            const perDay = work + Number(tempoKnobs.inbox_runs_per_project_per_day ?? 0);
-            const seen = status?.avg_usd_per_run;
-            const shape = MODES.find((m) => m.value === mode)?.label ?? mode;
-            return <>
-              {(!tempoTouched || (perDay > 0 && seen)) && <p className="np-line">
-                {!tempoTouched && `Picked to suit ${shape}. `}
-                {perDay > 0 && seen
-                  ? `At this install's average run, up to $${Math.round(perDay * 30 * seen)
-                      .toLocaleString()} a month.` : ""}
-              </p>}
-              <Compare cards={tempoPresets}>
-                <p>{tempoTouched
-                  ? "Thirteen rules — the daily and hourly run ceilings, how often each agent "
-                    + "may wake, whether agents buy a run just to read each other's messages, "
-                    + "how often the CEO plans, and how far ahead work may be scheduled."
-                  : `Pre-selected from the shape you picked on the first step (${shape}). Change `
-                    + "it here if that is wrong — it is thirteen rules, and every one of them is "
-                    + "editable later in Settings → Rules in force."}</p>
-                {perDay > 0 && <p>{seen
-                  ? `At ${perDay} runs a day — ${work} of work plus ${perDay - work} of `
-                    + `reading — and the $${seen.toFixed(2)} a run this install has `
-                    + `averaged, that is up to $${Math.round(perDay * 30 * seen)
-                      .toLocaleString()} a month — a ceiling, not a forecast.`
-                  : `That is a ceiling of ${(perDay * 30).toLocaleString()} runs a month, `
-                    + `${work * 30} of work and ${(perDay - work) * 30} of reading. This `
-                    + "install has never priced a run, so there is nothing to turn that "
-                    + "into money with yet."}</p>}
-              </Compare>
-            </>;
-          })()}
+          {jobMode ? <>
+            <label className="field" htmlFor="np-job-budget">What may it spend on the whole job?</label>
+            <div className="row" style={{ alignItems: "center", gap: 8 }}>
+              {tokensMode
+                ? <input id="np-job-budget" type="number" min={1} step={1_000_000} value={jobTokens}
+                    onChange={(e) => setJobTokens(+e.target.value)} />
+                : <input id="np-job-budget" type="number" min={1} value={jobBudget}
+                    onChange={(e) => setJobBudget(+e.target.value)} />}
+              <span className="help">{tokensMode ? "tokens, total" : "USD, total"} — not per month</span>
+            </div>
+            <p className="np-line">
+              It stops when this is spent. The last 5% is kept so the CEO can hand in what it
+              has if the money runs out before the work does.{" "}
+              <button type="button" className="linkish inline" onClick={() => setMonthlyInstead(true)}>
+                Use a monthly budget instead</button>
+            </p>
+          </> : <>
+            <label className="field" htmlFor="np-month-budget">What may it spend each month?</label>
+            <div className="row" style={{ alignItems: "center", gap: 8 }}>
+              {tokensMode
+                ? <input id="np-month-budget" type="number" min={0} step={1_000_000}
+                    value={monthlyTokenCap} onChange={(e) => setMonthlyTokenCap(+e.target.value)} />
+                : <input id="np-month-budget" type="number" min={0} value={usdCap}
+                    onChange={(e) => setUsdCap(+e.target.value)} />}
+              <span className="help">{tokensMode ? "tokens a month" : "USD a month"}</span>
+            </div>
+            <p className="np-line">
+              A plan, not a wall: going over it means the CEO owes you an account of what the extra
+              bought. It pauses at {Number(craft.hard_stop_multiple ?? 3)}× this.
+              {finishes && <>{" "}
+                <button type="button" className="linkish inline" onClick={() => setMonthlyInstead(false)}>
+                  Use a budget for the whole job instead</button></>}
+            </p>
+          </>}
         </div>
+
         <div className="card" style={{ marginBottom: 10 }}>
-          <label className="field">How good does it have to be, and what may it spend?</label>
-          <Cards label="How good does it have to be, and what may it spend?" value={barPreset}
-            onPick={(value) => applyBarPreset(value)}
-            options={barPresets.map((p) => ({ value: p.value, label: p.label, line: lead(p.blurb) }))} />
+          <label className="field">{jobMode ? "How should it use it?" : "How much daily work is there?"}</label>
+          <Cards label={jobMode ? "How should it use it?" : "How much daily work is there?"} value={tempo}
+            onPick={(value) => applyTempoPreset(value)}
+            options={tempoPresets
+              .filter((p) => (p.value === "sprint") === jobMode)
+              .map((p) => ({ value: p.value, label: p.label, headline: p.headline }))} />
+          {(() => {
+            const seen = status?.avg_usd_per_run;
+            if (jobMode) {
+              // Runs, not a promise of speed: money buys parallel work, and a
+              // chain of steps that depend on each other takes what it takes.
+              return <p className="np-line">
+                The run limits are lifted, so the budget is what paces it: up to
+                {" "}{String(tempoKnobs.max_concurrent_runs ?? 6)} runs at once, as the provider allows.
+                {!tokensMode && seen
+                  ? ` At this install's average run ($${seen.toFixed(2)}), $${jobBudget.toLocaleString()} `
+                    + `buys about ${Math.floor(jobBudget / seen).toLocaleString()} runs.`
+                  : ""}
+                {" "}Money buys work done in parallel; steps that wait on each other still take their time.
+              </p>;
+            }
+            // Runs, not dollars. Both lanes count — the inbox ceiling is a
+            // SEPARATE additive allowance, so a Heavy project's real ceiling is
+            // 190 runs a day and not 150. Divided into the budget the box above
+            // holds, and said the other way too: a big budget on a capped pace
+            // is money the project cannot reach.
+            const perDay = Number(tempoKnobs.runs_per_project_per_day ?? 0)
+              + Number(tempoKnobs.inbox_runs_per_project_per_day ?? 0);
+            if (!perDay || tokensMode) return null;
+            const reach = seen ? Math.round(perDay * 30 * seen) : 0;
+            const shape = MODES.find((m) => m.value === mode)?.label ?? mode;
+            return <p className="np-line">
+              {!tempoTouched && `Picked to suit ${shape}. `}
+              Your ${usdCap.toLocaleString()} budget holds if a run averages under
+              ${(usdCap / (perDay * 30)).toFixed(2)}
+              {seen ? `; runs on this install have averaged $${seen.toFixed(2)}` : ""}
+              {seen && reach < usdCap
+                ? `, so at this pace it can spend about $${reach.toLocaleString()} of it a month.`
+                : "."}
+            </p>;
+          })()}
+          <Compare cards={tempoPresets.filter((p) => (p.value === "sprint") === jobMode)}>
+            <p>{jobMode
+              ? "Sprint is thirteen rules: the run limits are set past anything a real board reaches, "
+                + "and the brakes that stop waste — wakes per agent, threads that only talk — stay on."
+              : "Thirteen rules — the daily and hourly run ceilings, how often each agent may wake, "
+                + "whether agents buy a run just to read each other's messages, how often the CEO "
+                + "plans, and how far ahead work may be scheduled."}
+              {" "}Every one is editable later in Settings → Rules in force.</p>
+          </Compare>
+        </div>
+
+        {/* How good the work has to be: read from the brief, shown with the
+            phrase it rests on, and his to overrule. Not a card any more — the
+            brief already says who will read the result. */}
+        <div className="card" style={{ marginBottom: 10 }}>
+          <label className="field">How good does it have to be?</label>
+          {quality ? (
+            <p className="np-line" style={{ marginTop: 0 }}>
+              <strong>{STAKES_WORDS[quality.stakes]}</strong>
+              {quality.proof && ". Claims count only once the platform has verified them"}
+              {quality.quote
+                ? <> — read from your brief: <q>{quality.quote}</q></>
+                : quality.by === "chairman" ? " — your choice"
+                : " — nothing in the brief pointed either way, so this is the default"}
+            </p>
+          ) : (
+            <p className="np-line" style={{ marginTop: 0 }}>Read from your brief once you have written it.</p>
+          )}
+          <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <label className="help" htmlFor="np-stakes">Change</label>
+            <select id="np-stakes" value={quality?.stakes ?? "normal"}
+              onChange={(e) => pickStakes(e.target.value as Stakes, quality?.proof ?? false)}>
+              <option value="low">Low</option>
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+            </select>
+            <label className="help" style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+              <input type="checkbox" checked={quality?.proof ?? false}
+                onChange={(e) => pickStakes(quality?.stakes ?? "normal", e.target.checked)} />
+              Claims must be verified
+            </label>
+          </div>
           {/* On the guided view the roster step is behind you, so its note is
               not on screen; on one page it is, a screen up, and saying it
               twice is how a page gets skimmed. */}
           {!onePage && rolesLoaded && needsReviewSeat && (
             <p className="np-line">
               {reviewer
-                ? `Every card adds a reviewer (${reviewerName}) to check the work.`
-                : "Every card needs a role that checks the work, and none is installed."}{" "}
+                ? `A reviewer (${reviewerName}) is added to check the work.`
+                : "The work needs a role that checks it, and none is installed."}{" "}
               <button type="button" className="linkish inline" onClick={skipCheck}>
                 Skip the check</button>
             </p>
           )}
-          {(() => {
-            // The rehearsal's own argument, reused: do not invent a price,
-            // invert the question.
-            if (tokensMode) {
-              return <p className="np-line">
-                Capped at {monthlyTokenCap.toLocaleString()} tokens a month, metered against the
-                selected subscription; the plan&apos;s own session and weekly windows apply first.
-              </p>;
-            }
-            // Divided by the runs the pace card above actually allows in a
-            // month, both lanes counted. It used to divide by the open-task
-            // ceiling times eight, which named a break-even ninety times too
-            // generous on the fastest card and did not move when the pace did.
-            // The second half answers the misreading this pair of cards
-            // invites: a big budget on a capped pace is money the project
-            // cannot reach, and nothing else on the form says so.
-            const perDay = Number(tempoKnobs.runs_per_project_per_day ?? 0)
-              + Number(tempoKnobs.inbox_runs_per_project_per_day ?? 0);
-            if (!perDay) return null;
-            const perRun = usdCap / (perDay * 30);
-            const seen = status?.avg_usd_per_run;
-            const reach = seen ? Math.round(perDay * 30 * seen) : 0;
-            const pace = tempoPresets.find((p) => p.value === tempo)?.label ?? "this pace";
-            return <p className="np-line">
-              Your ${usdCap.toLocaleString()} budget holds if a run averages under
-              ${perRun.toFixed(2)}
-              {seen ? `; runs on this install have averaged $${seen.toFixed(2)}` : ""}
-              {seen && reach < usdCap
-                ? `, so at ${pace} it can spend about $${reach.toLocaleString()} of it a month.`
-                : "."}
-            </p>;
-          })()}
-          <Compare cards={barPresets}>
-            <p>Money, proof and how finished the work has to be. A card fills in the numbers
-              below; change any of them there, now or later in Settings. Every card has the
-              work read by someone who did not write it, so a review team is added if you have
-              none. <b>Full send</b> also hires the writing and checking seats on the strongest
-              model and allows longer runs.</p>
-            {!tokensMode && !status?.avg_usd_per_run && <p>This install has never priced a
-              run, so there is nothing to check the cap against yet.</p>}
-          </Compare>
         </div>
 
         <details className="card np-more" style={{ marginBottom: 10 }}>
@@ -2391,7 +2516,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             )}
           </div>
           <div className="row">
-            <div>
+            {!jobMode && <div>
               {tokensMode ? (
                 <>
                   <label className="field">Monthly budget cap (tokens)</label>
@@ -2404,7 +2529,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                   <input type="number" min={0} value={usdCap} onChange={(e) => setUsdCap(+e.target.value)} />
                 </>
               )}
-            </div>
+            </div>}
             <div>
               <label className="field">Approval threshold (USD per spend)</label>
               <input
@@ -2581,8 +2706,25 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             )}
           </div>
           <div className="orgline">
+            <strong>Bar</strong>
+            <span className="chip">{quality?.stakes ?? "normal"} stakes</span>
+            <span className="help">
+              {quality?.quote ? <>because the brief says <q>{quality.quote}</q></>
+                : quality?.by === "chairman" ? "your choice" : "the default: nothing in the brief pointed either way"}
+            </span>
+          </div>
+          <div className="orgline">
             <strong>Cap</strong>
-            {tokensMode ? (
+            {jobMode ? (
+              <>
+                <span className="chip">{tokensMode ? `${jobTokens.toLocaleString()} tokens`
+                  : `$${jobBudget.toLocaleString()}`} for the whole job</span>
+                <span className="help">
+                  paced by Sprint — it stops when this is spent, and the last 5% is kept for the
+                  CEO to hand in what it has
+                </span>
+              </>
+            ) : tokensMode ? (
               <>
                 <span className="chip">{monthlyTokenCap.toLocaleString()} tokens/mo</span>
                 <span className="help">

@@ -39,6 +39,8 @@ DELIVER = {
              "mostly documents."),
     "mode": "deliver",
     "constitution": {"stakes": "normal"},
+    # Stakes rest on the brief's own words (`stamp_quality`).
+    "stakes_quote": "for a household that prints mostly documents",
     "teams": [{"role_slug": "worker", "name": "Research", "employees": ["Ada"]},
               {"role_slug": "adversary", "name": "Challenge", "employees": ["Sam"]}],
 }

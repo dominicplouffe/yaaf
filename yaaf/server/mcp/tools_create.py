@@ -372,6 +372,10 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
         "tempo": _tempo_line(body.get("mode") or "explore",
                              body.get("constitution") or {},
                              factory_start=body.get("factory_start")),
+        # The money, in the shape the spec gives it: a budget for the whole
+        # job is a wall the project stops at, a monthly one is a plan it may
+        # pass and account for. Said, because the two read alike as numbers.
+        "budget": _budget_line(body.get("constitution") or {}),
         "billing": llm_credentials.describe(billing) if billing else None,
         "also_paying": {p: llm_credentials.describe(row) for p, row in paying.items()} or None,
         "start_immediately": bool(arguments.get("start")) and not body.get("needs_mail"),
@@ -420,6 +424,8 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
                     "authority": preset_name(created["constitution"]) or "mixed",
                     "tempo": tempo_name(created["constitution"]) or "hand-tuned",
                     "bar": bar_name(created["constitution"]) or "hand-tuned",
+                    "job_budget": created["constitution"].get("project_usd_budget")
+                    or created["constitution"].get("project_token_budget") or None,
                     "billing": billing.name if billing else None})
 
 
@@ -594,6 +600,19 @@ def clone_project(principal: Principal, session: Session, arguments: dict) -> di
                                              name=arguments.get("name") or slug.title()),
                    session=session)
     return _record(session, principal, cloned.get("id"), "clone_project", arguments, cloned)
+
+
+def _budget_line(constitution: dict) -> str:
+    job_usd = constitution.get("project_usd_budget")
+    job_tokens = constitution.get("project_token_budget")
+    if job_usd or job_tokens:
+        amount = f"${float(job_usd):,.0f}" if job_usd else f"{int(job_tokens):,} tokens"
+        return (f"{amount} for the whole job: the project stops when it is spent, after a "
+                "reserve kept for the CEO to hand in what it has.")
+    monthly = constitution.get("monthly_usd_cap",
+                               ConstitutionDoc.model_fields["monthly_usd_cap"].default)
+    return (f"${float(monthly):,.0f} a month, as a plan: going over obliges an account, "
+            "and the project pauses at the hard stop, a multiple of it.")
 
 
 def _tempo_line(mode: str, constitution: dict, *, factory_start: str | None = None) -> str:

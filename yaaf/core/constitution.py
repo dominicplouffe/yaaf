@@ -992,9 +992,15 @@ def default_autonomy(constitution: dict[str, Any]) -> dict[str, Any]:
 # quieter project, and there was no way at all to say "do it properly, but
 # rarely".
 
-#: What the work is worth: money, and how good it has to be.
-BAR_RULES = ("stakes", "deliverable_review", "monthly_usd_cap",
-             "hard_stop_multiple", "approval_threshold_usd", "max_usd_per_run",
+#: How good the work has to be. It used to carry the money too — the monthly
+#: budget and the approval threshold — and that is how a card called "Full
+#: send" came to sit beside "Live" reading as a speed: it set $5,000 a month
+#: and a stronger model, and the chairman heard "go fast". The money is the
+#: chairman's own number now, typed on the form as a budget for the whole job
+#: or for the month, and a quality card never moves it. `hard_stop_multiple`
+#: stays: how far past a monthly plan is tolerable is a stakes question.
+BAR_RULES = ("stakes", "deliverable_review",
+             "hard_stop_multiple", "max_usd_per_run",
              "run_timeout_s", "require_evidence_verification", "drought_hours",
              "chairman_report_interval_hours")
 
@@ -1011,39 +1017,36 @@ BAR_PRESETS: dict[str, dict[str, Any]] = {
     "full_send": {
         "chairman_report_interval_hours": 1.0,
         "stakes": "high", "deliverable_review": "independent_read",
-        "monthly_usd_cap": 5000.0, "hard_stop_multiple": 3.0,
-        "approval_threshold_usd": 1000.0, "max_usd_per_run": 50.0,
+        "hard_stop_multiple": 3.0,
+        "max_usd_per_run": 50.0,
         "run_timeout_s": 10800, "require_evidence_verification": False,
         "drought_hours": 72,
     },
     "balanced": {
         "chairman_report_interval_hours": 1.0,
         "stakes": "normal", "deliverable_review": "independent_read",
-        "monthly_usd_cap": 1000.0, "hard_stop_multiple": 3.0,
-        "approval_threshold_usd": 250.0, "max_usd_per_run": 20.0,
+        "hard_stop_multiple": 3.0,
+        "max_usd_per_run": 20.0,
         "run_timeout_s": 5400, "require_evidence_verification": False,
         "drought_hours": 24,
     },
     "frugal": {
         "chairman_report_interval_hours": 4.0,
         "stakes": "low", "deliverable_review": "independent_read",
-        "monthly_usd_cap": 200.0,
         # The one number that moves off the field default. Every card used to
-        # leave this alone, so the cheap card's real wall was 200 x 3 = $600 —
-        # a chairman who asked for the smallest budget on the form got the
-        # third-largest ceiling on the install and was never shown the
-        # arithmetic. A card that says "cheap" should not inherit a wall
-        # written for a card that says "nothing spared".
+        # leave this alone, so the cheap card's real wall was 3x its plan — a
+        # chairman who asked for the cheapest bar got the same wall as one who
+        # asked for "nothing spared". Low stakes means the wall sits close.
         "hard_stop_multiple": 2.0,
-        "approval_threshold_usd": 50.0, "max_usd_per_run": 20.0,
+        "max_usd_per_run": 20.0,
         "run_timeout_s": 5400, "require_evidence_verification": False,
         "drought_hours": 48,
     },
     "show_me_proof": {
         "chairman_report_interval_hours": 1.0,
         "stakes": "normal", "deliverable_review": "independent_read",
-        "monthly_usd_cap": 1000.0, "hard_stop_multiple": 3.0,
-        "approval_threshold_usd": 250.0, "max_usd_per_run": 20.0,
+        "hard_stop_multiple": 3.0,
+        "max_usd_per_run": 20.0,
         "run_timeout_s": 5400, "require_evidence_verification": True,
         "drought_hours": 24,
     },
@@ -1341,28 +1344,27 @@ AUTONOMY_COPY = {
 
 BAR_COPY = {
     "full_send": {
-        "label": "Full send",
-        "blurb": "Nothing spared. The seats that write and check the work run on the "
-                 "strongest model at the deepest reasoning, with the per-run ceiling and "
-                 "timeout raised so a long piece is not cut off mid-thought. A big "
-                 "budget, and a wide berth before anything stops.",
+        "label": "High stakes",
+        "blurb": "The seats that write and check the work run on the strongest model "
+                 "at the deepest reasoning, with the per-run ceiling and timeout raised "
+                 "so a long piece is not cut off mid-thought.",
         "example": "Something a stranger judges you by.",
     },
     "balanced": {
-        "label": "Balanced",
-        "blurb": "A real budget, and the work read by somebody who did not write it. "
-                 "The default for a reason.",
+        "label": "Normal",
+        "blurb": "The work is read by somebody who did not write it before it reaches "
+                 "you. The default for a reason.",
         "example": "Most work.",
     },
     "frugal": {
-        "label": "Keep it cheap",
-        "blurb": "A small budget and a wall close behind it — still read before it "
-                 "reaches you. The read costs a run per deliverable, so expect roughly a "
+        "label": "Low stakes",
+        "blurb": "A wall close behind a monthly budget — still read before it reaches "
+                 "you. The read costs a run per deliverable, so expect roughly a "
                  "quarter less throughput for it.",
         "example": "A scratch project whose failure costs an afternoon.",
     },
     "show_me_proof": {
-        "label": "Show me proof",
+        "label": "Proof required",
         "blurb": "External validation matters: evidence counts only once the platform "
                  "verifies it, and a proof drought blocks busywork.",
         "example": "Anywhere being confidently wrong is expensive.",

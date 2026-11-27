@@ -50,7 +50,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.core.tokens import hash_token, mint
-from yaaf.server import datasource_tools, intent
+from yaaf.server import bar_reading, datasource_tools, intent
 
 settings.cache_clear()
 
@@ -73,6 +73,8 @@ datasource_tools.TRANSPORT = httpx.MockTransport(_offline)
 # key: reading one with a model is a paid call. A test of that path stands a
 # reader in (tests/selftest_invariants/test_read_as.py).
 intent.READER = None
+# The brief's bar, likewise: read by the word rules unless a test stands a reader in.
+bar_reading.READER = None
 
 #: The suite's person, seeded into every test's empty database: the instance
 #: admin, and — through `make_project` — the chairman of every project a test

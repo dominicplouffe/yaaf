@@ -352,6 +352,8 @@ def test_naming_the_tempo_card_is_all_it_takes(client, founder):
     review screen shows."""
     operate = {**PROJECT, "mode": "operate",
                "constitution": {"stakes": "normal"},
+               # Stakes rest on the chairman's words (`stamp_quality`).
+               "stakes_quote": "take money from strangers by 31 December",
                "teams": [{"role_slug": "adversary", "name": "Challenge",
                           "employees": ["Sam"], "lead": "Sam"}]}
     seed_role(client, "adversary", category="challenge")

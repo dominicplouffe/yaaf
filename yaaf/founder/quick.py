@@ -142,7 +142,7 @@ def instructions(billing: Secret) -> str:
         "integrations or repository.\n"
         "- Authority: leave the authority rules out (the platform's autonomous default).\n"
         "- Name the tempo card that fits the shape; stakes `normal` unless the brief "
-        "says otherwise.\n"
+        "says otherwise, with the phrase of the goal it rests on in `stakes_quote`.\n"
         "</quick-founding>"
     )
 
