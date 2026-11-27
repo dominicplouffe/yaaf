@@ -27,7 +27,7 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
-from tests.conftest import ADMIN, bearer, live_token, make_project
+from tests.conftest import ADMIN, bearer, live_token, make_project, seed_role
 from yaaf.core import ids
 from yaaf.core.constitution import TEMPO_PRESETS, effective, tempo_name
 from yaaf.core.db import db_session
@@ -288,31 +288,49 @@ def test_runs_left_are_counted_against_the_pot(client):
     assert left["usd_remaining"] == 600.0
 
 
-# ── 3. the board is not left empty ─────────────────────────────────────────────
+# ── 3. no team is left with nothing to do ──────────────────────────────────────
 
 
-def _empty_board(client, slug: str, minutes_ago: int, **cons) -> dict:
-    """A delivery whose last task closed `minutes_ago`, with its requirement
+def _idle_project(client, slug: str, minutes_ago: int, *, mode: str = "deliver",
+                  teams=None, **cons) -> dict:
+    """A project whose last task closed `minutes_ago`, with its requirement
     still open: the shape of the morning six seats sat idle."""
-    project = make_project(client, slug=slug, mode="deliver",
+    project = make_project(client, slug=slug, mode=mode, teams=teams,
                            constitution={"plan_authority": "ceo", **cons})
     then = utcnow() - timedelta(minutes=minutes_ago)
     with db_session() as session:
         session.query(RunQueue).delete()
-        req = Requirement(
-            id=ids.new_id(ids.REQUIREMENT), project_id=project["id"], key="R-04",
-            statement="The home and links pages run on the merged design.",
-            acceptance_test={"type": "observable", "target": "the pages render"},
-            status=RequirementStatus.IN_PROGRESS, stage=1)
-        session.add(req)
+        req = None
+        if mode != "explore":
+            req = Requirement(
+                id=ids.new_id(ids.REQUIREMENT), project_id=project["id"], key="R-04",
+                statement="The home and links pages run on the merged design.",
+                acceptance_test={"type": "observable", "target": "the pages render"},
+                status=RequirementStatus.IN_PROGRESS, stage=1)
+            session.add(req)
+        for team in project["teams"]:
+            session.add(Task(
+                id=ids.new_id(ids.TASK), project_id=project["id"], team_id=team["id"],
+                requirement_id=req.id if req else None,
+                created_by_agent_id=project["ceo_agent_id"],
+                title="Container and CI", goal="Merge the CI change.",
+                success_test={"type": "command", "command": "true"},
+                status=TaskStatus.DONE, created_at=then, updated_at=then))
+    return project
+
+
+def _give_work(project: dict, team_index: int = 0) -> None:
+    with db_session() as session:
+        req = session.query(Requirement).filter(
+            Requirement.project_id == project["id"], Requirement.key == "R-04").first()
         session.add(Task(
             id=ids.new_id(ids.TASK), project_id=project["id"],
-            team_id=project["teams"][0]["id"], requirement_id=req.id,
+            team_id=project["teams"][team_index]["id"],
+            requirement_id=req.id if req else None,
             created_by_agent_id=project["ceo_agent_id"],
-            title="Container and CI", goal="Merge the CI change.",
+            title="Build the home page", goal="On the merged design.",
             success_test={"type": "command", "command": "true"},
-            status=TaskStatus.DONE, created_at=then, updated_at=then))
-    return project
+            status=TaskStatus.READY, created_at=utcnow(), updated_at=utcnow()))
 
 
 def _evaluate(project: dict) -> None:
@@ -324,26 +342,54 @@ def _evaluate(project: dict) -> None:
 def _flag(project: dict) -> Flag | None:
     with db_session() as session:
         row = session.execute(select(Flag).where(
-            Flag.project_id == project["id"], Flag.kind == FlagKind.BOARD_EMPTY,
+            Flag.project_id == project["id"], Flag.kind == FlagKind.TEAMS_IDLE,
             Flag.status.in_([FlagStatus.OPEN, FlagStatus.RAISED]))).scalars().first()
         if row is not None:
             session.expunge(row)
         return row
 
 
-def test_an_empty_board_with_open_scope_opens_a_flag(client):
-    project = _empty_board(client, "idle", minutes_ago=90)
+TWO_TEAMS = [{"role_slug": "worker", "name": "Frontend", "employees": ["Ada", "Kai"],
+              "lead": "Ada"},
+             {"role_slug": "worker", "name": "Backend", "employees": ["Noor", "Sol"],
+              "lead": "Noor"}]
+
+
+def test_a_team_with_nothing_to_do_opens_a_flag(client):
+    project = _idle_project(client, "idle", minutes_ago=90)
     _evaluate(project)
     flag = _flag(project)
     assert flag is not None
-    assert "nothing on the board" in flag.summary
-    assert "not one at a time" in flag.summary
+    assert "Alpha" in flag.summary and "not one at a time" in flag.summary
 
 
-def test_it_is_measured_on_the_board_not_on_runs(client):
-    """The CEO that prompted this ran 29 times that morning and created no
-    tasks. Runs spent answering messages are not work on the board."""
-    project = _empty_board(client, "busy-ceo", minutes_ago=90)
+def test_one_task_on_the_board_does_not_hide_an_idle_team(client):
+    """The CEO that prompted this fed its board one task at a time. The board
+    was never empty, so an empty-board rule never fired."""
+    project = _idle_project(client, "one-at-a-time", minutes_ago=90, teams=TWO_TEAMS)
+    _give_work(project, team_index=0)
+    _evaluate(project)
+    flag = _flag(project)
+    assert flag is not None
+    assert "Backend" in flag.summary and "Frontend" not in flag.summary
+
+
+def test_it_closes_only_when_every_team_has_work(client):
+    project = _idle_project(client, "fill-all", minutes_ago=90, teams=TWO_TEAMS)
+    _evaluate(project)
+    assert _flag(project) is not None
+    _give_work(project, team_index=0)
+    _evaluate(project)
+    assert _flag(project) is not None, "one team fed is not the answer"
+    _give_work(project, team_index=1)
+    _evaluate(project)
+    assert _flag(project) is None
+
+
+def test_it_is_measured_on_teams_not_on_runs(client):
+    """The CEO ran 29 times that morning and created no tasks. Runs spent
+    answering messages are not work for a team."""
+    project = _idle_project(client, "busy-ceo", minutes_ago=90)
     with db_session() as session:
         for _ in range(3):
             session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"],
@@ -359,7 +405,7 @@ def test_the_flag_wakes_the_ceo_in_a_work_run(client):
     question from the chairman bars the CEO from creating anything."""
     from yaaf.server.janitor import evaluate_flags
 
-    project = _empty_board(client, "wake", minutes_ago=90)
+    project = _idle_project(client, "wake", minutes_ago=90)
     with db_session() as session:
         row = session.get(Project, project["id"])
         evaluate_flags(session, row, effective(session, row.id))
@@ -367,55 +413,70 @@ def test_the_flag_wakes_the_ceo_in_a_work_run(client):
     assert NoticeKind.FLAG_OPENED in dispatcher.URGENT_NOTICE_KINDS
 
 
-def test_putting_work_back_closes_it_without_a_word(client):
-    project = _empty_board(client, "refill", minutes_ago=90)
-    _evaluate(project)
-    assert _flag(project) is not None
-    with db_session() as session:
-        req = session.query(Requirement).filter(
-            Requirement.project_id == project["id"], Requirement.key == "R-04").one()
-        session.add(Task(
-            id=ids.new_id(ids.TASK), project_id=project["id"],
-            team_id=project["teams"][0]["id"], requirement_id=req.id,
-            created_by_agent_id=project["ceo_agent_id"],
-            title="Build the home page", goal="On the merged design.",
-            success_test={"type": "command", "command": "true"},
-            status=TaskStatus.READY, created_at=utcnow(), updated_at=utcnow()))
+def test_a_team_that_just_ran_dry_is_given_its_minutes(client):
+    project = _idle_project(client, "fresh", minutes_ago=5)
     _evaluate(project)
     assert _flag(project) is None
 
 
-def test_a_board_that_just_emptied_is_given_its_minutes(client):
-    project = _empty_board(client, "fresh", minutes_ago=5)
+def test_a_job_budget_gives_a_team_five_minutes_not_thirty(client):
+    project = _idle_project(client, "pot-fast", minutes_ago=8, project_usd_budget=800.0)
+    assert _rules(project)["idle_team_minutes"] == 5
+    _book(project["id"], 100.0)
     _evaluate(project)
-    assert _flag(project) is None
+    flag = _flag(project)
+    assert flag is not None and "$700.00 of the job budget is unspent" in flag.summary
 
 
 def test_the_floor_can_be_turned_off(client):
-    project = _empty_board(client, "off", minutes_ago=600, idle_board_minutes=0)
+    project = _idle_project(client, "off", minutes_ago=600, idle_team_minutes=0)
     _evaluate(project)
     assert _flag(project) is None
 
 
 def test_scope_waiting_on_the_chairman_is_not_the_ceos_idle(client):
-    """Scope only he can accept: the empty board is his move, and the flag
-    would make the CEO account for a silence he is producing."""
-    project = _empty_board(client, "his-move", minutes_ago=90, plan_authority="chairman")
+    """Scope only he can accept: the idle team is his move, and the flag would
+    make the CEO account for a silence he is producing."""
+    project = _idle_project(client, "his-move", minutes_ago=90, plan_authority="chairman")
     with db_session() as session:
         req = session.query(Requirement).filter(
             Requirement.project_id == project["id"], Requirement.key == "R-04").one()
         req.status = RequirementStatus.PROPOSED
+        plan = session.query(Requirement).filter(
+            Requirement.project_id == project["id"], Requirement.key == "R-00").first()
+        if plan is not None:
+            plan.status = RequirementStatus.MET
     _evaluate(project)
     assert _flag(project) is None
 
 
-def test_on_a_job_budget_the_flag_names_the_unspent_money(client):
-    project = _empty_board(client, "pot-idle", minutes_ago=90,
-                           project_usd_budget=800.0)
-    _book(project["id"], 100.0)
+def test_a_reviewing_team_waiting_for_work_is_not_idle(client):
+    seed_role(client, "editor", category="challenge")
+    project = _idle_project(client, "review-waits", minutes_ago=90, teams=[
+        {"role_slug": "worker", "name": "Writers", "employees": ["Ada"]},
+        {"role_slug": "editor", "name": "Review", "employees": ["Juno"]}])
+    _give_work(project, team_index=0)
     _evaluate(project)
-    flag = _flag(project)
-    assert flag is not None and "$700.00 of the job budget is unspent" in flag.summary
+    assert _flag(project) is None
+
+
+def test_explore_counts_only_with_a_pot_to_spend(client):
+    """Explore has no requirements to count. Open-ended and unfunded, idle can
+    be the right answer; given a budget for the whole job, it is not."""
+    unfunded = _idle_project(client, "explore-free", minutes_ago=90, mode="explore")
+    _evaluate(unfunded)
+    assert _flag(unfunded) is None
+
+    funded = _idle_project(client, "explore-pot", minutes_ago=90, mode="explore",
+                           project_usd_budget=400.0)
+    _evaluate(funded)
+    assert _flag(funded) is not None
+
+
+def test_a_project_on_a_rhythm_is_left_to_its_rhythm(client):
+    project = _idle_project(client, "operate", minutes_ago=600, mode="operate")
+    _evaluate(project)
+    assert _flag(project) is None
 
 
 # ── 4. existing projects are asked, never rewritten ────────────────────────────
@@ -434,6 +495,7 @@ def test_a_finishing_project_on_a_monthly_plan_is_offered_the_switch(client):
     action = row["action"]
     assert action["kind"] == "job_budget" and action["spent"] == 120.0
     assert action["rule"] == "project_usd_budget"
+    assert action["sprint"]["idle_team_minutes"] == 5
     assert "$120 has been spent so far" in row["detail"]
     # Offered, not applied.
     assert tempo_name(_rules(project)) == "live"

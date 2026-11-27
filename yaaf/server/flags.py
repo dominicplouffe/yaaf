@@ -39,6 +39,7 @@ from yaaf.core.models import (
     RequirementCycleResult,
     RequirementStatus,
     Task,
+    TaskStatus,
     utcnow,
 )
 from yaaf.server import metrics, policy, staffing
@@ -425,35 +426,36 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
         _resolve(session, project, FlagKind.RUN_OVERRUN, day["resets_at"][:10],
                  "the day rolled or the plan was raised")
 
-    # 5b'. The board is empty and should not be (house rule 1's other half:
-    #     a rule may fire when the project under-reaches). Opened, it wakes the
-    #     CEO through FLAG_OPENED in a WORK run — the lane that may create
-    #     tasks, which a question in the boardroom does not — and it resolves
-    #     itself the tick work is back on the board, so the answer it wants is
-    #     the work, not a paragraph.
-    idle = _board_idle(session, project, cons, state)
-    if idle is not None:
+    # 5b'. Teams with nothing to do (house rule 1's other half: a rule may
+    #     fire when the project under-reaches). Opened, it wakes the CEO
+    #     through FLAG_OPENED in a WORK run — the lane that may create tasks,
+    #     which a question in the boardroom does not. It stays open while ANY
+    #     team is still idle, so topping the board up with one task does not
+    #     answer it, and resolves itself the tick every team has work.
+    idle = idle_teams(session, project, cons, state)
+    if idle:
         job = state.get("job_budget")
         money = ""
         if job and not job["in_reserve"]:
             left = (f"${job['left']:,.2f}" if job["unit"] == "USD"
                     else f"{job['left']:,.0f} tokens")
             money = f" {left} of the job budget is unspent."
+        names = ", ".join(f"{t['team']} ({t['minutes']} min)" for t in idle)
         if open_flag(
-            session, project, FlagKind.BOARD_EMPTY,
-            f"{idle['open_scope']} open requirement(s) have nothing on the board, nobody "
-            f"holds a task, and no limit is stopping work — for {idle['minutes']} "
-            f"minutes now.{money} Put the next batch of work on the board: every task "
-            f"you can already see, not one at a time. If something genuinely blocks "
-            f"it, say in the boardroom what, and who can clear it.",
-            arithmetic={**idle, "blocked_by": state["blocked_by"],
-                        "job_budget": job},
+            session, project, FlagKind.TEAMS_IDLE,
+            f"{len(idle)} team(s) have nothing to do while scope is open, and no limit "
+            f"is stopping them: {names}.{money} Give every one of them work now — each "
+            f"team its own task, every task you can already see, not one at a time. "
+            f"If a team genuinely has nothing it can do, say in the boardroom why, and "
+            f"whether it should be stood down.",
+            arithmetic={"idle_teams": idle, "blocked_by": state["blocked_by"],
+                        "rule_minutes": cons.idle_team_minutes, "job_budget": job},
             subject_id=None,
         ):
             opened += 1
     else:
-        _resolve(session, project, FlagKind.BOARD_EMPTY, None,
-                 "work is back on the board, or a limit or the chairman now holds it")
+        _resolve(session, project, FlagKind.TEAMS_IDLE, None,
+                 "every team has work, or a limit or the chairman now holds it")
 
     # 5c. A seat that is spending and closing nothing. The three above are all
     #     about the project being STOPPED; this is the opposite failure, where
@@ -549,47 +551,83 @@ def acknowledge(session: Session, project: Project, flag: Flag, note: str) -> Fl
     return flag
 
 
-#: Gates under which an empty board is somebody else's to answer: a cap, a
-#: finished delivery, the job budget's own reserve, a start time (SELF_GATED's
-#: subject), the chairman, or work that is in fact going.
-_BOARD_IDLE_EXCUSED = (*CAP_GATES, "delivery_ready", "budget_reserve", "scheduled",
-                       "awaiting_chairman", "agents_busy", "concurrency")
+#: Gates under which an idle team is somebody else's to answer: a cap
+#: (concurrency included — every slot busy means an idle team could not start
+#: anyway), a finished delivery, the job budget's own reserve, a start time
+#: (SELF_GATED's subject), or the chairman.
+_IDLE_EXCUSED = (*CAP_GATES, "delivery_ready", "budget_reserve", "scheduled",
+                 "awaiting_chairman")
 
 
-def _board_idle(session: Session, project: Project, cons: ConstitutionDoc,
-                state: dict) -> dict | None:
-    """Open scope with an empty board and idle seats, past the rule's minutes,
-    or None.
+def idle_teams(session: Session, project: Project, cons: ConstitutionDoc,
+               state: dict) -> list[dict]:
+    """Teams that have had nothing to do for longer than the rule allows, on
+    a project with scope open. Empty when none, or when the rule does not
+    apply.
 
-    Measured from the last time any task moved (or creation, with none): the
-    board went empty when its last task closed, and that is the moment the
-    project began waiting on its own CEO. Runs are deliberately not the
-    measure — a CEO answering messages all morning runs plenty and still
-    leaves the board empty.
+    Only projects that FINISH: one on a rhythm sits idle between cycles by
+    design. Their scope is open requirements the CEO can act on (the
+    chairman's own verdicts excluded); an Explore project has no
+    requirements, so it counts as open only while it has a budget for the
+    whole job — a pot handed over to be spent is scope enough.
+
+    A team has work if it holds any task that is ready, claimed, checking or
+    in review, subtasks included; blocked does not count — blocked work waits
+    on somebody, and the CEO is who should notice. Reviewing teams are left
+    out: their work arrives when somebody else finishes. Each team's clock
+    starts at its own last task change (or its creation), so a busy team
+    elsewhere cannot hide it.
     """
-    from yaaf.server.dispatcher import _open_scope_with_no_board
+    from yaaf.core.models import Agent, AgentStatus, Role, RoleVersion, Team
 
-    minutes = cons.idle_board_minutes
-    if not minutes or state["blocked_by"] in _BOARD_IDLE_EXCUSED:
-        return None
-    waiting = state["waiting"]
-    if (waiting["claimable_tasks"] or waiting["claimed_tasks"] or waiting["gated_tasks"]
-            or waiting.get("checking_tasks") or waiting.get("reviewing_tasks")):
-        return None
-    scope = _open_scope_with_no_board(session, project, cons)
-    if not scope:
-        return None
-    last = session.execute(
-        select(func.max(Task.updated_at)).where(Task.project_id == project.id)
-    ).scalar_one() or project.created_at
-    if last is None:
-        return None
-    if last.tzinfo is None:
-        last = last.replace(tzinfo=UTC)  # an aggregate can come back without its type
-    idle_for = (utcnow() - last).total_seconds() / 60
-    if idle_for < minutes:
-        return None
-    return {"open_scope": scope, "minutes": int(idle_for), "rule_minutes": minutes}
+    minutes = cons.idle_team_minutes
+    if not minutes or shape.runs_on_cycles(project):
+        return []
+    if state["blocked_by"] in _IDLE_EXCUSED:
+        return []
+    if shape.has_scope(project):
+        parked = {r.id for r in policy.awaiting_chairman(session, project, cons)["verdicts"]}
+        scope = [rid for rid in session.execute(
+            select(Requirement.id).where(
+                Requirement.project_id == project.id,
+                Requirement.status.in_(
+                    [RequirementStatus.IN_PROGRESS, RequirementStatus.CHECKING])))
+            .scalars() if rid not in parked]
+        if not scope:
+            return []
+    elif not state.get("job_budget"):
+        return []
+    teams = session.execute(
+        select(Team, Role.category)
+        .join(RoleVersion, RoleVersion.id == Team.role_version_id)
+        .join(Role, Role.id == RoleVersion.role_id)
+        .where(Team.project_id == project.id)
+    ).all()
+    working = (TaskStatus.READY, TaskStatus.CLAIMED, TaskStatus.CHECKING, TaskStatus.REVIEW)
+    now = utcnow()
+    idle = []
+    for team, category in teams:
+        if category == staffing.REVIEW_CATEGORY:
+            continue
+        seats = session.execute(
+            select(func.count(Agent.id)).where(Agent.team_id == team.id,
+                                               Agent.status == AgentStatus.ACTIVE)
+        ).scalar_one()
+        if not seats:
+            continue  # stood down or paused: not idle, gone
+        if session.execute(
+            select(Task.id).where(Task.team_id == team.id, Task.status.in_(working)).limit(1)
+        ).first() is not None:
+            continue
+        last = session.execute(
+            select(func.max(Task.updated_at)).where(Task.team_id == team.id)
+        ).scalar_one() or getattr(team, "created_at", None) or project.created_at
+        if last is not None and last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)  # an aggregate can come back without its type
+        idle_for = (now - last).total_seconds() / 60 if last else minutes
+        if idle_for >= minutes:
+            idle.append({"team": team.name, "team_id": team.id, "minutes": int(idle_for)})
+    return idle
 
 
 def open_flags(session: Session, project_id: str) -> list[Flag]:

@@ -134,11 +134,11 @@ export const FLAG_PLAIN: Record<string, { title: string; means: string }> = {
     means: "The work may still be right; the estimate it was planned against was "
       + "not, and everything planned from that estimate inherits the error.",
   },
-  board_empty: {
-    title: "Work is open and the board is empty",
-    means: "There is scope left to do, nobody has a task, and nothing is stopping "
-      + "them. Putting the next work on the board is your CEO's job, and it has "
-      + "been woken to do it.",
+  teams_idle: {
+    title: "Teams are sitting with nothing to do",
+    means: "There is scope left to do, at least one team has no task, and nothing "
+      + "is stopping it. Giving every team work is your CEO's job, and it has been "
+      + "woken to do it.",
   },
   seat_idle: {
     title: "Somebody you are paying for has had nothing to do",

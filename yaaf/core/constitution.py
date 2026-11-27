@@ -173,20 +173,23 @@ class ConstitutionDoc(BaseModel):
         3, ge=1, group="Work discipline", label="Board size before that share is enforced",
         help="Below this many open tasks the ratio is not checked — three tasks cannot be "
              "half of anything useful.")
-    # The floor under the board (house rule 1's other half). Every rule above
-    # stops a project doing too much; nothing noticed one doing nothing while
-    # scope was open — the planning wake is a clock, every six hours on the
-    # default pace, and a CEO whose runs went on messages and reports left six
-    # seats idle all morning, then told its chairman it could not fill the
-    # board "from this chat". Measured on the BOARD, not on runs: that project
-    # ran 29 times and created no tasks.
-    idle_board_minutes: int = _rule(
-        30, ge=0, group="Work discipline", label="Minutes the board may sit empty with scope open",
-        help="Scope is open, nobody holds a task, nothing is ready to claim, and no "
-             "limit is stopping work. Past this many minutes a flag opens that wakes "
-             "the CEO at once and stays open until work is back on the board — or "
-             "until the CEO says in the boardroom what it is waiting for. Not raised "
-             "while the work waits on you, a start time, or a cap. 0 turns it off.")
+    # The floor under the work (house rule 1's other half). Every rule above
+    # stops a project doing too much; nothing noticed one doing too little
+    # while scope was open. The planning wake is a clock — every six hours on
+    # the default pace — and a CEO whose runs went on messages and reports
+    # fed its board one task at a time while six seats sat idle all morning.
+    # Measured on TEAMS, not on runs (that CEO ran 29 times) and not on an
+    # empty board (one task on it hid five idle teams).
+    idle_team_minutes: int = _rule(
+        30, ge=0, group="Work discipline",
+        label="Minutes a team may sit with nothing to do while scope is open",
+        help="On a project that finishes, a team holding no task — nothing ready, "
+             "claimed, checking or in review — while scope is open and no limit is "
+             "stopping work. Past this many minutes a flag opens that wakes the CEO "
+             "at once and stays open until every such team has work, or the CEO says "
+             "in the boardroom what it is waiting for. Teams that review others' work "
+             "are not counted. A budget for the whole job sets this to 5: idle time "
+             "is the money being saved by accident. 0 turns it off.")
     min_success_test_len: int = _rule(
         15, ge=1, group="Work discipline", label="Shortest allowed success test",
         help="Characters. A success test shorter than this is not falsifiable, so the "
@@ -350,7 +353,7 @@ class ConstitutionDoc(BaseModel):
     # it to be spent on the job. What made the old cliff poisonous was a wall
     # nobody meant to reach. This one is the planned end of the money, with a
     # reserve before it so reaching it is a hand-in rather than a crash, and a
-    # floor (`idle_board_minutes`) so a fixed pot is not sat on.
+    # floor (`idle_team_minutes`) so a fixed pot is not sat on.
     project_usd_budget: float = _rule(
         0.0, ge=0, group="Budgets", label="Budget for the whole job (USD)",
         help="USD, total since the project was created, under API-key billing. Unlike "
@@ -1219,6 +1222,10 @@ SPREAD_NEEDS_A_DATE = ("spread_job_budget spreads the job budget to the project'
                        "deadline, and this project has none: set the date first")
 
 
+#: How long a team may sit idle on a project with a budget for the whole job.
+JOB_IDLE_TEAM_MINUTES = 5
+
+
 def default_job_month(constitution: dict[str, Any]) -> dict[str, Any]:
     """A creation-time constitution whose monthly plan matches its job budget
     when the author stated the one and not the other.
@@ -1230,6 +1237,11 @@ def default_job_month(constitution: dict[str, Any]) -> dict[str, Any]:
     crossed in every month. A monthly plan somebody did write is left alone.
     """
     out = dict(constitution)
+    if has_job_budget(out) and "idle_team_minutes" not in out:
+        # A pot handed over to be spent: a team idle for five minutes is the
+        # CEO's to answer, not half an hour. Written into the rules, where the
+        # chairman can see and change it, rather than inferred from the card.
+        out["idle_team_minutes"] = JOB_IDLE_TEAM_MINUTES
     if out.get("project_usd_budget") and "monthly_usd_cap" not in out:
         out["monthly_usd_cap"] = float(out["project_usd_budget"])
     if out.get("project_token_budget") and "monthly_token_cap" not in out:

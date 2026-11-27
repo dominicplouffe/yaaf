@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from yaaf.core import artifacts, shape
 from yaaf.core.constitution import (
+    JOB_IDLE_TEAM_MINUTES,
     TEMPO_COPY,
     TEMPO_PRESETS,
     TEMPO_RULES,
@@ -1630,7 +1631,10 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                      "suggested": round(max(float(monthly), spent_job * 2), 2),
                      "rule": "project_usd_budget" if usd_mode else "project_token_budget",
                      "month_rule": "monthly_usd_cap" if usd_mode else "monthly_token_cap",
-                     "sprint": dict(TEMPO_PRESETS["sprint"])})
+                     # What a job budget gets at creation, so a project
+                     # switched later is held to the same five minutes.
+                     "sprint": {**TEMPO_PRESETS["sprint"],
+                                "idle_team_minutes": JOB_IDLE_TEAM_MINUTES}})
 
             # A factory that finished building and is now kept, still on the
             # build's budget for the whole job. Nothing re-paces it at the

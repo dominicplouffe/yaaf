@@ -269,13 +269,14 @@ class FlagKind(enum.StrEnum):
     # other way skipped all of them. Not arithmetic but a fact the repo
     # reports, and the automatic half: no change merges until it is answered.
     MAIN_BYPASSED = "main_bypassed"
-    # The floor under the board: scope open, nothing claimable, nobody
-    # holding a task, and no cap, start time or chairman to blame. Every kind
-    # above about pace says the project was STOPPED; this one says it stopped
-    # itself. The planning wake is on a clock, so a board that empties at
-    # 9am is not refilled until the clock says — and an idle project costs
-    # nothing, so nothing else notices.
-    BOARD_EMPTY = "board_empty"
+    # The floor under the work: on a project that finishes, a team with
+    # nothing to do while scope is open, and no cap, start time or chairman to
+    # blame. Every kind above about pace says the project was STOPPED; this
+    # one says it stopped itself. The planning wake is on a clock, so a team
+    # that runs dry at 9am waits for it — and an idle team costs nothing, so
+    # nothing else notices. Per team, so one task on the board cannot hide
+    # five teams with none.
+    TEAMS_IDLE = "teams_idle"
 
 
 class FlagStatus(enum.StrEnum):
