@@ -159,6 +159,7 @@ def _write_scenario(client, project, requirement_id, who="Rhea"):
     _, token = live_token(project["id"], _agent(project, who))
     return client.post("/agent/scenarios", headers=bearer(token), json={
         "requirement_id": requirement_id, "name": "two tabs, one hold",
+        "checks": "a patient can hold a free slot, from two tabs at once",
         "command": "python3 scripts/hold_race.py --tabs 2"})
 
 

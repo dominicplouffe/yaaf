@@ -324,6 +324,13 @@ async def t_board(args):
     return _text(_call("GET", "/agent/board"))
 
 
+@tool("requirements",
+      "Read the plan word for word: every requirement's id, key, statement, acceptance "
+      "test and status. Work from these, not from the project goal.", {})
+async def t_requirements(args):
+    return _text(_call("GET", "/agent/requirements"))
+
+
 @tool(
     "task_create",
     "Create a task. CEO only for team tasks; team leads create subtasks (assignments) "
@@ -523,13 +530,15 @@ async def t_change_review(args):
     "a shell command the platform runs from the root of every change serving it, "
     "passing on exit 0. Builders never read it — so test what the requirement "
     "promises, including the cases a builder would not think to check. Keep the "
-    "script outside the repo: put the whole check in the command.",
-    {"requirement_id": str, "name": str, "command": str},
+    "script outside the repo: put the whole check in the command. `checks` quotes "
+    "the words of the requirement this scenario tests, from its statement or "
+    "acceptance test; read them first with the requirements tool.",
+    {"requirement_id": str, "name": str, "command": str, "checks": str},
 )
 async def t_scenario_add(args):
     return _text(_call("POST", "/agent/scenarios", {
         "requirement_id": args["requirement_id"], "name": args["name"],
-        "command": args["command"]}))
+        "command": args["command"], "checks": args["checks"]}))
 
 
 @tool("scenarios_list",
@@ -1143,8 +1152,13 @@ async def t_tool_permission_request(args):
     "verbatim in the decision that wakes you; unanswered it expires to no, so also "
     "plan the work that does not depend on it. If there is nothing for him to do "
     "('no trade today, place nothing'), it is not an assist: a heads_up if a standing "
-    "order asks him to be told, otherwise the deliverable carries it.",
-    {"what": str, "where": str},
+    "order asks him to be told, otherwise the deliverable carries it. When it is his "
+    "yes on a change that waits on him (a CI file, a protected path), pass its "
+    "change_number: his yes on the assist is then his yes on that change.",
+    {"type": "object",
+     "properties": {"what": {"type": "string"}, "where": {"type": "string"},
+                    "change_number": {"type": "integer"}},
+     "required": ["what", "where"]},
 )
 async def t_assist_request(args):
     payload = {k: v for k, v in args.items() if v not in (None, "")}
@@ -1923,7 +1937,7 @@ def _meta_of(obj) -> dict:
 
 
 ALL_TOOLS = [
-    t_board, t_task_create, t_task_claim, t_task_complete, t_task_review,
+    t_board, t_requirements, t_task_create, t_task_claim, t_task_complete, t_task_review,
     t_task_block, t_task_kill,
     t_change_open, t_changes_list, t_change_review, t_scenario_add, t_scenarios_list,
     t_release_propose, t_releases_list, t_incident_postmortem,

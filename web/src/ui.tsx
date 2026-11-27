@@ -970,6 +970,7 @@ export interface Decidable {
   amount_usd?: number | null;
   capacity?: { from: number; to: number } | null;
   tool_permission?: { source: string; tool: string; to: "allow" | "deny" } | null;
+  change?: { number: number } | null;
 }
 
 export function decideLabels(a: Decidable): {
@@ -998,6 +999,7 @@ export function decideLabels(a: Decidable): {
     case "brief":
       return withNote("Confirm", "Not yet");
     case "assist":
+      if (a.change) return withNote(`Approve change #${a.change.number}`, "Not yet");
       return { yes: "Done", no: "Not done", yesMore: "Done, with a reply…",
         yesHint: "Send the CEO a fill price, a code", yesPlaceholder: "e.g. filled at $48.15" };
     default:

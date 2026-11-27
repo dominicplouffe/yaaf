@@ -26,6 +26,7 @@ from yaaf.core.models import (
     Approval,
     ApprovalStatus,
     Artifact,
+    Change,
     Channel,
     ChannelKind,
     ChannelRead,
@@ -37,6 +38,7 @@ from yaaf.core.models import (
     Notice,
     Project,
     ProjectMode,
+    Requirement,
     RequirementStatus,
     ResultFor,
     Role,
@@ -997,6 +999,37 @@ def _roster(session: Session, project: Project) -> list[dict]:
             }
         )
     return teams
+
+
+def requirement_view(r: Requirement) -> dict:
+    """A requirement as any seat reads it: what it promises and how it is
+    judged met. Only the CEO used to see these. 26 November 2026, the Split
+    app: the test writer was woken to write hidden scenarios for R-01 and R-02,
+    could not read either, guessed "the calculator" and "bad input", and hung
+    nine browser tests on the CI requirement and the build requirement. The
+    architect and the builder said the same thing that hour — "requirements
+    text isn't readable from my seat" — and wrote from the goal instead."""
+    return {"id": r.id, "key": r.key, "stage": r.stage, "status": r.status,
+            "statement": r.statement, "acceptance_test": r.acceptance_test}
+
+
+def _requirements_in_play(session: Session, run: Run, task: Task | None) -> list[dict]:
+    """The requirements this run is about: its task's, and any its wake names
+    — directly (scenarios owed) or through the change it must review."""
+    wanted: list[str] = []
+    if task is not None and task.requirement_id:
+        wanted.append(task.requirement_id)
+    for reason in (run.trigger or {}).get("reasons") or []:
+        if not isinstance(reason, dict):
+            continue
+        if reason.get("requirement_id"):
+            wanted.append(reason["requirement_id"])
+        elif reason.get("change_id"):
+            change = session.get(Change, reason["change_id"])
+            if change is not None and change.requirement_id:
+                wanted.append(change.requirement_id)
+    rows = [session.get(Requirement, rid) for rid in dict.fromkeys(wanted)]
+    return [requirement_view(r) for r in rows if r is not None and r.project_id == run.project_id]
 
 
 def _task_context(session: Session, task: Task) -> dict:
@@ -2095,6 +2128,17 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
     ).scalars().first()
     if claimed is not None and "task" not in pack:
         pack["task"] = _task_context(session, claimed)
+
+    # The CEO reads the whole plan above; every other seat reads the
+    # requirements this run serves, in full, and the rest on request.
+    if agent.kind != AgentKind.CEO:
+        task_row = session.get(Task, pack["task"]["id"]) if "task" in pack else None
+        in_play = _requirements_in_play(session, run, task_row)
+        if in_play:
+            pack["requirements"] = in_play
+            pack["requirements_note"] = (
+                "The requirements this run serves, word for word. Work from them, "
+                "not from the project goal. The requirements tool lists every one.")
 
     if observing:
         for key in CHAT_OMITS:

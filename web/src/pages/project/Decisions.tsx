@@ -194,6 +194,14 @@ function DecisionCard({
           {approval.tool_permission.source}, until you change it in Settings → Data sources.
         </div>
       )}
+      {approval.change && (
+        <div className="help" style={{ marginTop: 12 }}>
+          Yes approves change #{approval.change.number} on commit{" "}
+          <code>{approval.change.sha.slice(0, 7)}</code>, the one you were asked about
+          {approval.change.waits_on.includes("ci_config") ? " (it changes how CI checks every change)" : ""}.
+          {" "}A newer commit would need your yes again.
+        </div>
+      )}
       {approval.capacity && (
         <label className="field" style={{ marginTop: 12, display: "block" }}>
           Raise it to{" "}

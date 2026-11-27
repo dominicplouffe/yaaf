@@ -1056,6 +1056,9 @@ export interface ApprovalRow {
   capacity?: CapacityAsk | null;
   /** A tool permission request: the one move approving it makes. */
   tool_permission?: ToolPermissionAsk | null;
+  /** An assist asking your yes on a change: approving it approves that change
+      on that commit. */
+  change?: ChangeAsk | null;
   /** Your note, and the CEO's answer to it once given. */
   held_note?: HeldNote | null;
 }
@@ -1070,6 +1073,14 @@ export function splitWithout(body: string): [string, string | null] {
   const at = body.lastIndexOf(WITHOUT);
   if (at < 0) return [body, null];
   return [body.slice(0, at).trimEnd(), body.slice(at + WITHOUT.length).trim()];
+}
+
+export interface ChangeAsk {
+  change_id: string;
+  number: number;
+  sha: string;
+  /** The gates only your yes passes: "ci_config", "protected". */
+  waits_on: string[];
 }
 
 export interface BriefDraft {

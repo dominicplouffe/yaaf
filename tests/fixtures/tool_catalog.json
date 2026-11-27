@@ -201,9 +201,12 @@
     "name": "ask_close"
   },
   {
-    "description": "Any agent. A step only a HUMAN can do is blocking you \u2014 a captcha, a 2FA code, a KYC form, a signature, an account only the chairman can touch. Never try to defeat a security challenge; hand it over. Before calling: save your session state to the workspace (playwright storage_state / cookies, the URL you were on, what remains to do) \u2014 the workspace persists across runs, so the next run resumes where you stopped. Say exactly WHAT you need ('the 6-digit code SMS'd to your phone', 'solve the captcha at this URL and tell me done') and WHERE, naming the site and the account in full. It goes straight to the chairman, not through your team, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. His answer arrives verbatim in the decision that wakes you; unanswered it expires to no, so also plan the work that does not depend on it. If there is nothing for him to do ('no trade today, place nothing'), it is not an assist: a heads_up if a standing order asks him to be told, otherwise the deliverable carries it.",
+    "description": "Any agent. A step only a HUMAN can do is blocking you \u2014 a captcha, a 2FA code, a KYC form, a signature, an account only the chairman can touch. Never try to defeat a security challenge; hand it over. Before calling: save your session state to the workspace (playwright storage_state / cookies, the URL you were on, what remains to do) \u2014 the workspace persists across runs, so the next run resumes where you stopped. Say exactly WHAT you need ('the 6-digit code SMS'd to your phone', 'solve the captcha at this URL and tell me done') and WHERE, naming the site and the account in full. It goes straight to the chairman, not through your team, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. His answer arrives verbatim in the decision that wakes you; unanswered it expires to no, so also plan the work that does not depend on it. If there is nothing for him to do ('no trade today, place nothing'), it is not an assist: a heads_up if a standing order asks him to be told, otherwise the deliverable carries it. When it is his yes on a change that waits on him (a CI file, a protected path), pass its change_number: his yes on the assist is then his yes on that change.",
     "input_schema": {
       "properties": {
+        "change_number": {
+          "type": "integer"
+        },
         "what": {
           "type": "string"
         },
@@ -1185,6 +1188,15 @@
     "name": "requirement_propose"
   },
   {
+    "description": "Read the plan word for word: every requirement's id, key, statement, acceptance test and status. Work from these, not from the project goal.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "requirements"
+  },
+  {
     "description": "CEO only, when a review is open (see the `review` block in your context). File your variance narrative for the standing status meeting: what moved against the plan since the last review, the SINGLE largest cause named (a piece of work, a bet that failed, a run of failures \u2014 named by what it is, not by its key), and in `recommended`, what you would cut or move. The platform's numbers are already on the review \u2014 explain them, do not restate them. The chairman reads this at the meeting, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. His decisions come back to you as notices with his reasons.",
     "input_schema": {
       "properties": {
@@ -1259,9 +1271,12 @@
     "name": "roster_activity"
   },
   {
-    "description": "Code Factory, challenge seats only. Write a hidden scenario for a requirement: a shell command the platform runs from the root of every change serving it, passing on exit 0. Builders never read it \u2014 so test what the requirement promises, including the cases a builder would not think to check. Keep the script outside the repo: put the whole check in the command.",
+    "description": "Code Factory, challenge seats only. Write a hidden scenario for a requirement: a shell command the platform runs from the root of every change serving it, passing on exit 0. Builders never read it \u2014 so test what the requirement promises, including the cases a builder would not think to check. Keep the script outside the repo: put the whole check in the command. `checks` quotes the words of the requirement this scenario tests, from its statement or acceptance test; read them first with the requirements tool.",
     "input_schema": {
       "properties": {
+        "checks": {
+          "type": "string"
+        },
         "command": {
           "type": "string"
         },
@@ -1275,7 +1290,8 @@
       "required": [
         "requirement_id",
         "name",
-        "command"
+        "command",
+        "checks"
       ],
       "type": "object"
     },

@@ -2564,6 +2564,11 @@ class Approval(Base):
     # A TOOL_PERMISSION approval's move: {"source", "tool", "from", "to"}.
     # Approving it is what moves the tool; declining leaves it where it was.
     tool_permission: Mapped[dict | None] = mapped_column(JSONVariant)
+    # An ASSIST asking his yes on a change only he can pass: {"change_id",
+    # "number", "sha"}. Approving it IS that yes, on that commit. 26 November
+    # 2026: the CEO asked him to approve the Split app's CI change, he said
+    # yes, the change still had no yes, and he merged it by hand.
+    change: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
 class DataSourceTool(Base):

@@ -341,6 +341,13 @@ def evaluate(session: Session, project: Project, change: Change,
 CHAIRMAN_GATES = ("protected", "ci_config")
 
 
+def waits_on_chairman(change: Change) -> list[str]:
+    """The gates on this change only the chairman's own yes can pass, as the
+    last evaluation left them."""
+    gates = change.gates or {}
+    return [g for g in CHAIRMAN_GATES if not gates.get(g, {}).get("ok", True)]
+
+
 def _ask_chairman_if_only_he_is_left(session: Session, project: Project, change: Change,
                                      gates: dict) -> None:
     """A change whose every other gate is green and which waits only on the
@@ -708,6 +715,43 @@ def record_preview(session: Session, change: Change, sha: str, deployed: bool,
 
 
 # ── hidden scenarios ────────────────────────────────────────────────────────────
+
+
+#: The words every EARS requirement shares, and the glue between words. A quote
+#: made only of these ("THE SYSTEM SHALL") fits every requirement, so it shows
+#: nothing about which one the scenario tests.
+_SHARED_WORDS = frozenset(
+    ["a", "an", "and", "any", "are", "as", "at", "be", "by", "each", "every", "for", "from", "if", "in", "into", "is", "it", "its", "of", "on", "or", "shall", "should", "system", "that", "the", "then", "this", "to", "when", "where", "which", "while", "with"])
+
+
+def _content_words(text: str) -> list[str]:
+    import re
+
+    return [w for w in re.findall(r"[a-z0-9%$.]+", (text or "").lower().replace("'", ""))
+            if w.strip(".") and w.strip(".") not in _SHARED_WORDS]
+
+
+def _texts(value) -> list[str]:
+    """Every string inside an acceptance test, which is structured data."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [t for v in value.values() for t in _texts(v)]
+    if isinstance(value, list):
+        return [t for v in value for t in _texts(v)]
+    return []
+
+
+def quotes_requirement(checks: str, requirement) -> bool:
+    """Whether `checks` quotes three words running from the requirement's own
+    statement or acceptance test, past the words every requirement shares."""
+    quote = [w.strip(".") for w in _content_words(checks)]
+    for source in (requirement.statement, *_texts(requirement.acceptance_test)):
+        words = [w.strip(".") for w in _content_words(source or "")]
+        runs = {tuple(words[i:i + 3]) for i in range(len(words) - 2)}
+        if any(tuple(quote[i:i + 3]) in runs for i in range(len(quote) - 2)):
+            return True
+    return False
 
 
 def live_scenarios(session: Session, requirement_id: str | None) -> list:

@@ -79,7 +79,13 @@ const STATE: Record<string, [string, Tone]> = {
   review_owed: ["Waiting for a review", "idle"],
 };
 
-interface Gate { key: string; label: string; state: "ok" | "stop" | "busy" }
+interface Gate { key: string; label: string; state: "ok" | "stop" | "busy"; hint?: string }
+
+/** What the two run counters count. "This hour 16/15" read as sixteen of
+    something, with nothing to say what — and the reading runs, checks and scans
+    that also happened that hour made it look miscounted. */
+const COUNTS = "Counts runs where an agent works. Reading messages, checks and scans "
+  + "are not counted. A run counts when it starts, so the count can pass the limit by one.";
 
 function gates(dash: Dashboard, vitals: VitalsView | null): Gate[] {
   const a = dash.activity;
@@ -93,10 +99,15 @@ function gates(dash: Dashboard, vitals: VitalsView | null): Gate[] {
   const list: Gate[] = [
     { key: "work", label: waitingOnWork ? "Work not ready" : "Work ready",
       state: idle || waitingOnWork ? "stop" : "ok" },
-    { key: "day", label: `Runs today ${a.daily_runs.used}/${vitals?.today.wall ?? a.daily_runs.cap}`,
-      state: b === "daily_runs" || b === "governance_reserve" ? "stop" : "ok" },
-    { key: "hour", label: b === "pacing" ? `This hour ${a.pacing.used}/${a.pacing.cap}` : "Hourly limit",
-      state: b === "pacing" ? "stop" : "ok" },
+    { key: "day", label: `Work runs today ${a.daily_runs.used}/${vitals?.today.wall ?? a.daily_runs.cap}`,
+      state: b === "daily_runs" || b === "governance_reserve" ? "stop" : "ok",
+      hint: `Since midnight. ${COUNTS}` },
+    { key: "hour", label: b === "pacing" ? `Work runs this hour ${a.pacing.used}/${a.pacing.cap}`
+      : "Hourly limit",
+      state: b === "pacing" ? "stop" : "ok",
+      hint: `${a.pacing.used} of ${a.pacing.cap} in the last 60 minutes`
+        + (a.pacing.frees_at ? `; the next one may start at ${time(a.pacing.frees_at)}` : "")
+        + `. ${COUNTS}` },
     { key: "agent", label: b === "agents_busy" ? "Agents busy" : "Agent free",
       state: b === "wake_ceiling" || b === "coalescing" ? "stop" : b === "agents_busy" ? "busy" : "ok" },
     { key: "slot", label: `Run slots ${a.concurrency.in_flight}/${a.concurrency.cap}`,
@@ -187,7 +198,7 @@ export function StatusLine({ dash, vitals, fix, idleWhy }: {
       </div>
       <ol className="vt-gates" aria-label="What a run needs">
         {gates(dash, vitals).map((g) => (
-          <li key={g.key} className={`vt-gate ${g.state}`}>
+          <li key={g.key} className={`vt-gate ${g.state}`} title={g.hint}>
             <span aria-hidden="true">{g.state === "stop" ? "✕" : g.state === "busy" ? "●" : "✓"}</span>{g.label}
           </li>
         ))}

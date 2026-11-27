@@ -201,7 +201,7 @@ _DOING = {
     **dict.fromkeys(("messages_read", "channels", "mail_read"), "reading messages"),
     **dict.fromkeys(("message_post", "mail_send", "heads_up"), "sending a message"),
 }
-_DOING_PREFIX = (("task_", "checking the task board"), ("board", "checking the task board"),
+_DOING_PREFIX = (("task_", "checking the task board"), ("board", "checking the task board"), ("requirements", "reading the plan"),
                  ("memory", "checking its notes"), ("requirement", "checking the plan"),
                  ("brief", "drafting the brief"), ("approval", "checking approvals"))
 

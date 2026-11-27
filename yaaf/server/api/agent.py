@@ -11,6 +11,7 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import re
 import weakref
 from datetime import datetime, timedelta
 from typing import Literal
@@ -604,10 +605,29 @@ def incident_postmortem(incident_id: str, body: PostmortemIn,
     return releases.incident_view(incident)
 
 
+@router.get("/requirements")
+def requirements_list(ctx: RunContext = Depends(run_auth),
+                      session: Session = Depends(db)) -> dict:
+    """The plan, word for word, for any seat: what each requirement promises,
+    how it is judged met, and where it stands. A builder makes them true, a
+    reviewer checks a change against one, a test writer tests one — none can do
+    it from the project goal. Hidden scenarios stay hidden; this is the spec."""
+    from yaaf.server.contextpack import requirement_view
+
+    return {"requirements": [requirement_view(r)
+                             for r in policy.scope_requirements(session, ctx.project.id)
+                             if r.status != RequirementStatus.CUT]}
+
+
 class ScenarioAdd(BaseModel):
     requirement_id: str
     name: str = Field(min_length=3, max_length=200)
     command: str = Field(min_length=5, max_length=8000)
+    #: The words of the requirement this scenario tests, quoted from its
+    #: statement or acceptance test. 26 November 2026: a test writer that could
+    #: not read R-01 hung nine calculator tests on it, and R-01 is the CI
+    #: requirement. A scenario that cannot quote its requirement is not for it.
+    checks: str = Field(min_length=10, max_length=600)
 
 
 @router.post("/scenarios")
@@ -626,6 +646,13 @@ def add_scenario(body: ScenarioAdd, ctx: RunContext = Depends(run_auth),
     requirement = session.get(Requirement, body.requirement_id)
     if requirement is None or requirement.project_id != ctx.project.id:
         raise Refusal("Unknown requirement.", status_code=404)
+    if not changes.quotes_requirement(body.checks, requirement):
+        raise Refusal(
+            f"Not filed: `checks` does not quote {requirement.key}. Quote the words of "
+            f"{requirement.key} this scenario tests, from its statement or acceptance test. "
+            f"If none fit, the scenario belongs to another requirement (the requirements "
+            f"tool lists them). {requirement.key} says: {requirement.statement[:600]}",
+            status_code=422)
     row = Scenario(id=ids.new_id(ids.SCENARIO), project_id=ctx.project.id,
                    requirement_id=requirement.id, name=body.name.strip(),
                    command=body.command.strip(), author_agent_id=ctx.agent.id)
@@ -640,6 +667,7 @@ def add_scenario(body: ScenarioAdd, ctx: RunContext = Depends(run_auth),
         changes.queue_scenarios(session, ctx.project, change)
         changes.evaluate(session, ctx.project, change)
     return {"id": row.id, "requirement": requirement.key,
+            "statement": requirement.statement,
             "hidden": len(changes.live_scenarios(session, requirement.id))}
 
 
@@ -3630,6 +3658,42 @@ class AssistIn(BaseModel):
     what: str = Field(min_length=10, max_length=2000)
     # Where the human picks up: a URL, "the SMS sent to your phone", a form.
     where: str | None = Field(default=None, max_length=500)
+    # The change this asks his yes on, when it is one only he can pass (a CI
+    # file, a protected path). His yes on the assist is then his yes on it.
+    change_number: int | None = Field(default=None, ge=1)
+
+
+#: "change #1", "pull request 1", "PR #12": how an assist names a change.
+_NAMES_A_CHANGE = re.compile(r"\b(?:change|pull request|PR)\s*(?:number\s*)?#?\s*(\d+)\b",
+                             re.IGNORECASE)
+
+
+def _change_for_his_yes(session: Session, ctx: RunContext, body: AssistIn) -> dict | None:
+    """The change an assist asks his yes on, bound to its commit — or a refusal
+    when the assist names one waiting on him without saying it is for it."""
+    from yaaf.server import changes
+
+    if body.change_number is None:
+        text = f"{body.what} {body.where or ''}"
+        for number in dict.fromkeys(int(n) for n in _NAMES_A_CHANGE.findall(text)):
+            change = changes.by_number(session, ctx.project, number)
+            if change is not None and change.status in changes.LIVE \
+                    and changes.waits_on_chairman(change):
+                raise Refusal(
+                    f"Not filed: change #{number} waits on the chairman's own yes, and an "
+                    "assist's yes does not reach it on its own. File it again with "
+                    f"change_number: {number}, and his yes on this approves that change on "
+                    "its current commit.", status_code=409)
+        return None
+    change = changes.by_number(session, ctx.project, body.change_number)
+    if change is None:
+        raise Refusal(f"Unknown change #{body.change_number}.", status_code=404)
+    waiting = changes.waits_on_chairman(change)
+    if change.status not in changes.LIVE or not change.head_sha or not waiting:
+        raise Refusal(f"Change #{change.number} waits on nothing only the chairman can "
+                      "give, so there is no yes to ask him for.", status_code=409)
+    return {"change_id": change.id, "number": change.number, "sha": change.head_sha,
+            "waits_on": waiting}
 
 
 @router.post("/assists")
@@ -3647,9 +3711,11 @@ def assist_request(
     session state to the workspace BEFORE ending the run (playwright
     storage_state, cookies, the URL you were on): the workspace persists, so
     the next run resumes where this one stopped."""
+    change = _change_for_his_yes(session, ctx, body)
     approval = _file_approval(
         session, ctx, "assist", f"Assist: {body.what[:120]}",
         body.what + (f"\nWhere: {body.where}" if body.where else ""))
+    approval.change = change
     _boardroom_system_line(
         session, ctx.project.id,
         f"🤝 ASSIST NEEDED ({ctx.agent.name}): {body.what[:400]}"

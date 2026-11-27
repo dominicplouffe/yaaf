@@ -48,6 +48,9 @@ def approval_row(a: Approval, *, held_note: dict | None = None) -> dict:
         "capacity": a.capacity,
         # A tool_permission request's move: {"source", "tool", "from", "to"}.
         "tool_permission": a.tool_permission,
+        # An assist asking his yes on a change: {"change_id", "number", "sha",
+        # "waits_on"}. Approving it approves that change on that commit.
+        "change": a.change,
         "undo": approval_undo(a.kind),
         # His note as held for the CEO's answer, and the answer once given.
         "held_note": held_note,

@@ -4405,6 +4405,8 @@ def decide_approval(
         release = releases.decided(session, project, approval, body.approve, body.note)
         return {"id": approval.id, "status": approval.status,
                 "release": releases.view(release) if release else None}
+    if approval.kind == ApprovalKind.ASSIST and approval.change:
+        return _decide_change_assist(session, approval, project, body)
     if body.approve and approval.kind == ApprovalKind.TOOL_REQUEST and approval.grant:
         # A one-call grant past a denied tool. Retired: a yes would let nothing
         # through (the gateway reads only the switch), and saying it did would
@@ -4428,6 +4430,40 @@ def decide_approval(
         if offer is not None:
             out["offer"] = {**offer, "project_id": project.id}
     return out
+
+
+def _decide_change_assist(session: Session, approval: Approval, project: Project,
+                          body: ApprovalDecision) -> dict:
+    """His yes on an assist that asks for his yes on a change IS that yes, on
+    the commit he was asked about. A push since then is a commit he has not
+    seen: the yes is recorded, the change is not approved, and both of them are
+    told so rather than told it went through."""
+    from yaaf.core.models import Change
+    from yaaf.server import changes
+
+    bound = approval.change or {}
+    change = session.get(Change, bound.get("change_id"))
+    approved_change, why = None, None
+    if body.approve:
+        if change is None or change.status not in changes.LIVE:
+            why = f"change #{bound.get('number')} is no longer open"
+        elif change.head_sha != bound.get("sha"):
+            why = (f"change #{change.number} has a newer commit than the one you were "
+                   "asked about; approve that one on the Changes tab")
+        else:
+            approved_change = changes.chairman_approve(session, project, change)
+    said = (f" Change #{bound.get('number')} is approved on commit {str(bound.get('sha'))[:7]}."
+            if approved_change else f" Change #{bound.get('number')} is NOT approved: {why}."
+            if body.approve else "")
+    _apply_decision(
+        session, approval, project, body.approve, body.note,
+        notice_body=(f"Approval '{approval.title}' was "
+                     f"{'APPROVED' if body.approve else 'DENIED'}"
+                     + (f": {body.note}" if body.note else ".") + said),
+        audit_detail={"change": bound, "change_approved": bool(approved_change)})
+    return {"id": approval.id, "status": approval.status,
+            "change": approved_change["change"] if approved_change else None,
+            **({"change_not_approved": why} if why else {})}
 
 
 def _decide_brief(session: Session, approval: Approval, project: Project,
