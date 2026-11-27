@@ -27,6 +27,8 @@ export type FactoryView = {
     state: "working" | "idle"; since: string | null; on: string | null;
     runs_today: number; tokens_today: number }[];
   cost?: { unit: "usd" | "tokens"; estimate: boolean; spent_usd: number; tokens: number;
+    /** What a provider actually billed, and the subscription's runs at list price. */
+    billed_usd?: number; subscription_usd?: number;
     cap: number; per_merged_change_usd: number | null; merged: number;
     top_seat: { name: string; usd: number } | null };
   numbers?: {
@@ -184,6 +186,12 @@ export function FactoryCost({ view, base }: { view: FactoryView | null; base: st
   const usd = (n: number) => `${c.estimate ? "~" : ""}$${n < 10 ? n.toFixed(2) : Math.round(n)}`;
   const used = c.unit === "usd" ? c.spent_usd : c.tokens;
   const share = c.cap > 0 ? Math.min(1, used / c.cap) : 0;
+  const money = (n: number) => `$${n < 10 ? n.toFixed(2) : Math.round(n)}`;
+  const billed = c.billed_usd ?? 0;
+  const onPlan = c.subscription_usd ?? 0;
+  // A factory that codes on a subscription and talks on an API key (or the
+  // other way round) has two kinds of dollar in one total: say which is which.
+  const split = c.unit === "usd" ? onPlan > 0 : billed > 0;
   return (
     <section className="card fh-card" aria-labelledby="fh-cost">
       <div className="fh-head">
@@ -198,6 +206,9 @@ export function FactoryCost({ view, base }: { view: FactoryView | null; base: st
         <span style={{ width: `${share * 100}%` }} />
       </div>
       <dl className="fh-dl">
+        {split && <div><dt>Billed</dt><dd className="mono">{money(billed)}</dd></div>}
+        {split && c.unit === "usd" && <div><dt>On subscription</dt>
+          <dd className="mono">~{money(onPlan)} at list price</dd></div>}
         <div><dt>Per merged change</dt><dd className="mono">{c.per_merged_change_usd == null
           ? "no merges yet" : `${usd(c.per_merged_change_usd)} · ${c.merged} merged`}</dd></div>
         {c.unit === "tokens" && <div><dt>At list price</dt><dd className="mono">{usd(c.spent_usd)}</dd></div>}
@@ -205,6 +216,10 @@ export function FactoryCost({ view, base }: { view: FactoryView | null; base: st
       </dl>
       <p className="help">{c.estimate
         ? "Paid by a subscription, so dollars are estimates from tokens at list price. "
+        : ""}{split && c.unit === "usd"
+        ? "Billed is what a provider charged. Subscription runs cost nothing extra and count against the cap at list price. "
+        : ""}{split && c.unit === "tokens"
+        ? "Billed is what an API key was charged, on top of the subscription. "
         : ""}Counts every run, including ones that produced nothing.</p>
     </section>
   );

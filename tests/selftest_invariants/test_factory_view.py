@@ -145,3 +145,29 @@ def test_a_project_that_is_not_a_factory_has_no_factory_home(client, gh):
     assert _view(client, project) == {"phase": None}
     _, ceo = live_token(project["id"], project["ceo_agent_id"])
     assert bearer(ceo)  # the project is real; it simply is not a factory
+
+
+def test_the_cost_says_what_was_billed_and_what_a_subscription_stands_for(client, gh):
+    """A factory may code on a subscription and talk on an API key. The cap
+    counts both, as it did; the card says which dollars a provider charged."""
+    from yaaf.core.models import LedgerEntry, LedgerKind
+
+    project = _factory(client)
+    mika = _agent(project, "Mika")
+    before = _view(client, project)["cost"]
+    with db_session() as session:
+        for paid, usd in (("usd", 0.40), ("tokens", 1.10), (None, 0.25)):
+            run = Run(id=ids.new_id(ids.RUN), project_id=project["id"], agent_id=mika,
+                      kind=RunKind.AGENT_RUN, trigger={}, status="done", paid_in=paid,
+                      cost_usd=usd, priced_usd=usd, started_at=utcnow())
+            session.add(run)
+            session.add(LedgerEntry(id=ids.new_id(ids.LEDGER), project_id=project["id"],
+                                    kind=LedgerKind.MODEL_USAGE, usd=usd, run_id=run.id))
+    cost = _view(client, project)["cost"]
+    assert cost["unit"] == "usd" and before["subscription_usd"] == 0
+    # The total, which is what the cap is held against, is what it always was.
+    assert cost["spent_usd"] == round(before["spent_usd"] + 1.75, 2)
+    # A run from before the payer was pinned reads as the billing mode's.
+    assert cost["subscription_usd"] == 1.10
+    assert cost["billed_usd"] == round(before["billed_usd"] + 0.65, 2)
+    assert round(cost["billed_usd"] + cost["subscription_usd"], 2) == cost["spent_usd"]

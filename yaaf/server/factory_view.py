@@ -259,6 +259,16 @@ def summary(session: Session, project: Project) -> dict:
 
     est_usd = sum(run_usd(r) for r in month_runs)
     spent_usd = float(usd) if usd_mode else est_usd
+    # The same total, said as what it is made of. A factory's coding key and
+    # its billing credential may bill differently, and a subscription's runs
+    # move no dollars: on a dollar budget they are counted at list price
+    # (budget.counted), which is a number about the cap and not about the
+    # invoice. The cap's arithmetic is untouched; this only names the halves.
+    by_plan = sum(run_usd(r) for r in month_runs
+                  if (r.paid_in or ("usd" if usd_mode else "tokens")) == "tokens")
+    by_plan = min(by_plan, spent_usd)
+    billed_usd = spent_usd - by_plan if usd_mode else sum(
+        float(r.cost_usd or 0.0) for r in month_runs if r.paid_in == "usd")
     per_seat: dict[str, float] = {}
     for r in month_runs:
         if r.agent_id:
@@ -269,6 +279,10 @@ def summary(session: Session, project: Project) -> dict:
         "unit": "usd" if usd_mode else "tokens",
         "estimate": not usd_mode,
         "spent_usd": round(spent_usd, 2),
+        # Dollars a provider actually billed, and what the subscription's runs
+        # come to at list price. On a dollar budget the two sum to spent_usd.
+        "billed_usd": round(billed_usd, 2),
+        "subscription_usd": round(by_plan, 2),
         "tokens": int(tokens_in) + int(tokens_out),
         "cap": cons.monthly_usd_cap if usd_mode else cons.monthly_token_cap,
         "per_merged_change_usd": (round(spent_usd / len(merged_this_month), 2)
