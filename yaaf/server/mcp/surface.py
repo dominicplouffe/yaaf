@@ -333,6 +333,9 @@ WITHHELD = {
     "GET /admin/projects/{project_id}/credentials":
         "the same list rides the project's dashboard (`credentials`), which `project` "
         "already returns — a second read path would be a second definition of it.",
+    "GET /admin/projects/{project_id}/coding-credential":
+        "a Code Factory's coding key rides the project's dashboard (`coding`), which "
+        "`project` already returns — a second read path would be a second definition of it.",
     "GET /admin/settings/models":
         "the install's lineups and ceilings are above every project a client is scoped "
         "to; `catalog (models)` says what each class resolves to, which is what a drafter "
