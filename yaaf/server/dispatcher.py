@@ -1865,6 +1865,37 @@ def _talk_reasons(agent: Agent, reasons: list[dict], boardroom_ids: set[str]) ->
             and r.get("channel_id") in boardroom_ids]
 
 
+def _addressed_only(project: Project, agent: Agent, channel_kind: str | None) -> bool:
+    """In a Code Factory every one-seat team's seat leads its team, so the
+    leadership channel holds the whole challenge bench. Each batch of three
+    lines there woke five or six seats: on the Split app's first night 32 of 60
+    seat runs were woken by messages alone, and the reviewers said "nothing
+    needed me this run" again and again. There a seat other than the CEO wakes
+    only for a line that names it or answers its own; it reads the rest when
+    its own work wakes it."""
+    from yaaf.core import shape
+
+    return (shape.is_factory(project) and channel_kind == ChannelKind.LEADERSHIP
+            and agent.kind != AgentKind.CEO)
+
+
+def _addressed_to(session: Session, agent: Agent, message: Message) -> bool:
+    import re
+
+    if re.search(rf"(?<![\w@]){re.escape(agent.name)}\b|@{re.escape(agent.name)}\b",
+                 message.body or "", re.IGNORECASE):
+        return True
+    if message.thread_id:
+        root = session.get(Message, message.thread_id)
+        if root is not None and root.sender_agent_id == agent.id:
+            return True
+        return session.execute(
+            select(Message.id).where(Message.thread_id == message.thread_id,
+                                     Message.sender_agent_id == agent.id).limit(1)
+        ).first() is not None
+    return False
+
+
 def _message_reasons(
     session: Session, project: Project, cons: ConstitutionDoc, agent: Agent,
     *, skip_channels: set[str], delivered: bool, now,
@@ -1907,6 +1938,8 @@ def _message_reasons(
             # would urgently buy a run to read its own announcement.
             and not (m.sender_agent_id is None and m.sender_user_id is None)
         ]
+        if unread and _addressed_only(project, agent, channel_kinds.get(channel_id)):
+            unread = [m for m in unread if _addressed_to(session, agent, m)]
         actionable = 0
         channel_urgent = False
         notes = _note_lines(session, project.id) if unread else set()
@@ -2211,7 +2244,7 @@ def _factory_reads_owed(session: Session, agent: Agent, seats: list[Agent]) -> l
     from yaaf.core import shape
     from yaaf.core.constitution import effective
     from yaaf.core.models import Change, ChangeStatus, Project, Requirement, RequirementStatus
-    from yaaf.server import changes
+    from yaaf.server import changes, upkeep
 
     project = session.get(Project, agent.project_id)
     if project is None or not shape.is_factory(project):
@@ -2248,6 +2281,13 @@ def _factory_reads_owed(session: Session, agent: Agent, seats: list[Agent]) -> l
                                         RequirementStatus.IN_PROGRESS)))
         ).scalars():
             if changes.live_scenarios(session, requirement.id):
+                continue
+            # An upkeep promise ("every new issue answered within 24 hours") is
+            # measured by the platform, and a requirement judged by a person
+            # has no command to attack: no shell scenario can test either, and
+            # the wake for one fired every hour from hand-over on.
+            if upkeep.is_upkeep_promise(requirement) \
+                    or (requirement.acceptance_test or {}).get("type") not in (None, "command"):
                 continue
             if chosen("test-engineer") == agent.id:
                 reasons.append({"kind": "scenarios_owed", "requirement_id": requirement.id,
@@ -2317,9 +2357,23 @@ def _work_reasons(session: Session, agent: Agent, now) -> list[dict]:
                 Task.parent_task_id == task.id, Task.status.in_(policy.OPEN_TASK_STATUSES)
             )
         ).scalar_one()
-        if open_subtasks == 0:
+        if open_subtasks == 0 and not _change_waits_on_others(session, task):
             reasons.append({"kind": "claimed_task", "task_id": task.id})
     return reasons
+
+
+def _change_waits_on_others(session: Session, task: Task) -> bool:
+    """The task's work is a live change and nothing holding it is the
+    author's to fix. Its author is woken again by the notice that changes that:
+    a return, a red check, a failing scenario, a merge, a close."""
+    from yaaf.core.models import Change
+    from yaaf.server import changes
+
+    live = session.execute(
+        select(Change).where(Change.task_id == task.id, Change.status.in_(changes.LIVE))
+        .order_by(Change.created_at.desc())
+    ).scalars().first()
+    return live is not None and not changes.author_can_act(live)
 
 
 def _breaker_trips(

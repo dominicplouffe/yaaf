@@ -236,6 +236,7 @@ def _janitor_project(session: Session, project: Project) -> None:
         github.connect_wanted(session, project)
     changes.poll_github(session, project)
     changes.reconcile_main(session, project)
+    changes.requeue_lost_jobs(session, project)
     changes.merge_ready(session, project)
     releases.watch(session, project)
     upkeep.refresh_packages(session, project)

@@ -4440,14 +4440,14 @@ def _decide_change_assist(session: Session, approval: Approval, project: Project
     the commit he was asked about. A push since then is a commit he has not
     seen: the yes is recorded, the change is not approved, and both of them are
     told so rather than told it went through."""
-    from yaaf.core.models import Change
+    from yaaf.core.models import Change, ChangeStatus
     from yaaf.server import changes
 
     bound = approval.change or {}
     change = session.get(Change, bound.get("change_id"))
     approved_change, why = None, None
     if body.approve:
-        if change is None or change.status not in changes.LIVE:
+        if change is None or change.status not in (ChangeStatus.OPEN, ChangeStatus.READY):
             why = f"change #{bound.get('number')} is no longer open"
         elif change.head_sha != bound.get("sha"):
             why = (f"change #{change.number} has a newer commit than the one you were "

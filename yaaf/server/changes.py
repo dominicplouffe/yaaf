@@ -16,7 +16,7 @@ rule that still holds when GitHub's own branch protection could not be set.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -293,8 +293,16 @@ def gates_for(session: Session, project: Project, change: Change,
         "ok": signed,
         "detail": ("signed" if signed
                    else f"returned: {(change.review_note or '')[:200]}"
-                   if change.review_verdict == "returned"
+                   if change.review_verdict == "returned" and change.reviewed_sha == change.head_sha
                    else "waiting for a challenge seat to read it")}
+    # GitHub said it cannot merge this commit onto main (it conflicts, or main
+    # moved under a rule that wants it up to date). Green everywhere else, it
+    # would be queued and refused again every tick; a push clears it.
+    refused = (change.findings or {}).get("merge_refused") or {}
+    if refused.get("sha") and refused.get("sha") == change.head_sha:
+        gates["mergeable"] = {"ok": False, "detail": (
+            f"GitHub could not merge this commit onto main ({refused.get('status')}): "
+            "rebase the branch onto main and push")}
     return gates
 
 
@@ -339,6 +347,52 @@ def evaluate(session: Session, project: Project, change: Change,
 
 #: The gates only the chairman's own yes can pass.
 CHAIRMAN_GATES = ("protected", "ci_config")
+
+
+#: A check that finished badly: the author's to fix.
+_CHECK_FAILED = ("failure", "cancelled", "timed_out", "action_required", "startup_failure")
+
+
+def author_can_act(change: Change) -> bool:
+    """Whether anything holding this change is the author's to fix. A change
+    signed and green but for the chairman, a challenge seat, CI still running
+    or the platform still measuring waits on others; waking its author every
+    tick buys a run that says "nothing I can do will move it" (Split app, five
+    times in twenty minutes on one signed change)."""
+    if change.status == ChangeStatus.MERGING:
+        return False
+    if change.status not in (ChangeStatus.OPEN, ChangeStatus.READY):
+        return True
+    findings = change.findings or {}
+    head = change.head_sha
+
+    def measured(key: str) -> bool:
+        return (findings.get(key) or {}).get("sha") == head
+
+    for gate, detail in (change.gates or {}).items():
+        if detail.get("ok", True):
+            continue
+        if gate in ("protected", "ci_config", "packages"):
+            continue                     # the chairman's, or a challenge seat's
+        if gate == "review":
+            if change.review_verdict == "returned" and change.reviewed_sha == head:
+                return True
+            continue
+        if gate == "checks":
+            if any(v in _CHECK_FAILED for v in (change.checks or {}).values()):
+                return True
+            continue
+        if gate == "scenarios":
+            results = change.scenario_results or {}
+            if results.get("sha") == head and not all((results.get("results") or {}).values()):
+                return True
+            continue
+        if gate in ("scan", "health", "preview"):
+            if measured(gate):
+                return True
+            continue
+        return True
+    return False
 
 
 def waits_on_chairman(change: Change) -> list[str]:
@@ -402,6 +456,25 @@ def pull_request_event(session: Session, project: Project, action: str, pr: dict
         change.status = ChangeStatus.CLOSED
         change.status_reason = ("merged on GitHub, outside the platform" if pr.get("merged")
                                 else "closed on GitHub")
+        # The author's task is still claimed on this change; without a word it
+        # waits on a pull request that no longer exists.
+        _tell(session, project, change.author_agent_id, NoticeKind.CHANGE_RETURNED,
+              f"Change #{change.number} ({change.title}) was {change.status_reason}. "
+              + ("Its commit is on main without the platform's gates; the chairman is "
+                 "asked about it." if pr.get("merged") else
+                 "If the work is still wanted, push to the branch and it is reopened, or "
+                 "open a new change for the task."))
+        return {"change": change.id, "status": change.status}
+    if action == "reopened" and change.status == ChangeStatus.CLOSED \
+            and change.status_reason == "closed on GitHub":
+        # Reopened on GitHub: the change is live again, or no change could ever
+        # be opened for its branch (GitHub: "a pull request already exists").
+        _take_pr(change, pr)
+        change.status, change.status_reason = ChangeStatus.OPEN, None
+        scan(session, project, change)
+        queue_scenarios(session, project, change)
+        queue_scan(session, project, change)
+        evaluate(session, project, change)
         return {"change": change.id, "status": change.status}
     return {"change": change.id, "ignored": f"action {action!r}"}
 
@@ -809,6 +882,67 @@ def queue_scenarios(session: Session, project: Project, change: Change) -> bool:
     return True
 
 
+#: A scan or scenario job that finished without a result for the commit is
+#: tried again after this long, up to LOST_JOB_TRIES times per commit.
+LOST_JOB_AFTER = timedelta(minutes=3)
+LOST_JOB_TRIES = 3
+
+
+def requeue_lost_jobs(session: Session, project: Project) -> int:
+    """Run again a change's scan or hidden scenarios whose job ended with no
+    result for its head commit: a checkout fetch that hiccuped, a Docker error,
+    a run reaped by a restart. Nothing else re-queues them; the gate said "not
+    yet run on this commit" until somebody happened to push again."""
+    from yaaf.core.models import Run, RunKind, RunQueue, RunStatus
+
+    if not shape.is_factory(project):
+        return 0
+    cons = effective(session, project.id)
+    live = list(session.execute(
+        select(Change).where(Change.project_id == project.id,
+                             Change.status.in_((ChangeStatus.OPEN, ChangeStatus.READY)),
+                             Change.head_sha.is_not(None))).scalars())
+    if not live:
+        return 0
+    since = utcnow() - timedelta(days=2)
+    runs = list(session.execute(
+        select(Run).where(Run.project_id == project.id, Run.created_at >= since,
+                          Run.kind.in_((RunKind.SCENARIO_CHECK, RunKind.CHANGE_SCAN)))).scalars())
+    queued = list(session.execute(
+        select(RunQueue).where(RunQueue.project_id == project.id,
+                               RunQueue.kind.in_((RunKind.SCENARIO_CHECK,
+                                                  RunKind.CHANGE_SCAN)))).scalars())
+    cutoff = utcnow() - LOST_JOB_AFTER
+    requeued = 0
+    for change in live:
+        def lost(kind: str, change: Change = change) -> bool:
+            mine = [r for r in runs if r.kind == kind
+                    and (r.trigger or {}).get("change_id") == change.id
+                    and (r.trigger or {}).get("sha") == change.head_sha]
+            if any(q.kind == kind and (q.trigger or {}).get("change_id") == change.id
+                   for q in queued):
+                return False
+            if not mine or len(mine) >= LOST_JOB_TRIES:
+                return False   # never queued (nothing to recover), or tried enough
+            if any(r.status == RunStatus.RUNNING for r in mine):
+                return False
+            ended = max((r.finished_at for r in mine if r.finished_at), default=None)
+            return ended is not None and (ended if ended.tzinfo else ended.replace(tzinfo=UTC)) \
+                <= cutoff
+
+        results = change.scenario_results or {}
+        if results.get("sha") != change.head_sha and lost(RunKind.SCENARIO_CHECK) \
+                and queue_scenarios(session, project, change):
+            requeued += 1
+        findings = change.findings or {}
+        wanted = [k for k, on in (("scan", cons.platform_scans),
+                                  ("health", cons.code_health_ratchet)) if on]
+        if any((findings.get(k) or {}).get("sha") != change.head_sha for k in wanted) \
+                and lost(RunKind.CHANGE_SCAN) and queue_scan(session, project, change):
+            requeued += 1
+    return requeued
+
+
 def record_scenarios(session: Session, change: Change, sha: str,
                      results: dict[str, bool]) -> None:
     """What the runner saw. Ignored when the change has moved on since: a pass
@@ -858,15 +992,29 @@ def merge_ready(session: Session, project: Project) -> int:
     unexplained commit."""
     if not shape.is_factory(project) or project.status != ProjectStatus.RUNNING:
         return 0
+    settle_merging(session, project)
     if merges_frozen(session, project) is not None:
         return 0
     cons = effective(session, project.id)
     merged = 0
-    for change in list(session.execute(
+    now = utcnow()
+    ready = list(session.execute(
         select(Change).where(Change.project_id == project.id,
                              Change.status == ChangeStatus.READY)
         .order_by(Change.created_at)
-    ).scalars()):
+    ).scalars())
+    if ready and _main_moved_unseen(session, project):
+        # Someone moved main since the platform last looked. Judge that push
+        # before merging on top of it: once the platform's merge lands, the
+        # poll sees only its own commit and the push is never judged at all.
+        poll_github(session, project, force=True)
+        reconcile_main(session, project)
+        if merges_frozen(session, project) is not None:
+            return 0
+    for change in ready:
+        retry_at = (change.findings or {}).get("merge_retry_at")
+        if retry_at and datetime.fromisoformat(retry_at) > now:
+            continue
         evaluate(session, project, change, cons)
         if change.status != ChangeStatus.READY:
             continue
@@ -877,26 +1025,123 @@ def merge_ready(session: Session, project: Project) -> int:
                 session, project.github_repo or "", change.number or 0,
                 sha=change.head_sha or "", title=f"{change.title} (#{change.number})")
         except github.GithubError as exc:
-            change.status = ChangeStatus.OPEN
-            change.status_reason = str(exc)[:1000]
-            _audit(session, project, "change.merge_failed", change, {"error": str(exc)[:500]})
+            if _merge_failed(session, project, change, exc):
+                merged += 1
             session.commit()
             continue
-        change.status = ChangeStatus.MERGED
-        change.merged_sha = sha
-        change.merged_at = utcnow()
-        change.status_reason = None
-        _audit(session, project, "change.merged", change,
-               {"sha": sha, "head": change.head_sha, "reviewer": change.reviewer_agent_id})
-        policy.attest_shipped(
-            session, project, f"Change #{change.number} merged to main: {change.title}",
-            f"https://github.com/{project.github_repo}/pull/{change.number}"
-            if project.github_repo and change.number else None, task_id=change.task_id)
-        _tell(session, project, change.author_agent_id, NoticeKind.CHANGE_MERGED,
-              f"Change #{change.number} ({change.title}) is merged: {sha[:12]}.")
+        _finish_merge(session, project, change, sha)
         session.commit()
         merged += 1
     return merged
+
+
+def _main_moved_unseen(session: Session, project: Project) -> bool:
+    from yaaf.server import upkeep
+
+    known = upkeep.main_head(session, project.id)
+    if known is None or not project.github_repo:
+        return False
+    try:
+        head = github.branch_head(session, project.github_repo, _default_branch(project))
+    except github.GithubError:
+        return False
+    return bool(head) and head != known
+
+
+#: How long a change may sit in MERGING before the platform asks GitHub what
+#: became of it. The merge call itself times out in seconds; a change still
+#: MERGING minutes later is one whose answer was lost (a restart mid-call).
+MERGING_STALE = timedelta(minutes=5)
+#: How long to wait before trying again after GitHub could not be reached.
+MERGE_RETRY = timedelta(minutes=2)
+
+
+def _finish_merge(session: Session, project: Project, change: Change, sha: str) -> None:
+    change.status = ChangeStatus.MERGED
+    change.merged_sha = sha
+    change.merged_at = utcnow()
+    change.status_reason = None
+    _audit(session, project, "change.merged", change,
+           {"sha": sha, "head": change.head_sha, "reviewer": change.reviewer_agent_id})
+    policy.attest_shipped(
+        session, project, f"Change #{change.number} merged to main: {change.title}",
+        f"https://github.com/{project.github_repo}/pull/{change.number}"
+        if project.github_repo and change.number else None, task_id=change.task_id)
+    _tell(session, project, change.author_agent_id, NoticeKind.CHANGE_MERGED,
+          f"Change #{change.number} ({change.title}) is merged: {sha[:12]}.")
+
+
+def _merge_failed(session: Session, project: Project, change: Change,
+                  exc: Exception) -> bool:
+    """What a failed merge call really means, read back from the PR. True when
+    it had in fact merged.
+
+    A timeout after GitHub merged used to put the change back to OPEN; the poll
+    then saw the PR merged, closed it as "merged on GitHub, outside the
+    platform", and reconcile_main froze merging over the platform's own merge.
+    A GitHub 502 left a green change OPEN with nothing to judge it again, and a
+    merge GitHub cannot make (a conflict) told nobody."""
+    try:
+        pr = github.get_pull_request(session, project.github_repo or "", change.number or 0)
+    except github.GithubError:
+        pr = {}
+    if pr.get("merged") and pr.get("merge_commit_sha"):
+        _finish_merge(session, project, change, pr["merge_commit_sha"])
+        return True
+    said = str(exc)
+    _audit(session, project, "change.merge_failed", change, {"error": said[:500]})
+    status = next((code for code in ("405", "409", "422") if f": {code}" in said), None)
+    if pr.get("state") == "closed":
+        change.status = ChangeStatus.CLOSED
+        change.status_reason = "closed on GitHub before it could merge"
+        _tell(session, project, change.author_agent_id, NoticeKind.CHANGE_RETURNED,
+              f"Change #{change.number} ({change.title}) was closed on GitHub before it "
+              "merged.")
+    elif status:
+        change.status = ChangeStatus.OPEN
+        change.status_reason = said[:1000]
+        change.findings = {**(change.findings or {}),
+                           "merge_refused": {"sha": change.head_sha, "status": status}}
+        evaluate(session, project, change)
+        _tell(session, project, change.author_agent_id, NoticeKind.CHANGE_RETURNED,
+              f"Change #{change.number} ({change.title}) passed every gate but GitHub could "
+              f"not merge it onto main ({status}). Rebase the branch onto main and push; "
+              "the gates run again on the new commit.")
+    else:
+        # GitHub could not be reached or failed: still green, tried again soon.
+        change.status = ChangeStatus.READY
+        change.status_reason = f"merge not made yet, trying again: {said[:900]}"
+        change.findings = {**(change.findings or {}),
+                           "merge_retry_at": (utcnow() + MERGE_RETRY).isoformat()}
+    return False
+
+
+def settle_merging(session: Session, project: Project) -> int:
+    """Changes left in MERGING by a call whose answer never came back (the
+    process died mid-merge). Nothing else ever moves a MERGING change, and a
+    MERGING change also stops its task from opening another."""
+    settled = 0
+    cutoff = utcnow() - MERGING_STALE
+    for change in list(session.execute(
+        select(Change).where(Change.project_id == project.id,
+                             Change.status == ChangeStatus.MERGING)
+    ).scalars()):
+        at = change.updated_at
+        if at is not None and (at if at.tzinfo else at.replace(tzinfo=UTC)) > cutoff:
+            continue
+        try:
+            pr = github.get_pull_request(session, project.github_repo or "", change.number or 0)
+        except github.GithubError:
+            continue
+        if pr.get("merged") and pr.get("merge_commit_sha"):
+            _finish_merge(session, project, change, pr["merge_commit_sha"])
+        elif pr.get("state") == "closed":
+            change.status = ChangeStatus.CLOSED
+            change.status_reason = "closed on GitHub before it could merge"
+        else:
+            change.status = ChangeStatus.READY
+        settled += 1
+    return settled
 
 
 #: How often a factory asks GitHub for what its webhooks would have said.
@@ -946,6 +1191,11 @@ def poll_github(session: Session, project: Project, *, force: bool = False) -> d
                         != conclusion:
                     check_run_event(session, project, run)
                     seen["checks"] += 1
+        # A branch renamed on GitHub (main → trunk) answers the old name with
+        # a redirect, read as "no head": main tracking would stop in silence.
+        named = github.default_branch(session, repo)
+        if named and named != _default_branch(project):
+            project.integrations = {**(project.integrations or {}), "default_branch": named}
         head = github.branch_head(session, repo, _default_branch(project))
         known = upkeep.main_head(session, project.id)
         if head and known is None:

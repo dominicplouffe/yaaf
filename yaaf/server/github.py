@@ -157,6 +157,17 @@ def check_runs(session: Session, repo: str, sha: str) -> list[dict]:
     return list(response.json().get("check_runs") or [])
 
 
+def default_branch(session: Session, repo: str) -> str | None:
+    """The repo's default branch as GitHub names it, or None if unreadable."""
+    try:
+        response = _call(session, "GET", f"/repos/{repo}")
+    except GithubError:
+        return None
+    if response.status_code != 200:
+        return None
+    return response.json().get("default_branch") or None
+
+
 def branch_head(session: Session, repo: str, branch: str) -> str | None:
     response = _call(session, "GET", f"/repos/{repo}/branches/{branch}")
     if response.status_code != 200:
@@ -176,13 +187,18 @@ def connect(session: Session, project: Project, name_or_full: str) -> dict:
     project.github_repo = full_name
     integrations = {k: v for k, v in (project.integrations or {}).items()
                     if k not in ("repo_wanted", "repo_wanted_error", "repo_wanted_tried_at")}
+    # The repo's own default branch. Every reader assumed "main", so a repo on
+    # master or trunk could open no change and protected a branch it lacks.
+    branch = default_branch(session, full_name)
+    if branch:
+        integrations["default_branch"] = branch
     protection = None
     if shape.is_factory(project):
         # Only the platform merges in a factory. GitHub's own rule says so too
         # where the token may set it; where it may not, the platform's push
         # detection is the rule that holds, and the result is recorded either
         # way so the project page can say which.
-        protection = protect_main(session, full_name)
+        protection = protect_main(session, full_name, branch or "main")
         integrations["branch_protection"] = protection
     project.integrations = integrations
     if shape.is_factory(project):
@@ -322,8 +338,12 @@ def list_pull_files(session: Session, repo: str, number: int) -> list[dict]:
             raise GithubError(f"GitHub could not list the files of #{number}: "
                               f"{response.status_code}")
         batch = response.json() or []
+        # A rename's old name too: moving a workflow or a test out of its
+        # path is a change to that path, and the new name alone hides it.
         files.extend({"filename": f.get("filename"), "status": f.get("status"),
-                      "patch": f.get("patch")} for f in batch)
+                      "patch": f.get("patch"),
+                      **({"previous_filename": f["previous_filename"]}
+                         if f.get("previous_filename") else {})} for f in batch)
         if len(batch) < 100:
             break
     return files

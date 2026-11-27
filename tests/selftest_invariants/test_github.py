@@ -350,8 +350,16 @@ def test_a_requirement_is_judged_on_mains_latest_commit(client, monkeypatch, tmp
     _queued_check(project, RunKind.REQUIREMENT_CHECK, requirement_id="reqt_none")
     assert (shared / "ci.yml").exists(), "the shared tree is brought to main first"
 
-    _push_to_main(tmp_path, bare, "later.txt")
-    (shared / "work.txt").write_text("a seat that fell back to here, mid-change\n")
+    _push_to_main(tmp_path, bare, "second.yml")
+    (shared / "coverage.xml").write_text("<coverage/>\n")   # left behind by a check
     _queued_check(project, RunKind.REQUIREMENT_CHECK, requirement_id="reqt_none")
-    assert (shared / "work.txt").exists() and not (shared / "later.txt").exists(), \
+    assert (shared / "second.yml").exists(), "an untracked leftover does not stop it"
+    import os
+    assert os.stat(shared).st_mode & 0o777 == 0o777, "the sandbox's user can write in it"
+
+    _push_to_main(tmp_path, bare, "later.txt")
+    (shared / "README.md").write_text("a seat that fell back to here, mid-change\n")
+    _queued_check(project, RunKind.REQUIREMENT_CHECK, requirement_id="reqt_none")
+    assert "mid-change" in (shared / "README.md").read_text() \
+        and not (shared / "later.txt").exists(), \
         "a tree holding uncommitted work is left as it is"

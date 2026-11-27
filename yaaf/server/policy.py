@@ -1559,9 +1559,16 @@ def open_stage(session: Session, project_id: str) -> int:
 def runs_spent_on(session: Session, requirement_id: str) -> int:
     """Every run stamped against this requirement — including the planning and
     supervision runs that carried no single task, which is the half of spend
-    that used to be unattributable by construction."""
+    that used to be unattributable by construction. Not the platform's own
+    check runs (scenarios, scans, success and acceptance tests): no agent spent
+    them, and counting them showed the Split app's CI requirement at "21 of 4
+    runs", five of them scenario checks — and fed the estimate-bias multiplier
+    that sizes every later plan."""
+    from yaaf.server.dispatcher import UNMETERED_RUN_KINDS
+
     return session.execute(
-        select(func.count(Run.id)).where(Run.requirement_id == requirement_id)
+        select(func.count(Run.id)).where(Run.requirement_id == requirement_id,
+                                         Run.kind.not_in(UNMETERED_RUN_KINDS))
     ).scalar_one()
 
 

@@ -64,6 +64,10 @@ def weakened_tests(files: list[dict]) -> list[str]:
     found = []
     for f in files:
         name = f.get("filename") or ""
+        before = f.get("previous_filename") or ""
+        if before and is_test_file(before) and not is_test_file(name):
+            found.append(f"{before}: moved out of the test paths, to {name}")
+            continue
         if not is_test_file(name):
             continue
         if f.get("status") == "removed":
@@ -135,8 +139,14 @@ def secrets(files: list[dict]) -> list[str]:
 def protected(files: list[dict], globs: list[str]) -> list[str]:
     if not globs:
         return []
-    return sorted({f.get("filename") or "" for f in files
-                   if any(fnmatch.fnmatch(f.get("filename") or "", g) for g in globs)})
+    hit = set()
+    for f in files:
+        # Either name: a file renamed out of a protected path leaves it as
+        # surely as one deleted from it.
+        for name in (f.get("filename"), f.get("previous_filename")):
+            if name and any(fnmatch.fnmatch(name, g) for g in globs):
+                hit.add(name)
+    return sorted(hit)
 
 
 def parse_globs(raw: str) -> list[str]:

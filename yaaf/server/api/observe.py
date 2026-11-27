@@ -93,6 +93,7 @@ from yaaf.server.briefing import reading_member
 from yaaf.server.deps import db
 from yaaf.server.dispatcher import (
     MODEL_RUN_KINDS,
+    UNMETERED_RUN_KINDS,
     activity_state,
     chat_session_live,
     daily_runs_used,
@@ -1821,7 +1822,8 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
         requirement_id: {"runs": int(runs), "usd": round(float(usd or 0), 2)}
         for requirement_id, runs, usd in session.execute(
             select(Run.requirement_id, func.count(Run.id), func.sum(Run.cost_usd))
-            .where(Run.project_id == project.id, Run.requirement_id.is_not(None))
+            .where(Run.project_id == project.id, Run.requirement_id.is_not(None),
+                   Run.kind.not_in(UNMETERED_RUN_KINDS))     # agents' runs, as runs_spent_on
             .group_by(Run.requirement_id)
         )
     }

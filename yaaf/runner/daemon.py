@@ -674,21 +674,39 @@ def _refresh_shared_tree(session: Session, project: Project, workspace: Path) ->
     token = github.platform_token(session)
     if not token:
         return
-    dirty = subprocess.run(["git", "-C", str(workspace), "status", "--porcelain"],
-                           capture_output=True, text=True, timeout=60)
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", "-C", str(workspace), *args],
+                              capture_output=True, text=True, timeout=180)
+
+    # Untracked files do not count: an acceptance test that leaves coverage.xml
+    # behind would otherwise stop the tree from ever being refreshed again. A
+    # tracked edit, or commits main lacks on whatever branch is checked out,
+    # is a fallback seat's work, and a hard reset would throw it away.
+    def held_back(why: str) -> None:
+        log.warning("left %s's shared tree as it is: %s; its requirement checks judge "
+                    "that tree", project.slug, why)
+
+    dirty = git("status", "--porcelain", "--untracked-files=no")
     if dirty.returncode != 0 or dirty.stdout.strip():
-        log.info("left %s's shared tree as it is: it holds uncommitted work", project.slug)
-        return
+        return held_back("it holds uncommitted edits")
     try:
-        for step in (["git", "-C", str(workspace), "fetch", "-q",
-                      github.clone_url(project.github_repo, token), "HEAD"],
-                     ["git", "-C", str(workspace), "reset", "-q", "--hard", "FETCH_HEAD"]):
-            proc = subprocess.run(step, capture_output=True, text=True, timeout=180)
-            if proc.returncode != 0:
-                raise RuntimeError((proc.stderr or "").replace(token, "<redacted>").strip()[:300])
+        proc = git("fetch", "-q", github.clone_url(project.github_repo, token), "HEAD")
+        if proc.returncode != 0:
+            raise RuntimeError((proc.stderr or "").replace(token, "<redacted>").strip()[:300])
+        # Commits here that main lacks are someone's unpushed work.
+        ahead = git("rev-list", "--count", "FETCH_HEAD..HEAD").stdout.strip()
+        if ahead not in ("", "0"):
+            return held_back(f"it has {ahead} commit(s) main does not")
+        proc = git("reset", "-q", "--hard", "FETCH_HEAD")
+        if proc.returncode != 0:
+            raise RuntimeError((proc.stderr or "").strip()[:300])
     except Exception as exc:
         log.warning("could not bring %s's shared tree to main: %s", project.slug,
                     str(exc).replace(token, "<redacted>"))
+        return
+    # The reset runs as root: new directories would be 755 and the check, which
+    # runs as the sandbox's user, could not write into them.
+    _open_to_sandbox(workspace)
 
 
 def seat_path(project_slug: str, agent_id: str) -> Path:
@@ -1574,6 +1592,16 @@ def _record_check_attempt(task: Task, output: str) -> None:
     task.check_history = history[-CHECK_HISTORY_KEEP:]
 
 
+def _no_verdict(result: RunResult) -> bool:
+    """A check that never ran its command: Docker refused the container, the
+    image was missing, the backend crashed. It says nothing about the work, so
+    it is not a failed attempt — the row stays CHECKING and the janitor's lost
+    check pass runs it again. Counting it returned good work to its claimant
+    with empty output, and blocked the task once enough of them piled up. (An
+    empty command is a verdict: it says why in its output.)"""
+    return result.check_exit_code is None and not (result.check_output or "").strip()
+
+
 def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult) -> None:
     """The only place `met` is ever written by a command test.
 
@@ -1592,6 +1620,8 @@ def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult
         return
     requirement = session.get(Requirement, job.requirement_id)
     if requirement is None or requirement.status != RequirementStatus.CHECKING:
+        return
+    if _no_verdict(result):
         return
     output = (result.check_output or "")[:4000]
     requirement.check_output = output
@@ -1703,6 +1733,8 @@ def _notice_ceo_requirement(session: Session, requirement, body: str) -> None:
 def _finalize_success_check(session: Session, job: RunJob, result: RunResult) -> None:
     task = session.get(Task, job.task_id)
     if task is None or task.status != TaskStatus.CHECKING:
+        return
+    if _no_verdict(result):
         return
     output = (result.check_output or "")[:4000]
     task.check_output = output
