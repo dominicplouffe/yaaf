@@ -177,3 +177,25 @@ test("a Code Factory names its own lead and crew", async ({ page }) => {
   await expect(page.locator(".pickcard", { hasText: "Tech Lead" })).toHaveCount(0);
   await expect(page.getByText(/Drought window/)).toHaveCount(1);
 });
+
+test("a Code Factory's home shows each change and what it waits on", async ({ page }) => {
+  /* The seeded factory has three changes: one waits only on the chairman's
+     approval of its CI setup, one on a reviewer, one on CI. The approval must
+     be one of his decisions, on this page and in the Inbox, not only a button
+     on the Changes tab. */
+  const errors = failOnPageErrors(page);
+  const factory = await row(page.request, "A booking app");
+  await page.goto(`/app/#/projects/${factory.id}`);
+  const flight = page.locator("section", { has: page.getByRole("heading", { name: "Changes in flight" }) });
+  await expect(flight.locator("tbody tr")).toHaveCount(3);
+  await expect(flight.locator(".fh-pill", { hasText: "You" })).toHaveCount(1);
+  await expect(flight.locator(".fh-pill", { hasText: "Waiting for review" })).toHaveCount(1);
+  await expect(flight.locator(".fh-pill", { hasText: "Checks running" })).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: /The crew/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "How the factory is doing" })).toBeVisible();
+  await expect(page.getByText(/Approve change #1/).first()).toBeVisible();
+
+  await page.goto("/app/#/inbox");
+  await expect(page.getByText(/Approve change #1/).first()).toBeVisible();
+  expect(errors).toEqual([]);
+});

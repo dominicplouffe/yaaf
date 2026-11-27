@@ -50,7 +50,7 @@ class Item:
     """One Inbox row: what is waiting, on which project, and what silence does."""
 
     key: str
-    type: str  # approval | ask | scope | commitment | verdict | bet | frozen | signoff
+    type: str  # approval | ask | scope | commitment | verdict | bet | frozen | signoff | change
     tier: int  # 1 stopped · 2 on a clock — the Inbox's own order
     at: float  # epoch seconds of the consequence; 0 already happened; inf never
     clocked: bool
@@ -155,6 +155,12 @@ def project_items(p: dict) -> list[Item]:
             title=a["title"], approval=a,
             consequence=f"It is {a.get('if_silent') or 'declined'} {when(at)}. "
                         "Silence is a decision here.")
+    for c in p.get("pending_changes") or []:
+        add(key=f"{p['id']}-change-{c['id']}", type="change", tier=1, at=0,
+            kind="Approve a change",
+            title=f"Approve change #{c.get('number') or '?'}: {c['title']}",
+            consequence="It does not merge, and the work that builds on it waits. "
+                        "Approve it on the project's Changes tab.")
     asks = sorted(p.get("pending_asks") or [], key=lambda a: a["answer_by"])
     for i, ask in enumerate(asks):
         at = _epoch(ask["answer_by"]) or NEVER

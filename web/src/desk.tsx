@@ -61,7 +61,7 @@ type Tier = 1 | 2 | 3;
     key on. Separate from `kind`, which is the human label. */
 export type ItemType =
   | "approval" | "ask" | "scope" | "commitment" | "verdict" | "bet" | "frozen" | "signoff"
-  | "kill" | "drought" | "budget" | "noproof";
+  | "kill" | "drought" | "budget" | "noproof" | "change";
 
 export interface Item {
   key: string;
@@ -182,6 +182,25 @@ export function ReopenThread({ projectId, threadId, onDone, primary = false }: {
     on the Roadmap, where the requirement's whole record is. Accepting is
     reversible — a requirement can be cut later — so it is not a typed
     confirmation. */
+/** The chairman's own yes on a change that waits only on him — the same
+    endpoint the Changes tab's button calls, on the commit he is shown. */
+export function ApproveChange({ id, onDone }: { id: string; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <button className="small primary" disabled={busy} onClick={async () => {
+        setBusy(true);
+        setError(null);
+        try { await post(`/admin/changes/${id}/approve`, {}); onDone(); }
+        catch (e) { setError((e as Error).message); }
+        finally { setBusy(false); }
+      }}>Approve</button>
+      {error && <span className="help serious">{error}</span>}
+    </>
+  );
+}
+
 export function ScopeAccept({ project, onDone, compact = false }: {
   project: DeskProject; onDone: () => void; compact?: boolean;
 }) {
@@ -373,6 +392,26 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
     });
   }
 
+  // A Code Factory change waiting only on his approval of the commit. His at
+  // every dial setting (a path he marked, or the CI setup), so not one of the
+  // dial's three below.
+  for (const c of p.pending_changes ?? []) {
+    items.push({
+      key: `${p.id}-change-${c.id}`, type: "change", tier: 1, at: 0, yours: true, project: p,
+      kind: "Approve a change",
+      title: `Approve change #${c.number ?? "?"}: “${clip(c.title, 80)}”`,
+      what: (
+        <>
+          <b>{clip(c.title, 120)}</b> has passed every other check and is signed by a reviewer.
+          It waits only on you{c.why ? <>: {c.why}</> : "."} Your approval covers this exact
+          commit; a new push asks again.
+        </>
+      ),
+      consequence: "It does not merge, and the work that builds on it waits.",
+      to: `${to}/details/changes`, toLabel: "See the change",
+      actions: <ApproveChange id={c.id} onDone={reload} />,
+    });
+  }
   // The dial's own three. Each list is server-side empty where the CEO holds
   // that switch, so an autonomous project reaches none of this.
   const w = p.awaiting_you;

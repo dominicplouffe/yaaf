@@ -270,6 +270,49 @@ def spend_today(project_id: str, usd: float) -> None:
             note="agent_run done", at=utcnow() - timedelta(hours=rng.uniform(1, 9))))
 
 
+def factory(http: TestClient) -> dict:
+    """A Code Factory with three changes in flight, one waiting only on the
+    chairman's approval of its CI setup. Not run by the crew: its changes come
+    from GitHub, which a demo does not have, so they are written as the
+    platform would have recorded them."""
+    from yaaf.core.models import Change, ChangeStatus, Task, TaskStatus
+
+    project = create(http, "13-a-booking-app.json", supervised=False, start=True)
+    build = next(t for t in project["teams"] if t["name"] == "Build")
+    mika = build["agents"][0]["id"]
+    green = {name: {"ok": True, "detail": "ok"} for name in (
+        "serves", "size", "secrets", "tests", "packages", "protected", "ci_config", "scan",
+        "health", "preview", "coverage", "scenarios", "checks", "review")}
+    shapes = [
+        ("Run the tests on every pull request", 38, 0,
+         {"ci_config": {"ok": False, "detail": "edits the CI setup: the chairman approves "
+                                               "this commit"}}, "signed"),
+        ("Hold a slot for ten minutes", 142, 10,
+         {"review": {"ok": False, "detail": "waiting for a challenge seat"}}, None),
+        ("Reschedule up to a day ahead", 96, 2,
+         {"checks": {"ok": False, "detail": "running: test"}}, None),
+    ]
+    with db_session() as session:
+        for n, (title, added, removed, failing, verdict) in enumerate(shapes, 1):
+            task = Task(id=ids.new_id(ids.TASK), project_id=project["id"],
+                        team_id=build["id"], created_by_agent_id=project["ceo_agent_id"],
+                        title=title, goal=title, status=TaskStatus.CLAIMED,
+                        claimed_by_agent_id=mika,
+                        success_test={"type": "observable", "target": title})
+            session.add(task)
+            session.flush()
+            head = f"{n:02d}" + "a" * 38
+            session.add(Change(
+                id=ids.new_id(ids.CHANGE), project_id=project["id"], task_id=task.id,
+                author_agent_id=mika, number=n, branch=f"mika/change-{n}", title=title,
+                head_sha=head, lines_added=added, lines_removed=removed, files_changed=3,
+                status=ChangeStatus.OPEN, checks={"test": "success"} if n < 3 else {},
+                gates={**green, **failing}, review_verdict=verdict,
+                reviewed_sha=head if verdict else None,
+                created_at=utcnow() - timedelta(minutes=30 * n)))
+    return project
+
+
 def main() -> None:
     for name, value in rehearsal.COALESCE_PATCHES.items():
         setattr(dispatcher, name, value)
@@ -403,6 +446,8 @@ def main() -> None:
     for key, usd in (("filings", 8.40), ("change-watch", 13.20), ("idea-hunt", 52.10),
                      ("numbers", 21.70), ("first-hour", 4.20), ("desk", 0.90)):
         spend_today(projects[key]["id"], usd)
+
+    projects["factory"] = factory(http)
 
     print("seeded", OUT / "yaaf.db")
     for key, project in projects.items():

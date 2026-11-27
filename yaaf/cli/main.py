@@ -1840,6 +1840,9 @@ def status(
         slug, yours = row.get("slug", ""), row.get("awaiting_you") or {}
         for item in [*(row.get("pending_approvals") or []), *(row.get("pending_asks") or [])]:
             waiting.append(f"{slug}: {item.get('title', '')}  [{item.get('id', '')}]")
+        for change in row.get("pending_changes") or []:
+            waiting.append(f"{slug}: approve change #{change.get('number') or '?'} "
+                           f"{change.get('title', '')}  (its Changes tab)")
         # The rest of what the sentence counted, so the list and the count agree.
         if yours.get("plan"):
             waiting.append(f"{slug}: {yours['plan']} proposed requirement(s) to accept "

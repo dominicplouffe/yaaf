@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { FactoryLine } from "./FactoryLine";
+import { FactoryCost, FactoryCrew, FactoryInFlight, FactoryNumbers, FactoryStage,
+  useFactory } from "./FactoryHome";
 import {
   AgendaView,
   ChannelRow,
@@ -833,6 +834,8 @@ export default function Overview({
     () => get<FlagsView>(`/observe/projects/${projectId}/flags`), 15000);
   const { data: vitals } = usePoll(
     () => get<VitalsView>(`/observe/projects/${projectId}/vitals`), 30000, [projectId]);
+  const factory = dash.mode === "code_factory";
+  const fv = useFactory(projectId, factory);
 
   // The same rows the Inbox and the sidebar badge count, for this project. A
   // paused project is not counted there (pausing is a state, not a request),
@@ -1024,7 +1027,27 @@ export default function Overview({
           run, the strip of steps (each one click from its section) while the
           project is only unfinished. */}
       {settingUp ? <ProjectSetup ctx={ctx} /> : <SetupStrip ctx={ctx} />}
-      {goals ? (
+      {factory ? (
+        // A Code Factory: where it is, what needs you, every change in flight
+        // and what it waits on, the crew, how close to done, cost, and the
+        // numbers — the shape tools for supervising coding agents settled on.
+        <>
+          <FactoryStage view={fv} />
+          {!settingUp && <StatusLine dash={dash} vitals={vitals} fix={fix} idleWhy={idleWhy} />}
+          {banner}
+          <ProjectDecisions projectId={projectId} desk={desk} rows={rows} vitals={vitals} compact />
+          <FactoryInFlight view={fv} base={base} />
+          <FactoryCrew view={fv} base={base} />
+          {goals ? <DeliverHero ctx={ctx} goals={goals} />
+            : <ModePanel dash={dash} plan={ctx.plan} hypotheses={ctx.hypotheses} base={base} vitals={vitals} />}
+          <div className="fh-grid">
+            <FactoryCost view={fv} base={base} />
+            <FactoryNumbers view={fv} />
+          </div>
+          <HealthLine ctx={ctx} />
+          <AsOf at={ctx.asOf} error={ctx.error} />
+        </>
+      ) : goals ? (
         // A Deliver project leads with how close it is to done; the rest of
         // its home is the approved Deliver mockup, below.
         <>
@@ -1032,7 +1055,6 @@ export default function Overview({
           {!settingUp && <StatusLine dash={dash} vitals={vitals} fix={fix} idleWhy={idleWhy} />}
           {banner}
           <ProjectDecisions projectId={projectId} desk={desk} rows={rows} vitals={vitals} compact />
-          {dash.mode === "code_factory" && <FactoryLine projectId={projectId} base={base} />}
           <div className="ov-grid">
             <div className="ov-col">
               <GoalChecklist ctx={ctx} goals={goals} />
@@ -1057,7 +1079,6 @@ export default function Overview({
       {/* The project's home is what it needs from you first: this project's
           decisions, whole, from the one list the Inbox decides from. */}
       <ProjectDecisions projectId={projectId} desk={desk} rows={rows} vitals={vitals} />
-      {dash.mode === "code_factory" && <FactoryLine projectId={projectId} base={base} />}
 
       <ProgressRow ctx={ctx} verdicts={verdicts} vitals={vitals} />
 
