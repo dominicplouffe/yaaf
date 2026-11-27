@@ -146,7 +146,7 @@ Every phase ships on its own, with its attack tests, and leaves the suite green.
 - New-project kind card and the "start from" choice.
 - A Code section in the project nav: Pipeline, Changes, Releases, Health, Issues.
 - The line (lifecycle rail) and factory vitals on the home page.
-- The intake report, plus Settings → Environments.
+- The intake report, plus Settings → Code Factory (GitHub and Environments).
 - `npm run build` must pass.
 
 ## Sibling footprint (CLAUDE.md rule)
@@ -212,7 +212,7 @@ Everything in this plan is built. Attack tests: `test_code_factory.py`,
 | Forward pressure: a rollback opens the fix; a gate failing on 3 changes in 14 days opens work on the cause | `yaaf/server/pressure.py` |
 | Preview screenshots for the reviewer | `daemon._screenshot`, `/observe/changes/{id}/preview.png` |
 | Crew | six roles, three crews, examples 13 and 14 |
-| Screens | New Project card, home-page line and numbers, Changes and Releases tabs, Settings → Environments |
+| Screens | New Project card, home-page line and numbers, Changes and Releases tabs, Settings → Code Factory |
 
 Known limits, said plainly:
 - The sandbox image's scanner layer is written and its download URLs checked

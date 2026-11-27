@@ -61,9 +61,9 @@ EMAIL = Step("email", "Email", "mail")
 #: fail only inside an agent's run. Where it deploys can wait until it has
 #: something to release.
 FACTORY = (
-    Step("repo", "GitHub repository", "integrations", required=True),
-    Step("push", "Agents' GitHub key", "integrations", required=True),
-    Step("deploy", "Where it deploys", "integrations"),
+    Step("repo", "GitHub repository", "factory", required=True),
+    Step("push", "Agents' GitHub key", "factory", required=True),
+    Step("deploy", "Where it deploys", "factory"),
 )
 BY_KEY = {s.key: s for s in (*STEPS, EMAIL, *FACTORY)}
 

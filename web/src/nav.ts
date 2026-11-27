@@ -51,6 +51,11 @@ export const SETTINGS_NAV = [
   { key: "brief", label: "Brief", words: "goal standing orders" },
   { key: "money", label: "Money", words: "budget billing key credential pay fallback" },
   { group: "Connections" },
+  // A Code Factory's own wiring: where it builds and where it ships. Its own
+  // section rather than a corner of Integrations, beside Slack and webhooks,
+  // because nothing is built until the first half is done.
+  { key: "factory", label: "Code Factory", only: "code_factory",
+    words: "github repo repository push key token deploy environments production staging preview release health" },
   { key: "sources", label: "Data sources", words: "mcp database api connect" },
   { key: "credentials", label: "Credentials", words: "access promised wordpress google analytics aws test" },
   { key: "secrets", label: "Secrets & variables", words: "credentials api key token env" },

@@ -397,3 +397,22 @@ def test_changing_an_upkeep_rule_rewrites_its_promise(client):
     client.post(f"/admin/projects/{project['id']}/amendments", headers=ADMIN,
                 json={"changes": {"upkeep_issue_hours": 0}, "reason": "no issue tracker"})
     assert all(status == RequirementStatus.CUT for _, status in promise())
+
+
+def test_a_factorys_setup_steps_open_its_own_settings_section(client):
+    """The repo, the push key and the deploy target sat in Integrations beside
+    Slack and webhooks. They have a section of their own, and every step that
+    points at them must open a section the Settings page actually has."""
+    import pathlib
+    import re
+
+    from yaaf.server import checklist
+
+    project = factory(client, slug="wired", start=False)
+    with db_session() as session:
+        steps = {s.key: s.section for s in checklist.steps_for(session.get(Project,
+                                                                           project["id"]))}
+    assert {steps["repo"], steps["push"], steps["deploy"]} == {"factory"}
+    nav = (pathlib.Path(__file__).resolve().parents[2] / "web" / "src" / "nav.ts").read_text()
+    sections = set(re.findall(r'key: "([a-z]+)", label:', nav))
+    assert set(steps.values()) <= sections, set(steps.values()) - sections

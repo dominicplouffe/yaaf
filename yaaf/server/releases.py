@@ -141,7 +141,8 @@ def propose(session: Session, project: Project, agent: Agent, *, version: str,
     if environment(project) is None:
         raise Refusal(
             "There is no production environment to release to: the chairman sets its "
-            "deploy command and health URL in Settings → Environments. Until then the "
+            "deploy command and health URL in Settings → Code Factory → Environments. "
+            "Until then the "
             "factory ships a repo, not a running service.", status_code=409)
     if changes.merges_frozen(session, project) is not None:
         raise Refusal("Main moved without the platform and that is not answered yet; "
