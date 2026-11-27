@@ -215,6 +215,24 @@ def _report(session: Session, project: Project, since: datetime, window: str) ->
     typer.echo(f"Window:  {window}")
     typer.echo(f"Runs: {_n(total[0])} · tokens in/out: {_n(total[1])} / {_n(total[2])}"
                f" · run spend: {_money_line(total, subscription)}")
+    # A project may pay with both kinds at once — a Code Factory coding on a
+    # subscription and talking on an API key. The headline is what the budget
+    # counted; this is what it is made of, split as every spend screen splits it.
+    from yaaf.server.spend_rollup import project_split
+
+    # This report opens the database itself, possibly one a release behind:
+    # without the payer pinned on its runs there are no halves to name.
+    split = (project_split(session, project.id, since)
+             if "paid_in" in _live_columns(session, "runs")
+             else {"billed_usd": 0.0, "plan_usd": 0.0})
+    if split["billed_usd"] and (subscription or split["plan_usd"]):
+        typer.echo(f"  of which billed by API keys: ${split['billed_usd']:,.2f}"
+                   + (f" · subscription usage, counted at list price: "
+                      f"${split['plan_usd']:,.2f}" if split["plan_usd"] else
+                      " (on top of the subscription)"))
+    elif split["plan_usd"]:
+        typer.echo(f"  all of it subscription usage, counted at list price: "
+                   f"${split['plan_usd']:,.2f} — nothing was billed in dollars")
     typer.echo(f"Note: {TOKENS_CAVEAT}.")
     if not runs and not ledger:
         typer.echo("\nNothing recorded in this window.")

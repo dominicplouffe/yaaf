@@ -974,7 +974,12 @@ export interface SpendBucket {
   tokens_out: number;
   cache_creation: number;
   cache_read: number;
+  /** What the rows counted for against the budget. */
   usd: number;
+  /** Of `usd`: what a provider billed, and what stands for a subscription's
+      usage at list price. Absent on an old server. */
+  billed_usd?: number;
+  plan_usd?: number;
 }
 
 export interface SpendReport {
@@ -983,6 +988,8 @@ export interface SpendReport {
   window: "days" | "month";
   since: string;
   rows: SpendBucket[];
+  billed_usd?: number;
+  plan_usd?: number;
 }
 
 /** Every measure the install-wide rollup carries. `usd` is only ever what a

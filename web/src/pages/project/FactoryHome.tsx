@@ -30,7 +30,8 @@ export type FactoryView = {
     /** What a provider actually billed, and the subscription's runs at list price. */
     billed_usd?: number; subscription_usd?: number;
     cap: number; per_merged_change_usd: number | null; merged: number;
-    top_seat: { name: string; usd: number } | null };
+    per_merged_change_billed_usd?: number | null;
+    top_seat: { name: string; usd: number; billed_usd?: number } | null };
   numbers?: {
     time_to_merge_hours: Stat; sent_back: { count: number; n: number; early: boolean };
     first_review_minutes: Stat; change_lines: Stat & { limit: number };
@@ -210,9 +211,13 @@ export function FactoryCost({ view, base }: { view: FactoryView | null; base: st
         {split && c.unit === "usd" && <div><dt>On subscription</dt>
           <dd className="mono">~{money(onPlan)} at list price</dd></div>}
         <div><dt>Per merged change</dt><dd className="mono">{c.per_merged_change_usd == null
-          ? "no merges yet" : `${usd(c.per_merged_change_usd)} · ${c.merged} merged`}</dd></div>
+          ? "no merges yet" : `${usd(c.per_merged_change_usd)} · ${c.merged} merged`}
+          {split && c.per_merged_change_billed_usd != null
+            && <span className="help"> · {money(c.per_merged_change_billed_usd)} billed</span>}</dd></div>
         {c.unit === "tokens" && <div><dt>At list price</dt><dd className="mono">{usd(c.spent_usd)}</dd></div>}
-        {c.top_seat && <div><dt>Biggest seat</dt><dd>{c.top_seat.name}, {usd(c.top_seat.usd)}</dd></div>}
+        {c.top_seat && <div><dt>Biggest seat</dt><dd>{c.top_seat.name}, {usd(c.top_seat.usd)}
+          {split && c.top_seat.billed_usd != null
+            && <span className="help"> · {money(c.top_seat.billed_usd)} billed</span>}</dd></div>}
       </dl>
       <p className="help">{c.estimate
         ? "Paid by a subscription, so dollars are estimates from tokens at list price. "

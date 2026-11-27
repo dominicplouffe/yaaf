@@ -17,7 +17,7 @@ from yaaf.core.models import (
 
 def _add_run(project_id: str, agent_id: str | None, model: str | None = None,
              cost: float | None = None, tokens_out: int = 0, cache_read: int = 0,
-             entries: int = 1) -> str:
+             entries: int = 1, paid_in: str | None = None) -> str:
     """A run and the ledger rows it booked — the shape the runner writes at
     finalize. `entries` splits the same spend over several rows the way a chat
     session books one per turn."""
@@ -25,6 +25,7 @@ def _add_run(project_id: str, agent_id: str | None, model: str | None = None,
     with db_session() as session:
         session.add(Run(id=run_id, project_id=project_id, agent_id=agent_id,
                         trigger={"type": "test"}, status=RunStatus.DONE, model=model,
+                        paid_in=paid_in,
                         cost_usd=cost, tokens_out=tokens_out, cache_read_tokens=cache_read,
                         started_at=utcnow(), finished_at=utcnow()))
         for i in range(entries):
@@ -126,3 +127,29 @@ def test_spend_without_a_surviving_run_is_named_not_dropped(client):
     assert [r["key"] for r in rows] == ["unattributed"]
     assert rows[0]["tokens_out"] == 42
     assert rows[0]["runs"] == 0
+
+
+def test_the_rollup_says_what_was_billed_and_what_stands_for_a_plan(client):
+    """A dollar budget counts a subscription seat's runs at list price. The
+    total is still what the meter says; the halves are named beside it, by the
+    rule the install's rollup uses, on every grouping."""
+    from yaaf.server import spend_rollup
+
+    project = make_project(client)
+    ceo = project["ceo_agent_id"]
+    coder = project["teams"][0]["agents"][0]["id"]
+    _add_run(project["id"], ceo, model="claude-haiku-5-5", cost=0.40, paid_in="usd")
+    _add_run(project["id"], coder, model="claude-opus-5-5", cost=1.10, paid_in="tokens")
+    _add_run(project["id"], ceo, model="claude-haiku-5-5", cost=0.25)  # before the pin
+    by_agent = client.get(f"/observe/projects/{project['id']}/spend?group_by=agent",
+                          headers=ADMIN).json()
+    assert round(by_agent["billed_usd"], 2) == 0.65 and round(by_agent["plan_usd"], 2) == 1.10
+    rows = {r["key"]: r for r in by_agent["rows"]}
+    assert round(rows[coder]["plan_usd"], 2) == 1.10 and rows[coder]["billed_usd"] == 0
+    assert round(rows[ceo]["billed_usd"], 2) == 0.65 and rows[ceo]["plan_usd"] == 0
+    for row in by_agent["rows"]:
+        assert round(row["billed_usd"] + row["plan_usd"], 6) == round(row["usd"], 6)
+    with db_session() as session:
+        split = spend_rollup.project_split(session, project["id"], utcnow().replace(year=2000))
+    assert round(split["billed_usd"], 2) == 0.65 and round(split["plan_usd"], 2) == 1.10
+    assert round(split["by_agent"][coder]["plan_usd"], 2) == 1.10

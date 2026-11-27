@@ -2818,7 +2818,14 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
         key, label = key_label(run)
         b = buckets.setdefault(key, {"key": key, "label": label, "runs": 0,
                                      "tokens_in": 0, "tokens_out": 0,
-                                     "cache_creation": 0, "cache_read": 0, "usd": 0.0})
+                                     "cache_creation": 0, "cache_read": 0, "usd": 0.0,
+                                     "billed_usd": 0.0, "plan_usd": 0.0})
+        # `usd` is what the row counted for against the budget. Of it, what a
+        # provider billed, and what stands for a plan's usage at list price
+        # (spend_rollup.billed — the install's rollup splits by the same rule).
+        paid, on_plan = spend_rollup.billed(e.kind, e.usd, run.paid_in if run else None)
+        b["billed_usd"] += paid
+        b["plan_usd"] += (e.usd or 0.0) if on_plan else 0.0
         b["tokens_in"] += e.tokens_in
         b["tokens_out"] += e.tokens_out
         b["cache_creation"] += e.cache_creation_tokens
@@ -2833,7 +2840,9 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
                                     + b["cache_creation"] + b["cache_read"])),
     )
     return {"group_by": group_by, "days": days, "window": window,
-            "since": since.isoformat(), "rows": out}
+            "since": since.isoformat(), "rows": out,
+            "billed_usd": round(sum(b["billed_usd"] for b in out), 6),
+            "plan_usd": round(sum(b["plan_usd"] for b in out), 6)}
 
 
 @router.get("/spend", dependencies=[authority.SIGNED_IN])

@@ -174,6 +174,29 @@ function DollarsBilled({ projectId }: { projectId: string }) {
   );
 }
 
+/** The mirror of `DollarsBilled`, for a project whose budget is in dollars and
+    which runs some seats on a subscription — a Code Factory coding on a Claude
+    plan and talking on an API key. Those runs move no money; the cap counts
+    them at list price so it can see them at all. The reader asking what the
+    month cost is owed the two halves. Nothing renders until one has run. */
+function CountedOnPlan({ projectId }: { projectId: string }) {
+  const { data } = usePoll(
+    () => get<SpendReport>(`/observe/projects/${projectId}/spend?group_by=provider&window=month`),
+    30000,
+  );
+  const onPlan = data?.plan_usd ?? 0;
+  if (!data || onPlan <= 0) return null;
+  const from = data.rows.filter((r) => (r.plan_usd ?? 0) > 0)
+    .sort((a, b) => (b.plan_usd ?? 0) - (a.plan_usd ?? 0));
+  return (
+    <p className="help" style={{ margin: "var(--s3) 0 0" }}>
+      Billed by API keys this month: <b>{fmtUsd(data.billed_usd ?? 0)}</b>. Another{" "}
+      <b>~{fmtUsd(onPlan)}</b> is subscription usage ({from.map((r) => r.label).join(", ")}),
+      which costs nothing beyond the plan and counts against the cap at list price.
+    </p>
+  );
+}
+
 export default function Spend({ ctx }: { ctx: ProjectCtx }) {
   const { dash, projectId } = ctx;
   const admin = Boolean(useMe().me?.is_admin);
@@ -206,6 +229,7 @@ export default function Spend({ ctx }: { ctx: ProjectCtx }) {
               <em>{dash.evidence_24h} thing{dash.evidence_24h === 1 ? "" : "s"} verified outside</em></div>
           </div>
           {!usdMode && <DollarsBilled projectId={projectId} />}
+          {usdMode && <CountedOnPlan projectId={projectId} />}
           {daysOfHistory >= 3 ? (
             <SpendBars ledger={ledger ?? []} usdMode={usdMode} />
           ) : (

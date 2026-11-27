@@ -263,12 +263,16 @@ def summary(session: Session, project: Project) -> dict:
     # its billing credential may bill differently, and a subscription's runs
     # move no dollars: on a dollar budget they are counted at list price
     # (budget.counted), which is a number about the cap and not about the
-    # invoice. The cap's arithmetic is untouched; this only names the halves.
-    by_plan = sum(run_usd(r) for r in month_runs
-                  if (r.paid_in or ("usd" if usd_mode else "tokens")) == "tokens")
-    by_plan = min(by_plan, spent_usd)
-    billed_usd = spent_usd - by_plan if usd_mode else sum(
-        float(r.cost_usd or 0.0) for r in month_runs if r.paid_in == "usd")
+    # invoice. The cap's arithmetic is untouched; this only names the halves,
+    # the way every spend screen does (spend_rollup.project_split).
+    from yaaf.server.spend_rollup import project_split
+
+    split = project_split(session, project.id, start)
+    billed_usd = split["billed_usd"]
+    # On a token budget nothing on the plan is counted in dollars at all; the
+    # list-price figure is the estimate the card already shows.
+    by_plan = split["plan_usd"] if usd_mode else sum(
+        run_usd(r) for r in month_runs if r.paid_in != "usd")
     per_seat: dict[str, float] = {}
     for r in month_runs:
         if r.agent_id:
@@ -287,8 +291,14 @@ def summary(session: Session, project: Project) -> dict:
         "cap": cons.monthly_usd_cap if usd_mode else cons.monthly_token_cap,
         "per_merged_change_usd": (round(spent_usd / len(merged_this_month), 2)
                                   if merged_this_month else None),
+        # The same figure in billed dollars alone, for a reader asking what a
+        # merge cost him rather than what it counted for.
+        "per_merged_change_billed_usd": (round(billed_usd / len(merged_this_month), 2)
+                                         if merged_this_month else None),
         "merged": len(merged_this_month),
-        "top_seat": ({"name": names.get(top[0], "a seat"), "usd": round(top[1], 2)}
+        "top_seat": ({"name": names.get(top[0], "a seat"), "usd": round(top[1], 2),
+                      "billed_usd": round(
+                          split["by_agent"].get(top[0], {}).get("billed_usd", 0.0), 2)}
                      if top and top[1] > 0 else None),
     }
 

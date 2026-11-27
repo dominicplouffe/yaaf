@@ -171,3 +171,7 @@ def test_the_cost_says_what_was_billed_and_what_a_subscription_stands_for(client
     assert cost["subscription_usd"] == 1.10
     assert cost["billed_usd"] == round(before["billed_usd"] + 0.65, 2)
     assert round(cost["billed_usd"] + cost["subscription_usd"], 2) == cost["spent_usd"]
+    # No merge yet, so no per-merge figure in either kind of dollar; the seat
+    # that spent most says how much of it was a bill.
+    assert cost["per_merged_change_billed_usd"] is None
+    assert cost["top_seat"]["name"] == "Mika" and cost["top_seat"]["billed_usd"] == 0.65

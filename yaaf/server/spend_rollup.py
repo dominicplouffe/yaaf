@@ -100,6 +100,39 @@ def billed(kind: str, usd: float | None, paid_in: str | None) -> tuple[float, bo
     return (usd, False) if usd is not None else (0.0, True)
 
 
+def project_split(session: Session, project_id: str, since: datetime) -> dict:
+    """One project's counted dollars since `since`, said as what they are made
+    of: what a provider billed, and what stands for a plan's usage.
+
+    A project may pay with both kinds at once — a Code Factory coding on a
+    subscription and talking on an API key is built to. On a dollar budget the
+    subscription's runs are counted at list price (`budget.counted`), so the
+    number the cap is held against is a sum of bills and stand-ins. The cap is
+    right to count both; a reader asking what the month cost is owed the
+    halves. `billed` decides each row, as it does for the install's rollup, so
+    the two screens cannot split the same ledger differently.
+
+    `by_agent` carries the same halves per seat, for the readers that name one.
+    """
+    rows = session.execute(
+        select(LedgerEntry.kind, LedgerEntry.usd, Run.paid_in, Run.agent_id)
+        .select_from(LedgerEntry)
+        .outerjoin(Run, Run.id == LedgerEntry.run_id)
+        .where(LedgerEntry.project_id == project_id, LedgerEntry.at >= since,
+               LedgerEntry.kind != LedgerKind.REVENUE)).all()
+    out = {"billed_usd": 0.0, "plan_usd": 0.0, "by_agent": {}}
+    for row in rows:
+        usd, on_plan = billed(row.kind, row.usd, row.paid_in)
+        stand_in = (row.usd or 0.0) if on_plan else 0.0
+        out["billed_usd"] += usd
+        out["plan_usd"] += stand_in
+        if row.agent_id:
+            seat = out["by_agent"].setdefault(row.agent_id, {"billed_usd": 0.0, "plan_usd": 0.0})
+            seat["billed_usd"] += usd
+            seat["plan_usd"] += stand_in
+    return out
+
+
 # ── the window ─────────────────────────────────────────────────────────────────
 
 
