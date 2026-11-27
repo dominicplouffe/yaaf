@@ -1391,7 +1391,7 @@ export default function Settings({
   return (
     <div className="settings-lay">
       <div className="srail">
-        {SETTINGS_NAV.map((item) =>
+        {SETTINGS_NAV.filter((item) => !("only" in item) || item.only === dash.mode).map((item) =>
           "group" in item ? (
             <div className="grp" key={item.group}>{item.group}</div>
           ) : (
@@ -1586,12 +1586,19 @@ export default function Settings({
                  refreshSecrets={refreshSecrets} notice={notice} />
       </Section>
 
-      {dash.mode === "code_factory" && (
-        <Section on={section === "integrations"}>
+      <Section on={section === "factory"}>
+        {dash.mode === "code_factory" ? <>
           <h2>GitHub</h2>
           <FactoryGithub projectId={projectId} />
-        </Section>
-      )}
+          <h2>Environments</h2>
+          <p className="help">Needed before the first release, not before the first change:
+            where each release is deployed, and the URL the platform watches to roll it back.</p>
+          <EnvironmentsCard projectId={projectId} dash={dash} />
+        </> : (
+          <p className="help">This project is not a Code Factory, so it has no repo or deploy
+            settings of its own. Its GitHub workspace is under Integrations.</p>
+        )}
+      </Section>
 
       <Section on={section === "integrations"}>
       <h2>Slack bridge</h2>
@@ -1606,13 +1613,6 @@ export default function Settings({
       </div>
 
       </Section>
-
-      {dash.mode === "code_factory" && (
-        <Section on={section === "integrations"}>
-          <h2>Environments</h2>
-          <EnvironmentsCard projectId={projectId} dash={dash} />
-        </Section>
-      )}
 
       <Section on={section === "integrations"}>
       {dash.mode !== "code_factory" && <>

@@ -140,12 +140,12 @@ is settled — none of them may be skipped:
     GitHub. If it is not, the ledger says so: the form asks for the
     platform's GitHub key before Create, and nothing can be built without it.
     Always ledger the second key: the seats that build push with a GitHub key
-    of their own, entered after Create on Settings → Integrations → GitHub.
+    of their own, entered after Create on Settings → Code Factory.
     Neither goes in `credentials_promised`, and no key ever goes in the draft.
   - *Where it runs.* Ask whether the software will be hosted, and where, or
     not yet. Hosted: name the host in the goal; its deploy command, health
-    URL and deploy key are set after Create on Settings → Integrations →
-    Environments, which the ledger says. Not yet: the goal's finish line says
+    URL and deploy key are set after Create on Settings → Code Factory
+    → Environments, which the ledger says. Not yet: the goal's finish line says
     so, and the ledger says releases wait until Environments is filled in.
 - **Access he says he will give** — when he says he will give the project
   access to something ("my WordPress login", "a Google Analytics service

@@ -80,7 +80,7 @@ export function Changes({ ctx }: { ctx: ProjectCtx }) {
           <b>Nothing can be built yet.</b>{" "}
           {!setup.repo ? "This factory has no repository to push to."
             : "The seats that build have no GitHub key to push with."}{" "}
-          <Link to={`/projects/${projectId}/settings?s=integrations`}>Finish it in Settings → Integrations</Link>.
+          <Link to={`/projects/${projectId}/settings?s=factory`}>Finish it in Settings → Code Factory</Link>.
           The crew can still write and agree the spec meanwhile.
         </div>
       ) : (
@@ -155,7 +155,7 @@ export function Releases({ ctx }: { ctx: ProjectCtx }) {
     <div className="factory">
       {!data.production && (
         <p className="help">No production environment yet: set its deploy command and health URL in
-          Settings → Environments. Until then the factory ships a repo, not a running service.</p>
+          Settings → Code Factory → Environments. Until then the factory ships a repo, not a running service.</p>
       )}
       {data.incidents.length > 0 && <h3>Incidents</h3>}
       {data.incidents.map((i) => (

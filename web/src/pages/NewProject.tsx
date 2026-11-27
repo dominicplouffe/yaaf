@@ -1524,9 +1524,9 @@ export default function NewProject() {
           alert(
             `Project created, but its repository "${repo}" could not be made:\n\n` +
               `${(err as Error).message}\n\nThe project was NOT started. The name is kept: ` +
-              "fix what is above in Settings → Integrations → GitHub, then start the project.",
+              "fix what is above in Settings → Code Factory, then start the project.",
           );
-          navigate(`/projects/${created.id}/settings?s=integrations`);
+          navigate(`/projects/${created.id}/settings?s=factory`);
           return;
         }
       }
