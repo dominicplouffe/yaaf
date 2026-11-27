@@ -554,3 +554,67 @@ def test_a_hook_is_made_only_where_github_could_deliver_it(client, gh, monkeypat
     (_, _, body), = [c for c in gh.calls if c[0] == "POST" and c[1].endswith("/hooks")]
     assert body["config"]["url"].endswith(f"/webhooks/github/{project['id']}")
     assert body["config"]["content_type"] == "json" and "check_run" in body["events"]
+
+
+def test_a_factory_founded_before_the_github_key_makes_its_repo_once_the_key_is_saved(
+        client, gh, monkeypatch):
+    """Found on a real first project: founded before the platform's GitHub key
+    existed, the form's make-the-repo step failed, the name was lost, and the
+    chairman met an empty repo field. The name is kept, and the repo is made
+    the moment the key is saved."""
+    import httpx
+
+    from yaaf.core.models import Project as ProjectRow
+
+    monkeypatch.setattr(github, "platform_token", lambda session: None)
+    client.post("/admin/users", json=CHAIR, headers=ADMIN)
+    seed_role(client, "tech-lead", is_ceo=True, category="leadership")
+    seed_role(client, "engineer", category="build")
+    seed_role(client, "reviewer", category="challenge")
+    created = client.post("/admin/projects", headers=ADMIN, json={
+        "slug": "split", "name": "Split", "goal": "A tiny bill-splitting web app.",
+        "chairman_email": CHAIR["email"], "mode": "code_factory",
+        "integrations": {"repo_wanted": "split"},
+        "teams": [{"role_slug": "engineer", "name": "Build", "employees": ["Mika"]},
+                  {"role_slug": "reviewer", "name": "Review", "employees": ["Rhea"]}]})
+    assert created.status_code == 200, created.text
+    pid = created.json()["id"]
+    setup = client.get(f"/admin/projects/{pid}/factory/setup", headers=ADMIN).json()
+    assert setup["repo"] is None and setup["repo_wanted"] == "split"
+
+    def fake(method, path, token, json=None):
+        gh.calls.append((method, path, json))
+        if path == "/user":
+            return httpx.Response(200 if token == "github_pat_good" else 401, json={"login": "acme"})
+        if method == "POST" and path == "/user/repos":
+            return httpx.Response(201, json={"full_name": f"acme/{json['name']}"})
+        return httpx.Response(200, json={})
+
+    from yaaf.core import platform
+
+    monkeypatch.setattr(github, "_request", fake)
+    # From here the key is whatever is really stored, as on an install.
+    monkeypatch.setattr(github, "platform_token",
+                        lambda session: platform.secret_value(session, "github"))
+    bad = client.put("/admin/settings/github", json={"token": "github_pat_typo"}, headers=ADMIN)
+    assert bad.status_code == 422 and "did not accept" in bad.json()["detail"]
+    saved = client.put("/admin/settings/github", json={"token": "github_pat_good"},
+                       headers=ADMIN)
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == {"login": "acme", "repos_made": ["acme/split"], "repos_failed": []}
+    with db_session() as session:
+        row = session.get(ProjectRow, pid)
+        assert row.github_repo == "acme/split"
+        assert "repo_wanted" not in (row.integrations or {})
+
+
+def test_only_a_factory_may_want_a_repo_and_only_a_repo_shaped_name(client, gh):
+    project = _factory(client)  # users and roles
+    bad = client.post("/admin/projects", headers=ADMIN, json={
+        "slug": "badname", "name": "X", "goal": "A tiny bill-splitting web app.",
+        "chairman_email": CHAIR["email"], "mode": "code_factory",
+        "integrations": {"repo_wanted": "not a repo name"},
+        "teams": [{"role_slug": "engineer", "name": "Build", "employees": ["Mika"]},
+                  {"role_slug": "reviewer", "name": "Review", "employees": ["Rhea"]}]})
+    assert bad.status_code == 422 and "repo_wanted" in bad.json()["detail"]
+    assert project["id"]

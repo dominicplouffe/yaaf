@@ -194,6 +194,13 @@ WITHHELD = {
     "POST /admin/projects/{project_id}/github":
         "provisioning takes a GitHub token — a credential value, inbound, that the "
         "chairman should paste where only they can read it.",
+    "PUT /admin/settings/github":
+        "it takes the platform's GitHub key — the one that creates repos and merges — "
+        "a credential value, inbound, that the chairman should paste where only they "
+        "can read it.",
+    "GET /admin/settings/github":
+        "a yes or no the New Project form asks before Create, so it can ask for the "
+        "key on the spot; a model client can do nothing with the answer.",
     "PUT /admin/projects/{project_id}/factory/push-token":
         "it takes the GitHub key a Code Factory's seats push with — a credential "
         "value, inbound, that the chairman should paste where only they can read it.",

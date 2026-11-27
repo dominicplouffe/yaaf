@@ -8,7 +8,7 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import "./newproject.css";
-import { ConstitutionField, CrewSummary, get, McpServerEntry, post, ProjectBundle,
+import { ConstitutionField, CrewSummary, get, McpServerEntry, post, ProjectBundle, put,
   RehearsalReport, RoleSummary, SlackProvision } from "../api";
 import Drill from "../drill";
 import { BLANK_DRAFT, PromiseCard, PromiseDraft, PromisedSection, storePromised } from "../credentialNeeds";
@@ -461,6 +461,29 @@ export default function NewProject() {
   // model: the form shows none of them as fields, so the review step says
   // what the project is agreeing to instead of letting it take them unseen.
   const [factoryRules, setFactoryRules] = useState<ConstitutionField[]>([]);
+  // The platform's GitHub key makes the repo right after Create. Asked for
+  // here, before Create, because a factory founded without it could not make
+  // its repo — and used to land on an empty repo field in Settings.
+  const [githubConnected, setGithubConnected] = useState<boolean | null>(null);
+  const [githubKey, setGithubKey] = useState("");
+  const [githubSaid, setGithubSaid] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    if (!factory || githubConnected) return;
+    get<{ connected: boolean }>("/admin/settings/github")
+      .then((r) => setGithubConnected(r.connected)).catch(() => setGithubConnected(null));
+  }, [factory, githubConnected]);
+  async function saveGithubKey() {
+    setGithubSaid(null);
+    try {
+      const r = await put<{ login: string | null }>("/admin/settings/github",
+        { token: githubKey.trim() });
+      setGithubConnected(true);
+      setGithubKey("");
+      setGithubSaid({ ok: true, text: `Connected as ${r.login ?? "that account"}.` });
+    } catch (err) {
+      setGithubSaid({ ok: false, text: (err as Error).message });
+    }
+  }
   useEffect(() => {
     if (!factory || factoryRules.length) return;
     get<ConstitutionField[]>("/admin/constitution/schema")
@@ -866,6 +889,9 @@ export default function NewProject() {
       if (factory && factoryStart === "repo" && !factoryRepo.includes("/")) {
         return "Name the repo to keep, as owner/name";
       }
+      if (factory && !bundle?.project.github_repo && githubConnected === false) {
+        return "Connect this install to GitHub, so it can make the repo";
+      }
       return null;
     }
     if (n === 2) {
@@ -1258,7 +1284,13 @@ export default function NewProject() {
               ? {}
               : autonomyPresets.find((p) => p.value === autonomy)?.constitution ?? {}),
           },
-          integrations: { ...(bundle?.project.integrations ?? {}), runtime },
+          integrations: {
+            ...(bundle?.project.integrations ?? {}), runtime,
+            // Kept with the project, so a repo that cannot be made at Create
+            // is made the moment it can be, under the name chosen here.
+            ...(factory && !bundle?.project.github_repo
+              ? { repo_wanted: factoryRepo.trim() || slug } : {}),
+          },
           ...(bundle?.project.github_repo ? { github_repo: bundle.project.github_repo } : {}),
           ceo_role_slug: chosenCeo,
           ceo_name: bundle?.project.ceo_name ?? "CEO",
@@ -1476,9 +1508,9 @@ export default function NewProject() {
           await post(`/admin/projects/${created.id}/github`, { repo });
         } catch (err) {
           alert(
-            `Project created, but its repository could not be set up:\n\n${(err as Error).message}` +
-              "\n\nThe project was NOT started. Connect the repo in Settings → Integrations, " +
-              "then start the project.",
+            `Project created, but its repository "${repo}" could not be made:\n\n` +
+              `${(err as Error).message}\n\nThe project was NOT started. The name is kept: ` +
+              "fix what is above in Settings → Integrations → GitHub, then start the project.",
           );
           navigate(`/projects/${created.id}/settings?s=integrations`);
           return;
@@ -1842,6 +1874,27 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                       "owner/name uses an empty one you already made."}
                 </span>
               </div>
+              {githubConnected === false && (
+                <div className="np-note" style={{ marginTop: 10 }}>
+                  <strong>Connect this install to GitHub first.</strong> The platform makes the
+                  repo, opens pull requests and merges with a key of its own — no agent ever
+                  holds it. A fine-grained token with Contents, Pull requests, Administration and
+                  Webhooks (read and write) on the account the repos belong to. Saved once, for
+                  every project.
+                  <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    <input type="password" value={githubKey} placeholder="github_pat_…"
+                      aria-label="Platform GitHub key" style={{ flex: 1, minWidth: 220 }}
+                      onChange={(e) => setGithubKey(e.target.value)} />
+                    <button type="button" className="primary"
+                      disabled={githubKey.trim().length < 8} onClick={saveGithubKey}>
+                      Check and save
+                    </button>
+                  </div>
+                </div>
+              )}
+              {githubSaid && (
+                <p className={`help${githubSaid.ok ? "" : " serious"}`}>{githubSaid.text}</p>
+              )}
               <Why>
                 {factoryStart === "new"
                   ? "Built first, to a date you can sign, then kept on a weekly rhythm — the same project, without rebuilding it."
