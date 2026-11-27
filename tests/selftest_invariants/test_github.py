@@ -225,3 +225,68 @@ def test_a_repo_attached_after_the_first_run_is_still_cloned(client, monkeypatch
     origin = subprocess.run(["git", "-C", str(workspace), "remote", "get-url", "origin"],
                             capture_output=True, text=True, check=True).stdout.strip()
     assert origin == "https://github.com/acme/ghlate.git"
+
+
+def _git(where: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(where), *args], capture_output=True, text=True,
+                          check=True).stdout.strip()
+
+
+def test_each_factory_seat_works_in_a_checkout_of_its_own(client, monkeypatch, tmp_path):
+    """One shared tree was one checked-out branch for the whole crew: two
+    engineers running at once switched it under each other, and a reviewer
+    checking a change out moved everybody's files. Each seat now has its own
+    checkout, kept between its runs, started from the remote's latest main."""
+    project = make_project(client, slug="ghseats", mode="code_factory")
+    _install_platform_secret(client)
+    bare = _seed_bare_repo(tmp_path)
+    monkeypatch.setattr(github, "clone_url", lambda name, token: f"file://{bare}")
+    _set_github_repo(project["id"], "acme/ghseats")
+    with db_session() as session:
+        shared = Path(daemon._prepare_workspace(session, session.get(Project, project["id"])))
+    # main moves on GitHub after the shared tree was cloned
+    newer = tmp_path / "newer"
+    subprocess.run(["git", "clone", "-q", str(bare), str(newer)], check=True)
+    (newer / "CHANGELOG.md").write_text("merged since\n")
+    _git(newer, "-c", "user.email=t@e", "-c", "user.name=T", "add", ".")
+    _git(newer, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-qm", "merged")
+    _git(newer, "push", "-q", "origin", "HEAD")
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        mika = Path(daemon._prepare_workspace(session, row, agent_id="agent_mika"))
+        dev = Path(daemon._prepare_workspace(session, row, agent_id="agent_dev"))
+    assert len({mika, dev, shared}) == 3, "a checkout each, and the shared tree apart"
+    assert (mika / "CHANGELOG.md").exists(), "a new seat starts from the remote's latest"
+    for seat in (mika, dev):
+        assert (seat / "README.md").read_text() == "seeded\n"
+        assert _git(seat, "remote", "get-url", "origin") == "https://github.com/acme/ghseats.git"
+        assert ".yaaf/" in (seat / ".git" / "info" / "exclude").read_text()
+        assert PLATFORM_TOKEN not in (seat / ".git" / "config").read_text()
+
+    _git(mika, "checkout", "-q", "-b", "mika/total")
+    (mika / "calc.py").write_text("half done\n")
+    assert _git(dev, "rev-parse", "--abbrev-ref", "HEAD") == \
+        _git(shared, "rev-parse", "--abbrev-ref", "HEAD"), "Dev's branch is Dev's"
+    assert not (dev / "calc.py").exists(), "and Mika's unfinished file is not in it"
+    (mika / ".yaaf").mkdir(exist_ok=True)
+    (mika / ".yaaf" / "trace-run_1.jsonl").write_text("{}\n")
+    assert ".yaaf" not in _git(mika, "status", "--porcelain"), "staging is never committed"
+
+    with db_session() as session:
+        again = Path(daemon._prepare_workspace(session, session.get(Project, project["id"]),
+                                               agent_id="agent_mika"))
+    assert again == mika and _git(mika, "rev-parse", "--abbrev-ref", "HEAD") == "mika/total"
+    assert (mika / "calc.py").read_text() == "half done\n", "kept between its runs"
+
+
+def test_a_project_that_is_not_a_factory_keeps_its_one_shared_tree(client, monkeypatch,
+                                                                   tmp_path):
+    project = make_project(client, slug="ghplain")
+    _install_platform_secret(client)
+    bare = _seed_bare_repo(tmp_path)
+    monkeypatch.setattr(github, "clone_url", lambda name, token: f"file://{bare}")
+    _set_github_repo(project["id"], "acme/ghplain")
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        assert daemon._prepare_workspace(session, row, agent_id="agent_a") == \
+            daemon._prepare_workspace(session, row)

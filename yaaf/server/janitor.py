@@ -1941,7 +1941,14 @@ def _harvest_reaped_usage(session: Session, project: Project, run: Run) -> bool:
     unknown margin. Recovering it here makes failure cost what it costs.
     """
     slug = f"{project.slug}-chat" if run.kind == RunKind.CHAT_SESSION else project.slug
-    path = Path(settings().workspaces_root) / slug / ".yaaf" / f"result-{run.id}.json"
+    name = f"result-{run.id}.json"
+    # A Code Factory seat runs in its own checkout (daemon.seat_path), so its
+    # checkpoint is there; the shared tree is where every other run's is.
+    candidates = [Path(settings().workspaces_root) / slug / ".yaaf" / name]
+    if run.agent_id:
+        candidates.insert(0, Path(settings().workspaces_root) / ".seats" / project.slug
+                          / run.agent_id / ".yaaf" / name)
+    path = next((c for c in candidates if c.exists()), candidates[-1])
     try:
         data = json.loads(path.read_text())
     except FileNotFoundError:

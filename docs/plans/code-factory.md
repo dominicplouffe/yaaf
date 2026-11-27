@@ -140,7 +140,7 @@ Every phase ships on its own, with its attack tests, and leaves the suite green.
 - Git in the sandbox: safe.directory, an identity, and a credential helper reading $GITHUB. The runner's clone is shared-writable.
 - Settings → Integrations → GitHub holds the platform key, the repo and the agents' push key (checked for push access, granted to every pushing role). The checklist lists repo, push key and deploy target.
 - A green change wakes one challenge seat to read it (the code reviewer if there is one); accepted scope with no hidden scenario wakes one (the test engineer). A change waiting only on the chairman tells him, once per commit.
-- Not done: seats share one working tree per project (several runs at once can clobber each other's checkout).
+- Each seat works in a checkout of its own (`<workspaces_root>/.seats/<slug>/<agent>`), a local clone of the project's tree started from the remote's latest default branch and kept between that seat's runs. Platform staging (`.yaaf/`) is excluded from git.
 
 **UI**, alongside phases 1–6:
 - New-project kind card and the "start from" choice.
