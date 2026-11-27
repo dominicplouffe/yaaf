@@ -2030,6 +2030,11 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                 ),
             }
         pack["deliverables"] = _deliverables(session, project)
+        if shape.is_factory(project):
+            from yaaf.server import releases
+
+            if (owed := releases.unreleased(session, project)) is not None:
+                pack["release_owed"] = owed
         owed = _overrun_owed(session, project)
         if owed is not None:
             pack["overrun"] = owed

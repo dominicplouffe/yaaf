@@ -55,22 +55,38 @@ LESSONS = {
     "secrets": "credentials keep reaching diffs — stop them before the commit",
     "scan": "the platform scan keeps finding the same kind of problem",
     "coverage": "changes keep arriving under the coverage floor",
-    "scenarios": "hidden scenarios keep failing — the spec and the build disagree",
     "health": "changes keep making the codebase harder to maintain",
-    "review": "reviewers keep returning changes for the same reasons",
 }
+#: Not here: "review" and "scenarios". A return is the review working, and a
+#: hidden scenario failing a first push is what hidden scenarios are for; three
+#: of either in two weeks is a factory iterating, and a lesson for it opened a
+#: requirement and a task ahead of the features (the Split app logged one on its
+#: second change).
 
 
 def _build_team(session: Session, project: Project) -> Team | None:
+    """The team platform-opened work lands on: one that can take it now. The
+    first build-category team found could be Release with its one seat stood
+    down, and a fix would sit ready with nobody to claim it."""
+    from yaaf.core.models import Agent, AgentStatus
+
     teams = list(session.execute(
-        select(Team, Role.category).join(RoleVersion, RoleVersion.id == Team.role_version_id)
+        select(Team, Role.category, Role.slug)
+        .join(RoleVersion, RoleVersion.id == Team.role_version_id)
         .join(Role, Role.id == RoleVersion.role_id).where(Team.project_id == project.id)))
-    for team, category in teams:
-        if category == "build":
-            return team
-    for team, category in teams:
-        if category != "challenge":
-            return team
+
+    def staffed(team: Team) -> bool:
+        return team.lead_agent_id is not None and session.execute(
+            select(Agent.id).where(Agent.id == team.lead_agent_id,
+                                   Agent.status == AgentStatus.ACTIVE)).first() is not None
+
+    for wanted in (lambda c, slug, t: slug == "engineer" and staffed(t),
+                   lambda c, slug, t: c == "build" and staffed(t),
+                   lambda c, slug, t: c == "build",
+                   lambda c, slug, t: c != "challenge"):
+        for team, category, slug in teams:
+            if wanted(category, slug, team):
+                return team
     return teams[0][0] if teams else None
 
 

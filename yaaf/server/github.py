@@ -157,6 +157,22 @@ def check_runs(session: Session, repo: str, sha: str) -> list[dict]:
     return list(response.json().get("check_runs") or [])
 
 
+def suites_running(session: Session, repo: str, sha: str) -> int | None:
+    """How many check suites on this commit have not finished, or None if
+    GitHub could not say. A job that `needs:` another gets its check run only
+    when the first finishes, so the runs reported so far can all be green while
+    the suite is still going."""
+    try:
+        response = _call(session, "GET", f"/repos/{repo}/commits/{sha}/check-suites?per_page=100")
+    except GithubError:
+        return None
+    if response.status_code != 200:
+        return None
+    suites = response.json().get("check_suites") or []
+    return sum(1 for s in suites if s.get("status") != "completed"
+               and (s.get("latest_check_runs_count") or 0) > 0)
+
+
 def default_branch(session: Session, repo: str) -> str | None:
     """The repo's default branch as GitHub names it, or None if unreadable."""
     try:

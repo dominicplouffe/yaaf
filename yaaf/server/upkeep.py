@@ -392,12 +392,26 @@ def write_promises(session: Session, project: Project, cycle: Cycle | None) -> i
     if not shape.is_factory(project):
         return 0
     cons = effective(session, project.id)
-    have = {(r.acceptance_test or {}).get("source", {}).get("measure")
+    have = {(r.acceptance_test or {}).get("source", {}).get("measure"): r
             for r in session.execute(select(Requirement).where(
                 Requirement.project_id == project.id)).scalars()
             if is_upkeep_promise(r) and r.status != RequirementStatus.CUT}
+    wanted = _wanted(cons)
+    # The rules as they stand now. A promise was written once and never again,
+    # so moving "answered within 24 hours" to 48, or to 0 (off), changed
+    # nothing while the settings screen said it had.
+    for measure_name, row in have.items():
+        now = next(((st, t) for m, st, t in wanted if m == measure_name), None)
+        if now is None:
+            row.status, row.cut_reason, row.cut_at = (RequirementStatus.CUT,
+                                                      "the chairman turned this rule off",
+                                                      utcnow())
+        elif (row.statement, row.acceptance_test.get("target")) != now:
+            row.statement = now[0]
+            row.acceptance_test = {**row.acceptance_test, "target": now[1]}
+            row.meta = {**(row.meta or {}), "title": now[0]}
     written = 0
-    for measure_name, statement, target in _wanted(cons):
+    for measure_name, statement, target in wanted:
         if measure_name in have:
             continue
         requirement = Requirement(

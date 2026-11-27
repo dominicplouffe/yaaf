@@ -105,6 +105,32 @@ def needs_chairman(session: Session, project: Project, cons: ConstitutionDoc,
 # ── proposing ───────────────────────────────────────────────────────────────────
 
 
+def unreleased(session: Session, project: Project) -> dict | None:
+    """What a release would ship right now, when one could be proposed: a
+    production environment, merging not frozen, nothing in flight, and changes
+    merged since the last live release. The CEO is shown it: nothing else ever
+    said a factory had merged work waiting to go out."""
+    from yaaf.server import changes
+
+    if environment(project) is None or changes.merges_frozen(session, project) is not None:
+        return None
+    if session.execute(select(Release.id).where(Release.project_id == project.id,
+                                                Release.status.in_(IN_FLIGHT))).first():
+        return None
+    previous = last_live(session, project.id)
+    query = select(Change).where(Change.project_id == project.id,
+                                 Change.status == ChangeStatus.MERGED)
+    if previous is not None:
+        query = query.where(Change.merged_at > previous.created_at)
+    merged = list(session.execute(query.order_by(Change.merged_at)).scalars())
+    if not merged:
+        return None
+    return {"live": previous.version if previous else None, "merged_since": len(merged),
+            "changes": [f"#{c.number} {c.title}" for c in merged[-10:]],
+            "note": "Merged work is waiting to go out. Propose a release with "
+                    "release_propose when it is worth shipping; the platform deploys it."}
+
+
 def propose(session: Session, project: Project, agent: Agent, *, version: str,
             title: str) -> Release:
     from yaaf.server import changes

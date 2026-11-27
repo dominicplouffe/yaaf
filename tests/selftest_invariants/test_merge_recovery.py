@@ -226,3 +226,20 @@ def test_a_signature_does_not_erase_another_seats_return(client, gh):
     signed = _sign(client, project, change["id"])
     assert signed.status_code == 409 and "Sasha returned this commit" in signed.json()["error"]
     assert _change(change["id"]).status == ChangeStatus.OPEN
+
+
+def test_a_change_is_not_merged_while_its_ci_is_still_running(client, gh, monkeypatch):
+    project, change = _ready(client)
+    real = github._request
+
+    def suites(method, path, token, json=None):
+        if "/check-suites" in path:
+            return httpx.Response(200, json={"check_suites": [
+                {"status": "in_progress", "latest_check_runs_count": 1}]})
+        return real(method, path, token, json)
+
+    monkeypatch.setattr(github, "_request", suites)
+    assert _merge(project) == 0 and gh.merges() == []
+    assert "still running" in (_change(change["id"]).status_reason or "")
+    monkeypatch.setattr(github, "_request", gh)
+    assert _merge(project) == 1

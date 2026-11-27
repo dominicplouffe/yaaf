@@ -1061,6 +1061,14 @@ def merge_ready(session: Session, project: Project) -> int:
         evaluate(session, project, change, cons)
         if change.status != ChangeStatus.READY:
             continue
+        running = github.suites_running(session, project.github_repo or "",
+                                        change.head_sha or "")
+        if running:
+            # Green on every run reported so far, but CI is not done: a job
+            # waiting on another has not even reported yet. Merged now, it would
+            # land code its own CI is still judging.
+            change.status_reason = f"CI is still running on this commit ({running} suite(s))"
+            continue
         change.status = ChangeStatus.MERGING
         session.commit()
         try:

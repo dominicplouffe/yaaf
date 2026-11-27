@@ -372,3 +372,28 @@ def test_a_factory_founded_silent_on_evidence_gets_floors_its_work_can_meet(clie
         assert effective(session, stated["id"]).external_ratio_min == 0.25
         assert effective(session, stated["id"]).drought_hours == 12
         assert effective(session, other["id"]).external_ratio_min == 0.5
+
+
+def test_changing_an_upkeep_rule_rewrites_its_promise(client):
+    """A promise was written once and never again: moving the issue rule from 24
+    to 48 hours, or turning it off, changed nothing the factory was held to."""
+    from yaaf.core.models import Requirement, RequirementStatus
+
+    project = adopted(client)
+
+    def promise():
+        with db_session() as session:
+            rows = [r for r in session.query(Requirement).filter_by(project_id=project["id"])
+                    if (r.meta or {}).get("upkeep") == "issue_wait_hours_max"]
+            return [(r.statement, r.status) for r in rows]
+
+    assert any("24 hours" in st for st, _ in promise())
+    amended = client.post(f"/admin/projects/{project['id']}/amendments", headers=ADMIN,
+                          json={"changes": {"upkeep_issue_hours": 48},
+                                "reason": "we answer issues within two days"})
+    assert amended.status_code == 200, amended.text
+    assert [st for st, status in promise() if status != RequirementStatus.CUT] == \
+        ["Every new issue is answered within 48 hours"]
+    client.post(f"/admin/projects/{project['id']}/amendments", headers=ADMIN,
+                json={"changes": {"upkeep_issue_hours": 0}, "reason": "no issue tracker"})
+    assert all(status == RequirementStatus.CUT for _, status in promise())

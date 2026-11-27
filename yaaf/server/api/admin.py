@@ -5293,6 +5293,11 @@ def _amend(project_id: str, body: AmendmentIn, session: Session, *,
         # worth an operator log line: the rulebook moving is not a routine edit.
         log.warning("constitution amended: project=%s changes=%s reason=%s",
                     project.slug, amendment.changes, amendment.reason)
+    if shape.is_factory(project) and shape.runs_on_cycles(project):
+        # The upkeep promises are these rules written down; rewrite them now.
+        from yaaf.server import upkeep
+
+        upkeep.write_promises(session, project, policy.current_cycle(session, project.id))
     # Disclosed in this call, since it is in force in this call.
     ceo = policy.ceo_of(session, project.id)
     for amendment in applied_now:

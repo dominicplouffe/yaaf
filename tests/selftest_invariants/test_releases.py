@@ -491,3 +491,16 @@ def test_a_deploy_lost_mid_flight_fails_its_release_instead_of_wedging_it(client
         row = session.get(Project, project["id"])
         janitor.reap_stale_runs(session, row, effective(session, row.id))
     assert _release(queued.trigger["release_id"]).status == ReleaseStatus.FAILED
+
+
+def test_the_ceo_is_shown_merged_work_waiting_to_go_out(client, gh, health):
+    from tests.conftest import bearer, live_token
+
+    project = _factory(client)
+    _, ceo = live_token(project["id"], project["ceo_agent_id"])
+    _shipped_change(client, project, gh)
+    assert "release_owed" not in client.get("/agent/context", headers=bearer(ceo)).json(), \
+        "no production environment: nothing could be released"
+    _with_prod(client, project)
+    owed = client.get("/agent/context", headers=bearer(ceo)).json()["release_owed"]
+    assert owed["merged_since"] == 1 and owed["live"] is None
