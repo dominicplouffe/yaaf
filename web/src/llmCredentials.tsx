@@ -36,8 +36,9 @@ export interface CredentialProject {
   status: string;
   /** Can this project still spend? A stopped or completed one cannot. */
   live: boolean;
-  /** Whether it pays the project, or stands by as its fallback. */
-  as?: "pays" | "fallback";
+  /** Whether it pays the project, stands by as its fallback, or is what a
+      Code Factory's repo seats code with. */
+  as?: "pays" | "fallback" | "codes";
 }
 
 export interface Credential {

@@ -975,6 +975,28 @@ def _provider_credential_problems(project: dict, session: Session) -> list[str]:
             project.pop("fallback_secret_id", None)
         else:
             project["fallback_secret_id"] = row.id
+    # A Code Factory's coding key likewise. Named on any other kind of
+    # project it is dropped with a sentence, not carried to a refusal.
+    coding = project.pop("coding_credential_name", None)
+    if coding or project.get("coding_secret_id"):
+        from yaaf.core import project_credentials, shape
+
+        row = (llm_credentials.resolve(session, name=coding) if coding
+               else llm_credentials.resolve(session, credential_id=project["coding_secret_id"]))
+        problem = None
+        if not shape.is_factory(str(project.get("mode") or "")):
+            problem = "only a Code Factory holds a coding key; it was dropped"
+        elif row is None:
+            problem = (f"the coding key names no LLM credential "
+                       f"{coding or project.get('coding_secret_id')!r}; "
+                       f"{llm_credentials.menu(session)}. Call list_credentials.")
+        else:
+            problem = project_credentials.coding_problem(row)
+        if problem:
+            problems.append(problem)
+            project.pop("coding_secret_id", None)
+        else:
+            project["coding_secret_id"] = row.id
     return problems
 
 

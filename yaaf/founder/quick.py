@@ -250,7 +250,8 @@ def create_and_start(session: Session, thread: FoundingThread) -> None:
     quick = thread.quick or {}
     body = {k: v for k, v in ((thread.draft_bundle or {}).get("project") or {}).items()
             if k not in ("billing_secret_name", "credential_names",
-                         "fallback_credential_name", "fallback_secret_id")}
+                         "fallback_credential_name", "fallback_secret_id",
+                         "coding_credential_name")}
     body.update(chairman_email=user.email, billing_secret_id=quick.get("billing_id"),
                 billing_mode=None)
     with acting.acting(acting.person(user.id, quick.get("via"))):

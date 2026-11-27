@@ -90,6 +90,38 @@ yaaf pay-provider my-project openai <credential-id>
 
 Every run still counts against the project's one budget.
 
+## A Code Factory holds two keys
+
+A Code Factory spends on two things: a great many small runs of talking (the
+lead planning, the boardroom, messages between seats) and fewer, heavier runs
+that write code. One key for both makes the coding model the price of every
+message. So a factory names two:
+
+| Key | Pays | Set |
+|---|---|---|
+| Billing credential | The lead, the boardroom, and every seat whose role is not granted the repo | When you create the project |
+| Coding key | Every seat whose role is granted the repo (`github`): engineer, architect, test engineer, code reviewer, security, release | Step 3 of the form, or Settings → Money |
+
+The coding key is an Anthropic, OpenAI or Google credential, API key or
+subscription login. Its seats run on that provider's coding tool (Claude Agent
+SDK, Codex CLI or Gemini CLI). A coding seat whose role names no model runs
+the provider's `@frontier` model; a seat or role that names one keeps it. It
+can be a second credential for the provider the billing one already pays, for
+example a Claude API key for the talking and a Claude subscription for the
+coding.
+
+**A Code Factory does not start without a coding key.** Start and reopen are
+refused, with the credentials that would do. A running factory keeps its key:
+you can replace it, and you can remove it only after pausing.
+
+```bash
+yaaf set-coding-key my-factory <credential-id>
+```
+
+The coding key pays the repo seats and nothing else. A talking seat put on
+the coding key's provider is refused unless the project also pays that
+provider in the usual way.
+
 ## Subscriptions
 
 Anthropic, OpenAI and Google also take a subscription login instead of an API

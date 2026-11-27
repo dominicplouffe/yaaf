@@ -277,6 +277,11 @@ def rehearse(principal: Principal, session: Session, arguments: dict) -> dict:
                          "description": "Optional: a stored credential's name, of another "
                                         "provider, that class seats move to while the billing "
                                         "credential's provider is failing"},
+            "coding_key": {"type": "string",
+                           "description": "Code Factory only, and required to start one: a "
+                                          "stored Anthropic, OpenAI or Google credential's "
+                                          "name, which the seats that hold the repo code "
+                                          "with. Every other seat stays on billing_secret"},
             "start": {"type": "boolean", "description": "Start it immediately (default false)"},
             "confirm": {"type": "string", "description": "The token from this tool's preview"},
             "detail": DETAIL_ARG,
@@ -334,11 +339,17 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
     fallback_name = arguments.get("fallback") or body.get("fallback_credential_name")
     fallback = _billing_secret(session, fallback_name) if isinstance(fallback_name, str) \
         else None
+    # And a Code Factory's coding key.
+    coding_name = arguments.get("coding_key") or body.get("coding_credential_name")
+    coding = _billing_secret(session, coding_name) if isinstance(coding_name, str) else None
     body = {k: v for k, v in body.items()
             if k not in ("billing_secret_id", "billing_secret_name", "credential_names",
-                         "fallback_credential_name", "fallback_secret_id")}
+                         "fallback_credential_name", "fallback_secret_id",
+                         "coding_credential_name", "coding_secret_id")}
     if fallback is not None:
         body["fallback_secret_id"] = fallback.id
+    if coding is not None:
+        body["coding_secret_id"] = coding.id
     if billing is not None:
         body["billing_secret_id"] = billing.id
         body["billing_secret_name"] = billing.name  # for the summary; the endpoint ignores it

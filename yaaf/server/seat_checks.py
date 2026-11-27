@@ -86,7 +86,9 @@ def seat_problems(session: Session, project: Project, agent: Agent, *,
     # health says so) or runs on the scripted backend, which reads none.
     pays = bool(project.billing_secret_id) and (
         (project.integrations or {}).get("runtime") != "mock")
-    context = context or model_policy.context(session, project)
+    # A coding seat resolves in its own context whichever one the caller
+    # brought: failover never moves it, and the fallback door never asks it.
+    context = model_policy.seat_context(session, project, agent, context)
     role_version = role_version_for(session, agent)
     seat = seat_for(agent, role_version, context=context)
     if not seat.resolved:
@@ -95,7 +97,7 @@ def seat_problems(session: Session, project: Project, agent: Agent, *,
         return SeatCheck([Problem("unmodelled", unmodelled(seat.model))], catalog.EFFORTS)
     found: list[Problem] = []
     credential = project_credentials.seat_credential(session, project, seat.provider,
-                                                     fallback=fallback)
+                                                     fallback=fallback, agent=agent)
     if credential is None and pays:
         # R5 — it fails at the door, not at 3am.
         found.append(Problem("payer", unpaid(

@@ -78,6 +78,8 @@ REACHED = {
         "project_configure (stop_paying_provider)",
     "PUT /admin/projects/{project_id}/fallback-credential":
         "project_configure (set_fallback) — by credential name, never a value",
+    "PUT /admin/projects/{project_id}/coding-credential":
+        "project_configure (set_coding_key) — by credential name, never a value",
     "POST /admin/teams/{team_id}/stand_down": "lifecycle (stand_down)",
     "POST /admin/teams/{team_id}/recall": "lifecycle (recall)",
     "POST /admin/projects/{project_id}/mcp_servers": "data_source (add)",
@@ -331,6 +333,9 @@ WITHHELD = {
     "GET /admin/projects/{project_id}/credentials":
         "the same list rides the project's dashboard (`credentials`), which `project` "
         "already returns — a second read path would be a second definition of it.",
+    "GET /admin/projects/{project_id}/coding-credential":
+        "a Code Factory's coding key rides the project's dashboard (`coding`), which "
+        "`project` already returns — a second read path would be a second definition of it.",
     "GET /admin/settings/models":
         "the install's lineups and ceilings are above every project a client is scoped "
         "to; `catalog (models)` says what each class resolves to, which is what a drafter "

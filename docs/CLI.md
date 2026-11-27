@@ -247,6 +247,7 @@ Covered in [PROVIDERS.md](PROVIDERS.md).
 | `yaaf hide-llm-credentials` / `unhide-llm-credentials` | Take keys off the menus without deleting them |
 | `yaaf llm-credential-usage` | What's left on a subscription plan |
 | `yaaf pay-provider P PROVIDER CRED` | Let a project pay a second provider |
+| `yaaf set-coding-key P CRED` | Name the key a Code Factory's repo seats code with |
 | `yaaf smoke CRED` | One tiny real call, to prove a key works |
 | `yaaf check-provider CRED` | Can these models do yaaf's work? Shows the cost first. |
 | `yaaf discover-models CRED` | What models this key can reach, with prices |

@@ -96,6 +96,7 @@ from yaaf.runtimes import catalog
 from yaaf.runtimes import providers as runtime_providers
 from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS
 from yaaf.runtimes.harnesses import canonical as canonical_harness
+from yaaf.runtimes.harnesses import find as find_harness
 from yaaf.runtimes.seats import choosable, class_role_refusal
 from yaaf.runtimes.seats import refusal as seat_refusal
 from yaaf.server import acting, authority, briefing, policy, unread
@@ -942,6 +943,10 @@ class ProjectCreate(BaseModel):
     # The credential class seats move to while the billing one's provider is
     # failing (yaaf.core.breakers) — held to the fallback door's rules.
     fallback_secret_id: str | None = None
+    # Code Factory only: the credential its repo seats code with
+    # (yaaf.core.project_credentials.codes). A draft may be made without one;
+    # it does not start without one.
+    coding_secret_id: str | None = None
     teams: list[TeamSpec] = Field(default_factory=list)
     # Solo mode (the M2 single-agent arm): the CEO is placed as the sole member
     # — hence derived lead — of the only team, so one brain plans AND executes
@@ -981,6 +986,19 @@ def _refuse_without_mailbox(project: Project) -> None:
     from yaaf.server.mail.settings import start_refusal
 
     refusal = start_refusal(project)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
+
+
+def _refuse_without_coding_key(session: Session, project: Project) -> None:
+    """A Code Factory does not run without the key its repo seats code with.
+    The alternative is the state the coding key exists to end: every seat on
+    the billing credential, and the model that writes the code setting the
+    price of every message. 409, as for the mailbox — the project is fine and
+    its setup is not finished."""
+    from yaaf.core import project_credentials
+
+    refusal = project_credentials.coding_refusal(session, project)
     if refusal:
         raise HTTPException(status_code=409, detail=refusal)
 
@@ -1193,8 +1211,11 @@ def apply_fallback(session: Session, project: Project, credential_id: str) -> No
     project.fallback_secret_id = secret.id
     session.flush()
     context = model_policy.context(session, project, provider=provider_name, fallback=True)
+    # A coding seat stays on the coding key through an outage of the billing
+    # provider, which is not its provider's outage.
     moving = [agent for agent in _project_agents(session, project.id)
-              if _bare_class(seat_for(agent, role_version_for(session, agent)))]
+              if _bare_class(seat_for(agent, role_version_for(session, agent)))
+              and project_credentials.codes(session, project, agent) is None]
     problem = seat_problem(session, project, moving, context=context, fallback=True)
     if problem:
         raise HTTPException(status_code=422, detail=(
@@ -1219,6 +1240,96 @@ def fallback_view(session: Session, project: Project) -> dict:
             if fallback else None,
             "active": active is not None,
             "breaker": breakers.state(session, project.billing_secret_id)}
+
+
+class CodingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: The credential a Code Factory's repo seats code with; null removes it.
+    credential_id: str | None = None
+
+
+@router.get("/projects/{project_id}/coding-credential", dependencies=[authority.READ])
+def get_coding_credential(project_id: str, session: Session = Depends(db)) -> dict:
+    return coding_view(session, _get_project(session, project_id))
+
+
+@router.put("/projects/{project_id}/coding-credential", dependencies=[authority.STEER])
+def set_coding_credential(project_id: str, body: CodingIn,
+                          session: Session = Depends(db)) -> dict:
+    """Name the credential this Code Factory's repo seats code with. Refused
+    for any other kind of project, for a credential of a provider with no
+    coding CLI, and unless every coding seat could run on it. Taking it away
+    is refused while the factory runs: that is the start rule from the other
+    side."""
+    project = _get_project(session, project_id)
+    if not body.credential_id:
+        if not shape.is_factory(project):
+            raise HTTPException(status_code=422, detail=_NOT_A_FACTORY)
+        if project.status == ProjectStatus.RUNNING and project.coding_secret_id \
+                and (project.integrations or {}).get("runtime") != "mock":
+            raise HTTPException(status_code=409, detail=(
+                "a running Code Factory keeps its coding key — name another to replace "
+                "it, or pause the project first"))
+        project.coding_secret_id = None
+        session.flush()
+        refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+        _audit(session, project.id, "billing.coding_removed", "project", project.id, {})
+        return coding_view(session, project)
+    apply_coding(session, project, body.credential_id)
+    return coding_view(session, project)
+
+
+_NOT_A_FACTORY = ("only a Code Factory holds a coding key — every other kind of project "
+                  "runs each seat on the credential that pays its provider")
+
+
+def apply_coding(session: Session, project: Project, credential_id: str, *,
+                 seats: bool = True) -> None:
+    """Name `credential_id` the project's coding key, or refuse with why: the
+    door's rules, shared with project creation and every importer. `seats`
+    off leaves the seat check to a caller about to run it anyway."""
+    from yaaf.core import project_credentials
+    from yaaf.core.llm_credentials import assigned_credential
+
+    if not shape.is_factory(project):
+        raise HTTPException(status_code=422, detail=_NOT_A_FACTORY)
+    secret = assigned_credential(session, credential_id)
+    problem = project_credentials.coding_problem(secret)
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
+    project.coding_secret_id = secret.id
+    session.flush()
+    if seats:
+        refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+    _audit(session, project.id, "billing.coding", "project", project.id,
+           {"credential_id": secret.id, "provider": secret.provider,
+            "codes": [a.name for a in _project_agents(session, project.id)
+                      if project_credentials.holds_repo(session, a)]})
+
+
+def coding_view(session: Session, project: Project) -> dict:
+    """A Code Factory's coding key, who codes with it, and whether the project
+    may start as it stands — for the project's Settings. `applies` is false on
+    every other kind of project, which has no such key to show."""
+    from yaaf.core import project_credentials
+    from yaaf.core.llm_credentials import bills
+
+    secret = session.get(Secret, project.coding_secret_id) \
+        if project.coding_secret_id and shape.is_factory(project) else None
+    provider_name = (secret.provider or runtime_providers.DEFAULT_PROVIDER) if secret else None
+    harness = project_credentials.coding_harness(provider_name) if provider_name else None
+    found = find_harness(harness)
+    return {"applies": shape.is_factory(project),
+            "credential_id": secret.id if secret else None,
+            "name": secret.name if secret else None,
+            "provider": provider_name,
+            "label": runtime_providers.provider(provider_name).label if secret else None,
+            "bills": bills(secret) if secret else None,
+            "harness": found.label if found else None,
+            "seats": [a.name for a in _project_agents(session, project.id)
+                      if project_credentials.holds_repo(session, a)],
+            "refusal": project_credentials.coding_refusal(session, project)}
 
 
 @router.get("/providers", dependencies=[authority.SIGNED_IN])
@@ -1706,6 +1817,9 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
                          "agents": [{"id": a.id, "name": a.name} for a in agents]})
     for provider_name, credential_id in body.credentials.items():
         attach_provider_credential(session, project, provider_name, credential_id)
+    if body.coding_secret_id:
+        # Before the seats are judged: the coding seats are judged on it.
+        apply_coding(session, project, body.coding_secret_id, seats=False)
     refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
     if body.fallback_secret_id:
         apply_fallback(session, project, body.fallback_secret_id)
@@ -1972,6 +2086,10 @@ def export_project(project_id: str, include_values: bool = False,
             "fallback_credential_name": (fallback.name if (fallback := session.get(
                 Secret, project.fallback_secret_id)) else None)
             if project.fallback_secret_id else None,
+            # And a Code Factory's coding key.
+            "coding_credential_name": (coding.name if (coding := session.get(
+                Secret, project.coding_secret_id)) else None)
+            if project.coding_secret_id else None,
             "ceo_role_slug": ceo_role_slug,
             "ceo_name": ceo.name,
             "ceo_daily_at": ceo.daily_at,
@@ -2234,6 +2352,11 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     if source.fallback_secret_id and project.billing_secret_id \
             and resolve(session, credential_id=source.fallback_secret_id) is not None:
         project.fallback_secret_id = source.fallback_secret_id
+    # And its coding key. Without it the twin is a draft that will not start
+    # until somebody names one, which is the rule and not an accident.
+    if source.coding_secret_id and shape.is_factory(project) \
+            and resolve(session, credential_id=source.coding_secret_id) is not None:
+        project.coding_secret_id = source.coding_secret_id
 
     source_ceo = session.execute(
         select(Agent).where(Agent.project_id == source.id, Agent.kind == AgentKind.CEO)
@@ -3457,6 +3580,10 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
         # from the other side: the seats stayed put and the money moved.
         _settle_provider_credentials(session, project)
         refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+        if project.status == ProjectStatus.RUNNING:
+            # A Code Factory started with nothing paying it starts paying
+            # here, so the start rule is asked here too.
+            _refuse_without_coding_key(session, project)
     if body.controlled_domains is not None:
         project.controlled_domains = body.controlled_domains
         changed["controlled_domains"] = body.controlled_domains
@@ -3681,6 +3808,7 @@ def start_project(project_id: str, session: Session = Depends(db)) -> dict:
     # the alternative is a start that succeeds and a first run that does not.
     refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
     _refuse_without_mailbox(project)
+    _refuse_without_coding_key(session, project)
     project.status = ProjectStatus.RUNNING
     project.status_reason = None
     # A Deliver or Operate project starts owing a plan. The chairman's words
@@ -3891,6 +4019,7 @@ def reopen_project(project_id: str, session: Session = Depends(db)) -> dict:
                        "carry on from where it stopped")
     # Reopening is a start like any other: the mailbox may have gone since.
     _refuse_without_mailbox(project)
+    _refuse_without_coding_key(session, project)
     project.status = ProjectStatus.RUNNING
     project.status_reason = None
     from yaaf.core.models import Decision

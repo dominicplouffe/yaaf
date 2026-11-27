@@ -43,6 +43,15 @@ Also fixed: text from people without write access (issues, comments) reaches
 agents as quoted data, never as instructions. Only the release seat holds the
 production deploy key.
 
+## Two keys
+
+A factory holds a billing credential and a coding key. The seats whose role is
+granted the repo code on the coding key, on its provider's own coding CLI. The
+lead and every other seat stay on the billing credential, so the model that
+writes the code is not the price of every message. A factory does not start
+without a coding key (`project_credentials.coding_refusal`; attacked in
+`test_coding_key.py`). See [Providers](../PROVIDERS.md#a-code-factory-holds-two-keys).
+
 ## Two ways in
 
 - **Build new.** yaaf creates the repo, protects main, and stage 1 is always the

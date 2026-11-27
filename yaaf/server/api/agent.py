@@ -218,7 +218,7 @@ def model_token(ctx: RunContext = Depends(run_auth), session: Session = Depends(
     # a run leased onto it during an outage keeps running after the billing
     # provider recovers, and its next token must not read as a dead key.
     secret = project_credentials.credential_for(session, ctx.project, seller.name,
-                                                fallback=True)
+                                                fallback=True, agent=ctx.agent)
     if secret is None:
         raise HTTPException(status_code=409, detail=f"this project no longer pays {seller.label}")
     try:

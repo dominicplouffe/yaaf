@@ -819,7 +819,7 @@ def _install_payer_view(session, project) -> dict | None:
 
 @router.get("/projects/{project_id}", dependencies=[authority.READ])
 def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
-    from yaaf.server.api.admin import fallback_view, provider_credentials_view
+    from yaaf.server.api.admin import coding_view, fallback_view, provider_credentials_view
 
     project = _project(session, project_id)
     cons = effective(session, project.id)
@@ -958,6 +958,7 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         # Where class seats go while the billing credential's provider fails,
         # and whether they are there now.
         "fallback": fallback_view(session, project),
+        "coding": coding_view(session, project),
         # Drought-clock anchors: the UI counts toward the refusal, not just
         # reporting it after the fact.
         "created_at": (
@@ -1166,6 +1167,18 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             f"paying {seller.label if seller else provider_name} with '{secret.name}'",
             "settings")
 
+    # A Code Factory's coding key: named, or the reason it will not start.
+    from yaaf.server.api.admin import coding_view
+
+    coding = coding_view(session, project)
+    if coding["applies"] and (project.integrations or {}).get("runtime") != "mock":
+        if coding["refusal"]:
+            add("coding", "fail", coding["refusal"], "settings")
+        else:
+            add("coding", "ok", f"the repo seats code with '{coding['name']}' "
+                f"({coding['label']}, on {coding['harness']}); everything else is paid "
+                "by the billing credential", "settings")
+
     # Failover: whether class seats are on the fallback right now, and
     # whether the fallback could still take them — a lineup or a price that
     # moved since it was set would otherwise be found mid-outage.
@@ -1182,7 +1195,8 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
 
         label = seller_of(fallback["provider"]).label
         moving = [a for a in _project_agents(session, project.id)
-                  if _bare_class(seat_of(a, pinned_role(session, a)))]
+                  if _bare_class(seat_of(a, pinned_role(session, a)))
+                  and project_credentials.codes(session, project, a) is None]
         problem = seat_problem(session, project, moving, context=models_policy.context(
             session, project, provider=fallback["provider"], fallback=True), fallback=True)
         breaker = fallback["breaker"] or {}
@@ -1217,13 +1231,11 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     from yaaf.core import model_policy
     from yaaf.runtimes import catalog
     from yaaf.runtimes.harnesses import HARNESSES
-    from yaaf.runtimes.seats import seat_for
-    from yaaf.server.contextpack import role_version_for
 
     context = model_policy.context(session, project)
     metered: dict[str, set[str]] = {}
     for agent in _project_agents(session, project.id):
-        seat = seat_for(agent, role_version_for(session, agent), context=context)
+        seat = model_policy.seat(session, project, agent, base=context)
         harness = HARNESSES.get(seat.harness or "")
         if harness is not None and harness.cost == "priced":
             metered.setdefault(seat.model, set()).add(harness.label)
@@ -1234,7 +1246,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
 
     resolved: dict[str, list[str]] = {}
     for agent in _project_agents(session, project.id):
-        seat = seat_for(agent, role_version_for(session, agent), context=context)
+        seat = model_policy.seat(session, project, agent, base=context)
         if seat.model:
             resolved.setdefault(seat.model, []).append(agent.name)
     paying = {name: secret.id for name, secret in project_credentials.held(session, project).items()}
@@ -1989,7 +2001,6 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
     # The same helper the health finding reads, so the Team page can never mark
     # a seat the Overview does not name, or the other way round.
     from yaaf.runtimes import catalog
-    from yaaf.runtimes.seats import seat_for
     from yaaf.server.contextpack import role_version_for
 
     dormant = _dormant_seats(session, project)
@@ -2009,7 +2020,7 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
 
     def working(agent) -> dict:
         version = role_version_for(session, agent)
-        seat = seat_for(agent, version, context=context)
+        seat = model_policy.seat(session, project, agent, base=context)
         usd = float(spent.get(agent.id, 0.0))
         return {"model": catalog.label(seat.model), "model_id": seat.model,
                 "provider": seat.provider, "effort": seat.effort, "harness": seat.harness,
