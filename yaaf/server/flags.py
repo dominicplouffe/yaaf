@@ -19,10 +19,10 @@ it: when it stops working, the silence shows.
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import UTC, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids, shape
@@ -38,6 +38,7 @@ from yaaf.core.models import (
     Requirement,
     RequirementCycleResult,
     RequirementStatus,
+    Task,
     utcnow,
 )
 from yaaf.server import metrics, policy, staffing
@@ -424,6 +425,36 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
         _resolve(session, project, FlagKind.RUN_OVERRUN, day["resets_at"][:10],
                  "the day rolled or the plan was raised")
 
+    # 5b'. The board is empty and should not be (house rule 1's other half:
+    #     a rule may fire when the project under-reaches). Opened, it wakes the
+    #     CEO through FLAG_OPENED in a WORK run — the lane that may create
+    #     tasks, which a question in the boardroom does not — and it resolves
+    #     itself the tick work is back on the board, so the answer it wants is
+    #     the work, not a paragraph.
+    idle = _board_idle(session, project, cons, state)
+    if idle is not None:
+        job = state.get("job_budget")
+        money = ""
+        if job and not job["in_reserve"]:
+            left = (f"${job['left']:,.2f}" if job["unit"] == "USD"
+                    else f"{job['left']:,.0f} tokens")
+            money = f" {left} of the job budget is unspent."
+        if open_flag(
+            session, project, FlagKind.BOARD_EMPTY,
+            f"{idle['open_scope']} open requirement(s) have nothing on the board, nobody "
+            f"holds a task, and no limit is stopping work — for {idle['minutes']} "
+            f"minutes now.{money} Put the next batch of work on the board: every task "
+            f"you can already see, not one at a time. If something genuinely blocks "
+            f"it, say in the boardroom what, and who can clear it.",
+            arithmetic={**idle, "blocked_by": state["blocked_by"],
+                        "job_budget": job},
+            subject_id=None,
+        ):
+            opened += 1
+    else:
+        _resolve(session, project, FlagKind.BOARD_EMPTY, None,
+                 "work is back on the board, or a limit or the chairman now holds it")
+
     # 5c. A seat that is spending and closing nothing. The three above are all
     #     about the project being STOPPED; this is the opposite failure, where
     #     everything looks busy and part of the roster is not moving the work.
@@ -516,6 +547,49 @@ def acknowledge(session: Session, project: Project, flag: Flag, note: str) -> Fl
     log.info("flag %s acknowledged for %s (status %s)",
              flag.kind, project.slug, flag.status)
     return flag
+
+
+#: Gates under which an empty board is somebody else's to answer: a cap, a
+#: finished delivery, the job budget's own reserve, a start time (SELF_GATED's
+#: subject), the chairman, or work that is in fact going.
+_BOARD_IDLE_EXCUSED = (*CAP_GATES, "delivery_ready", "budget_reserve", "scheduled",
+                       "awaiting_chairman", "agents_busy", "concurrency")
+
+
+def _board_idle(session: Session, project: Project, cons: ConstitutionDoc,
+                state: dict) -> dict | None:
+    """Open scope with an empty board and idle seats, past the rule's minutes,
+    or None.
+
+    Measured from the last time any task moved (or creation, with none): the
+    board went empty when its last task closed, and that is the moment the
+    project began waiting on its own CEO. Runs are deliberately not the
+    measure — a CEO answering messages all morning runs plenty and still
+    leaves the board empty.
+    """
+    from yaaf.server.dispatcher import _open_scope_with_no_board
+
+    minutes = cons.idle_board_minutes
+    if not minutes or state["blocked_by"] in _BOARD_IDLE_EXCUSED:
+        return None
+    waiting = state["waiting"]
+    if (waiting["claimable_tasks"] or waiting["claimed_tasks"] or waiting["gated_tasks"]
+            or waiting.get("checking_tasks") or waiting.get("reviewing_tasks")):
+        return None
+    scope = _open_scope_with_no_board(session, project, cons)
+    if not scope:
+        return None
+    last = session.execute(
+        select(func.max(Task.updated_at)).where(Task.project_id == project.id)
+    ).scalar_one() or project.created_at
+    if last is None:
+        return None
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)  # an aggregate can come back without its type
+    idle_for = (utcnow() - last).total_seconds() / 60
+    if idle_for < minutes:
+        return None
+    return {"open_scope": scope, "minutes": int(idle_for), "rule_minutes": minutes}
 
 
 def open_flags(session: Session, project_id: str) -> list[Flag]:

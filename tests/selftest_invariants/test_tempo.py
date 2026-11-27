@@ -79,7 +79,11 @@ def test_a_tempo_card_writes_only_real_rules(name, rules):
     it."""
     assert not unknown_rules(rules), name
     assert set(rules) == set(TEMPO_RULES)
-    ConstitutionDoc.model_validate({**ConstitutionDoc().model_dump(), **rules})
+    # Sprint is the one card that cannot stand alone: it is refused without a
+    # budget for the whole job (test_sprint_without_a_job_budget_is_refused),
+    # so it is validated the way it is always written — with one.
+    pot = {"project_usd_budget": 500.0} if name == "sprint" else {}
+    ConstitutionDoc.model_validate({**ConstitutionDoc().model_dump(), **rules, **pot})
 
 
 @pytest.mark.parametrize("name,rules", sorted(BAR_PRESETS.items()))

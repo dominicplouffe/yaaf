@@ -65,6 +65,7 @@ const UNSPOKEN = new Set(["paused by chairman", "stopped by chairman"]);
 const STATE: Record<string, [string, Tone]> = {
   daily_runs: ["Paused: no runs left today", "warn"],
   governance_reserve: ["Paused: today's runs are used; the rest are kept for reviews", "warn"],
+  budget_reserve: ["Handing in: the job budget is nearly spent", "warn"],
   pacing: ["Paused for the hour: hourly limit reached", "warn"],
   wake_ceiling: ["Waiting: each agent has used its runs for this hour", "warn"],
   coalescing: ["Waiting a moment to batch messages", "ok"],
@@ -90,7 +91,7 @@ const COUNTS = "Counts runs where an agent works. Reading messages, checks and s
 function gates(dash: Dashboard, vitals: VitalsView | null): Gate[] {
   const a = dash.activity;
   const b = a.blocked_by;
-  const waitingOnWork = b !== null && !(b in STATE && ["daily_runs", "governance_reserve", "pacing", "wake_ceiling",
+  const waitingOnWork = b !== null && !(b in STATE && ["daily_runs", "governance_reserve", "budget_reserve", "pacing", "wake_ceiling",
     "coalescing", "concurrency", "agents_busy", "inbox_runs"].includes(b));
   // Ready means a task an agent can claim, or a run already going. Unread mail
   // between agents is not work: counting it put "✓ Work ready" beside "Idle".

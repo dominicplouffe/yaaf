@@ -273,6 +273,7 @@ export interface Activity {
     | "daily_runs"
     | "pacing"
     | "governance_reserve"
+    | "budget_reserve"
     | "concurrency"
     | "agents_busy"
     | "wake_ceiling"
@@ -298,6 +299,10 @@ export interface Activity {
   pacing: { used: number; cap: number; frees_at: string | null };
   /** The slice of the day only a review or a re-forecast may spend. */
   governance_reserve: { reserved: number; ordinary_cap: number; active: boolean };
+  /** The budget for the whole job, when the project has one. Past
+      `reserve_line` only the CEO runs, to hand in what it has. */
+  job_budget: { budget: number; spent: number; unit: "USD" | "tokens"; left: number;
+    reserve_line: number; in_reserve: boolean } | null;
   /** When the hourly ceiling next lets someone through. `frees_at` is null
       when nothing is actually held behind it. */
   wake_ceiling: { cap: number; frees_at: string | null; agents_held: number };
@@ -658,13 +663,17 @@ export interface HealthCheck {
       version; `tempo` amends the pace to the card a project of this rhythm
       usually runs, and its other answer — keep the pace — is recorded for the
       whole project (POST /admin/projects/{id}/tempo/keep); `hire` adds the
-      one team the row says is missing. */
+      one team the row says is missing; `job_budget` moves a finishing project
+      onto a budget for the whole job (an amendment), and its other answer —
+      keep the monthly budget — is recorded (POST …/job-budget/keep). */
   action:
     | { kind: "repin"; team_id: string }
     | { kind: "tempo"; to: string; to_label: string; keep_label: string;
         changes: Record<string, unknown> }
     | { kind: "hire"; role_slug: string; team_name: string; employee: string;
         label: string }
+    | { kind: "job_budget"; unit: "usd" | "tokens"; spent: number; suggested: number;
+        rule: string; month_rule: string; sprint: Record<string, unknown> }
     | null;
   /** This finding's identity: its kind and words with the numbers masked, so
       it survives a count ticking over and changes when the finding does. */

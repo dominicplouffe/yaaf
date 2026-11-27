@@ -270,6 +270,69 @@ def month_to_date(session: Session, project_id: str) -> tuple[float, int]:
     return float(usd), int(tokens)
 
 
+def job_to_date(session: Session, project_id: str) -> tuple[float, int]:
+    """Spend since the project began, both units — the job budget's own sum.
+
+    From creation rather than from whenever the budget was set: "the whole
+    job" means the whole job, and a start date nobody can see is how a total
+    stops adding up. A project switched onto a job budget mid-way is shown its
+    spend so far when it is asked for the total, rather than having it hidden.
+    """
+    usd, tokens = session.execute(
+        select(
+            func.coalesce(func.sum(LedgerEntry.usd), 0.0),
+            func.coalesce(
+                func.sum(LedgerEntry.tokens_in + LedgerEntry.tokens_out
+                         + LedgerEntry.cache_creation_tokens
+                         + LedgerEntry.cache_read_tokens),
+                0,
+            ),
+        ).where(LedgerEntry.project_id == project_id,
+                LedgerEntry.kind != LedgerKind.REVENUE)
+    ).one()
+    return float(usd), int(tokens)
+
+
+class JobBudget(NamedTuple):
+    """The job budget, in the unit this project bills in, with its two lines."""
+
+    budget: float
+    unit: str
+    spent: float
+    #: Past this, ordinary work stops and only the CEO runs (the hand-in).
+    reserve_line: float
+
+    @property
+    def left(self) -> float:
+        return max(0.0, self.budget - self.spent)
+
+    @property
+    def in_reserve(self) -> bool:
+        return self.spent >= self.reserve_line
+
+    @property
+    def spent_out(self) -> bool:
+        return self.spent >= self.budget
+
+
+def job_budget(session: Session, project: Project, cons: ConstitutionDoc) -> JobBudget | None:
+    """This project's job budget, or None when it has none in its billing unit.
+
+    The unit follows billing exactly as `budget_of` does: a dollar budget on a
+    subscription project cannot be measured, so it is not a wall there, and
+    the create and amend paths refuse that combination before it is stored
+    (`job_budget_problem`).
+    """
+    usd_mode = project.billing_mode == "api_key"
+    budget = float(cons.project_usd_budget if usd_mode else cons.project_token_budget)
+    if budget <= 0:
+        return None
+    usd, tokens = job_to_date(session, project.id)
+    spent = usd if usd_mode else float(tokens)
+    return JobBudget(budget=budget, unit="USD" if usd_mode else "tokens", spent=spent,
+                     reserve_line=budget * (1.0 - cons.budget_reserve_ratio))
+
+
 def proposed_budget(session: Session, project: Project,
                     cons: ConstitutionDoc) -> dict | None:
     """What the last three months say the budget should be.

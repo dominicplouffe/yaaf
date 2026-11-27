@@ -32,9 +32,11 @@ from yaaf.core.constitution import (
     default_autonomy,
     default_briefing,
     default_factory_floors,
+    default_job_month,
     default_tempo,
     effective,
     effective_version,
+    job_budget_problem,
     propose_amendment,
     rule_label,
 )
@@ -1680,8 +1682,9 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         doc = ConstitutionDoc.model_validate(
             {**ConstitutionDoc().model_dump(),
              **default_tempo(shape.behaves_as(body.mode, phase),
-                             default_factory_floors(body.mode, default_briefing(
-                                 default_autonomy(body.constitution))))})
+                             default_job_month(default_factory_floors(
+                                 body.mode, default_briefing(
+                                     default_autonomy(body.constitution)))))})
     except ValidationError as exc:
         # A rule that cannot hold — a 29th of every month — is the founder's to
         # fix, not a 500. It reached here unchecked for as long as the suite's
@@ -1690,6 +1693,9 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         raise HTTPException(status_code=422, detail="; ".join(
             f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()
         )) from None
+    if problem := job_budget_problem(
+            billing.llm_mode if billing else (body.billing_mode or "api_key"), doc):
+        raise HTTPException(status_code=422, detail=f"constitution: {problem}")
     _check_review_seat(session, doc, body.teams, solo=body.solo)
     deadline = body.deadline
     deadline_source = None
@@ -5465,6 +5471,21 @@ def _amend(project_id: str, body: AmendmentIn, session: Session, *,
         ],
         "note": " ".join(note_parts) + " Everything is disclosed to the CEO.",
     }
+
+
+@router.post("/projects/{project_id}/job-budget/keep", dependencies=[authority.STEER])
+def keep_monthly_budget(project_id: str, session: Session = Depends(db)) -> dict:
+    """Answer the job-budget row with "keep": this finishing project stays on
+    its monthly budget, on purpose. Switching is an ordinary amendment; keeping
+    changes no rule, so it is recorded, and the row stays away for good."""
+    from yaaf.core.constitution import has_job_budget
+
+    project = _get_project(session, project_id)
+    if has_job_budget(effective(session, project.id).model_dump()):
+        raise HTTPException(status_code=409,
+                            detail="This project already has a budget for the whole job.")
+    _audit(session, project.id, "job_budget.keep", "project", project.id, {})
+    return {"ok": True}
 
 
 @router.post("/projects/{project_id}/tempo/keep", dependencies=[authority.STEER])

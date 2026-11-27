@@ -2662,6 +2662,84 @@ def run_cost_profile(session: Session, project_id: str,
 
 
 
+def enforce_job_budget(session: Session, project: Project, cons: ConstitutionDoc) -> bool:
+    """The job budget's two lines. Returns True when it paused the project.
+
+    Checked before the month, because on a project that has one it is the
+    first line crossed — the monthly plan is set to match it at creation
+    (`default_job_month`) precisely so the month never speaks first.
+
+    The reserve line is said ONCE per job, to the CEO and to the chairman: the
+    work stopping there is the dispatcher's (`_dispatch_project`), and this is
+    the half that makes sure somebody knows why. The wall pauses exactly as the
+    monthly hard stop does, with the same reason prefix, because it is the same
+    kind of stop — only the chairman starts it again — but in different words:
+    reaching this one is the planned end of the money, not a runaway.
+    """
+    from yaaf.server import budget as budget_lib
+
+    job = budget_lib.job_budget(session, project, cons)
+    if job is None:
+        return False
+    if job.spent_out:
+        project.status = ProjectStatus.PAUSED
+        project.status_reason = (
+            f"{inbox.HARD_STOP}: the job budget is spent — {job.spent:,.0f} of "
+            f"{job.budget:,.0f} {job.unit}"
+        )
+        for run in session.execute(
+            select(Run).where(Run.project_id == project.id, Run.status == RunStatus.RUNNING)
+        ).scalars():
+            run.token_revoked = True
+        for queued in session.execute(
+            select(RunQueue).where(RunQueue.project_id == project.id)
+        ).scalars():
+            session.delete(queued)
+        _notice_ceo(
+            session, project, NoticeKind.BUDGET_EXHAUSTED,
+            f"The job budget is spent: {job.spent:,.0f} of {job.budget:,.0f} {job.unit}. "
+            "The project is paused and the chairman was told. This is the end of the "
+            "money he set for the job, not a failure: when he resumes it, lead with "
+            "what the money bought and what more would buy.",
+        )
+        chairman_notify(
+            session, project, "project paused: the job budget is spent",
+            f"{job.spent:,.0f} of the {job.budget:,.0f} {job.unit} you set for the job. "
+            "Live runs were stopped and the queue cleared. To carry on, raise the job "
+            "budget in Settings and resume; the CEO's hand-in says what more would buy."
+            + project_link(project.id, "spend", "See where it went"),
+            attention=Attention.ALARM,
+        )
+        log.warning("project %s paused: job budget %.0f spent", project.slug, job.budget)
+        return True
+    if job.in_reserve:
+        already = session.execute(
+            select(func.count(Notice.id)).where(
+                Notice.project_id == project.id,
+                Notice.kind == NoticeKind.BUDGET_RESERVE)
+        ).scalar_one()
+        if not already:
+            _notice_ceo(
+                session, project, NoticeKind.BUDGET_RESERVE,
+                f"The job budget is down to its hand-in reserve: {job.spent:,.0f} of "
+                f"{job.budget:,.0f} {job.unit} spent, {job.left:,.0f} left. Ordinary "
+                "work has stopped; only you may still run. Use it to hand in: post in "
+                "the boardroom what is finished, what is not, where the unfinished work "
+                "stands, and what more money would buy — with a number. If the brief "
+                "names a failure deliverable, this is when it is owed.",
+            )
+            chairman_notify(
+                session, project, "the job budget is nearly spent",
+                f"{job.spent:,.0f} of the {job.budget:,.0f} {job.unit} you set for the "
+                f"job. The last {job.left:,.0f} is held for the CEO to hand in what it "
+                "has; everyone else has stopped. Raise the job budget in Settings if "
+                "you want the work to go on."
+                + project_link(project.id, "settings", "Raise it"),
+                attention=Attention.ALARM,
+            )
+    return False
+
+
 def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) -> None:
     """Three thresholds, and only the last one stops anything.
 
@@ -2681,6 +2759,8 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
     from yaaf.server import budget as budget_lib
     from yaaf.server import flags as flag_lib
 
+    if enforce_job_budget(session, project, cons):
+        return
     usd, tokens = month_to_date(session, project.id)
     budget, unit = budget_lib.budget_of(project, cons)
     spent = usd if project.billing_mode == "api_key" else float(tokens)

@@ -269,6 +269,13 @@ class FlagKind(enum.StrEnum):
     # other way skipped all of them. Not arithmetic but a fact the repo
     # reports, and the automatic half: no change merges until it is answered.
     MAIN_BYPASSED = "main_bypassed"
+    # The floor under the board: scope open, nothing claimable, nobody
+    # holding a task, and no cap, start time or chairman to blame. Every kind
+    # above about pace says the project was STOPPED; this one says it stopped
+    # itself. The planning wake is on a clock, so a board that empties at
+    # 9am is not refilled until the clock says — and an idle project costs
+    # nothing, so nothing else notices.
+    BOARD_EMPTY = "board_empty"
 
 
 class FlagStatus(enum.StrEnum):
@@ -560,6 +567,11 @@ class NoticeKind(enum.StrEnum):
     HYPOTHESIS_EXPIRED = "hypothesis_expired"
     BUDGET_WARNING = "budget_warning"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    # The job budget reached its hand-in reserve: ordinary work has stopped
+    # and only the CEO may still run, to write up what was done. Its own kind
+    # because it is said once per job, and a BUDGET_WARNING is said once a
+    # month — sharing the kind would have let one swallow the other.
+    BUDGET_RESERVE = "budget_reserve"
     # The real-world spend envelope (external_monthly_usd_cap) — warned at the
     # same ratio as the model budget, but never pausing anything: the wall is
     # enforced where money is cleared and booked, not by stopping the project.

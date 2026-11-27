@@ -37,7 +37,9 @@ export interface ProjectBrief {
   lines: BriefLine[];
   groups: Record<string, number>;
   needs_you: number;
-  money: { unit: "usd" | "tokens"; window: number; month_to_date: number; cap: number };
+  money: { unit: "usd" | "tokens"; window: number; month_to_date: number; cap: number;
+    /** The budget for the whole job, when the project has one. */
+    job?: { spent: number; budget: number } | null };
   pulse: { last_run_at: string | null; running: number; open_tasks: number };
 }
 
@@ -84,7 +86,9 @@ export function BriefBody({ brief }: { brief: ProjectBrief }) {
       <p className="bf-head">{brief.headline}</p>
       <p className="bf-meta">
         {brief.window_source} · spent {fmtUnit(money.window, money.unit)} in this window ·{" "}
-        {fmtUnit(money.month_to_date, money.unit)} of {fmtUnit(money.cap, money.unit)} this month
+        {money.job
+          ? <>{fmtUnit(money.job.spent, money.unit)} of {fmtUnit(money.job.budget, money.unit)} for the whole job</>
+          : <>{fmtUnit(money.month_to_date, money.unit)} of {fmtUnit(money.cap, money.unit)} this month</>}
       </p>
       {brief.quiet && (
         <p className="help">

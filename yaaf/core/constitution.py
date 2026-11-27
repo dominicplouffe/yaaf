@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
-from yaaf.core.models import Amendment, Constitution, utcnow
+from yaaf.core.models import Amendment, Constitution, Project, utcnow
 
 
 def parse_report_window(raw: object) -> tuple[time, time] | None:
@@ -173,6 +173,20 @@ class ConstitutionDoc(BaseModel):
         3, ge=1, group="Work discipline", label="Board size before that share is enforced",
         help="Below this many open tasks the ratio is not checked — three tasks cannot be "
              "half of anything useful.")
+    # The floor under the board (house rule 1's other half). Every rule above
+    # stops a project doing too much; nothing noticed one doing nothing while
+    # scope was open — the planning wake is a clock, every six hours on the
+    # default pace, and a CEO whose runs went on messages and reports left six
+    # seats idle all morning, then told its chairman it could not fill the
+    # board "from this chat". Measured on the BOARD, not on runs: that project
+    # ran 29 times and created no tasks.
+    idle_board_minutes: int = _rule(
+        30, ge=0, group="Work discipline", label="Minutes the board may sit empty with scope open",
+        help="Scope is open, nobody holds a task, nothing is ready to claim, and no "
+             "limit is stopping work. Past this many minutes a flag opens that wakes "
+             "the CEO at once and stays open until work is back on the board — or "
+             "until the CEO says in the boardroom what it is waiting for. Not raised "
+             "while the work waits on you, a start time, or a cap. 0 turns it off.")
     min_success_test_len: int = _rule(
         15, ge=1, group="Work discipline", label="Shortest allowed success test",
         help="Characters. A success test shorter than this is not falsifiable, so the "
@@ -324,6 +338,35 @@ class ConstitutionDoc(BaseModel):
              "to provide by being a cliff. Set it to the most you would tolerate losing "
              "on a bad month, not to what you expect to spend. 1.0 restores the old "
              "behaviour, where the plan and the wall are the same number.")
+    # The job's budget, as against the month's. The two numbers above plan a
+    # MONTH, which is the right question for a project that runs on a rhythm
+    # and the wrong one for a project that finishes: "spend $2,000 getting this
+    # built" had no rule to live in, so it was typed into a monthly plan that
+    # was neither total nor a limit, beside a pace that could not reach it.
+    #
+    # This one is a wall, and that is deliberate. The plan-is-not-a-wall lesson
+    # above was learned by CEOs ESTIMATING their own month and being killed for
+    # missing; nobody estimates here — the chairman named a pot and asked for
+    # it to be spent on the job. What made the old cliff poisonous was a wall
+    # nobody meant to reach. This one is the planned end of the money, with a
+    # reserve before it so reaching it is a hand-in rather than a crash, and a
+    # floor (`idle_board_minutes`) so a fixed pot is not sat on.
+    project_usd_budget: float = _rule(
+        0.0, ge=0, group="Budgets", label="Budget for the whole job (USD)",
+        help="USD, total since the project was created, under API-key billing. Unlike "
+             "the monthly budget this is a limit: at this number the project pauses. "
+             "Before it, a reserve (below) is held back so the CEO can hand in what "
+             "it has. For a project that finishes once — a delivery, an "
+             "investigation, a build. 0: no job budget, only the monthly one.")
+    project_token_budget: int = _rule(
+        0, ge=0, group="Budgets", label="Token budget for the whole job",
+        help="The same limit, in tokens, under subscription billing. 0: none.")
+    budget_reserve_ratio: float = _rule(
+        0.05, ge=0, lt=0.5, group="Budgets", label="Share of the job budget kept for the hand-in",
+        help="Past the job budget minus this share, ordinary work stops and only the "
+             "CEO may still run: to write up what was done, what is left, and what "
+             "more money would buy. Without it, running out means stopping mid-task "
+             "with nothing written down. 0 turns the reserve off.")
     budget_warn_ratio: float = _rule(
         0.8, gt=0, lt=1, group="Budgets", label="Warn at this share of the budget",
         help="Where the CEO is told it is approaching the plan — early enough to say "
@@ -791,6 +834,22 @@ class ConstitutionDoc(BaseModel):
                 "rhythm — pick a day every month has")
         return self
 
+    @model_validator(mode="after")
+    def _sprint_has_a_pot(self) -> ConstitutionDoc:
+        # Sprint's run ceilings are set so high that money is the only thing
+        # pacing it. Without a job budget the only money limit left is the
+        # monthly plan times its multiple — three months of budget in a month,
+        # spent as fast as the provider allows. The card means "spend THIS";
+        # with no "this" it is refused rather than left to mean "spend".
+        if (tempo_name(self.model_dump()) == "sprint"
+                and not (self.project_usd_budget or self.project_token_budget)):
+            raise ValueError(
+                "the Sprint pace needs a budget for the whole job "
+                "(project_usd_budget, or project_token_budget under subscription "
+                "billing): it lifts the run limits so the budget is what paces it, "
+                "and with no budget nothing would")
+        return self
+
     @field_validator("ceo_daily_at")
     @classmethod
     def _daily_time_is_readable(cls, raw: str | None) -> str | None:
@@ -991,6 +1050,26 @@ BAR_PRESETS: dict[str, dict[str, Any]] = {
 }
 
 TEMPO_PRESETS: dict[str, dict[str, Any]] = {
+    # The card for "get it done, within this budget". Every volume ceiling is
+    # set past anything a real board reaches, so the job budget — which this
+    # card is refused without (`_sprint_has_a_pot`) — is the limit that binds.
+    # What is NOT lifted is every brake that stops waste rather than work:
+    # wakes per agent (a looping seat), the pair breaker (two seats talking),
+    # and concurrency, which protects the provider rate limit every project on
+    # the box shares — raised to 6, and still under the install's own
+    # per-provider ceiling. Buying parallelism is what a budget can do; a
+    # chain of dependent steps is as long as it is.
+    "sprint": {
+        "runs_per_project_per_day": 2000, "runs_per_project_per_hour": 120,
+        "wakes_per_agent_per_hour": 6,
+        "inbox_runs_per_project_per_day": 400,
+        "inbox_runs_per_project_per_hour": 60,
+        "max_concurrent_runs": 6, "reserved_governance_runs": 5,
+        "ceo_heartbeat_hours": 2.0, "ceo_daily_at": None,
+        "max_task_gate_hours": 6, "pair_breaker_messages": 10,
+        "mail_max_per_day": 5,
+        "queue_ceiling": 12,
+    },
     # Today's field defaults, and deliberately so: a quieter default would have
     # lowered the daily volume of every project on the install the moment it
     # shipped, without anyone choosing that for any of them. That is the
@@ -1078,11 +1157,61 @@ TEMPO_FOR_CYCLE = {"hourly": "live", "daily": "working_hours",
 DEFAULT_TEMPO = "live"
 
 
-def tempo_for(mode: str, cycle_frequency: str | None = None) -> str:
-    """The tempo a project of this shape runs at when nobody picked one."""
+def tempo_for(mode: str, cycle_frequency: str | None = None,
+              job_budget: bool = False) -> str:
+    """The tempo a project of this shape runs at when nobody picked one.
+
+    A project that ends, given a budget for the whole job, sprints: the
+    chairman named the money and the finish line, and the only thing left to
+    decide is how fast — which a pot exists to answer. Without one it stays on
+    the old default, because sprinting on a monthly plan has no wall in sight.
+    """
     if str(mode) != "operate":
-        return DEFAULT_TEMPO
+        return "sprint" if job_budget else DEFAULT_TEMPO
     return TEMPO_FOR_CYCLE.get(cycle_frequency or "weekly", "few_times_daily")
+
+
+def has_job_budget(constitution: dict[str, Any]) -> bool:
+    return bool(constitution.get("project_usd_budget")
+                or constitution.get("project_token_budget"))
+
+
+def job_budget_problem(billing_mode: str, cons: ConstitutionDoc) -> str | None:
+    """Why this constitution's job budget could not be enforced on a project
+    that bills this way, or None.
+
+    `ConstitutionDoc` cannot ask: it does not know how the project pays. A
+    Sprint on a subscription project carrying only a dollar budget validates
+    there and then has no wall at all, which is the one state the card's own
+    validator exists to refuse.
+    """
+    usd_mode = billing_mode == "api_key"
+    has_it = cons.project_usd_budget if usd_mode else cons.project_token_budget
+    other = cons.project_token_budget if usd_mode else cons.project_usd_budget
+    if other and not has_it:
+        return ("this project bills in " + ("USD" if usd_mode else "tokens")
+                + ", so its job budget has to be "
+                + ("project_usd_budget" if usd_mode else "project_token_budget")
+                + " — the other unit cannot be measured here and would never stop it")
+    return None
+
+
+def default_job_month(constitution: dict[str, Any]) -> dict[str, Any]:
+    """A creation-time constitution whose monthly plan matches its job budget
+    when the author stated the one and not the other.
+
+    The monthly machinery — the warning line, the overrun account — runs on
+    every project. On one with a job budget it must never trip before the job
+    budget does, or the CEO is told to account for "the month going over" a
+    number nobody chose. Matching them makes the job budget the first line
+    crossed in every month. A monthly plan somebody did write is left alone.
+    """
+    out = dict(constitution)
+    if out.get("project_usd_budget") and "monthly_usd_cap" not in out:
+        out["monthly_usd_cap"] = float(out["project_usd_budget"])
+    if out.get("project_token_budget") and "monthly_token_cap" not in out:
+        out["monthly_token_cap"] = int(out["project_token_budget"])
+    return out
 
 
 def bar_name(constitution: dict[str, Any]) -> str | None:
@@ -1178,7 +1307,8 @@ def default_tempo(mode: str, constitution: dict[str, Any]) -> dict[str, Any]:
         return dict(constitution)
     frequency = constitution.get("cycle_frequency",
                                  ConstitutionDoc.model_fields["cycle_frequency"].default)
-    return {**TEMPO_PRESETS[tempo_for(mode, frequency)], **constitution}
+    return {**TEMPO_PRESETS[tempo_for(mode, frequency, has_job_budget(constitution))],
+            **constitution}
 
 
 # What each card SAYS. It lives beside the rules it explains rather than in the
@@ -1245,6 +1375,18 @@ BAR_COPY = {
 # files and the audit log say, so they stay put — a card is still recognised
 # by its rules (`tempo_name`), never by what it is called.
 TEMPO_COPY = {
+    "sprint": {
+        "label": "Sprint",
+        "headline": "up to 2,000 runs a day, paced by the budget",
+        "blurb": "The run limits are lifted so the job budget is what paces the "
+                 "project: work starts the moment it is ready, up to six at once as "
+                 "the provider allows, and the CEO plans every two hours. A reserve "
+                 "is kept so it can hand in what it has if the money runs out first. "
+                 "Money buys parallel work; a chain of steps that depend on each "
+                 "other still takes as long as it takes.",
+        "example": "A delivery, an investigation or a build with a budget and no "
+                   "reason to wait.",
+    },
     "live": {
         "label": "Heavy",
         "headline": "about 150 runs a day",
@@ -1371,7 +1513,10 @@ def propose_amendment(
         # the document ignores extra keys, so an invented rule is stored in the
         # amendment row, shown back to the chairman, and never in force.
         raise ValueError("; ".join(invented))
-    effective(session, project_id).overlay(changes)  # raises if the result is invalid
+    after = effective(session, project_id).overlay(changes)  # raises if the result is invalid
+    project = session.get(Project, project_id)
+    if project is not None and (problem := job_budget_problem(project.billing_mode, after)):
+        raise ValueError(problem)
     if not changes:
         return []
     amendment = Amendment(

@@ -25,6 +25,7 @@ from yaaf.core.constitution import (
     TEMPO_PRESETS,
     TEMPO_RULES,
     effective,
+    has_job_budget,
     tempo_for,
     tempo_name,
 )
@@ -1599,6 +1600,38 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                         "Lower the pace or raise the budget.",
                         "settings")
 
+            # Existing projects onto a job budget: asked, never applied. A
+            # project that finishes once but runs on a monthly estimate was
+            # the only shape a finishing project COULD have before the job
+            # budget existed, so every one of them is a mismatch nobody chose
+            # — and re-pacing a live project because a rule became available
+            # is the silent rewrite `doctrine.py` forbids. So it is the pace
+            # row's shape: one row, both answers, asked once per project.
+            if (not shape.runs_on_cycles(project)
+                    and not has_job_budget(rules)
+                    and not job_budget_kept(session, project.id)):
+                from yaaf.server import budget as budget_lib
+
+                usd_job, tokens_job = budget_lib.job_to_date(session, project.id)
+                usd_mode = project.billing_mode == "api_key"
+                spent_job = usd_job if usd_mode else float(tokens_job)
+                monthly = rules["monthly_usd_cap"] if usd_mode else rules["monthly_token_cap"]
+                shown = (lambda v: f"${v:,.0f}") if usd_mode else (lambda v: f"{v:,.0f} tokens")
+                add("job-budget", "warn",
+                    f"This project finishes once but runs on a monthly estimate of "
+                    f"{shown(monthly)}. It can run on a budget for the whole job "
+                    f"instead, as fast as that budget allows (Sprint), stopping when "
+                    f"it is spent. {shown(spent_job)} has been spent so far, and "
+                    "counts toward the total.",
+                    "settings",
+                    {"kind": "job_budget",
+                     "unit": "usd" if usd_mode else "tokens",
+                     "spent": round(spent_job, 2),
+                     "suggested": round(max(float(monthly), spent_job * 2), 2),
+                     "rule": "project_usd_budget" if usd_mode else "project_token_budget",
+                     "month_rule": "monthly_usd_cap" if usd_mode else "monthly_token_cap",
+                     "sprint": dict(TEMPO_PRESETS["sprint"])})
+
             act = activity_state(session, project, live_cons)
             brief = act["brief"]
             # Only the briefs that mean *stopped* are findings. Concurrency and
@@ -1706,6 +1739,16 @@ def _tempo_mismatch(cycle: str, on: str, wanted: str, moved: datetime | None,
             else "")
     return (f"{lead} {cycle.capitalize()} projects usually run {usual} "
             f"(up to {runs(wanted)} runs a day{cost}).{over}")
+
+
+def job_budget_kept(session: Session, project_id: str) -> bool:
+    """Whether a chair answered the job-budget row with "keep the monthly
+    budget". Once, for the project: the question does not change shape the
+    way the pace row's does, so there is nothing to match the answer on."""
+    return session.execute(
+        select(AuditLog.id).where(AuditLog.project_id == project_id,
+                                  AuditLog.action == "job_budget.keep").limit(1)
+    ).scalar_one_or_none() is not None
 
 
 def tempo_kept(session: Session, project_id: str, cycle: str, tempo: str) -> bool:

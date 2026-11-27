@@ -74,6 +74,10 @@ GATES = {
     "review_owed",
     # Everything is true and only his click is left. See QUEUED below.
     "delivery_ready",
+    # The job budget is down to its hand-in reserve. A banner and not a wait:
+    # no clock ends it, only the chairman raising the budget, and the work
+    # that stopped behind it is the reason he would want to.
+    "budget_reserve",
 }
 # Stopped and waiting on him, but drawn as a decision in his queue rather than
 # as a banner. Finishing was once "the one quiet that earns a banner", because
@@ -138,6 +142,8 @@ def _synthetic(gate: str | None) -> dict:
         "wake_ceiling": {"cap": 6, "frees_at": at, "agents_held": 1},
         "coalescing": {"ripe_at": at, "agents_held": 1},
         "concurrency": {"in_flight": 3, "cap": 3},
+        "job_budget": {"budget": 2000.0, "spent": 1910.0, "unit": "USD", "left": 90.0,
+                       "reserve_line": 1900.0, "in_reserve": True},
         "inbox_runs": {"used_today": 40, "cap_today": 40,
                        "used_this_hour": 3, "cap_this_hour": 8},
         "waiting": {"ready_tasks": 1, "claimable_tasks": 0, "gated_tasks": 1,
