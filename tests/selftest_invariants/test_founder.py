@@ -1414,3 +1414,53 @@ def test_a_stop_cancels_the_model_call_rather_than_waiting_it_out():
     with pytest.raises(progress.Stopped):
         asyncio.run(progress.stoppable("thr_early", forever()))
     assert progress.stop("thr_nothing") is False
+
+
+def test_a_founder_drafted_factory_is_led_by_the_tech_lead():
+    """Found asking whether "Describe it" works for a Code Factory: a draft
+    that named no lead was filled with the generic CEO, which the server then
+    refused at Create. The draft fills the factory's own lead, and validation
+    says so before the chairman ever presses Create."""
+    from yaaf.founder import tools as founder_tools
+
+    project = {"slug": "split", "name": "Split", "goal": "A tiny bill-splitting web app.",
+               "mode": "code_factory",
+               "teams": [{"role_slug": "engineer", "name": "Build", "employees": ["Mika"]}]}
+    drafted = founder_tools.as_bundle(project)
+    assert drafted["project"]["ceo_role_slug"] == "tech-lead"
+    assert not [p for p in founder_tools.validate(drafted) if p.startswith("ceo_role_slug")]
+
+    wrong = founder_tools.as_bundle({**project, "ceo_role_slug": "ceo"})
+    assert any("Tech Lead" in p for p in founder_tools.validate(wrong))
+    other = founder_tools.as_bundle({**project, "mode": "deliver"})
+    assert other["project"]["ceo_role_slug"] == "ceo"
+
+
+def test_a_founder_drafted_factory_carries_its_repo_where_create_reads_it():
+    """The Founder asks a new build's repo name; it has to land where Create
+    and the form read it, or the repo is never made under that name."""
+    from yaaf.founder import tools as founder_tools
+
+    base = {"slug": "split", "name": "Split", "goal": "A tiny bill-splitting web app.",
+            "mode": "code_factory",
+            "teams": [{"role_slug": "engineer", "name": "Build", "employees": ["Mika"]}]}
+    new = founder_tools.as_bundle({**base, "factory_start": "new", "repo": "split-app"})
+    assert new["project"]["integrations"]["repo_wanted"] == "split-app"
+    assert "repo" not in new["project"] and not new["project"].get("github_repo")
+    kept = founder_tools.as_bundle({**base, "factory_start": "repo", "repo": "acme/invoices"})
+    assert kept["project"]["github_repo"] == "acme/invoices"
+    other = founder_tools.as_bundle({**base, "mode": "deliver", "repo": "ignored"})
+    assert "repo_wanted" not in other["project"]["integrations"]
+
+
+def test_the_founder_sees_whether_github_is_connected(client):
+    """So it can tell him, in the ledger, that the form will ask for the key."""
+    from yaaf.core.db import db_session
+    from yaaf.founder import agent
+
+    with db_session() as session:
+        assert 'github: {"connected": false}' in agent.library(session)
+    client.post("/admin/secrets", headers=ADMIN, json={
+        "project_id": None, "name": "github", "value": "github_pat_x", "role_scopes": []})
+    with db_session() as session:
+        assert 'github: {"connected": true}' in agent.library(session)

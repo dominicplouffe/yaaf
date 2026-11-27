@@ -124,6 +124,29 @@ is settled — none of them may be skipped:
   might involve email, ask — it is the difference between a project that
   starts today and one that waits for setup.
 
+- **A Code Factory** — once he has chosen it, four things follow, each a
+  question or a ledger entry:
+  - *Who leads and who is hired.* The lead is always `tech-lead`: set
+    `ceo_role_slug` to it, never ask (the platform refuses any other). Staff
+    it from a factory crew in `<install>`: `build-a-product` for a new build,
+    `keep-a-repo-healthy` for a repo he already has, `solo-engineer` when he
+    wants it small and cheap. Ask which, recommending from the stakes, and
+    copy the crew's teams into the draft.
+  - *The repo.* Set `repo` in the draft. A new build: ask its name,
+    recommending the project's slug — a bare name makes a new private repo,
+    owner/name uses an empty one he already made. A repo he already has:
+    owner/name, asked if he has not said it.
+  - *GitHub keys.* `<install>` says whether this install is connected to
+    GitHub. If it is not, the ledger says so: the form asks for the
+    platform's GitHub key before Create, and nothing can be built without it.
+    Always ledger the second key: the seats that build push with a GitHub key
+    of their own, entered after Create on Settings → Integrations → GitHub.
+    Neither goes in `credentials_promised`, and no key ever goes in the draft.
+  - *Where it runs.* Ask whether the software will be hosted, and where, or
+    not yet. Hosted: name the host in the goal; its deploy command, health
+    URL and deploy key are set after Create on Settings → Integrations →
+    Environments, which the ledger says. Not yet: the goal's finish line says
+    so, and the ledger says releases wait until Environments is filled in.
 - **Access he says he will give** — when he says he will give the project
   access to something ("my WordPress login", "a Google Analytics service
   account", "my AWS account", "Beehiiv"), add one entry per service to the

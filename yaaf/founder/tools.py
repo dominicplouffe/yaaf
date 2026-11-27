@@ -287,7 +287,11 @@ PROPOSE_SCHEMA = {
                          "enum": ["explore", "deliver", "operate", "code_factory"]},
                 "factory_start": {"type": "string", "enum": ["new", "repo"],
                                   "description": "code_factory only: build from "
-                                  "nothing, or adopt the repo named in github_repo"},
+                                  "nothing, or adopt the repo named in `repo`"},
+                "repo": {"type": "string",
+                         "description": "code_factory only: a new build's repo — a bare "
+                                        "name makes a new private repo, owner/name uses an "
+                                        "empty one; an adopted repo's owner/name"},
                 "ceo_role_slug": {"type": "string"},
                 "ceo_name": {"type": "string"},
                 "teams": {"type": "array", "items": {
@@ -757,6 +761,29 @@ def _timed(fn):
     return dataclasses.replace(fn, handler=timed)
 
 
+def github_status(session: Session) -> dict:
+    """Whether this install holds the platform's GitHub key — what a Code
+    Factory makes its repo, opens pull requests and merges with."""
+    from yaaf.server import github
+
+    return {"connected": github.platform_token(session) is not None}
+
+
+def _place_repo(project: dict) -> dict:
+    """The draft's one `repo` field, put where the create endpoint reads it: an
+    adopted repo is the project's `github_repo`; a new build's is the repo it
+    wants made (`integrations.repo_wanted`), made right after Create — or the
+    moment the platform's GitHub key exists."""
+    repo = project.get("repo")
+    project = {k: v for k, v in project.items() if k != "repo"}
+    if not repo or project.get("mode") != "code_factory":
+        return project
+    if project.get("factory_start") == "repo":
+        return {**project, "github_repo": repo}
+    return {**project, "integrations": {**(project.get("integrations") or {}),
+                                        "repo_wanted": repo}}
+
+
 def as_bundle(project: dict) -> dict:
     """Wrap a proposed project as a complete setup bundle.
 
@@ -775,6 +802,7 @@ def as_bundle(project: dict) -> dict:
         project = {**project, "teams": [
             {**t, "employees": t.get("employees") or []} if isinstance(t, dict) else t
             for t in teams]}
+    project = _place_repo(project)
     return {
         "yaaf_bundle": 1,
         "kind": "project_setup",
@@ -787,7 +815,10 @@ def as_bundle(project: dict) -> dict:
             "constitution": {},
             "integrations": {},
             "teams": [],
-            "ceo_role_slug": "ceo",
+            # A Code Factory has one lead (shape.FACTORY_LEAD_ROLE), and a draft
+            # that named none was otherwise refused at Create for naming "ceo".
+            "ceo_role_slug": (shape.FACTORY_LEAD_ROLE if project.get("mode") == "code_factory"
+                              else "ceo"),
             "ceo_name": "CEO",
             **project,
         },
@@ -817,10 +848,20 @@ def validate(bundle: dict) -> list[str]:
     # Founder is not allowed to fill in.
     probe = {**project, "chairman_email": project.get("chairman_email") or "chairman@example.com"}
     try:
-        ProjectCreate.model_validate(probe)
+        parsed = ProjectCreate.model_validate(probe)
     except ValidationError as exc:
         return [f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}"
                 for err in exc.errors()][:10]
+    # The endpoint's own rule on who may lead which kind, asked the same way:
+    # a draft it would refuse at Create is a draft with a problem now.
+    from fastapi import HTTPException
+
+    from yaaf.server.api.admin import _factory_lead_at_create
+
+    try:
+        _factory_lead_at_create(parsed)
+    except HTTPException as exc:
+        return [f"ceo_role_slug: {exc.detail}"]
     return date_problems(project) + constitution_problems(project.get("constitution") or {})
 
 

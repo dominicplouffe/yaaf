@@ -889,7 +889,7 @@ export default function NewProject() {
       if (factory && factoryStart === "repo" && !factoryRepo.includes("/")) {
         return "Name the repo to keep, as owner/name";
       }
-      if (factory && !bundle?.project.github_repo && githubConnected === false) {
+      if (factory && githubConnected === false) {
         return "Connect this install to GitHub, so it can make the repo";
       }
       return null;
@@ -955,6 +955,15 @@ export default function NewProject() {
       if (p.mode) {
         setMode(p.mode);
         setModeNotice(null);
+        if (p.mode === "code_factory") {
+          // Where it starts and its repo, from a file's wiring or a Founder
+          // draft. Unread, a draft that adopts a repo was posted as a new build.
+          const wiring = (p.integrations ?? {}) as Record<string, unknown>;
+          const start = (p as { factory_start?: string }).factory_start ?? wiring["factory_start"];
+          setFactoryStart(start === "repo" ? "repo" : "new");
+          const named = p.github_repo ?? wiring["repo_wanted"];
+          if (typeof named === "string") setFactoryRepo(named);
+        }
       } else {
         // A file from before project shapes existed. Guessing Explore here
         // once silently overwrote a chairman's Deliver choice — keep whatever
@@ -1180,7 +1189,8 @@ export default function NewProject() {
     setDrillError(null);
     setDrill(null);
     try {
-      const chosenCeo = bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
+      const chosenCeo = factory ? FACTORY_LEAD
+        : bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
       if (!chosenCeo) throw new Error("Pick a CEO role first.");
       // Role definitions a fresh library lacks travel with the spec, so the
       // drill can resolve them without anything being written here.
@@ -1213,7 +1223,8 @@ export default function NewProject() {
   /** Every seat on the form and the model it would run on — its role's, or
       the override a setup file carries. */
   function seatModels(): { who: string; model: string }[] {
-    const chosenCeo = bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
+    const chosenCeo = factory ? FACTORY_LEAD
+        : bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
     const ceoModel = bundle?.project.ceo_model_override
       ?? roles.find((r) => r.slug === chosenCeo)?.model ?? "";
     const out = [{ who: "the CEO", model: ceoModel }];
@@ -1419,7 +1430,8 @@ export default function NewProject() {
       }
       // The file's choice wins when one was loaded — its teams were designed
       // around that CEO — otherwise the chairman's.
-      const chosenCeo = bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
+      const chosenCeo = factory ? FACTORY_LEAD
+        : bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
       if (!chosenCeo) throw new Error("No CEO role in the library — create one on the Roles page first.");
       const body = projectBody(chosenCeo);
       const created = await post<{
@@ -1502,8 +1514,10 @@ export default function NewProject() {
       // A factory with no repo has nowhere to push, and nothing on its screens
       // says so until a run fails. Created (or checked) here, with main
       // protected, before the project is started.
-      if (factory && !bundle?.project.github_repo) {
-        const repo = factoryRepo.trim() || slug;
+      if (factory) {
+        // Also for a repo a file or draft already named: attaching is what
+        // protects main and points the webhook here, and it re-checks access.
+        const repo = factoryRepo.trim() || bundle?.project.github_repo || slug;
         try {
           await post(`/admin/projects/${created.id}/github`, { repo });
         } catch (err) {
@@ -2469,7 +2483,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         <div className="card" style={{ marginBottom: 10 }}>
           <div className="orgline">
             <strong>CEO</strong>
-            <span className="chip accent">{roleLabel(bundle?.project.ceo_role_slug ?? ceoSlug)}</span>
+            <span className="chip accent">{roleLabel(factory ? FACTORY_LEAD
+              : bundle?.project.ceo_role_slug ?? ceoSlug)}</span>
             <span className="help">the only agent that speaks to you</span>
           </div>
           {effectiveTeams.map((t, i) => (
