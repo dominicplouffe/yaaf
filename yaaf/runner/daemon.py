@@ -281,7 +281,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
         attempt=queued.attempt,
         timeout_s=cons.run_timeout_s,
         api_base_url=settings().api_base_url,
-        workspace_dir=_prepare_workspace(session, project),
+        workspace_dir=_prepare_workspace(session, project, agent_id=queued.agent_id),
     )
 
     if queued.kind == RunKind.SUCCESS_CHECK:
@@ -622,17 +622,107 @@ def _talk_only_if_held(session: Session, run: Run, job: RunJob) -> None:
                             "files": False, "talk_only": intent.refusal(standing, "A script")}
 
 
-def _prepare_workspace(session: Session, project: Project) -> str:
+def _prepare_workspace(session: Session, project: Project,
+                       agent_id: str | None = None) -> str:
     """The job's workspace path. GitHub-backed projects get their repo cloned
     on first touch; after that (or on any failure) the workspace is exactly
     the plain local dir it always was — agents own the working tree, and a
-    workspace must never hard-block a run."""
+    workspace must never hard-block a run.
+
+    In a Code Factory each seat works in a checkout of its own (`seat_path`).
+    One shared tree meant one checked-out branch for the whole crew: two
+    engineers running at once switched it under each other, and a reviewer
+    checking a change out moved everybody's files."""
+    from yaaf.core import shape
+
     workspace = Path(settings().workspaces_root) / project.slug
     if project.github_repo and not (workspace / ".git").exists():
         _clone_workspace(session, project.github_repo, workspace)
     workspace.mkdir(parents=True, exist_ok=True)
+    if agent_id and shape.is_factory(project) and (workspace / ".git").exists():
+        seat = _seat_workspace(session, project, workspace, agent_id)
+        if seat is not None:
+            _materialize_mail(session, project, seat)
+            return str(seat)
     _materialize_mail(session, project, workspace)
     return str(workspace)
+
+
+def seat_path(project_slug: str, agent_id: str) -> Path:
+    """Where one seat's own checkout lives: beside the project's tree, never
+    inside it, so the shared tree's file index and `git status` never see it."""
+    return Path(settings().workspaces_root) / ".seats" / project_slug / agent_id
+
+
+#: Never committed: the platform's per-run staging (prompts, packs, traces).
+_EXCLUDED = (".yaaf/",)
+
+
+def _exclude_staging(repo: Path) -> None:
+    exclude = repo / ".git" / "info" / "exclude"
+    try:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        have = exclude.read_text() if exclude.exists() else ""
+        missing = [line for line in _EXCLUDED if line not in have.splitlines()]
+        if missing:
+            exclude.write_text(have.rstrip("\n") + ("\n" if have else "")
+                               + "\n".join(missing) + "\n")
+    except OSError:
+        log.warning("could not keep platform staging out of git in %s", repo)
+
+
+def _seat_workspace(session: Session, project: Project, main: Path,
+                    agent_id: str) -> Path | None:
+    """This seat's own checkout, made on its first run and kept after it, so
+    the branch it was on and its uncommitted work are where it left them.
+
+    A local clone of the project's tree rather than a git worktree: a
+    worktree's `.git` is a pointer to the main repository, which is not inside
+    the one directory the sandbox mounts, so git would be broken in there. A
+    local clone shares the main repository's objects on disk and stands alone.
+    It starts at the remote's latest main, fetched with the platform's key,
+    and is then pointed at the plain GitHub URL — the seat pushes with its own
+    key, through the image's credential helper. Any failure falls back to the
+    shared tree, as a failed clone always has: a run is never blocked on this."""
+    import shutil
+    import subprocess
+
+    from yaaf.server import github
+
+    seat = seat_path(project.slug, agent_id)
+    if (seat / ".git").exists():
+        return seat
+    full_name = project.github_repo or ""
+    token = github.platform_token(session)
+    try:
+        if seat.exists():
+            shutil.rmtree(seat)
+        seat.parent.mkdir(parents=True, exist_ok=True)
+        steps = [["git", "clone", "-q", "--local", str(main), str(seat)]]
+        if token and full_name:
+            # The remote's own default branch, whatever it is called: the local
+            # clone already has that branch checked out (the shared tree was
+            # cloned from the remote), so bring it to the remote's latest.
+            steps += [["git", "-C", str(seat), "fetch", "-q",
+                       github.clone_url(full_name, token), "HEAD"],
+                      ["git", "-C", str(seat), "reset", "-q", "--hard", "FETCH_HEAD"]]
+        steps += [["git", "-C", str(seat), "remote", "set-url", "origin",
+                   github.public_url(full_name) if full_name else str(main)],
+                  ["git", "-C", str(seat), "config", "core.sharedRepository", "0777"]]
+        for step in steps:
+            proc = subprocess.run(step, capture_output=True, text=True, timeout=180)
+            if proc.returncode != 0:
+                said = (proc.stderr or "").replace(token or "\0", "<redacted>").strip()[:300]
+                raise RuntimeError(said or f"{step[1:4]} failed")
+    except Exception as exc:
+        shutil.rmtree(seat, ignore_errors=True)
+        log.warning("could not make %s's own checkout of %s; using the shared tree: %s",
+                    agent_id, full_name or project.slug, str(exc).replace(token or "\0", "<redacted>"))
+        return None
+    _exclude_staging(seat)
+    _open_to_sandbox(seat)
+    log.info("made %s's own checkout of %s", agent_id, full_name or project.slug)
+    return seat
 
 
 def _materialize_mail(session: Session, project: Project, workspace: Path) -> None:
@@ -704,6 +794,7 @@ def _clone_workspace(session: Session, full_name: str, workspace: Path) -> None:
     # group- and world-writable, or a seat's first commit dies on .git/objects.
     subprocess.run(["git", "-C", str(workspace), "config", "core.sharedRepository", "0777"],
                    capture_output=True, timeout=30)
+    _exclude_staging(workspace)
     _open_to_sandbox(workspace)
     log.info("cloned %s into %s", full_name, workspace)
 
