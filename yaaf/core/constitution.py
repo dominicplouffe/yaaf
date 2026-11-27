@@ -367,6 +367,17 @@ class ConstitutionDoc(BaseModel):
              "CEO may still run: to write up what was done, what is left, and what "
              "more money would buy. Without it, running out means stopping mid-task "
              "with nothing written down. 0 turns the reserve off.")
+    # Sprint answers "as fast as the money allows". This answers the other
+    # question a job budget can carry: "use it across the window". An Explore
+    # project chasing one sale in sixty days that spent its whole pot in the
+    # first week has nothing left for the weeks the market takes to answer.
+    spread_job_budget: bool = _rule(
+        False, group="Budgets", label="Spread the job budget evenly to the deadline",
+        help="On, each day may spend an equal share of what is left of the job budget "
+             "(less the hand-in reserve) over the days left to the project's deadline; "
+             "past today's share, ordinary work waits for midnight UTC. Needs a job "
+             "budget and a deadline. Off: the job budget is spent as fast as the work "
+             "allows.")
     budget_warn_ratio: float = _rule(
         0.8, gt=0, lt=1, group="Budgets", label="Warn at this share of the budget",
         help="Where the CEO is told it is approaching the plan — early enough to say "
@@ -841,6 +852,11 @@ class ConstitutionDoc(BaseModel):
         # monthly plan times its multiple — three months of budget in a month,
         # spent as fast as the provider allows. The card means "spend THIS";
         # with no "this" it is refused rather than left to mean "spend".
+        if self.spread_job_budget and not (self.project_usd_budget
+                                           or self.project_token_budget):
+            raise ValueError(
+                "spread_job_budget spreads a budget for the whole job across its "
+                "window, and there is no job budget to spread")
         if (tempo_name(self.model_dump()) == "sprint"
                 and not (self.project_usd_budget or self.project_token_budget)):
             raise ValueError(
@@ -1199,6 +1215,10 @@ def job_budget_problem(billing_mode: str, cons: ConstitutionDoc) -> str | None:
     return None
 
 
+SPREAD_NEEDS_A_DATE = ("spread_job_budget spreads the job budget to the project's "
+                       "deadline, and this project has none: set the date first")
+
+
 def default_job_month(constitution: dict[str, Any]) -> dict[str, Any]:
     """A creation-time constitution whose monthly plan matches its job budget
     when the author stated the one and not the other.
@@ -1519,6 +1539,8 @@ def propose_amendment(
     project = session.get(Project, project_id)
     if project is not None and (problem := job_budget_problem(project.billing_mode, after)):
         raise ValueError(problem)
+    if project is not None and after.spread_job_budget and project.deadline is None:
+        raise ValueError(SPREAD_NEEDS_A_DATE)
     if not changes:
         return []
     amendment = Amendment(

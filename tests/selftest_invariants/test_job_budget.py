@@ -457,3 +457,118 @@ def test_keeping_the_monthly_budget_answers_for_the_project(client):
 def test_a_project_on_a_rhythm_is_never_offered_one(client):
     project = make_project(client, slug="rhythm", mode="operate")
     assert "job-budget" not in _checks(client, project)
+
+
+# ── spreading a job budget across its window ────────────────────────────────────
+
+
+def _spread(client, slug: str, budget: float = 300.0, days: int = 30, **cons):
+    deadline = (utcnow() + timedelta(days=days)).isoformat()
+    return make_project(client, slug=slug, mode="explore", deadline=deadline,
+                        constitution={"project_usd_budget": budget,
+                                      "spread_job_budget": True, "budget_reserve_ratio": 0.0,
+                                      **cons})
+
+
+def _share(project: dict):
+    from yaaf.server import budget as budget_lib
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        return budget_lib.daily_share(session, row, effective(session, row.id))
+
+
+def test_spreading_needs_a_job_budget_and_a_date(client):
+    make_project(client, slug="seed")
+    base = {"name": "S", "goal": "One sale in the next 60 days.",
+            "chairman_email": "chair@example.com", "ceo_role_slug": "ceo",
+            "ceo_name": "CEO", "mode": "explore",
+            "teams": [{"role_slug": "worker", "name": "Alpha", "employees": ["Lead"]}]}
+    no_pot = client.post("/admin/projects", headers=ADMIN, json={
+        **base, "slug": "no-pot", "constitution": {"spread_job_budget": True}})
+    assert no_pot.status_code == 422 and "no job budget" in no_pot.text
+    no_date = client.post("/admin/projects", headers=ADMIN, json={
+        **base, "slug": "no-date",
+        "constitution": {"project_usd_budget": 300.0, "spread_job_budget": True}})
+    assert no_date.status_code == 422 and "deadline" in no_date.text
+
+    undated = make_project(client, slug="undated", mode="explore",
+                           constitution={"project_usd_budget": 300.0})
+    assert _amend(client, undated, {"spread_job_budget": True}).status_code == 422
+
+
+def test_each_day_gets_an_equal_share_of_what_is_left(client):
+    project = _spread(client, "window", budget=300.0, days=30)
+    share = _share(project)
+    assert share is not None and 9.5 <= share.share <= 10.5
+    assert not share.spent
+
+    # Yesterday's spend is not today's: the share is recomputed from what is left.
+    _book(project["id"], 90.0, at=utcnow() - timedelta(days=1))
+    assert 6.5 <= _share(project).share <= 7.5
+
+
+def test_past_todays_share_work_waits_for_midnight(client):
+    project = _spread(client, "spent-today", budget=300.0, days=30)
+    _book(project["id"], 12.0)
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        state = dispatcher.activity_state(session, row, effective(session, row.id))
+    assert state["blocked_by"] == "daily_money"
+    assert state["brief"]["clears_at"] == state["daily_money"]["resets_at"]
+    assert "Today's share of the job budget is spent" in state["brief"]["headline"]
+
+    with db_session() as session:
+        for agent in session.query(Agent).filter(Agent.project_id == project["id"],
+                                                 Agent.kind != AgentKind.CEO):
+            session.add(Notice(id=ids.new_id(ids.NOTICE), project_id=project["id"],
+                               agent_id=agent.id, kind=NoticeKind.BUDGET_WARNING,
+                               body="Wake up."))
+    with db_session() as session:
+        session.query(RunQueue).delete()
+        dispatcher.dispatch_once(session)
+    with db_session() as session:
+        queued = session.query(RunQueue).filter(RunQueue.project_id == project["id"]).count()
+    assert queued == 0
+
+
+def test_a_sprint_is_never_held_to_a_share(client):
+    project = _job(client, slug="no-spread")
+    _book(project["id"], 400.0)
+    assert _share(project) is None
+
+
+# ── a factory handed over to upkeep ─────────────────────────────────────────────
+
+
+def test_a_kept_factory_on_its_build_budget_is_asked_for_a_month(client):
+    from yaaf.core.models import FactoryPhase
+
+    project = make_project(client, slug="handed-over", mode="code_factory",
+                           constitution={"project_usd_budget": 900.0})
+    assert "upkeep-budget" not in _checks(client, project)  # still building
+    with db_session() as session:
+        session.get(Project, project["id"]).factory_phase = FactoryPhase.UPKEEP
+    row = _checks(client, project)["upkeep-budget"]
+    action = row["action"]
+    assert action["kind"] == "upkeep_budget" and "Sprint" in row["detail"]
+    assert tempo_name(_rules(project)) == "sprint"  # asked, not applied
+
+    switched = _amend(client, project, {**action["changes"], action["month_rule"]: 150.0})
+    assert switched.status_code == 200, switched.text
+    rules = _rules(project)
+    assert rules["project_usd_budget"] == 0.0 and rules["monthly_usd_cap"] == 150.0
+    assert tempo_name(rules) == "few_times_daily"
+    assert "upkeep-budget" not in _checks(client, project)
+
+
+def test_keeping_the_job_budget_in_upkeep_answers_it(client):
+    from yaaf.core.models import FactoryPhase
+
+    project = make_project(client, slug="kept-pot", mode="code_factory",
+                           constitution={"project_usd_budget": 900.0})
+    with db_session() as session:
+        session.get(Project, project["id"]).factory_phase = FactoryPhase.UPKEEP
+    assert client.post(f"/admin/projects/{project['id']}/upkeep-budget/keep",
+                       headers=ADMIN).status_code == 200
+    assert "upkeep-budget" not in _checks(client, project)

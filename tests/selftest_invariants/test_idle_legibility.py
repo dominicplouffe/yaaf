@@ -78,6 +78,9 @@ GATES = {
     # no clock ends it, only the chairman raising the budget, and the work
     # that stopped behind it is the reason he would want to.
     "budget_reserve",
+    # Today's share of a job budget spread to its deadline is spent. A wait:
+    # midnight UTC ends it, with a new share.
+    "daily_money",
 }
 # Stopped and waiting on him, but drawn as a decision in his queue rather than
 # as a banner. Finishing was once "the one quiet that earns a banner", because
@@ -94,7 +97,7 @@ FINE = {"concurrency", "agents_busy", "checking", "review_owed", "awaiting_ceo"}
 # UI, and each has to name the moment it ends — a wait with no falsifiable time
 # in it reads as a permanent fault.
 WAITS = {"daily_runs", "pacing", "governance_reserve", "wake_ceiling",
-         "coalescing", "scheduled"}
+         "coalescing", "scheduled", "daily_money"}
 # The waits that clear on their own within the hour, or at a moment the CEO
 # already chose, and need nothing from anybody. Stopped, but not a banner:
 # their own sentences say "nothing here needs you", and a box raised for them
@@ -106,6 +109,10 @@ QUIET_WAITS = {"pacing", "wake_ceiling", "coalescing", "scheduled"}
 # work is sitting idle behind them, and then they name it. Reading used up is
 # never that: its gate only fires when nobody holds ready work.
 COSTED = {"daily_runs", "governance_reserve"}
+# The same ruling for money: a spread job budget's share for today is spent.
+# A banner only when ready work waits behind it, and it says so in money,
+# not in runs — so it is its own set rather than a member of COSTED.
+COSTED_MONEY = {"daily_money"}
 QUIET_STOPS = {"inbox_runs"}
 
 
@@ -142,6 +149,8 @@ def _synthetic(gate: str | None) -> dict:
         "wake_ceiling": {"cap": 6, "frees_at": at, "agents_held": 1},
         "coalescing": {"ripe_at": at, "agents_held": 1},
         "concurrency": {"in_flight": 3, "cap": 3},
+        "daily_money": {"share": 40.0, "spent_today": 41.5, "days_left": 12,
+                        "unit": "USD", "resets_at": at},
         "job_budget": {"budget": 2000.0, "spent": 1910.0, "unit": "USD", "left": 90.0,
                        "reserve_line": 1900.0, "in_reserve": True},
         "inbox_runs": {"used_today": 40, "cap_today": 40,
@@ -224,7 +233,8 @@ def test_only_stopped_gates_raise_the_banner():
     on their own and say so, so they print as a quiet line instead."""
     for gate in (*FINE, *QUIET_WAITS, *QUEUED, *QUIET_STOPS, None):
         assert dispatcher._activity_brief(_synthetic(gate))["banner"] is False, gate
-    for gate in sorted(GATES - FINE - QUIET_WAITS - QUEUED - QUIET_STOPS - COSTED):
+    for gate in sorted(GATES - FINE - QUIET_WAITS - QUEUED - QUIET_STOPS - COSTED
+                       - COSTED_MONEY):
         assert dispatcher._activity_brief(_synthetic(gate))["banner"] is True, gate
     # Quiet is not silent: each still names the moment it ends.
     for gate in QUIET_WAITS:
@@ -788,3 +798,13 @@ def test_a_reset_is_said_in_the_readers_zone_too():
     brief = dispatcher._activity_brief(daily)
     assert brief["detail"].startswith(
         "Inbox reads reset at 00:00 UTC (Fri 23 Oct, 8:00 pm EDT).")
+
+
+def test_todays_share_of_the_money_is_a_banner_only_when_work_waits():
+    idle = dispatcher._activity_brief(_synthetic("daily_money"))
+    assert idle["banner"] is False and "Nothing ready is held up" in idle["detail"]
+    state = _synthetic("daily_money")
+    state["waiting"]["claimable_tasks"] = 2
+    costly = dispatcher._activity_brief(state)
+    assert costly["banner"] is True and "2 ready task(s) wait for it" in costly["detail"]
+    assert costly["clears_at"]

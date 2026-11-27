@@ -70,7 +70,7 @@ ACK_CLOSES = (*HISTORICAL_KINDS, FlagKind.BUDGET_OVERRUN, FlagKind.MAIN_BYPASSED
 #: these; anything outside this set is the project's own doing or the
 #: chairman's, and is not an excuse for an idle desk.
 CAP_GATES = ("daily_runs", "pacing", "concurrency", "inbox_runs",
-             "wake_ceiling", "governance_reserve")
+             "wake_ceiling", "governance_reserve", "daily_money")
 
 
 def _scoreline(cycle) -> str:

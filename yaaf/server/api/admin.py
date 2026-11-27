@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from yaaf.core import credential_files, ids, model_policy, platform, prices, shape, web_search
 from yaaf.core.constitution import (
     GROUP_THEMES,
+    SPREAD_NEEDS_A_DATE,
     THEME_ORDER,
     ConstitutionDoc,
     create_initial,
@@ -1704,6 +1705,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         raise HTTPException(status_code=422, detail=f"constitution: {problem}")
     if problem := bar_reading.reading_problem(body.goal, doc.model_dump(), body.quality):
         raise HTTPException(status_code=422, detail=problem)
+    if doc.spread_job_budget and body.deadline is None:
+        raise HTTPException(status_code=422, detail=f"constitution: {SPREAD_NEEDS_A_DATE}")
     _check_review_seat(session, doc, body.teams, solo=body.solo)
     deadline = body.deadline
     deadline_source = None
@@ -5522,6 +5525,15 @@ def keep_monthly_budget(project_id: str, session: Session = Depends(db)) -> dict
         raise HTTPException(status_code=409,
                             detail="This project already has a budget for the whole job.")
     _audit(session, project.id, "job_budget.keep", "project", project.id, {})
+    return {"ok": True}
+
+
+@router.post("/projects/{project_id}/upkeep-budget/keep", dependencies=[authority.STEER])
+def keep_job_budget_in_upkeep(project_id: str, session: Session = Depends(db)) -> dict:
+    """Answer the upkeep-budget row with "keep": this kept project stays on the
+    budget for the whole job — a fixed pot for its upkeep too — on purpose."""
+    _get_project(session, project_id)
+    _audit(session, project_id, "upkeep_budget.keep", "project", project_id, {})
     return {"ok": True}
 
 

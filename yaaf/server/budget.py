@@ -333,6 +333,60 @@ def job_budget(session: Session, project: Project, cons: ConstitutionDoc) -> Job
                      reserve_line=budget * (1.0 - cons.budget_reserve_ratio))
 
 
+class DailyShare(NamedTuple):
+    """Today's share of a spread job budget, and what today has spent of it."""
+
+    share: float
+    spent_today: float
+    days_left: int
+
+    @property
+    def spent(self) -> bool:
+        return self.spent_today >= self.share
+
+
+def daily_share(session: Session, project: Project, cons: ConstitutionDoc,
+                now=None) -> DailyShare | None:
+    """Today's share of the job budget when it is spread to the deadline, or
+    None when it is not (no job budget, spreading off, no date).
+
+    Recomputed every day from what is actually left, so a slow day leaves
+    more for the days after it and a fast one less — a share, not a quota
+    that was fixed at creation and is wrong by the first Tuesday. Measured on
+    the UTC day the run allowance already uses. Against the reserve line,
+    not the total: the hand-in's money is never anybody's share. On the last
+    day, or past the date, the share is everything left.
+    """
+    if not cons.spread_job_budget or project.deadline is None:
+        return None
+    job = job_budget(session, project, cons)
+    if job is None:
+        return None
+    now = now or utcnow()
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    usd_mode = project.billing_mode == "api_key"
+    usd, tokens = session.execute(
+        select(
+            func.coalesce(func.sum(LedgerEntry.usd), 0.0),
+            func.coalesce(
+                func.sum(LedgerEntry.tokens_in + LedgerEntry.tokens_out
+                         + LedgerEntry.cache_creation_tokens
+                         + LedgerEntry.cache_read_tokens),
+                0,
+            ),
+        ).where(LedgerEntry.project_id == project.id,
+                LedgerEntry.at >= today,
+                LedgerEntry.kind != LedgerKind.REVENUE)
+    ).one()
+    spent_today = float(usd) if usd_mode else float(tokens)
+    deadline = project.deadline
+    days_left = max(1, -(-(deadline - today).total_seconds() // 86400))
+    before_today = job.spent - spent_today
+    spendable = max(0.0, job.reserve_line - before_today)
+    return DailyShare(share=spendable / days_left, spent_today=spent_today,
+                      days_left=int(days_left))
+
+
 def proposed_budget(session: Session, project: Project,
                     cons: ConstitutionDoc) -> dict | None:
     """What the last three months say the budget should be.

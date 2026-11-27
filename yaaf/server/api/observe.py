@@ -1632,6 +1632,30 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                      "month_rule": "monthly_usd_cap" if usd_mode else "monthly_token_cap",
                      "sprint": dict(TEMPO_PRESETS["sprint"])})
 
+            # A factory that finished building and is now kept, still on the
+            # build's budget for the whole job. Nothing re-paces it at the
+            # hand-over — that would be the silent rewrite again — so the
+            # job budget would carry on paying for upkeep at Sprint until it
+            # ran out and paused a kept repo. Asked here, both answers on the
+            # row, the moment the hand-over makes it true.
+            if (shape.runs_on_cycles(project) and has_job_budget(rules)
+                    and not upkeep_budget_kept(session, project.id)):
+                usd_mode = project.billing_mode == "api_key"
+                wanted = tempo_for("operate", rules.get("cycle_frequency"))
+                add("upkeep-budget", "warn",
+                    "This project is now kept on a rhythm but still runs on its budget for "
+                    "the whole job, at Sprint: it will stop when that is spent. Give upkeep "
+                    f"a monthly budget and the {TEMPO_COPY[wanted]['label']} workload its "
+                    "rhythm usually runs.",
+                    "settings",
+                    {"kind": "upkeep_budget",
+                     "unit": "usd" if usd_mode else "tokens",
+                     "suggested": (200.0 if usd_mode else 50_000_000),
+                     "month_rule": "monthly_usd_cap" if usd_mode else "monthly_token_cap",
+                     "to_label": TEMPO_COPY[wanted]["label"],
+                     "changes": {**TEMPO_PRESETS[wanted], "project_usd_budget": 0.0,
+                                 "project_token_budget": 0, "spread_job_budget": False}})
+
             act = activity_state(session, project, live_cons)
             brief = act["brief"]
             # Only the briefs that mean *stopped* are findings. Concurrency and
@@ -1739,6 +1763,14 @@ def _tempo_mismatch(cycle: str, on: str, wanted: str, moved: datetime | None,
             else "")
     return (f"{lead} {cycle.capitalize()} projects usually run {usual} "
             f"(up to {runs(wanted)} runs a day{cost}).{over}")
+
+
+def upkeep_budget_kept(session: Session, project_id: str) -> bool:
+    """Whether a chair chose to keep a kept project on its job budget."""
+    return session.execute(
+        select(AuditLog.id).where(AuditLog.project_id == project_id,
+                                  AuditLog.action == "upkeep_budget.keep").limit(1)
+    ).scalar_one_or_none() is not None
 
 
 def job_budget_kept(session: Session, project_id: str) -> bool:

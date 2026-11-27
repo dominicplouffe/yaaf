@@ -66,6 +66,7 @@ const STATE: Record<string, [string, Tone]> = {
   daily_runs: ["Paused: no runs left today", "warn"],
   governance_reserve: ["Paused: today's runs are used; the rest are kept for reviews", "warn"],
   budget_reserve: ["Handing in: the job budget is nearly spent", "warn"],
+  daily_money: ["Paused: today's share of the budget is spent", "warn"],
   pacing: ["Paused for the hour: hourly limit reached", "warn"],
   wake_ceiling: ["Waiting: each agent has used its runs for this hour", "warn"],
   coalescing: ["Waiting a moment to batch messages", "ok"],
@@ -91,7 +92,7 @@ const COUNTS = "Counts runs where an agent works. Reading messages, checks and s
 function gates(dash: Dashboard, vitals: VitalsView | null): Gate[] {
   const a = dash.activity;
   const b = a.blocked_by;
-  const waitingOnWork = b !== null && !(b in STATE && ["daily_runs", "governance_reserve", "budget_reserve", "pacing", "wake_ceiling",
+  const waitingOnWork = b !== null && !(b in STATE && ["daily_runs", "governance_reserve", "budget_reserve", "daily_money", "pacing", "wake_ceiling",
     "coalescing", "concurrency", "agents_busy", "inbox_runs"].includes(b));
   // Ready means a task an agent can claim, or a run already going. Unread mail
   // between agents is not work: counting it put "✓ Work ready" beside "Idle".
@@ -125,6 +126,7 @@ export function resumesAt(dash: Dashboard, vitals: VitalsView | null): string | 
   switch (a.blocked_by) {
     case "daily_runs":
     case "governance_reserve": return a.daily_runs.resets_at;
+    case "daily_money": return a.daily_money?.resets_at ?? null;
     case "pacing": return a.pacing.frees_at;
     case "wake_ceiling": return a.wake_ceiling.frees_at;
     case "coalescing": return a.coalescing.ripe_at;

@@ -630,6 +630,7 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
   // The total the job-budget row would switch to, typed on the row itself:
   // the one number the switch cannot guess for him.
   const [jobTotal, setJobTotal] = useState<number | null>(null);
+  const [upkeepMonthly, setUpkeepMonthly] = useState<number | null>(null);
   if (!data) return null;
   const isOpen = (c: HealthCheck) => c.status === "fail" || (c.status === "warn" && !c.acked_at);
   // "Out of runs" and its kin are the status line's to say, with the gate
@@ -696,6 +697,32 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
           + "for the whole job, paced by Sprint, from Setup & health.",
         changes: { ...a.sprint, [a.rule]: total, [a.month_rule]: total },
       });
+      reloadHealth();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  // A kept factory off the build's pot and onto a month, at the workload its
+  // rhythm usually runs: one amendment, the same as Settings would write.
+  const toUpkeep = async (check: HealthCheck, monthly: number) => {
+    if (check.action?.kind !== "upkeep_budget") return;
+    setError(null);
+    const a = check.action;
+    try {
+      await post(`/admin/projects/${projectId}/amendments`, {
+        reason: `Upkeep given a monthly budget of ${monthly.toLocaleString()} at `
+          + `${a.to_label}, from Setup & health, after the build was handed over.`,
+        changes: { ...a.changes, [a.month_rule]: monthly },
+      });
+      reloadHealth();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const keepJobInUpkeep = async () => {
+    setError(null);
+    try {
+      await post(`/admin/projects/${projectId}/upkeep-budget/keep`, {});
       reloadHealth();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -798,6 +825,21 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
                 </button>
               </span>
             );
+          })() : check.action?.kind === "upkeep_budget" && !check.acked_at ? (() => {
+            const a = check.action;
+            const monthly = upkeepMonthly ?? a.suggested;
+            return (
+              <span className="row" style={{ gap: 6, alignItems: "center" }}>
+                <label className="help" htmlFor="upkeep-monthly">A month</label>
+                <input id="upkeep-monthly" type="number" min={1} value={monthly}
+                  style={{ width: "8rem" }}
+                  onChange={(e) => setUpkeepMonthly(+e.target.value)} />
+                <button className="small" disabled={monthly <= 0}
+                  onClick={() => toUpkeep(check, monthly)}>
+                  Switch upkeep to “{a.to_label}”
+                </button>
+              </span>
+            );
           })() : isOpen(check) && WHERE_TO[whereOf(check)] ? (
             <Link to={WHERE_TO[whereOf(check)][2]
               ? WHERE_TO[whereOf(check)][0]
@@ -810,6 +852,10 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
           ) : check.action?.kind === "job_budget" && !check.acked_at ? (
             <button className="small" onClick={() => keepMonthly()}>
               Keep the monthly budget
+            </button>
+          ) : check.action?.kind === "upkeep_budget" && !check.acked_at ? (
+            <button className="small" onClick={() => keepJobInUpkeep()}>
+              Keep the job budget
             </button>
           ) : check.status === "warn" && (
             <button className="small" onClick={() => ack(check, !check.acked_at)}>

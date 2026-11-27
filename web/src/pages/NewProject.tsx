@@ -479,6 +479,10 @@ export default function NewProject() {
   const [monthlyInstead, setMonthlyInstead] = useState(false);
   const jobMode = finishes && !monthlyInstead;
   const [jobBudget, setJobBudget] = useState(500);
+  // Spread the job budget to the window instead of sprinting through it. Only
+  // where there is a window to spread it over: an Explore project's date.
+  const [spread, setSpread] = useState(false);
+  const spreadable = mode === "explore" && !!exploreDeadline;
   const [jobTokens, setJobTokens] = useState(100_000_000);
   const [approvalThreshold, setApprovalThreshold] = useState(250);
   const [requireVerification, setRequireVerification] = useState(false);
@@ -1378,9 +1382,12 @@ export default function NewProject() {
             // A job budget sets the month to match, so the monthly plan never
             // speaks before the job's own lines (`default_job_month`).
             ...(jobMode
-              ? (tokensMode
-                ? { project_token_budget: jobTokens, monthly_token_cap: jobTokens }
-                : { project_usd_budget: jobBudget, monthly_usd_cap: jobBudget })
+              ? {
+                  ...(tokensMode
+                    ? { project_token_budget: jobTokens, monthly_token_cap: jobTokens }
+                    : { project_usd_budget: jobBudget, monthly_usd_cap: jobBudget }),
+                  spread_job_budget: spread && spreadable,
+                }
               : { monthly_usd_cap: usdCap, monthly_token_cap: monthlyTokenCap,
                   project_usd_budget: 0, project_token_budget: 0 }),
             approval_threshold_usd: approvalThreshold,
@@ -2391,11 +2398,24 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
 
         <div className="card" style={{ marginBottom: 10 }}>
           <label className="field">{jobMode ? "How should it use it?" : "How much daily work is there?"}</label>
-          <Cards label={jobMode ? "How should it use it?" : "How much daily work is there?"} value={tempo}
-            onPick={(value) => applyTempoPreset(value)}
-            options={tempoPresets
-              .filter((p) => (p.value === "sprint") === jobMode)
-              .map((p) => ({ value: p.value, label: p.label, headline: p.headline }))} />
+          <Cards label={jobMode ? "How should it use it?" : "How much daily work is there?"}
+            value={jobMode && spread && spreadable ? "spread" : tempo}
+            onPick={(value) => {
+              if (value === "spread") return setSpread(true);
+              setSpread(false);
+              applyTempoPreset(value);
+            }}
+            options={[
+              ...tempoPresets
+                .filter((p) => (p.value === "sprint") === jobMode)
+                .map((p) => ({ value: p.value, label: p.label, headline: p.headline })),
+              // Not a pace card: Sprint's own limits, with each day held to an
+              // equal share of what is left until the window closes.
+              ...(jobMode && spreadable ? [{
+                value: "spread", label: "Spread to the date",
+                headline: `an equal share each day until ${exploreDeadline}`,
+              }] : []),
+            ]} />
           {(() => {
             const seen = status?.avg_usd_per_run;
             if (jobMode) {

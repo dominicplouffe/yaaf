@@ -441,9 +441,14 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     # and — the case this was written for — a project whose hourly ceiling went
     # to four agents acknowledging a broadcast may still run the two agents
     # holding ready tasks.
+    # A spread job budget's share for today: past it, ordinary work waits for
+    # midnight exactly as it does at the run wall — the same lane, the same
+    # exemptions for the chairman's own messages.
+    share = budget_lib.daily_share(session, project, cons, now)
     work_blocked = (today >= wall
                     or hourly_runs_used(session, project, now)
-                    >= cons.runs_per_project_per_hour)
+                    >= cons.runs_per_project_per_hour
+                    or (share is not None and share.spent))
 
     inbox_today = inbox_runs_used(session, project, start)
     inbox_hour = inbox_runs_used(session, project, now - timedelta(hours=1))
@@ -1198,6 +1203,24 @@ def _activity_brief(state: dict) -> dict:
             # a line, not a box.
             banner=False, sig=None)
 
+    if gate == "daily_money":
+        m = state["daily_money"]
+        money = (lambda v: f"${v:,.2f}") if m["unit"] == "USD" else (lambda v: f"{v:,.0f} tokens")
+        ready = waiting["claimable_tasks"]
+        return brief(
+            "serious", "today's share",
+            f"today's share of the budget is spent ({money(m['spent_today'])} of "
+            f"{money(m['share'])}), resumes {_midnight(state)}",
+            f"Today's share of the job budget is spent: {money(m['spent_today'])} of "
+            f"{money(m['share'])}.",
+            f"The budget is spread over the {m['days_left']} day(s) left to the deadline, "
+            f"so work resumes at {_midnight(state)} with a new share."
+            + (f" {ready} ready task(s) wait for it." if ready else " Nothing ready is held up.")
+            + " To go faster, turn off spreading in Settings and the project sprints; "
+            "your messages in the boardroom are still answered.",
+            # A banner only when ready work waits, the run wall's own ruling.
+            banner=bool(ready), sig="daily_money", clears_at=m["resets_at"])
+
     if gate == "budget_reserve":
         j = state["job_budget"]
         money = (lambda v: f"${v:,.2f}") if j["unit"] == "USD" else (lambda v: f"{v:,.0f} tokens")
@@ -1465,6 +1488,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     run_wall, reserved = run_walls(cons)
     governance_only = used >= run_wall - reserved
     job = budget_lib.job_budget(session, project, cons)
+    share = budget_lib.daily_share(session, project, cons, now)
 
     agents = list(
         session.execute(
@@ -1541,6 +1565,8 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             if not r["busy"] and r["wakes_last_hour"] < r["wake_cap"]]
     if used >= run_wall:
         blocked_by = "daily_runs"
+    elif share is not None and share.spent:
+        blocked_by = "daily_money"
     elif used_hour >= cons.runs_per_project_per_hour:
         blocked_by = "pacing"
     elif in_flight >= max_concurrent:
@@ -1612,6 +1638,11 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
         # The job budget, when the project has one: the line its hand-in
         # reserve starts at is a gate like the others, and the Overview has to
         # be able to say how much is left without asking a second endpoint.
+        "daily_money": None if share is None else {
+            "share": round(share.share, 4), "spent_today": round(share.spent_today, 4),
+            "days_left": share.days_left, "unit": job.unit if job else "USD",
+            "resets_at": (start + timedelta(days=1)).isoformat(),
+        },
         "job_budget": None if job is None else {
             "budget": job.budget, "spent": round(job.spent, 4), "unit": job.unit,
             "left": round(job.left, 4), "reserve_line": round(job.reserve_line, 4),

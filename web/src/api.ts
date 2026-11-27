@@ -274,6 +274,7 @@ export interface Activity {
     | "pacing"
     | "governance_reserve"
     | "budget_reserve"
+    | "daily_money"
     | "concurrency"
     | "agents_busy"
     | "wake_ceiling"
@@ -299,6 +300,9 @@ export interface Activity {
   pacing: { used: number; cap: number; frees_at: string | null };
   /** The slice of the day only a review or a re-forecast may spend. */
   governance_reserve: { reserved: number; ordinary_cap: number; active: boolean };
+  /** Today's share of a job budget spread to its deadline, when it is. */
+  daily_money: { share: number; spent_today: number; days_left: number;
+    unit: "USD" | "tokens"; resets_at: string } | null;
   /** The budget for the whole job, when the project has one. Past
       `reserve_line` only the CEO runs, to hand in what it has. */
   job_budget: { budget: number; spent: number; unit: "USD" | "tokens"; left: number;
@@ -674,6 +678,8 @@ export interface HealthCheck {
         label: string }
     | { kind: "job_budget"; unit: "usd" | "tokens"; spent: number; suggested: number;
         rule: string; month_rule: string; sprint: Record<string, unknown> }
+    | { kind: "upkeep_budget"; unit: "usd" | "tokens"; suggested: number; month_rule: string;
+        to_label: string; changes: Record<string, unknown> }
     | null;
   /** This finding's identity: its kind and words with the numbers masked, so
       it survives a count ticking over and changes when the finding does. */
