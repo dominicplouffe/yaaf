@@ -103,7 +103,14 @@ export function SetupStrip({ ctx, section }: { ctx: ProjectCtx; section?: string
   // so on that page the one in view is the one named in the link.
   const need = params.get("need");
   const current = section === "credentials" && need ? `credentials&need=${need}` : section ?? setup.next?.section;
-  const step = setup.steps.find((s) => s.section === current);
+  // Several steps share one section (Integrations holds the repo, the agents'
+  // key, where it deploys and the bridges). The step this page acts on is the
+  // one still to do there: picking the first one found showed "GitHub
+  // repository ✓" and no button, while "Where it deploys" waited with no way
+  // to say the project is fine without it.
+  const inSection = setup.steps.filter((s) => s.section === current);
+  const step = inSection.find((s) => s.key === setup.next?.key)
+    ?? inSection.find((s) => s.state === "todo") ?? inSection[0];
   const canWave = !!step && step.state === "todo" && !step.required && dash.can_steer !== false;
   const failed = setup.steps.find((s) => s.state === "failed");
   return (
