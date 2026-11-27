@@ -1059,6 +1059,8 @@ export interface ApprovalRow {
   /** An assist asking your yes on a change: approving it approves that change
       on that commit. */
   change?: ChangeAsk | null;
+  /** An assist asking you to answer a flag (a merge freeze): yes answers it. */
+  flag?: { flag_id: string; kind: string } | null;
   /** Your note, and the CEO's answer to it once given. */
   held_note?: HeldNote | null;
 }

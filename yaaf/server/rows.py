@@ -51,6 +51,8 @@ def approval_row(a: Approval, *, held_note: dict | None = None) -> dict:
         # An assist asking his yes on a change: {"change_id", "number", "sha",
         # "waits_on"}. Approving it approves that change on that commit.
         "change": a.change,
+        # An assist asking him to answer a flag: {"flag_id", "kind"}.
+        "flag": a.flag,
         "undo": approval_undo(a.kind),
         # His note as held for the CEO's answer, and the answer once given.
         "held_note": held_note,

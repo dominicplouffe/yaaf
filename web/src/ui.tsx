@@ -971,6 +971,7 @@ export interface Decidable {
   capacity?: { from: number; to: number } | null;
   tool_permission?: { source: string; tool: string; to: "allow" | "deny" } | null;
   change?: { number: number } | null;
+  flag?: { kind: string } | null;
 }
 
 export function decideLabels(a: Decidable): {
@@ -1000,6 +1001,8 @@ export function decideLabels(a: Decidable): {
       return withNote("Confirm", "Not yet");
     case "assist":
       if (a.change) return withNote(`Approve change #${a.change.number}`, "Not yet");
+      if (a.flag?.kind === "main_bypassed") return withNote("Keep it and unfreeze", "Not yet");
+      if (a.flag) return withNote("Answer it", "Not yet");
       return { yes: "Done", no: "Not done", yesMore: "Done, with a reply…",
         yesHint: "Send the CEO a fill price, a code", yesPlaceholder: "e.g. filled at $48.15" };
     default:

@@ -2569,6 +2569,11 @@ class Approval(Base):
     # 2026: the CEO asked him to approve the Split app's CI change, he said
     # yes, the change still had no yes, and he merged it by hand.
     change: Mapped[dict | None] = mapped_column(JSONVariant)
+    # An ASSIST asking him to answer a flag only his answer closes (a merge
+    # freeze): {"flag_id", "kind"}. Approving it IS that answer. The same
+    # evening, the CEO asked him twice to clear the Split app's merge freeze;
+    # he said yes twice and the freeze stood, because neither yes reached it.
+    flag: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
 class DataSourceTool(Base):

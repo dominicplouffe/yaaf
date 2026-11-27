@@ -186,3 +186,51 @@ def test_an_assist_cannot_carry_a_change_that_does_not_wait_on_him(client, gh):
     refused = _assist(client, project, change["number"], change_number=change["number"])
     assert refused.status_code == 409
     assert "nothing only the chairman can give" in refused.json()["error"]
+
+
+# ── his yes on an assist reaches the alert it asked about ───────────────────────
+
+
+def _frozen(client, project) -> str:
+    from tests.selftest_invariants.test_merge_gate import _hook
+    from yaaf.core.models import Flag, FlagKind, FlagStatus, Project
+    from yaaf.server import changes
+
+    _hook(client, project, "push", {
+        "ref": "refs/heads/main", "after": "c" * 40, "pusher": {"name": "dplouffe"},
+        "sender": {"login": "dplouffe"}}, "push-hand-merge")
+    with db_session() as session:
+        changes.reconcile_main(session, session.get(Project, project["id"]))
+        flag = session.query(Flag).filter_by(project_id=project["id"],
+                                             kind=FlagKind.MAIN_BYPASSED).one()
+        flag.status = FlagStatus.RAISED
+        return flag.id
+
+
+def _freeze_assist(client, project, **extra):
+    _, ceo = live_token(project["id"], project["ceo_agent_id"])
+    return client.post("/agent/assists", headers=bearer(ceo), json={
+        "what": "Please clear the alert that is freezing all merging: main moved without "
+                "the platform.", "where": "Your Inbox", **extra})
+
+
+def test_an_assist_about_the_merge_freeze_must_carry_the_flag(client, gh):
+    project = _factory(client)
+    flag_id = _frozen(client, project)
+    refused = _freeze_assist(client, project)
+    assert refused.status_code == 409 and f"flag_id: {flag_id}" in refused.json()["error"]
+
+
+def test_his_yes_on_the_assist_answers_the_freeze(client, gh):
+    from yaaf.core.models import Project
+    from yaaf.server import changes
+
+    project = _factory(client)
+    flag_id = _frozen(client, project)
+    filed = _freeze_assist(client, project, flag_id=flag_id)
+    assert filed.status_code == 200, filed.text
+    decided = client.post(f"/admin/approvals/{filed.json()['assist_id']}/decide",
+                          json={"approve": True}, headers=ADMIN)
+    assert decided.status_code == 200 and decided.json()["flag_closed"] is True
+    with db_session() as session:
+        assert changes.merges_frozen(session, session.get(Project, project["id"])) is None

@@ -202,6 +202,13 @@ function DecisionCard({
           {" "}A newer commit would need your yes again.
         </div>
       )}
+      {approval.flag && (
+        <div className="help" style={{ marginTop: 12 }}>
+          {approval.flag.kind === "main_bypassed"
+            ? "Yes keeps the commit that reached main without the platform, answers the alert, and lets changes merge again."
+            : "Yes is your answer to the alert, and closes it."}
+        </div>
+      )}
       {approval.capacity && (
         <label className="field" style={{ marginTop: 12, display: "block" }}>
           Raise it to{" "}

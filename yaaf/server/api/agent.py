@@ -3661,11 +3661,44 @@ class AssistIn(BaseModel):
     # The change this asks his yes on, when it is one only he can pass (a CI
     # file, a protected path). His yes on the assist is then his yes on it.
     change_number: int | None = Field(default=None, ge=1)
+    # The flag this asks him to answer, when only his answer closes it (a
+    # merge freeze). His yes on the assist is then his answer to it.
+    flag_id: str | None = Field(default=None, max_length=40)
 
 
 #: "change #1", "pull request 1", "PR #12": how an assist names a change.
 _NAMES_A_CHANGE = re.compile(r"\b(?:change|pull request|PR)\s*(?:number\s*)?#?\s*(\d+)\b",
                              re.IGNORECASE)
+
+
+#: How an assist talks about a merge freeze.
+_NAMES_THE_FREEZE = re.compile(r"freez|main moved|moved main|bypass|without the platform",
+                               re.IGNORECASE)
+
+
+def _flag_for_his_yes(session: Session, ctx: RunContext, body: AssistIn) -> dict | None:
+    """The flag an assist asks him to answer, or a refusal when it asks about
+    the merge freeze without carrying the flag that holds it."""
+    from yaaf.core.models import Flag, FlagStatus
+    from yaaf.server import changes
+    from yaaf.server import flags as flag_lib
+
+    if body.flag_id is None:
+        frozen = changes.merges_frozen(session, ctx.project)
+        if frozen is not None and _NAMES_THE_FREEZE.search(f"{body.what} {body.where or ''}"):
+            raise Refusal(
+                "Not filed: merging is frozen by a flag only his answer closes, and an "
+                f"assist's yes does not reach it on its own. File it again with flag_id: "
+                f"{frozen.id}, and his yes on this answers it. There is no other button.",
+                status_code=409)
+        return None
+    flag = session.get(Flag, body.flag_id)
+    if flag is None or flag.project_id != ctx.project.id:
+        raise Refusal("Unknown flag.", status_code=404)
+    if flag.status != FlagStatus.RAISED or flag.kind not in flag_lib.ACK_CLOSES:
+        raise Refusal(f"His answer does not close this {flag.kind} flag ({flag.status}), so "
+                      "there is no yes to ask him for.", status_code=409)
+    return {"flag_id": flag.id, "kind": flag.kind}
 
 
 def _change_for_his_yes(session: Session, ctx: RunContext, body: AssistIn) -> dict | None:
@@ -3712,10 +3745,12 @@ def assist_request(
     storage_state, cookies, the URL you were on): the workspace persists, so
     the next run resumes where this one stopped."""
     change = _change_for_his_yes(session, ctx, body)
+    flag = _flag_for_his_yes(session, ctx, body)
     approval = _file_approval(
         session, ctx, "assist", f"Assist: {body.what[:120]}",
         body.what + (f"\nWhere: {body.where}" if body.where else ""))
     approval.change = change
+    approval.flag = flag
     _boardroom_system_line(
         session, ctx.project.id,
         f"🤝 ASSIST NEEDED ({ctx.agent.name}): {body.what[:400]}"

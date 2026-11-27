@@ -4407,6 +4407,8 @@ def decide_approval(
                 "release": releases.view(release) if release else None}
     if approval.kind == ApprovalKind.ASSIST and approval.change:
         return _decide_change_assist(session, approval, project, body)
+    if approval.kind == ApprovalKind.ASSIST and approval.flag:
+        return _decide_flag_assist(session, approval, project, body)
     if body.approve and approval.kind == ApprovalKind.TOOL_REQUEST and approval.grant:
         # A one-call grant past a denied tool. Retired: a yes would let nothing
         # through (the gateway reads only the switch), and saying it did would
@@ -4464,6 +4466,36 @@ def _decide_change_assist(session: Session, approval: Approval, project: Project
     return {"id": approval.id, "status": approval.status,
             "change": approved_change["change"] if approved_change else None,
             **({"change_not_approved": why} if why else {})}
+
+
+def _decide_flag_assist(session: Session, approval: Approval, project: Project,
+                        body: ApprovalDecision) -> dict:
+    """His yes on an assist that asks him to answer a flag IS that answer —
+    the same one the flag's own answer box gives, in his words or the
+    request's."""
+    from yaaf.server import flags as flag_lib
+
+    flag = session.get(Flag, (approval.flag or {}).get("flag_id"))
+    closed, why = False, None
+    if body.approve:
+        if flag is None or flag.status != FlagStatus.RAISED:
+            why = "the flag is no longer waiting on an answer"
+        else:
+            flag_lib.acknowledge(session, project, flag,
+                                 body.note or f"Yes, to: {approval.title[:300]}")
+            _audit(session, flag.project_id, "flag.ack", "flag", flag.id,
+                   {"kind": flag.kind, "status": flag.status, "via_approval": approval.id})
+            closed = flag.status == FlagStatus.RESOLVED
+    said = (" The flag is answered and closed." if closed
+            else f" The flag is NOT answered: {why}." if body.approve and why else "")
+    _apply_decision(
+        session, approval, project, body.approve, body.note,
+        notice_body=(f"Approval '{approval.title}' was "
+                     f"{'APPROVED' if body.approve else 'DENIED'}"
+                     + (f": {body.note}" if body.note else ".") + said),
+        audit_detail={"flag": approval.flag, "flag_closed": closed})
+    return {"id": approval.id, "status": approval.status, "flag_closed": closed,
+            **({"flag_not_answered": why} if why else {})}
 
 
 def _decide_brief(session: Session, approval: Approval, project: Project,

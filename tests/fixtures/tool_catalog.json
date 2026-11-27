@@ -201,11 +201,14 @@
     "name": "ask_close"
   },
   {
-    "description": "Any agent. A step only a HUMAN can do is blocking you \u2014 a captcha, a 2FA code, a KYC form, a signature, an account only the chairman can touch. Never try to defeat a security challenge; hand it over. Before calling: save your session state to the workspace (playwright storage_state / cookies, the URL you were on, what remains to do) \u2014 the workspace persists across runs, so the next run resumes where you stopped. Say exactly WHAT you need ('the 6-digit code SMS'd to your phone', 'solve the captcha at this URL and tell me done') and WHERE, naming the site and the account in full. It goes straight to the chairman, not through your team, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. His answer arrives verbatim in the decision that wakes you; unanswered it expires to no, so also plan the work that does not depend on it. If there is nothing for him to do ('no trade today, place nothing'), it is not an assist: a heads_up if a standing order asks him to be told, otherwise the deliverable carries it. When it is his yes on a change that waits on him (a CI file, a protected path), pass its change_number: his yes on the assist is then his yes on that change.",
+    "description": "Any agent. A step only a HUMAN can do is blocking you \u2014 a captcha, a 2FA code, a KYC form, a signature, an account only the chairman can touch. Never try to defeat a security challenge; hand it over. Before calling: save your session state to the workspace (playwright storage_state / cookies, the URL you were on, what remains to do) \u2014 the workspace persists across runs, so the next run resumes where you stopped. Say exactly WHAT you need ('the 6-digit code SMS'd to your phone', 'solve the captcha at this URL and tell me done') and WHERE, naming the site and the account in full. It goes straight to the chairman, not through your team, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. His answer arrives verbatim in the decision that wakes you; unanswered it expires to no, so also plan the work that does not depend on it. If there is nothing for him to do ('no trade today, place nothing'), it is not an assist: a heads_up if a standing order asks him to be told, otherwise the deliverable carries it. When it is his yes on a change that waits on him (a CI file, a protected path), pass its change_number: his yes on the assist is then his yes on that change. When it is his answer to a flag only he closes (merging frozen because main moved without the platform), pass its flag_id: his yes is then that answer. Never name a button the platform does not show; the request itself is his button.",
     "input_schema": {
       "properties": {
         "change_number": {
           "type": "integer"
+        },
+        "flag_id": {
+          "type": "string"
         },
         "what": {
           "type": "string"

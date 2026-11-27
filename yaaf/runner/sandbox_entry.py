@@ -1154,10 +1154,13 @@ async def t_tool_permission_request(args):
     "('no trade today, place nothing'), it is not an assist: a heads_up if a standing "
     "order asks him to be told, otherwise the deliverable carries it. When it is his "
     "yes on a change that waits on him (a CI file, a protected path), pass its "
-    "change_number: his yes on the assist is then his yes on that change.",
+    "change_number: his yes on the assist is then his yes on that change. When it is "
+    "his answer to a flag only he closes (merging frozen because main moved without "
+    "the platform), pass its flag_id: his yes is then that answer. Never name a "
+    "button the platform does not show; the request itself is his button.",
     {"type": "object",
      "properties": {"what": {"type": "string"}, "where": {"type": "string"},
-                    "change_number": {"type": "integer"}},
+                    "change_number": {"type": "integer"}, "flag_id": {"type": "string"}},
      "required": ["what", "where"]},
 )
 async def t_assist_request(args):
