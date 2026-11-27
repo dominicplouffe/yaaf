@@ -35,11 +35,21 @@ def code_files(paths: list[str]) -> list[str]:
             and not p.startswith(("vendor/", "node_modules/")) and "/node_modules/" not in p]
 
 
+#: The most file-list text one command takes before the tree is read instead.
+ARG_BUDGET = 100_000
+
+
 def command(files: list[str]) -> str:
     """Write lizard's CSV and ruff's JSON into the directory, echoing each
     tool's exit status so a missing binary reads as unavailable."""
     quoted = " ".join("'" + f.replace("'", "'\\''") + "'" for f in files)
     py = " ".join("'" + f.replace("'", "'\\''") + "'" for f in files if f.endswith(".py"))
+    if len(quoted) > ARG_BUDGET:
+        # One argument past Linux's 128 KiB limit and the container does not
+        # start: on a repo of ~1,500 files main's health read as "not measured"
+        # forever. Only a whole-tree reading gets this big, so read the tree.
+        quoted = "-x './node_modules/*' -x '*/node_modules/*' -x './vendor/*' -x '*/vendor/*' ."
+        py = "." if py else ""
     parts = [f"lizard --csv {quoted} > .yaaf-lizard.csv 2>/dev/null; echo \"lizard=$?\""]
     if py:
         parts.append(f"ruff check --isolated --select {','.join(RUFF_RULES)} "

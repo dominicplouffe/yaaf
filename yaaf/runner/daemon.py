@@ -1940,13 +1940,25 @@ def _checkout(job: RunJob, where: Path) -> str | None:
 
     secret = job.fetch_url or ""
     where.mkdir(parents=True, exist_ok=True)
-    for step in (["git", "init", "-q", str(where)],
-                 ["git", "-C", str(where), "fetch", "-q", "--depth", "1", secret,
-                  job.check_branch or job.check_sha or ""],
-                 ["git", "-C", str(where), "checkout", "-q", job.check_sha or ""]):
-        proc = subprocess.run(step, capture_output=True, text=True, timeout=180)
-        if proc.returncode != 0:
-            return (proc.stderr or "").replace(secret, "<repo>").strip()[:300]
+
+    def run(step: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(step, capture_output=True, text=True, timeout=180)
+
+    proc = run(["git", "init", "-q", str(where)])
+    # The exact commit, not the branch's tip: a branch that moved between the
+    # queue and this fetch left its tip here and the queued commit out of a
+    # depth-1 history ("reference is not a tree"). GitHub serves a commit by
+    # its sha; the branch is the fallback for a remote that will not.
+    if proc.returncode == 0 and job.check_sha:
+        proc = run(["git", "-C", str(where), "fetch", "-q", "--depth", "1", secret,
+                    job.check_sha])
+    if proc.returncode != 0 or not job.check_sha:
+        proc = run(["git", "-C", str(where), "fetch", "-q", "--depth", "50", secret,
+                    job.check_branch or job.check_sha or ""])
+    if proc.returncode == 0:
+        proc = run(["git", "-C", str(where), "checkout", "-q", job.check_sha or "FETCH_HEAD"])
+    if proc.returncode != 0:
+        return (proc.stderr or "").replace(secret, "<repo>").strip()[:300]
     _open_to_sandbox(where)
     return None
 

@@ -394,3 +394,14 @@ def test_a_changes_health_is_measured_from_where_its_branch_left_main(monkeypatc
     job.timeout_s = 60
     daemon._change_health(job, work)
     assert measured and all(files == ["mine.py"] for files in measured)
+
+
+def test_a_big_repos_health_command_stays_under_the_argument_limit():
+    """Every file on one argument line, twice for Python: past Linux's 128 KiB
+    per-argument limit the container never started, and main read "not
+    measured" for good."""
+    from yaaf.runner import health
+
+    many = [f"src/pkg{i // 50}/module_with_a_long_name_{i}.py" for i in range(3000)]
+    assert len(health.command(many)) < 2000
+    assert "'src/a.py'" in health.command(["src/a.py"])
