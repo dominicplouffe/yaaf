@@ -237,6 +237,9 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
             item["title"] = _wrapped(item.get("title"), "approval")
             if item.get("recommendation"):
                 item["recommendation"] = _wrapped(item["recommendation"], "approval")
+        # A change's title is its author seat's words, like an ask's.
+        for item in row.get("pending_changes") or []:
+            item["title"] = _wrapped(item.get("title"), "change")
         for item in row.get("pending_asks") or []:
             for field in ("title", "body", "default_action", "recommendation"):
                 if item.get(field):

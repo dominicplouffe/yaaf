@@ -1122,6 +1122,7 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
         "plan": len(waiting["plan"]),
         "verdicts": len(waiting["verdicts"]),
         "commitment": waiting["commitment"] is not None,
+        "changes": len(policy.changes_awaiting_chairman(session, project)),
         "flags_raised": raised_flags,
         "open_reviews": int(open_review),
         # What he asked to be told and has not noted yet.
@@ -1549,6 +1550,9 @@ def _waiting_lines(waiting: dict, when) -> list[str]:
             body.append(f"  · {waiting['verdicts']} observable close(s) only you can judge")
         if waiting["commitment"]:
             body.append("  · a delivery date to sign")
+        if waiting.get("changes"):
+            body.append(f"  · {waiting['changes']} code change(s) waiting only on your "
+                        "approval of the commit")
         # Counted in the total, so listed under it: the count and the list
         # disagreeing is the thing this letter must never do.
         if waiting.get("bets"):

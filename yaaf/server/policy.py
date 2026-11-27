@@ -1504,6 +1504,7 @@ def needs_you(session: Session, project: Project, cons: ConstitutionDoc, *,
         "plan": 1 if waiting["plan"] else 0,
         "verdicts": len(waiting["verdicts"]),
         "commitment": 1 if waiting["commitment"] is not None else 0,
+        "changes": len(changes_awaiting_chairman(session, project)),
         "signoff": 1 if signoff is not None else 0,
         "bets": bets,
         "frozen": 1 if frozen else 0,
@@ -3016,6 +3017,31 @@ def awaiting_chairman(session: Session, project: Project, cons: ConstitutionDoc)
             ).order_by(Commitment.created_at.desc()).limit(1)
         ).scalar_one_or_none()
     return out
+
+
+def changes_awaiting_chairman(session: Session, project: Project) -> list:
+    """Code Factory changes that have passed everything else and wait only on
+    his own approval of the commit: a path he marked as needing a person, or
+    the CI setup.
+
+    Kept apart from `awaiting_chairman` for the reason asks are: that dict is
+    the dial's, and it reads empty on an autonomous project because the dial
+    gave those decisions away. These are not the dial's — they are his at every
+    setting, by rules he holds — so they live beside the approvals and asks,
+    counted in `needs_you` and listed on the desk as their own shelf. Before
+    this they waited on a button only the Changes tab showed."""
+    from yaaf.core import shape
+
+    if not shape.is_factory(project):
+        return []
+    from yaaf.core.models import Change, ChangeStatus
+    from yaaf.server.factory_view import waiting_on
+
+    return [c for c in session.execute(
+        select(Change).where(Change.project_id == project.id,
+                             Change.status == ChangeStatus.OPEN)
+        .order_by(Change.created_at)
+    ).scalars() if waiting_on(c) == "you"]
 
 
 def ceo_holds(cons: ConstitutionDoc, switch: str) -> bool:

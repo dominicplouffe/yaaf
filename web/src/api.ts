@@ -1250,6 +1250,11 @@ export interface DeskProject {
     verdicts: { key: string; statement: string; name: string }[];
     commitment: { id: string; deliver_by: string; scope_count: number } | null;
   };
+  /** Code Factory changes waiting only on the chairman's approval of the
+      commit (a path he marked, or the CI setup). His at every dial setting, so
+      beside the approvals and asks rather than in `awaiting_you`. `why` is the
+      gate's own words. */
+  pending_changes?: { id: string; number: number | null; title: string; why: string }[];
   /** The reader's unread boardroom messages on this project. */
   boardroom_unread: number | null;
   evidence_7d: number;

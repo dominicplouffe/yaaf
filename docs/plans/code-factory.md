@@ -145,7 +145,7 @@ Every phase ships on its own, with its attack tests, and leaves the suite green.
 **UI**, alongside phases 1–6:
 - New-project kind card and the "start from" choice.
 - A Code section in the project nav: Pipeline, Changes, Releases, Health, Issues.
-- The line (lifecycle rail) and factory vitals on the home page.
+- The project home (pages/project/FactoryHome.tsx, server/factory_view.py): where the project is in its life; the decisions, including a change waiting only on the chairman (its own desk shelf, `pending_changes`, beside approvals and asks — counted in needs_you, in the Inbox, the CLI and the brief); changes in flight sorted by what each waits on; each seat's live state; how close to done; cost against the cap and per merged change; and six delivery numbers in speed/quality pairs, each with its sample and marked early below five. Shaped after tools for supervising coding agents (review-queue triage, per-agent state, DORA plus review pickup and change size, cost per outcome).
 - The intake report, plus Settings → Code Factory (GitHub and Environments).
 - `npm run build` must pass.
 

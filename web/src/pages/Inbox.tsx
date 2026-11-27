@@ -70,6 +70,7 @@ type Decided =
 const ICON: Record<ItemType, IconName> = {
   approval: "check", ask: "help", scope: "list", commitment: "calendar", verdict: "eye",
   bet: "target", frozen: "alert", signoff: "flag", kill: "target", drought: "shield", budget: "wallet", noproof: "shield",
+  change: "check",
 };
 
 /** Why this one is the chairman's, in a clause — true at every dial setting,

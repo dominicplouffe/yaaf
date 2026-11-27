@@ -237,6 +237,18 @@ def _awaiting_chairman(session: Session, project: Project, cons,
     }
 
 
+def _pending_changes(session: Session, project: Project) -> list[dict]:
+    """Changes waiting only on the chairman's approval of the commit, with the
+    gate's own words for why (policy.changes_awaiting_chairman)."""
+    return [
+        {"id": c.id, "number": c.number, "title": c.title,
+         "why": " and ".join((c.gates or {}).get(g, {}).get("detail", "")
+                             for g in ("protected", "ci_config")
+                             if not (c.gates or {}).get(g, {}).get("ok", True))}
+        for c in policy.changes_awaiting_chairman(session, project)
+    ]
+
+
 @router.get("/desk", dependencies=[authority.SIGNED_IN])
 def desk(live: bool = False, only: str | None = None, session: Session = Depends(db),
          person: Person = Depends(person_auth)) -> dict:
@@ -445,6 +457,7 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             "ceo_judgment": policy.ceo_judgment(session, project.id),
             "pending_approvals": pending,
             "pending_asks": pending_asks,
+            "pending_changes": _pending_changes(session, project),
             # The finished delivery, as the decision it is: Complete, reopen, or
             # let it close itself at `closes_at`.
             "pending_signoff": signoff,
@@ -1728,12 +1741,13 @@ def project_changes(project_id: str, session: Session = Depends(db)) -> dict:
 
 @router.get("/projects/{project_id}/factory", dependencies=[authority.READ])
 def project_factory(project_id: str, session: Session = Depends(db)) -> dict:
-    """A Code Factory's line, stage by stage, and its numbers."""
+    """A Code Factory's home page as data: changes in flight and what each
+    waits on, the crew's state, progress, cost and the factory's numbers."""
     from yaaf.server import factory_view
 
     project = _project(session, project_id)
     if not shape.is_factory(project):
-        return {"phase": None, "rail": [], "vitals": {}}
+        return {"phase": None}
     return factory_view.summary(session, project)
 
 
