@@ -2,6 +2,10 @@
    Colour is state only, and every state also carries a word. */
 
 .dh-hero { margin-top: var(--s4); padding: 18px 20px; display: grid; gap: 14px; }
+/* One track that may shrink below its content. Without it the implicit column is
+   sized to the work bar's min-content (every goal key, unwrapped), so a project with
+   many goals pushed the whole card, the expected finish and the sentence off the page. */
+.dh-hero { grid-template-columns: minmax(0, 1fr); }
 .dh-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px 32px; align-items: end; }
 .dh-pct-col { display: grid; gap: 6px; min-width: 0; }
 .dh-pct-col .vt-k { margin: 0; }
@@ -17,6 +21,11 @@
 .dh-workbar { display: flex; gap: 3px; height: 30px; }
 .dh-workbar > span { min-width: 0; display: flex; align-items: center; padding: 0 8px; border-radius: 4px; overflow: hidden;
   white-space: nowrap; background: var(--sunken); color: var(--muted); font-size: var(--t-micro); font-weight: 600; }
+/* A block only shows what fits whole: a label cut to "R-0" reads as a different goal.
+   The full name stays in the tooltip and the bar's aria-label. */
+.dh-workbar > span { container-type: inline-size; }
+@container (max-width: 104px) { .dh-seg-word { display: none; } }
+@container (max-width: 29px) { .dh-seg-key { visibility: hidden; } }
 .dh-workbar > .done { background: var(--good); color: var(--page); }
 .dh-workbar > .doing { color: var(--ink);
   background: repeating-linear-gradient(135deg, rgba(var(--good-rgb), 0.55) 0 4px, rgba(var(--good-rgb), 0.25) 4px 8px); }

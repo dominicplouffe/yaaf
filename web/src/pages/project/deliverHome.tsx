@@ -222,7 +222,8 @@ export function DeliverHero({ ctx, goals }: { ctx: ProjectCtx; goals: Goals }) {
         aria-label={g.list.map((x) => `${x.key} ${x.met ? "done" : x.state === "work" ? "in progress" : "not started"}`).join(", ")}>
         {g.list.map((x) => {
           const [cls, word] = seg(x);
-          return <span key={x.key} className={cls} style={{ flex: x.weight }} title={`${x.key} · ${x.name}`}>{x.key}{word}</span>;
+          return <span key={x.key} className={cls} style={{ flex: x.weight }} title={`${x.key} · ${x.name}`}>
+            <span className="dh-seg-key">{x.key}</span>{word && <span className="dh-seg-word">{word}</span>}</span>;
         })}
       </div>
       <div className="dh-scale">
