@@ -132,13 +132,16 @@ def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
     provider it pays becomes the project's primary provider, and every role
     that names a class (@frontier, @balanced, @fast) resolves on it.
     """
-    from yaaf.core import llm_credentials, model_policy, prices
+    from yaaf.core import llm_credentials, model_policy, prices, project_credentials
     from yaaf.runtimes import catalog
     from yaaf.runtimes.providers import provider as seller
 
     rows = llm_credentials.choices(session, with_plan=with_plan)
     own = model_policy.lineups(session)
+    coders = project_credentials.coding_providers()
     for row in rows:
+        # Whether a Code Factory's repo seats could code with it.
+        row["can_code"] = (row.get("provider") or "") in coders
         lineup = catalog.lineup_of(row.get("provider") or "", own)
         row["provider_label"] = seller(row.get("provider")).label
         row["classes"] = {cls: {"model": lineup.get(cls),
@@ -164,6 +167,16 @@ def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
              "dollars, cannot run — say so rather than draft it. A seat pinned to another "
              "provider's model needs that provider paid too: put {provider: id} in the "
              "draft's `credentials`, under the same rule — one per provider, or ask.")
+    coding = [row["name"] for row in rows if row["can_code"]]
+    note += (" A Code Factory also names a coding key (`coding_secret_id`), what its repo "
+             "seats code with, and cannot start without one: "
+             + ("none here can code, so say in your cover note that an administrator "
+                "must add an Anthropic, OpenAI or Google credential first."
+                if not coding else
+                f"only {coding[0]!r} can code, so a factory's draft names it."
+                if len(coding) == 1 else
+                f"{', '.join(repr(n) for n in coding)} can code — ask which, and leave it "
+                "unset until they answer."))
     return {"credentials": rows, "note": note}
 
 
@@ -315,6 +328,11 @@ PROPOSE_SCHEMA = {
                                                 "pace rules — name `tempo` instead"},
                 "controlled_domains": {"type": "array", "items": {"type": "string"}},
                 "billing_secret_id": {"type": "string"},
+                "coding_secret_id": {
+                    "type": "string",
+                    "description": "code_factory only, and required for it to start: "
+                                   "the credential its repo seats code with — one "
+                                   "list_credentials marks `can_code`"},
                 "credentials": {"type": "object", "additionalProperties": {"type": "string"},
                                 "description": "{provider: credential id}"},
                 "ceo_model_override": {"type": "string"},
@@ -997,6 +1015,7 @@ def _provider_credential_problems(project: dict, session: Session) -> list[str]:
             project.pop("coding_secret_id", None)
         else:
             project["coding_secret_id"] = row.id
+            project["coding_credential_name"] = row.name
     return problems
 
 
@@ -1246,6 +1265,8 @@ def summarise(bundle: dict) -> dict:
         "headcount": sum(len(t.get("employees") or []) for t in teams),
         "constitution_keys": sorted((project.get("constitution") or {}).keys()),
         "pays_with": project.get("billing_secret_name") or None,
+        # A Code Factory's coding key, by name, once the draft names one.
+        "codes_with": project.get("coding_credential_name") or None,
         # Whether it cannot start until somebody gives it a mailbox.
         "needs_mail": bool(project.get("needs_mail")),
     }

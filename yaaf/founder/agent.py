@@ -45,7 +45,8 @@ SECTIONS = {
     "shape": ("name", "mode", "deadline", "deadline_source"),
     "team": ("ceo_role_slug", "ceo_name", "ceo_model_override", "teams"),
     "rules": ("constitution", "controlled_domains"),
-    "pays": ("billing_secret_id", "billing_secret_name", "credentials"),
+    "pays": ("billing_secret_id", "billing_secret_name", "credentials",
+             "coding_secret_id", "coding_credential_name"),
     "mail": ("needs_mail",),
 }
 

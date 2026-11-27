@@ -276,3 +276,45 @@ def test_an_agent_cannot_read_or_move_the_key(world):
     assert world["client"].get(path, headers=forged).status_code in (401, 403)
     pack = world["client"].get("/agent/context", headers=forged)
     assert pack.status_code == 200 and OAT not in pack.text and "Claude Max" not in pack.text
+
+
+# ── the Founder ─────────────────────────────────────────────────────────────────
+
+
+def test_the_founder_is_told_which_credentials_can_code(world):
+    from yaaf.founder import prompt, tools
+
+    _credential(world["client"], "DeepSeek", "deepseek", "sk-deepseek-selftest")
+    with db_session() as session:
+        listed = tools.list_credentials(session)
+    can = {row["name"]: row["can_code"] for row in listed["credentials"]}
+    assert can == {"Talk": True, "Claude Max": True, "DeepSeek": False}
+    assert "coding_secret_id" in listed["note"] and "ask which" in listed["note"]
+    # And it can write the answer down: the draft has a field for it, and the
+    # prompt says what the field is for.
+    assert "coding_secret_id" in tools.PROPOSE_SCHEMA["properties"]["project"]["properties"]
+    from pathlib import Path
+
+    source = Path(prompt.__file__).read_text()
+    assert "coding_secret_id" in source and "does not\n    start without" in source
+
+
+def test_a_draft_that_names_a_coding_key_carries_it_to_create(world):
+    from yaaf.founder import tools
+
+    draft = {"mode": "code_factory", "billing_secret_id": world["billing"],
+             "coding_secret_id": world["coding"]}
+    with db_session() as session:
+        assert tools._provider_credential_problems(draft, session) == []
+    assert draft["coding_secret_id"] == world["coding"]
+    assert draft["coding_credential_name"] == "Claude Max"
+    assert tools.summarise({"project": draft})["codes_with"] == "Claude Max"
+    # Named where it does not belong, or naming a key that cannot code, it is
+    # dropped with a sentence rather than carried to a refusal at Create.
+    deepseek = _credential(world["client"], "DeepSeek", "deepseek", "sk-deepseek-selftest")
+    for bad in ({"mode": "deliver", "coding_secret_id": world["coding"]},
+                {"mode": "code_factory", "coding_secret_id": deepseek},
+                {"mode": "code_factory", "coding_credential_name": "No Such Key"}):
+        with db_session() as session:
+            problems = tools._provider_credential_problems(bad, session)
+        assert problems and "coding_secret_id" not in bad, (bad, problems)

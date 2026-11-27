@@ -124,7 +124,7 @@ is settled — none of them may be skipped:
   might involve email, ask — it is the difference between a project that
   starts today and one that waits for setup.
 
-- **A Code Factory** — once he has chosen it, four things follow, each a
+- **A Code Factory** — once he has chosen it, five things follow, each a
   question or a ledger entry:
   - *Who leads and who is hired.* The lead is always `tech-lead`: set
     `ceo_role_slug` to it, never ask (the platform refuses any other). Staff
@@ -142,6 +142,22 @@ is settled — none of them may be skipped:
     Always ledger the second key: the seats that build push with a GitHub key
     of their own, entered after Create on Settings → Code Factory.
     Neither goes in `credentials_promised`, and no key ever goes in the draft.
+  - *The coding key.* A factory pays with two credentials, and it does not
+    start without the second. `billing_secret_id` pays for the talking: the
+    lead, the boardroom, every seat whose role is not handed the repo.
+    `coding_secret_id` pays the seats that are — engineer, architect, test
+    engineer, code reviewer, security, release — on its provider's own coding
+    tool, at that provider's `@frontier` model unless the seat or its role
+    names one. It is one of the credentials `list_credentials` marks
+    `can_code` (Anthropic, OpenAI or Google), and it may be a second
+    credential for the provider the billing one pays, or the billing
+    credential itself. It spends his money like the billing one, so it is
+    settled the same way: exactly one that can code, the draft names it; more
+    than one, ask which, with `recommended: null`, and leave it unset until he
+    answers; none, the ledger says the factory can be created and cannot start
+    until an administrator adds one in Settings → Providers and names it in
+    the project's Settings → Money. Say in the cover note which credential
+    codes and which pays for the rest. Never set it on any other shape.
   - *Where it runs.* Ask whether the software will be hosted, and where, or
     not yet. Hosted: name the host in the goal; its deploy command, health
     URL and deploy key are set after Create on Settings → Code Factory
