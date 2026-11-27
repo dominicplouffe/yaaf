@@ -97,6 +97,18 @@ RUN printf 'PATH="/opt/venv/bin:$PATH"\nexport PATH\n' > /etc/profile.d/00-venv.
 
 # Non-root: the workspace mount is the only writable surface that matters.
 RUN useradd -m -u 10001 agent
+# git, for a Code Factory seat. The runner clones the repo as its own user, so
+# without safe.directory git refuses the workspace outright ("dubious
+# ownership"). A seat pushes with the project's `github` credential, handed to
+# it as $GITHUB; this helper is how git finds it, read at push time from the
+# environment and never written to a file or a remote URL. No credential, no
+# answer: git then fails the push saying so, rather than prompting into a
+# sandbox with nobody to type.
+RUN git config --system safe.directory '*' \
+    && git config --system user.name "yaaf agent" \
+    && git config --system user.email "agent@yaaf.invalid" \
+    && git config --system credential.https://github.com.helper \
+       '!f() { test "$1" = get && test -n "$GITHUB" && printf "username=x-access-token\npassword=%s\n" "$GITHUB"; }; f'
 # File-shaped credentials need no image support: the runner mounts a tmpfs at
 # /run/yaaf (sandbox.CREDENTIALS_TMPFS) and the entry script makes its own 0700
 # directory inside it. Nothing here, on purpose — a key must never be in a layer.

@@ -128,9 +128,19 @@ Every phase ships on its own, with its attack tests, and leaves the suite green.
 **7. Crew and docs (S).**
 - Six roles: tech-lead, architect, test-engineer, code-reviewer, security-engineer, release-engineer.
 - Three crews: build a product, keep a repo healthy, solo engineer.
+- The kind picks the lead and the crew. A factory is always led by tech-lead (the server fills it and refuses any other, and refuses tech-lead on any other kind). The form fills in build a product for a new build or keep a repo healthy for an adopted repo, and offers only the factory crews.
 - Two `examples/` bundles.
 - Founder doctrine for the shape call.
 - README "Four kinds of project", CLI, MCP read surface, golden evals re-recorded and explained.
+
+**First run, checked end to end.** What a default-settings factory needs before its first merge, each fixed where it used to fail silently:
+- Evidence: a merged change and a live release are platform-attested evidence; a factory's outward-work floor defaults to 0 and its drought to 72h, and a drought warns but never refuses a factory's tasks (refusing them deadlocked it).
+- The form asks for the repo and creates it (or checks an empty one) right after Create, with main protected. A repo attached after the first run is still cloned.
+- GitHub is read every minute for each open change's head, its checks and main, so a box at localhost works with no webhook; with a public https address the hook is created on attach.
+- Git in the sandbox: safe.directory, an identity, and a credential helper reading $GITHUB. The runner's clone is shared-writable.
+- Settings → Integrations → GitHub holds the platform key, the repo and the agents' push key (checked for push access, granted to every pushing role). The checklist lists repo, push key and deploy target.
+- A green change wakes one challenge seat to read it (the code reviewer if there is one); accepted scope with no hidden scenario wakes one (the test engineer). A change waiting only on the chairman tells him, once per commit.
+- Not done: seats share one working tree per project (several runs at once can clobber each other's checkout).
 
 **UI**, alongside phases 1–6:
 - New-project kind card and the "start from" choice.

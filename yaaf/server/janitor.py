@@ -230,6 +230,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     check_delivery_ready(session, project)
     # Code Factory: judge pushes to main first, so a bypass freezes merging
     # before this tick merges anything on top of it.
+    changes.poll_github(session, project)
     changes.reconcile_main(session, project)
     changes.merge_ready(session, project)
     releases.watch(session, project)
@@ -3274,6 +3275,10 @@ def warn_drought(session: Session, project: Project, cons: ConstitutionDoc) -> N
     if not already:
         _notice_ceo(
             session, project, NoticeKind.DROUGHT,
+            f"Nothing has shipped in {cons.drought_hours}h: no change merged and no "
+            "release went live. Find what is stuck — a change waiting on CI, a review, "
+            "a gate it fails — and clear it, make the next piece smaller, or escalate "
+            "to the chairman." if shape.is_factory(project) else
             f"Evidence drought: no verified external evidence in {cons.drought_hours}h. "
             "Internal task creation is now refused by the platform. Change the channel, "
             "change the offer, change the bet, or escalate to the chairman.",

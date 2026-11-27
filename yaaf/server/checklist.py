@@ -56,17 +56,29 @@ STEPS = (
 #: and required where the work runs through email: such a project cannot start
 #: without it (yaaf.server.mail.settings.start_refusal).
 EMAIL = Step("email", "Email", "mail")
-BY_KEY = {s.key: s for s in (*STEPS, EMAIL)}
+#: A Code Factory's own wiring, right after the key: without a repo it has
+#: nowhere to push, and without a key its seats cannot push to it. Each used to
+#: fail only inside an agent's run. Where it deploys can wait until it has
+#: something to release.
+FACTORY = (
+    Step("repo", "GitHub repository", "integrations", required=True),
+    Step("push", "Agents' GitHub key", "integrations", required=True),
+    Step("deploy", "Where it deploys", "integrations"),
+)
+BY_KEY = {s.key: s for s in (*STEPS, EMAIL, *FACTORY)}
 
 
 def steps_for(project: Project) -> tuple[Step, ...]:
     """This project's steps, in order. The email step sits right after the key:
     when it is required, it is the second thing standing between a new project
     and its first run."""
+    from yaaf.core import shape
+
+    head = (STEPS[0], *(FACTORY if shape.is_factory(project) else ()))
     if not (project.needs_mail or (project.integrations or {}).get("mail")):
-        return STEPS
+        return (*head, *STEPS[1:])
     email = Step(EMAIL.key, EMAIL.label, EMAIL.section, required=bool(project.needs_mail))
-    return (STEPS[0], email, *STEPS[1:])
+    return (*head, email, *STEPS[1:])
 
 
 def _state(project: Project) -> dict:
@@ -119,6 +131,31 @@ def _done(session: Session, project: Project, step: Step) -> tuple[bool, str]:
         if slack or project.github_repo:
             return True, "Slack" if slack else "GitHub"
         return False, "Mirror the project into Slack, or connect a GitHub repository."
+    if step.key == "repo":
+        from yaaf.server import github
+
+        if project.github_repo:
+            return True, f"Builds in {project.github_repo}."
+        if github.platform_token(session) is None:
+            return False, ("Connect the platform to GitHub first (a key for the account "
+                           "that creates repos and merges), then create or pick the repo.")
+        return False, "Nowhere to push yet: create a repo, or pick an empty one."
+    if step.key == "push":
+        from yaaf.server.api.admin import _project_secret, _push_roles
+
+        push = _project_secret(session, project.id, "github")
+        missing = sorted(set(_push_roles(session, project)) - set(push.role_scopes or [])) \
+            if push else None
+        if push and not missing:
+            return True, "The seats that build can push branches."
+        if push:
+            return False, f"Not granted to {', '.join(missing)} yet: save the key again."
+        return False, "The seats that build push branches with their own GitHub key."
+    if step.key == "deploy":
+        environments = sorted((integrations.get("environments") or {}).keys())
+        if environments:
+            return True, f"Deploys to {', '.join(environments)}."
+        return False, "A deploy command and a health URL, before its first release."
     if step.key == "email":
         from yaaf.server.mail import settings as mail_settings
 

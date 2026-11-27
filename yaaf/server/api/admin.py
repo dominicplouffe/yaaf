@@ -31,6 +31,7 @@ from yaaf.core.constitution import (
     create_initial,
     default_autonomy,
     default_briefing,
+    default_factory_floors,
     default_tempo,
     effective,
     effective_version,
@@ -1568,7 +1569,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         doc = ConstitutionDoc.model_validate(
             {**ConstitutionDoc().model_dump(),
              **default_tempo(shape.behaves_as(body.mode, phase),
-                             default_briefing(default_autonomy(body.constitution)))})
+                             default_factory_floors(body.mode, default_briefing(
+                                 default_autonomy(body.constitution))))})
     except ValidationError as exc:
         # A rule that cannot hold — a 29th of every month — is the founder's to
         # fix, not a 500. It reached here unchecked for as long as the suite's
@@ -2002,7 +2004,30 @@ def _factory_phase_at_create(body: ProjectCreate) -> str | None:
             status_code=422,
             detail="a Code Factory that adopts a repo needs the repo: pass "
                    "github_repo as owner/name.")
+    _factory_lead_at_create(body)
     return shape.initial_phase(body.mode, body.factory_start)
+
+
+def _factory_lead_at_create(body: ProjectCreate) -> None:
+    """A Code Factory has one lead, and nothing else has it. The kind already
+    answers who runs it: a generic CEO has none of the factory's verbs in its
+    brief, and the Tech Lead has nothing but. Asking the chairman to pick
+    between them was a question with one right answer, so an unnamed lead is
+    filled and a different one refused."""
+    if shape.is_factory(body.mode):
+        if "ceo_role_slug" not in body.model_fields_set:
+            body.ceo_role_slug = shape.FACTORY_LEAD_ROLE
+        elif body.ceo_role_slug != shape.FACTORY_LEAD_ROLE:
+            raise HTTPException(
+                status_code=422,
+                detail=f"a Code Factory is led by the Tech Lead "
+                       f"({shape.FACTORY_LEAD_ROLE}), not {body.ceo_role_slug}: it is "
+                       "the lead whose brief is the factory's spec, gates and releases.")
+    elif body.ceo_role_slug == shape.FACTORY_LEAD_ROLE:
+        raise HTTPException(
+            status_code=422,
+            detail=f"the Tech Lead ({shape.FACTORY_LEAD_ROLE}) leads Code Factory "
+                   f"projects only; this one is {body.mode}.")
 
 
 def _factory_start_recorded(integrations: dict | None, mode: str,
@@ -6949,12 +6974,105 @@ def attach_github(project_id: str, body: GithubAttach, session: Session = Depend
         # way so the project page can say which.
         protection = github.protect_main(session, full_name)
         project.integrations = {**(project.integrations or {}),
-                                "branch_protection": protection}
+                                "branch_protection": protection,
+                                "github_hook": github.ensure_hook(session, project, full_name)}
     _audit(session, project.id, "project.github_attach", "project", project.id,
            {"github_repo": full_name,
             **({"branch_protection": protection} if protection is not None else {})})
     return {"github_repo": full_name,
             **({"branch_protection": protection} if protection is not None else {})}
+
+
+class PushTokenIn(BaseModel):
+    token: str = Field(min_length=8, max_length=400)
+
+
+def _push_roles(session: Session, project: Project) -> list[str]:
+    """The roles on this project whose definition asks for the `github`
+    credential — the seats that push branches."""
+    from yaaf.core.models import Agent, Role, RoleVersion, Team
+
+    rows = session.execute(
+        select(Role.slug, RoleVersion.secret_scopes)
+        .join(RoleVersion, RoleVersion.role_id == Role.id)
+        .join(Team, Team.role_version_id == RoleVersion.id)
+        .where(Team.project_id == project.id)
+    ).all() + session.execute(
+        select(Role.slug, RoleVersion.secret_scopes)
+        .join(RoleVersion, RoleVersion.role_id == Role.id)
+        .join(Agent, Agent.role_version_id == RoleVersion.id)
+        .where(Agent.project_id == project.id)
+    ).all()
+    return sorted({slug for slug, scopes in rows if "github" in (scopes or [])})
+
+
+@router.get("/projects/{project_id}/factory/setup", dependencies=[authority.READ])
+def factory_setup(project_id: str, session: Session = Depends(db)) -> dict:
+    """What a Code Factory needs wired before its first change can merge, each
+    with whether it is. The screens show it as one strip, because each of
+    these used to fail somewhere only an agent's run log said."""
+    from yaaf.server import github
+
+    project = _get_project(session, project_id)
+    if not shape.is_factory(project):
+        raise HTTPException(status_code=422, detail="setup belongs to a Code Factory project")
+    integrations = project.integrations or {}
+    push = _project_secret(session, project.id, "github")
+    needed = _push_roles(session, project)
+    granted = sorted(set(push.role_scopes or []) & set(needed)) if push else []
+    last_hook = session.execute(
+        select(func.max(AuditLog.at)).where(AuditLog.project_id == project.id,
+                                                    AuditLog.action == "webhook.github")
+    ).scalar_one_or_none()
+    return {
+        "platform_token": github.platform_token(session) is not None,
+        "repo": project.github_repo,
+        "branch_protection": integrations.get("branch_protection"),
+        "push_token": {"set": push is not None, "granted": granted,
+                       "missing": sorted(set(needed) - set(granted))},
+        "notifications": {"hook": integrations.get("github_hook"),
+                          "last_delivery_at": last_hook.isoformat() if last_hook else None,
+                          "polled_every_s": changes_poll_every_s()},
+        "environments": sorted((integrations.get("environments") or {}).keys()),
+    }
+
+
+def changes_poll_every_s() -> int:
+    from yaaf.server import changes
+
+    return changes.POLL_EVERY_S
+
+
+@router.put("/projects/{project_id}/factory/push-token", dependencies=[authority.STEER])
+def set_push_token(project_id: str, body: PushTokenIn, session: Session = Depends(db)) -> dict:
+    """The key the seats push branches with, stored as the project's `github`
+    credential and granted to every role here that pushes. Checked against the
+    repo first: a key that cannot push used to be found out by an engineer's
+    failed push, read by nobody."""
+    from yaaf.server import github
+
+    project = _get_project(session, project_id)
+    if not shape.is_factory(project):
+        raise HTTPException(status_code=422, detail="this belongs to a Code Factory project")
+    token = body.token.strip()
+    if project.github_repo:
+        try:
+            response = github._request("GET", f"/repos/{project.github_repo}", token)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502,
+                                detail=f"could not reach GitHub: {type(exc).__name__}") from exc
+        if response.status_code != 200:
+            raise HTTPException(status_code=422, detail=(
+                f"GitHub refused this key for {project.github_repo} "
+                f"({response.status_code}). It needs access to that repo."))
+        if not (response.json().get("permissions") or {}).get("push"):
+            raise HTTPException(status_code=422, detail=(
+                f"This key can read {project.github_repo} but not push to it. Give it "
+                "write access to contents (and workflows, so a seat can set up CI)."))
+    roles = _push_roles(session, project)
+    _upsert_project_secret(session, project.id, "github", token, roles)
+    _audit(session, project.id, "factory.push_token", "project", project.id, {"roles": roles})
+    return {"granted": roles}
 
 
 # ── slack: what this project inherits, and its rooms ────────────────────────────

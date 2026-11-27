@@ -31,7 +31,7 @@ import { SETTINGS_NAV } from "../../nav";
 import { ConfirmModal, fmtUnit, SecretInput, StoredSecret } from "../../ui";
 import { choiceLabel, humanizeHelp, Lede, splitLead, Why } from "../../settingsCopy";
 import { modeLabel } from "../../ui/project";
-import { EnvironmentsCard } from "./Factory";
+import { EnvironmentsCard, FactoryGithub } from "./Factory";
 
 /** "amazon-audit-v2" → "amazon-audit-v3"; "Acme" → "Acme (clone)". Twins come
     in numbered runs far more often than they come in ones. */
@@ -1586,6 +1586,13 @@ export default function Settings({
                  refreshSecrets={refreshSecrets} notice={notice} />
       </Section>
 
+      {dash.mode === "code_factory" && (
+        <Section on={section === "integrations"}>
+          <h2>GitHub</h2>
+          <FactoryGithub projectId={projectId} />
+        </Section>
+      )}
+
       <Section on={section === "integrations"}>
       <h2>Slack bridge</h2>
       <div className="card">
@@ -1608,10 +1615,12 @@ export default function Settings({
       )}
 
       <Section on={section === "integrations"}>
+      {dash.mode !== "code_factory" && <>
       <h2>GitHub workspace</h2>
       <div className="card">
         <GithubWorkspace projectId={projectId} dash={dash} act={act} busy={busy} />
       </div>
+      </>}
 
       <h2>Inbound evidence webhooks</h2>
       <div className="card">

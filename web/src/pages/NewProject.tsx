@@ -8,7 +8,7 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import "./newproject.css";
-import { CrewSummary, get, McpServerEntry, post, ProjectBundle,
+import { ConstitutionField, CrewSummary, get, McpServerEntry, post, ProjectBundle,
   RehearsalReport, RoleSummary, SlackProvision } from "../api";
 import Drill from "../drill";
 import { BLANK_DRAFT, PromiseCard, PromiseDraft, PromisedSection, storePromised } from "../credentialNeeds";
@@ -33,6 +33,50 @@ import type { FounderStatus, PresetCard } from "./StartProject";
 /** Names for a seat the chairman hired without naming. Plain, distinct,
     and short enough to read in a run log. */
 const SEAT_NAMES = ["Ada", "Juno", "Iris", "Theo", "Noor", "Kai", "Mira", "Sol", "Wren", "Otto"];
+
+/** The one lead a Code Factory has (`yaaf.core.shape.FACTORY_LEAD_ROLE`). The
+    server fills it and refuses any other, so the form does not ask. */
+export const FACTORY_LEAD = "tech-lead";
+
+/** The crew a Code Factory starts with, by where it starts. A crew is a
+    factory's when the Tech Lead leads it. */
+const FACTORY_CREW: Record<"new" | "repo", string> = {
+  new: "build-a-product",
+  repo: "keep-a-repo-healthy",
+};
+
+function crewTeams(crew: CrewSummary): TeamDraft[] {
+  return crew.teams.map((t) => ({
+    role_slug: t.role_slug,
+    name: t.name,
+    employees: t.employees.join(", "),
+    lead: t.lead ?? "",
+    schedules: t.schedules,
+  }));
+}
+
+/** The Code Factory rules in one sentence, read from the server's defaults
+    (or a setup file's values). Says only what a default-settings chairman
+    would want to know before Create; Settings → Rules has the rest. */
+function factorySummary(rules: ConstitutionField[], set: Record<string, unknown>): string {
+  const at = (key: string) => (key in set ? set[key] : rules.find((r) => r.key === key)?.default);
+  const on = (key: string) => at(key) === true;
+  const parts = [
+    at("release_authority") === "autonomous"
+      ? "releases go out without asking you"
+      : "you approve the first release, and every major one",
+    `changes of at most ${at("max_change_lines")} lines`,
+    "a reviewer who did not write it signs each change",
+    "CI must pass on the exact commit",
+  ];
+  const checks = [on("hidden_scenarios") && "hidden tests",
+    on("platform_scans") && "security scans",
+    on("code_health_ratchet") && "code-health checks"].filter(Boolean);
+  if (checks.length) parts.push(`${checks.join(", ")} on every change`);
+  const coverage = Number(at("min_changed_line_coverage") ?? 0);
+  if (coverage > 0) parts.push(`at least ${coverage}% of changed lines tested`);
+  return parts.join(" · ");
+}
 
 interface TeamDraft {
   role_slug: string;
@@ -412,6 +456,23 @@ export default function NewProject() {
   // Which team row is choosing a role, or null. One panel, reused per row.
   const [hireOpen, setHireOpen] = useState<number | null>(null);
   const [crews, setCrews] = useState<CrewSummary[]>([]);
+  const factory = mode === "code_factory";
+  // The Code Factory rules, with their defaults, straight from the server's
+  // model: the form shows none of them as fields, so the review step says
+  // what the project is agreeing to instead of letting it take them unseen.
+  const [factoryRules, setFactoryRules] = useState<ConstitutionField[]>([]);
+  useEffect(() => {
+    if (!factory || factoryRules.length) return;
+    get<ConstitutionField[]>("/admin/constitution/schema")
+      .then((rows) => setFactoryRules(rows.filter((r) => r.group === "Code Factory")))
+      .catch(() => {});
+  }, [factory, factoryRules.length]);
+  // The crew the form filled in for a factory, as it filled it. While the
+  // teams still read exactly so, they are the form's and follow the start
+  // (a new build or an adopted repo); once the chairman edits one, they are
+  // his and nothing here touches them again.
+  const autoCrew = useRef<string | null>(null);
+
 
   // Four steps, because there are four decisions here that need the
   // chairman's judgement: what the project is for, who does the work, what it
@@ -435,6 +496,31 @@ export default function NewProject() {
   // the whole form; the file's full constitution/config and any role
   // definitions the library lacks ride along at submit time.
   const [bundle, setBundle] = useState<ProjectBundle | null>(null);
+
+  useEffect(() => {
+    if (bundle) return; // a setup file says who leads and who is hired
+    const blank = teams.length === 1 && !teams[0].role_slug && !teams[0].name.trim()
+      && !teams[0].employees.trim();
+    const ours = blank || JSON.stringify(teams) === autoCrew.current;
+    if (factory) {
+      setCeoSlug(FACTORY_LEAD);
+      const crew = crews.find((c) => c.slug === FACTORY_CREW[factoryStart]);
+      if (ours && crew && crew.missing_role_slugs.length === 0) {
+        const filled = crewTeams(crew);
+        autoCrew.current = JSON.stringify(filled);
+        setTeams(filled);
+      }
+    } else {
+      setCeoSlug((current) => (current === FACTORY_LEAD
+        ? (roles.find((r) => r.slug === "ceo")?.slug ?? "") : current));
+      if (autoCrew.current && JSON.stringify(teams) === autoCrew.current) {
+        setTeams([{ role_slug: "", name: "", employees: "", lead: "" }]);
+      }
+      autoCrew.current = null;
+    }
+    // teams is read, not watched: an edit must never re-fill the crew.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [factory, factoryStart, crews, roles, bundle]);
   // Access he promised while founding: one card each, tested here before the
   // project exists, stored on its promises once it does.
   const [promiseCards, setPromiseCards] = useState<PromiseCard[]>([]);
@@ -777,6 +863,9 @@ export default function NewProject() {
       // was the only word a chairman used to get about a bad address.
       if (!SLUG_OK.test(slug)) return "The address takes 2 to 64 lower-case letters, numbers or dashes";
       if (existingSlugs.includes(slug)) return "Another project already uses this address";
+      if (factory && factoryStart === "repo" && !factoryRepo.includes("/")) {
+        return "Name the repo to keep, as owner/name";
+      }
       return null;
     }
     if (n === 2) {
@@ -1135,7 +1224,7 @@ export default function NewProject() {
           ...(mode === "code_factory" ? { factory_start: factoryStart } : {}),
           ...(mode === "code_factory" && factoryStart === "repo" && factoryRepo.trim()
             ? { github_repo: factoryRepo.trim() } : {}),
-          controlled_domains: controlledDomains
+          controlled_domains: factory ? [] : controlledDomains
             .split(",")
             .map((d) => d.trim())
             .filter(Boolean),
@@ -1153,7 +1242,8 @@ export default function NewProject() {
             // after picking a card is what actually gets created.
             ...craft,
             queue_ceiling: queueCeiling,
-            drought_hours: droughtHours,
+            // A factory's is the server's (FACTORY_FLOORS): sized to a first merge.
+            ...(factory ? {} : { drought_hours: droughtHours }),
             monthly_usd_cap: usdCap,
             monthly_token_cap: monthlyTokenCap,
             approval_threshold_usd: approvalThreshold,
@@ -1376,6 +1466,23 @@ export default function NewProject() {
         if (created.webhooks) setDone(created.id);
         else navigate(`/projects/${created.id}/settings?s=sources`);
         return;
+      }
+      // A factory with no repo has nowhere to push, and nothing on its screens
+      // says so until a run fails. Created (or checked) here, with main
+      // protected, before the project is started.
+      if (factory && !bundle?.project.github_repo) {
+        const repo = factoryRepo.trim() || slug;
+        try {
+          await post(`/admin/projects/${created.id}/github`, { repo });
+        } catch (err) {
+          alert(
+            `Project created, but its repository could not be set up:\n\n${(err as Error).message}` +
+              "\n\nThe project was NOT started. Connect the repo in Settings → Integrations, " +
+              "then start the project.",
+          );
+          navigate(`/projects/${created.id}/settings?s=integrations`);
+          return;
+        }
       }
       // The chairman already explained all of this to the Founder and argued
       // it through. Making them say it again to a new CEO is exactly the form
@@ -1722,14 +1829,19 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                   { value: "repo", label: "A repo I already have",
                     line: "The crew reads first: a read-only report and a proposed upkeep charter." },
                 ]} />
-              {factoryStart === "repo" && (
-                <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "baseline",
-                  flexWrap: "wrap" }}>
-                  <label className="field" style={{ margin: 0 }} htmlFor="np-repo">Repository</label>
-                  <input id="np-repo" value={factoryRepo} placeholder="owner/name"
-                    onChange={(e) => setFactoryRepo(e.target.value)} style={{ width: 260 }} />
-                </div>
-              )}
+              <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "baseline",
+                flexWrap: "wrap" }}>
+                <label className="field" style={{ margin: 0 }} htmlFor="np-repo">Repository</label>
+                <input id="np-repo" value={factoryRepo}
+                  placeholder={factoryStart === "repo" ? "owner/name" : slug || "a new repo name"}
+                  onChange={(e) => setFactoryRepo(e.target.value)} style={{ width: 260 }} />
+                <span className="help">
+                  {factoryStart === "repo"
+                    ? "The repo to keep, as owner/name."
+                    : `Blank creates a new private repo named ${slug || "after the project"}; ` +
+                      "owner/name uses an empty one you already made."}
+                </span>
+              </div>
               <Why>
                 {factoryStart === "new"
                   ? "Built first, to a date you can sign, then kept on a weekly rhythm — the same project, without rebuilding it."
@@ -1778,9 +1890,30 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           </Why>
         </div>
         <div className="card" style={{ marginBottom: 10 }}>
-          <CeoPicker roles={roles} value={ceoSlug} onChange={setCeoSlug} />
+          {factory ? (
+            <p style={{ margin: 0 }}>
+              <strong>{roles.find((r) => r.slug === FACTORY_LEAD)?.name ?? "Tech Lead"}</strong>
+              {" "}— a Code Factory is always led by its Tech Lead, who turns your goal into a
+              spec you accept, plans it in stages and staffs it.
+              {rolesLoaded && !roles.some((r) => r.slug === FACTORY_LEAD) && (
+                <> This install's library has no Tech Lead yet: run{" "}
+                  <code>deploy/update_single_server.sh --no-pull</code>.</>
+              )}
+            </p>
+          ) : (
+            <CeoPicker roles={roles.filter((r) => r.slug !== FACTORY_LEAD)}
+              value={ceoSlug} onChange={setCeoSlug} />
+          )}
         </div>
         <h2>Teams</h2>
+        {factory && !bundle && autoCrew.current !== null && (
+          <p className="subtitle">
+            Filled with the{" "}
+            <strong>{crews.find((c) => c.slug === FACTORY_CREW[factoryStart])?.name}</strong> crew,
+            which covers every gate: builders, a reviewer who signs each change, hidden tests,
+            security and releases. Change any of it, here or later.
+          </p>
+        )}
         {missingRoleSlugs.length > 0 && (
           <div className="np-note">
             This setup file hires {missingRoleSlugs.length === 1 ? "a role" : "roles"} this
@@ -2138,6 +2271,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 onChange={(e) => setQueueCeiling(+e.target.value)}
               />
             </div>
+            {!factory && (
             <div>
               <label className="field">Drought window (hours without verified external evidence)</label>
               <input
@@ -2147,6 +2281,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 onChange={(e) => setDroughtHours(+e.target.value)}
               />
             </div>
+            )}
           </div>
           <div className="row">
             <div>
@@ -2206,7 +2341,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 Guessed from your browser — every local time in the rules reads this zone.
               </div>
             </div>
-            <div>
+            {!factory && <div>
               <label className="field">External evidence must be verified</label>
               <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8 }}>
                 <input
@@ -2219,8 +2354,15 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                   On, evidence counts only once the platform fetches and checks it.
                 </span>
               </label>
-            </div>
+            </div>}
           </div>
+            {factory ? (
+              <p className="help">
+                A Code Factory proves its progress by shipping: a change the platform merged,
+                or a release that passed its canary watch. There is no outside evidence to
+                set up, and nothing to name as your own.
+              </p>
+            ) : <>
             <label className="field">
               Your own domains, comma-separated
             </label>
@@ -2235,6 +2377,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               outside the project, and anything on a property you control cannot count as
               outside.
             </Why>
+            </>}
           <p className="help">
             {bundle
               ? "Everything else (external-evidence floor, wake caps, memory caps, refusal caps…) " +
@@ -2297,6 +2440,15 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <span className="chip">{MODES.find((m) => m.value === mode)?.label ?? mode}</span>
             <span className="help">cannot be changed after Create</span>
           </div>
+          {factory && factoryRules.length > 0 && (
+            <div className="orgline">
+              <strong>Factory rules</strong>
+              <span className="help">
+                {factorySummary(factoryRules, bundle?.project.constitution ?? {})}
+                {" "}— each one is in Settings → Rules in force, to change later.
+              </span>
+            </div>
+          )}
           {/* The two questions the summary did not answer: how much it does
               without asking, and who reads the work before you do. */}
           <div className="orgline">
@@ -2606,7 +2758,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         {hireOpen !== null && (
           <HirePanel
             roles={roles}
-            crews={crews}
+            crews={crews.filter((c) => (c.ceo_role_slug === FACTORY_LEAD) === factory)}
             loaded={rolesLoaded}
             selected={teams[hireOpen]?.role_slug ? [teams[hireOpen].role_slug] : []}
             goal={goal}
@@ -2628,13 +2780,9 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               // employees, leads and schedules come from the worked example
               // it was lifted from, so it lands as a project rather than a
               // list of job titles.
-              setTeams(crew.teams.map((t) => ({
-                role_slug: t.role_slug,
-                name: t.name,
-                employees: t.employees.join(", "),
-                lead: t.lead ?? "",
-                schedules: t.schedules,
-              })));
+              const filled = crewTeams(crew);
+              autoCrew.current = factory ? JSON.stringify(filled) : null;
+              setTeams(filled);
               if (crew.ceo_role_slug) setCeoSlug(crew.ceo_role_slug);
               setHireOpen(null);
             }}

@@ -2,29 +2,35 @@
 
 ## Running tests — pick the smallest tier that answers the question
 
-The suite is ~1,350 integration tests that drive the real app over HTTP against
+The suite is ~3,100 integration tests that drive the real app over HTTP against
 a real database. That is deliberate (see CONTRIBUTING house rule #1) and it means
-the full run costs about a minute. A minute is cheap once. It is not cheap after
-every edit, and running it after every edit is the single biggest drag on how
-fast this project moves.
+the full run costs minutes, and the browser tests and Postgres run more again.
 
-So: **match the tier to the question you are actually asking.**
+**Do not run the full suite locally. GitHub CI runs it.** Every push runs lint,
+the whole suite on Postgres (sharded four ways), the web build, the browser
+tests (`web/e2e`) and the sandbox image build (`.github/workflows/ci.yml`).
+Running any of that here first only waits twice for the same answer.
+
+Locally, run only the tests for what you touched:
 
 | Tier | Command | When |
 |---|---|---|
 | 0 — iterating | `pytest --testmon -q` | after each edit. Runs only tests whose code you changed. Seconds. |
-| 1 — this area works | `pytest tests/selftest_invariants/test_<area>.py -q` | before you claim a change works |
-| 2 — ready to commit | `pytest -q -n auto` | **once**, at the end |
-| 3 — Postgres | `YAAF_TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/postgres pytest -q -n auto` | only when you touched leasing, JSON columns, timestamps, or migrations |
+| 1 — this area works | `pytest tests/selftest_invariants/test_<area>.py -q -n auto` | before you commit, for each area you changed |
+| lint | `ruff check .` (and `npm run build` in `web/` if you touched it) | before you commit. Seconds. |
 
-**Do not run the full suite after every edit.** If you changed one function,
-tier 0 or tier 1 is the honest check. Tier 2 belongs at the end, once, before a
-commit — not between exploratory edits, and not before you and the human have
-even decided the change is worth keeping.
+Then commit, push, and read CI's result. If a job fails, reproduce just that
+test locally (`pytest path::test_name -q`), fix it, and push again. Do not
+report a change as done while its CI run is red or still running; say it is
+pushed and waiting on CI.
 
-`--testmon` needs one full run to build its map (`pytest -q` once, then
-`--testmon` from then on). It is a development accelerator and **never a gate**:
-CI always runs everything.
+Not locally, unless the human asks: the full suite (`pytest -q -n auto`), the
+Postgres run, and the browser tests (`npx playwright test`).
+
+`--testmon` needs one full run to build its map before it can pick tests for
+you. Without that map, tier 1 alone is the check: do not run the whole suite
+just to build it. It is a development accelerator and **never a gate**: CI
+always runs everything.
 
 Always pass `-n auto`. The suite parallelises nearly linearly and there is no
 reason to run it serially except to read one test's failure output.

@@ -54,9 +54,22 @@ class FakeGitHub:
         self.files: list[dict] = [{"filename": "src/booking/hold.ts", "status": "modified",
                                    "patch": "@@\n+export const HOLD_MINUTES = 10"}]
         self.files_status = 200
+        self.runs: dict[str, list[dict]] = {}
+        self.main = "base" + "0" * 36
+        self.can_push = True
 
     def __call__(self, method, path, token, json=None):
         self.calls.append((method, path, json))
+        if method == "GET" and path == f"/repos/{REPO}":
+            return httpx.Response(200, json={"permissions": {"push": self.can_push}})
+        if method == "GET" and "/check-runs" in path:
+            sha = path.split("/commits/")[1].split("/")[0]
+            return httpx.Response(200, json={"check_runs": self.runs.get(sha, [])})
+        if method == "GET" and path.startswith(f"/repos/{REPO}/branches/"):
+            return httpx.Response(200, json={"commit": {"sha": self.main}})
+        if method == "GET" and path.startswith(f"/repos/{REPO}/pulls/") \
+                and path.split("/")[-1].isdigit():
+            return httpx.Response(200, json=self.prs.get(int(path.split("/")[-1]), {}))
         if method == "POST" and path == f"/repos/{REPO}/pulls":
             number = len(self.prs) + 41
             pr = {"number": number, "head": {"sha": f"h{number}" + "0" * 30, "ref": json["head"]},
@@ -97,7 +110,8 @@ def _factory(client, *, mode="code_factory", slug="slotwise", scenarios=False,
     the scenarios and the scan."""
     client.post("/admin/users", json=CHAIR, headers=ADMIN)
     seed_role(client, "ceo", is_ceo=True, category="leadership")
-    seed_role(client, "engineer", category="build")
+    seed_role(client, "tech-lead", is_ceo=True, category="leadership")
+    seed_role(client, "engineer", category="build", secret_scopes=["github"])
     seed_role(client, "reviewer", category="challenge")
     created = client.post("/admin/projects", json={
         "slug": slug, "name": "Slotwise", "goal": "A booking app for physio clinics.",
@@ -396,3 +410,147 @@ def test_attaching_a_repo_to_a_factory_protects_main(client, gh, monkeypatch):
     protection = next(c for c in gh.calls if c[1].endswith("/branches/main/protection"))
     assert protection[2]["required_pull_request_reviews"] is not None
     assert protection[2]["allow_force_pushes"] is False
+
+
+def test_a_merge_is_the_factorys_outside_proof_and_ends_a_drought(client, gh):
+    """Found walking a form-made factory: merges wrote no evidence, so a
+    factory went into drought a day after founding — and a drought refused the
+    very task whose merge would have ended it, so it never could. A merge every
+    gate passed is the proof, and a factory in drought may still be given work."""
+    from datetime import timedelta
+
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Evidence, EvidenceProvenance
+    from yaaf.server import policy
+
+    project = _factory(client, drought_hours=24)
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        row.created_at = row.created_at - timedelta(days=3)
+    with db_session() as session:
+        cons = effective(session, project["id"])
+        assert policy.drought_active(session, project["id"], cons), "no proof yet"
+
+    change = _open(client, project, _claimed_task(client, project)).json()
+    _green(client, project, change["head_sha"])
+    _sign(client, project, change["id"])
+    assert _merge(project) == 1
+
+    with db_session() as session:
+        proof, = session.query(Evidence).filter_by(project_id=project["id"]).all()
+        assert proof.provenance == EvidenceProvenance.PLATFORM_ATTESTED
+        assert proof.created_by_agent_id is None and proof.task_id == change["task_id"]
+        assert not policy.drought_active(session, project["id"],
+                                         effective(session, project["id"]))
+
+
+def _poll(project) -> dict:
+    with db_session() as session:
+        return changes.poll_github(session, session.get(Project, project["id"]), force=True)
+
+
+def test_with_no_webhook_the_platform_reads_github_itself(client, gh):
+    """Most installs are a box at localhost that GitHub cannot reach, and the
+    checks gate read only webhooks: change #1 waited on "no check has reported
+    on this commit yet" forever. The janitor now asks GitHub."""
+    project = _factory(client)
+    assert _poll(project)["main"] == gh.main, "main's first sighting is its baseline"
+    with db_session() as session:
+        assert changes.merges_frozen(session, session.get(Project, project["id"])) is None, \
+            "a new repo's own first commit is not a push around the gates"
+
+    change = _open(client, project, _claimed_task(client, project)).json()
+    gh.runs[change["head_sha"]] = [{"head_sha": change["head_sha"], "name": "test",
+                                    "status": "completed", "conclusion": "success"}]
+    assert _poll(project)["checks"] == 1
+    assert _poll(project)["checks"] == 0, "a check already recorded is not recorded again"
+    _sign(client, project, change["id"])
+    assert _merge(project) == 1
+
+    # Somebody pushes to main around the platform; polling notices.
+    gh.main = "x" * 40
+    _poll(project)
+    with db_session() as session:
+        changes.reconcile_main(session, session.get(Project, project["id"]))
+        assert changes.merges_frozen(session, session.get(Project, project["id"])) is not None
+
+
+def test_a_new_push_seen_by_polling_clears_the_old_checks(client, gh):
+    project = _factory(client)
+    change = _open(client, project, _claimed_task(client, project)).json()
+    _green(client, project, change["head_sha"])
+    gh.prs[41] = {**gh.prs[41], "head": {"sha": "n" * 40}, "state": "open"}
+    _poll(project)
+    row = _change(change["id"])
+    assert row.head_sha == "n" * 40 and row.checks == {}
+
+
+def _owed(project, name) -> list[dict]:
+    from yaaf.core.models import Agent, utcnow
+    from yaaf.server import dispatcher
+
+    with db_session() as session:
+        agent = session.get(Agent, _agent(project, name))
+        return [r for r in dispatcher._work_reasons(session, agent, utcnow())
+                if r["kind"] in ("change_review_owed", "scenarios_owed")]
+
+
+def test_a_green_change_wakes_one_reviewer_and_a_signed_one_wakes_nobody(client, gh):
+    """Found by an audit of a new factory: nothing woke a challenge seat for a
+    change, so change #1 sat at "waiting for a challenge seat" until somebody
+    happened to message Rhea."""
+    project = _factory(client)
+    change = _open(client, project, _claimed_task(client, project)).json()
+    assert _owed(project, "Rhea") == [], "not before CI has said anything"
+    _green(client, project, change["head_sha"])
+    assert [r["change_id"] for r in _owed(project, "Rhea")] == [change["id"]]
+    assert _owed(project, "Mika") == [], "a builder is never the one woken to read"
+    _sign(client, project, change["id"])
+    assert _owed(project, "Rhea") == []
+
+
+def test_accepted_scope_with_no_hidden_scenario_wakes_a_challenge_seat(client, gh):
+    project = _factory(client, scenarios=True)
+    _claimed_task(client, project)  # proposes and accepts a requirement
+    owed = _owed(project, "Rhea")
+    assert [r["kind"] for r in owed] == ["scenarios_owed"]
+
+
+def test_the_setup_strip_says_what_is_wired_and_a_push_key_is_checked(client, gh):
+    """Each of these used to fail where only an agent's run log said so: no
+    repo, no key the seats can push with, a key that can read but not push."""
+    project = _factory(client)
+    setup = client.get(f"/admin/projects/{project['id']}/factory/setup", headers=ADMIN).json()
+    assert setup["platform_token"] is True and setup["repo"] == REPO
+    assert setup["push_token"] == {"set": False, "granted": [], "missing": ["engineer"]}
+    assert setup["notifications"]["polled_every_s"] == changes.POLL_EVERY_S
+
+    gh.can_push = False
+    refused = client.put(f"/admin/projects/{project['id']}/factory/push-token",
+                         json={"token": "ghp_readonly_key"}, headers=ADMIN)
+    assert refused.status_code == 422 and "not push" in refused.json()["detail"]
+
+    gh.can_push = True
+    saved = client.put(f"/admin/projects/{project['id']}/factory/push-token",
+                       json={"token": "ghp_writer_key"}, headers=ADMIN)
+    assert saved.status_code == 200 and saved.json()["granted"] == ["engineer"]
+    setup = client.get(f"/admin/projects/{project['id']}/factory/setup", headers=ADMIN).json()
+    assert setup["push_token"] == {"set": True, "granted": ["engineer"], "missing": []}
+
+
+def test_a_hook_is_made_only_where_github_could_deliver_it(client, gh, monkeypatch):
+    from yaaf.core import config
+
+    project = _factory(client)
+    with db_session() as session:
+        quiet = github.ensure_hook(session, session.get(Project, project["id"]), REPO)
+    assert not quiet["ok"] and "every minute" in quiet["detail"]
+    assert not [c for c in gh.calls if c[1].endswith("/hooks")]
+
+    monkeypatch.setattr(config.settings(), "public_base_url", "https://yaaf.example.com")
+    with db_session() as session:
+        made = github.ensure_hook(session, session.get(Project, project["id"]), REPO)
+    assert made["ok"], made
+    (_, _, body), = [c for c in gh.calls if c[0] == "POST" and c[1].endswith("/hooks")]
+    assert body["config"]["url"].endswith(f"/webhooks/github/{project['id']}")
+    assert body["config"]["content_type"] == "json" and "check_run" in body["events"]

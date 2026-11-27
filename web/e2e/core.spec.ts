@@ -138,3 +138,39 @@ test("every page renders on a project with history", async ({ page }) => {
     expect(errors, route).toEqual([]);
   }
 });
+
+test("a Code Factory names its own lead and crew", async ({ page }) => {
+  /* The kind answers both questions. The form used to ask anyway — a lead
+     picker offering every CEO, and the factory's crew card 13 of 20 in a row
+     that scrolled sideways out of sight. */
+  failOnPageErrors(page);
+  await page.goto("/app/#/projects/new");
+  await page.getByRole("button", { name: /Fill in the form/ }).click();
+  await page.getByRole("button", { name: "All on one page" }).click();
+  await page.getByRole("radio", { name: /Code Factory/ }).click();
+  await expect(page.getByText(/always led by its Tech Lead/)).toBeVisible();
+  await expect(page.locator(".pickcard", { hasText: "CEO / Project Manager" })).toHaveCount(0);
+  await expect(page.getByText(/Filled with the\s+Build a product\s+crew/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /Software Architect/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Code Reviewer/ })).toBeVisible();
+
+  // Its proof is shipping, so the outside-evidence knobs are not asked; the
+  // repo is, and the rules it takes on by default are said before Create.
+  await expect(page.getByText(/Drought window/)).toHaveCount(0);
+  await expect(page.getByText(/External evidence must be verified/)).toHaveCount(0);
+  await expect(page.getByText(/Your own domains/)).toHaveCount(0);
+  await expect(page.getByText(/Blank creates a new private repo/)).toBeVisible();
+  await expect(page.locator(".orgline", { hasText: "Factory rules" }))
+    .toContainText(/you approve the first release.*hidden tests, security scans, code-health checks/);
+
+  // Adopting a repo swaps the crew the form chose; it is still the form's.
+  await page.getByRole("radio", { name: /A repo I already have/ }).click();
+  await expect(page.getByText(/Filled with the\s+Keep a repo healthy\s+crew/)).toBeVisible();
+
+  // Any other kind gets its lead picker back, without the Tech Lead in it.
+  await page.getByRole("radio", { name: /Deliver Ship one thing/ }).click();
+  await expect(page.getByText(/always led by its Tech Lead/)).toHaveCount(0);
+  await expect(page.locator(".pickcard", { hasText: "CEO / Project Manager" })).toBeVisible();
+  await expect(page.locator(".pickcard", { hasText: "Tech Lead" })).toHaveCount(0);
+  await expect(page.getByText(/Drought window/)).toHaveCount(1);
+});

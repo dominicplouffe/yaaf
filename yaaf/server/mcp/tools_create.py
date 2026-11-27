@@ -35,6 +35,7 @@ from yaaf.core.constitution import (
     ConstitutionDoc,
     bar_name,
     default_autonomy,
+    default_factory_floors,
     default_tempo,
     preset_name,
     stated_tempo,
@@ -595,7 +596,7 @@ def _tempo_line(mode: str, constitution: dict, *, factory_start: str | None = No
 
     filled = {**ConstitutionDoc().model_dump(),
               **default_tempo(shape.behaves_as(mode, shape.initial_phase(mode, factory_start)),
-                              constitution)}
+                              default_factory_floors(mode, constitution))}
     # What the spec CHOSE, which is not what the project ends up equalling:
     # `live` is the field defaults, so a spec naming `queue_ceiling: 8` and
     # nothing else produces a live project without anyone picking live.

@@ -256,6 +256,16 @@ export function PickCard({ on, title, blurb, example, onClick, disabled }: {
     whichever CEO role the database returned first, so an install carrying both
     `ceo` and `cio` could hand a markets desk the generic CEO — and the CEO is
     the only agent the chairman ever speaks to. */
+/** What a lead is for, said only when it is true. Every lead outside markets
+    used to read "the default — any kind of project", the factory's Tech Lead
+    and a chairman's own specialist leads included, so the one sentence meant
+    to tell them apart said the same thing under each. */
+function leadCaption(role: RoleSummary): string | undefined {
+  if (role.slug === "ceo") return "the default — any kind of project";
+  const special = (role.domains ?? []).filter((d) => d !== "general");
+  return special.length ? `pick this for ${special.join(" or ")} work` : undefined;
+}
+
 export function CeoPicker({ roles, value, onChange }: {
   roles: RoleSummary[];
   value: string;
@@ -279,9 +289,7 @@ export function CeoPicker({ roles, value, onChange }: {
           on={value === role.slug}
           title={role.name}
           blurb={clip(role.description, 130)}
-          example={role.domains?.includes("markets")
-            ? "pick this for markets work"
-            : "the default — any kind of project"}
+          example={leadCaption(role)}
           onClick={() => onChange(role.slug)}
         />
       ))}

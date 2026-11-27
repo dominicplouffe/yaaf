@@ -66,6 +66,11 @@ def runs_on_cycles(project: Any, phase: str | None = None) -> bool:
     return mode == ProjectMode.CODE_FACTORY and phase == FactoryPhase.UPKEEP
 
 
+#: The one role that leads a Code Factory, and leads nothing else. The kind
+#: answers who runs it, so the server fills it and refuses any other.
+FACTORY_LEAD_ROLE = "tech-lead"
+
+
 def is_factory(project: Any) -> bool:
     mode, _ = _mode_phase(project)
     return mode == ProjectMode.CODE_FACTORY

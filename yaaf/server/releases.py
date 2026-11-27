@@ -354,6 +354,12 @@ def _go_live(session: Session, project: Project, release: Release) -> None:
     release.live_at = utcnow()
     provenance.sign_release(session, project, release, provenance.sbom_bytes(release))
     _audit(session, project, "release.live", release, {"probes": release.probes})
+    from yaaf.server import policy
+
+    policy.attest_shipped(session, project,
+                          f"Release {release.version} is live and passed its canary watch",
+                          f"https://github.com/{project.github_repo}/releases/tag/v{release.version}"
+                          if project.github_repo else None)
     digest = hashlib.sha256(provenance.canonical(release.provenance)).hexdigest()
     signed = ("\n\n---\nProvenance: signed by this yaaf install (Ed25519), statement "
               f"sha256 {digest[:16]}…"

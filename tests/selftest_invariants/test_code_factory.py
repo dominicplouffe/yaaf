@@ -23,7 +23,7 @@ from datetime import timedelta
 
 import pytest
 
-from tests.conftest import ADMIN, bearer, live_token, make_project
+from tests.conftest import ADMIN, bearer, live_token, make_project, seed_role
 from tests.selftest_invariants.test_daily_obligations import DAILY
 from tests.selftest_invariants.test_modes import fabricate_met, run_mode_tick
 from tests.selftest_invariants.test_requirements import accept, ceo_token, propose
@@ -54,8 +54,9 @@ def adopted(client, slug="invoice-api", **kwargs) -> dict:
 
 
 def _body(slug, **extra):
+    lead = "tech-lead" if extra.get("mode") == "code_factory" else "ceo"
     return {"slug": slug, "name": "X", "goal": "Build a booking app for clinics",
-            "chairman_email": "chair@example.com", "ceo_role_slug": "ceo",
+            "chairman_email": "chair@example.com", "ceo_role_slug": lead,
             "teams": [{"role_slug": "worker", "name": "A", "employees": ["E1"]}], **extra}
 
 
@@ -137,6 +138,7 @@ def test_a_factory_built_from_nothing_starts_owing_a_plan_with_no_cycle(client):
 
 def test_a_factory_being_built_may_hold_a_sourced_target_date(client):
     make_project(client, slug="seed", start=False)
+    seed_role(client, "tech-lead", is_ceo=True)
     deadline = (utcnow() + timedelta(days=60)).isoformat()
     anonymous = client.post("/admin/projects", json=_body(
         "dated", mode="code_factory", deadline=deadline), headers=ADMIN)
@@ -329,3 +331,44 @@ def test_an_adopted_repo_is_read_before_any_work_is_created(client):
     with db_session() as session:
         assert policy.plan_requirement(session, project["id"]).status == RequirementStatus.MET
     assert make_task(client, token, project, rid).status_code == 200
+
+
+def test_a_factory_is_led_by_the_tech_lead_and_nothing_else_is(client):
+    """The kind answers who runs it. The form used to ask anyway, offering the
+    generic CEO and the FPL strategists beside the Tech Lead, and a factory
+    founded under any of them had a lead with none of the factory's verbs."""
+    make_project(client, slug="seed", start=False)
+    seed_role(client, "tech-lead", is_ceo=True)
+    unnamed = _body("unnamed", mode="code_factory")
+    del unnamed["ceo_role_slug"]
+    filled = client.post("/admin/projects", json=unnamed, headers=ADMIN)
+    assert filled.status_code == 200, filled.text
+    exported = client.get(f"/admin/projects/{filled.json()['id']}/export", headers=ADMIN)
+    assert exported.json()["project"]["ceo_role_slug"] == "tech-lead"
+
+    generic = client.post("/admin/projects", json=_body(
+        "generic", mode="code_factory", ceo_role_slug="ceo"), headers=ADMIN)
+    assert generic.status_code == 422 and "Tech Lead" in generic.json()["detail"]
+
+    borrowed = client.post("/admin/projects", json=_body(
+        "borrowed", mode="deliver", ceo_role_slug="tech-lead"), headers=ADMIN)
+    assert borrowed.status_code == 422 and "Code Factory projects only" in \
+        borrowed.json()["detail"]
+
+
+def test_a_factory_founded_silent_on_evidence_gets_floors_its_work_can_meet(client):
+    """A factory's work is building, which no task can make "face outward":
+    the default half-outward floor refused its plan. Silent founders get a
+    zero floor and a drought sized to a first merge; a stated rule stands."""
+    from yaaf.core.constitution import effective
+
+    silent = factory(client, slug="silent", start=False)
+    stated = factory(client, slug="stated", start=False,
+                     constitution={"external_ratio_min": 0.25, "drought_hours": 12})
+    other = make_project(client, slug="other", mode="deliver", start=False)
+    with db_session() as session:
+        assert effective(session, silent["id"]).external_ratio_min == 0.0
+        assert effective(session, silent["id"]).drought_hours == 72
+        assert effective(session, stated["id"]).external_ratio_min == 0.25
+        assert effective(session, stated["id"]).drought_hours == 12
+        assert effective(session, other["id"]).external_ratio_min == 0.5
