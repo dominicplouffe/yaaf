@@ -616,6 +616,9 @@ class NoticeKind(enum.StrEnum):
     # platform refused it; and the platform merged it. Both go to the author,
     # who otherwise learns only by polling a page.
     CHANGE_RETURNED = "change_returned"
+    # A hidden scenario failed on a change: told to its author (a challenge
+    # seat), with what it printed. The builder never hears which or why.
+    SCENARIO_FAILED = "scenario_failed"
     CHANGE_MERGED = "change_merged"
     # Code Factory releases: decided, live, or rolled back by the guard. The
     # last opens an incident; the CEO is told so it can write the postmortem.

@@ -541,9 +541,23 @@ async def t_scenario_add(args):
         "command": args["command"], "checks": args["checks"]}))
 
 
+@tool(
+    "scenario_retire",
+    "Code Factory, challenge seats only. Withdraw a hidden scenario that tests the wrong "
+    "thing: work a later requirement builds, or a rule its requirement never states. Say "
+    "why in `reason`; the CEO is told. File the right one on the requirement it really "
+    "tests with scenario_add.",
+    {"scenario_id": str, "reason": str},
+)
+async def t_scenario_retire(args):
+    return _text(_call("POST", f"/agent/scenarios/{args['scenario_id']}/retire",
+                       {"reason": args["reason"]}))
+
+
 @tool("scenarios_list",
-      "Code Factory. Challenge seats read the hidden scenarios; any other seat reads "
-      "only how many guard each requirement.", {})
+      "Code Factory. Challenge seats read the hidden scenarios, and for each one failing "
+      "on an open change, what it printed; any other seat reads only how many guard "
+      "each requirement.", {})
 async def t_scenarios_list(args):
     return _text(_call("GET", "/agent/scenarios"))
 
@@ -1942,7 +1956,7 @@ def _meta_of(obj) -> dict:
 ALL_TOOLS = [
     t_board, t_requirements, t_task_create, t_task_claim, t_task_complete, t_task_review,
     t_task_block, t_task_kill,
-    t_change_open, t_changes_list, t_change_review, t_scenario_add, t_scenarios_list,
+    t_change_open, t_changes_list, t_change_review, t_scenario_add, t_scenario_retire, t_scenarios_list,
     t_release_propose, t_releases_list, t_incident_postmortem,
     t_requirement_propose, t_requirement_depends_on,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,

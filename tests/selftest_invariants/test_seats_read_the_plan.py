@@ -234,3 +234,39 @@ def test_his_yes_on_the_assist_answers_the_freeze(client, gh):
     assert decided.status_code == 200 and decided.json()["flag_closed"] is True
     with db_session() as session:
         assert changes.merges_frozen(session, session.get(Project, project["id"])) is None
+
+
+# ── a hidden scenario's author reads why it failed, and can withdraw it ─────────
+
+
+def test_a_failing_scenarios_author_is_told_why_and_can_retire_it(client, gh):
+    from yaaf.core.models import Notice, Scenario
+    from yaaf.server import changes as changes_lib
+
+    project = _factory(client, scenarios=True)
+    task_id = _claimed_task(client, project)
+    filed = _scenario(client, project, "a patient can hold a free slot, and the CLI too")
+    sid = filed.json()["id"]
+    change = _open(client, project, task_id).json()
+    with db_session() as session:
+        row = session.get(Change, change["id"])
+        changes_lib.record_scenarios(session, row, row.head_sha, {sid: False},
+                                     {sid: "exit 1: FAIL: bin/durations.js missing"})
+        told = [n.body for n in session.query(Notice).filter_by(project_id=project["id"])
+                if "fails on change" in n.body]
+    assert told and "bin/durations.js missing" in told[0]
+
+    _, rhea = live_token(project["id"], _agent(project, "Rhea"))
+    listed = client.get("/agent/scenarios", headers=bearer(rhea)).json()["scenarios"]
+    assert listed[0]["failing_on"][0]["printed"].endswith("bin/durations.js missing")
+    _, mika = live_token(project["id"], _agent(project, "Mika"))
+    seen = client.get("/agent/scenarios", headers=bearer(mika)).text
+    assert "durations.js" not in seen, "the builder never reads why"
+    assert client.post(f"/agent/scenarios/{sid}/retire", headers=bearer(mika),
+                       json={"reason": "the builder would love to drop this one"}
+                       ).status_code == 403
+    retired = client.post(f"/agent/scenarios/{sid}/retire", headers=bearer(rhea),
+                          json={"reason": "It tests the CLI, which a later requirement builds."})
+    assert retired.status_code == 200, retired.text
+    with db_session() as session:
+        assert session.get(Scenario, sid).retired_at is not None

@@ -956,13 +956,44 @@ def requeue_lost_jobs(session: Session, project: Project) -> int:
 
 
 def record_scenarios(session: Session, change: Change, sha: str,
-                     results: dict[str, bool]) -> None:
+                     results: dict[str, bool], why: dict[str, str] | None = None) -> None:
     """What the runner saw. Ignored when the change has moved on since: a pass
-    on an older commit is a pass on code that is no longer the change."""
+    on an older commit is a pass on code that is no longer the change.
+
+    A failure is told to the scenario's author, once per change, with the end
+    of what it printed. Nobody could read why before: the Durations factory's
+    R-01 scenario stubbed out a CLI that a later requirement builds, failed
+    every CI change, and neither its author nor anyone else could tell the
+    scenario was the one asking too much."""
+    from yaaf.core.models import Scenario
+
     project = session.get(Project, change.project_id)
     if project is None or sha != change.head_sha:
         return
-    change.scenario_results = {"sha": sha, "results": dict(results), "at": utcnow().isoformat()}
+    why = {k: str(v)[:1500] for k, v in (why or {}).items() if results.get(k) is False}
+    change.scenario_results = {"sha": sha, "results": dict(results), "why": why,
+                               "at": utcnow().isoformat()}
+    told = set((change.findings or {}).get("scenarios_told") or [])
+    requirement = session.get(Requirement, change.requirement_id) if change.requirement_id \
+        else None
+    for scenario_id, ok in results.items():
+        if ok or scenario_id in told:
+            continue
+        scenario = session.get(Scenario, scenario_id)
+        if scenario is None or not scenario.author_agent_id:
+            continue
+        told.add(scenario_id)
+        key = requirement.key if requirement else "its requirement"
+        _tell(session, project, scenario.author_agent_id, NoticeKind.SCENARIO_FAILED,
+              f"Your hidden scenario \"{scenario.name}\" fails on change #{change.number} "
+              f"({change.title}), which serves {key}. It printed: "
+              f"{why.get(scenario_id) or '(nothing)'}\n"
+              f"If the change is wrong, say nothing: its author sees only the count. If the "
+              f"change does what {key} says and your scenario asks for more (work a later "
+              "requirement builds), retire it with scenario_retire and file it on the "
+              "requirement it really tests.")
+    if told:
+        change.findings = {**(change.findings or {}), "scenarios_told": sorted(told)}
     _audit(session, project, "change.scenarios", change,
            {"sha": sha, "passed": sum(1 for ok in results.values() if ok),
             "total": len(results)})

@@ -1899,8 +1899,9 @@ def _materialize_scenarios(session: Session, queued, project: Project, run, job:
 
 def _run_scenarios(job: RunJob) -> RunResult:
     """Check out the change's exact commit, run each scenario from its root,
-    record pass/fail by exit code, and remove the checkout. The output kept is
-    a count: which scenario failed, and why, is the test seat's to read."""
+    record pass/fail by exit code, and remove the checkout. Which scenario
+    failed, and the end of what it printed, go to the platform for the test
+    seat to read; the builder hears only the count."""
     import json
     import shutil
 
@@ -1908,15 +1909,18 @@ def _run_scenarios(job: RunJob) -> RunResult:
 
     where = Path(job.workspace_dir)
     results: dict[str, bool] = {}
+    why: dict[str, str] = {}
     try:
         failed = _checkout(job, where)
         if failed:
             return RunResult(ok=False, summary=f"could not check out the change: {failed}")
         per = max(30, job.timeout_s // max(1, len(job.scenarios)))
         for scenario_id, command in job.scenarios:
-            code, _output = run_check_command(command=command, workspace_dir=str(where),
-                                              timeout_s=per)
+            code, output = run_check_command(command=command, workspace_dir=str(where),
+                                             timeout_s=per)
             results[scenario_id] = code == 0
+            if code != 0:
+                why[scenario_id] = f"exit {code}: " + (output or "").strip()[-1200:]
     except Exception as exc:
         return RunResult(ok=False, summary=f"scenario run crashed: {type(exc).__name__}")
     finally:
@@ -1924,7 +1928,8 @@ def _run_scenarios(job: RunJob) -> RunResult:
     passed = sum(results.values())
     return RunResult(ok=True, summary=f"hidden scenarios {passed}/{len(results)}",
                      check_exit_code=0 if passed == len(results) else 1,
-                     check_output=json.dumps({"sha": job.check_sha, "results": results}))
+                     check_output=json.dumps({"sha": job.check_sha, "results": results,
+                                              "why": why}))
 
 
 def _checkout(job: RunJob, where: Path) -> str | None:
@@ -2363,7 +2368,8 @@ def _finalize_scenario_check(session: Session, job: RunJob, result: RunResult) -
         data = json.loads(result.check_output)
     except ValueError:
         return
-    changes.record_scenarios(session, change, data.get("sha") or "", data.get("results") or {})
+    changes.record_scenarios(session, change, data.get("sha") or "", data.get("results") or {},
+                             data.get("why") or {})
 
 
 def _run_check_command(job: RunJob) -> RunResult:

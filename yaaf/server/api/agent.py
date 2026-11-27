@@ -671,6 +671,52 @@ def add_scenario(body: ScenarioAdd, ctx: RunContext = Depends(run_auth),
             "hidden": len(changes.live_scenarios(session, requirement.id))}
 
 
+class ScenarioRetire(BaseModel):
+    reason: str = Field(min_length=20, max_length=1000)
+
+
+@router.post("/scenarios/{scenario_id}/retire")
+def retire_scenario(scenario_id: str, body: ScenarioRetire,
+                    ctx: RunContext = Depends(run_auth),
+                    session: Session = Depends(db)) -> dict:
+    """A challenge seat withdraws a hidden scenario that tests the wrong thing —
+    work a later requirement builds, a rule its requirement never states. There
+    was no way to: one such scenario held every change to its requirement, and
+    the platform's own retire was a hand edit to the database."""
+    from yaaf.core.models import Change, Notice, NoticeKind, Scenario
+    from yaaf.server import changes
+
+    changes.require_factory(ctx.project)
+    if not policy.is_review_seat(session, ctx.agent):
+        raise Refusal("A hidden scenario is withdrawn by a challenge seat. A seat that "
+                      "builds cannot remove the test it is judged by.", status_code=403)
+    row = session.get(Scenario, scenario_id)
+    if row is None or row.project_id != ctx.project.id:
+        raise Refusal("Unknown scenario.", status_code=404)
+    if row.retired_at is not None:
+        return {"id": row.id, "retired": True, "note": "already retired"}
+    row.retired_at = utcnow()
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id, actor=f"agent:{ctx.agent.id}",
+        action="scenario.retire", entity="scenario", entity_id=row.id,
+        detail={"name": row.name[:200], "reason": body.reason.strip()[:1000]}))
+    session.flush()
+    for change in session.execute(
+        select(Change).where(Change.requirement_id == row.requirement_id,
+                             Change.status.in_(changes.LIVE[:2]))
+    ).scalars():
+        changes.queue_scenarios(session, ctx.project, change)
+        changes.evaluate(session, ctx.project, change)
+    ceo = policy.ceo_of(session, ctx.project.id)
+    if ceo is not None and ceo.id != ctx.agent.id:
+        session.add(Notice(id=ids.new_id(ids.NOTICE), project_id=ctx.project.id,
+                           agent_id=ceo.id, kind=NoticeKind.SCENARIO_FAILED,
+                           body=f"{ctx.agent.name} retired the hidden scenario "
+                                f"\"{row.name[:160]}\": {body.reason.strip()[:600]}"))
+    return {"id": row.id, "retired": True,
+            "hidden": len(changes.live_scenarios(session, row.requirement_id))}
+
+
 @router.get("/scenarios")
 def list_scenarios(ctx: RunContext = Depends(run_auth),
                    session: Session = Depends(db)) -> dict:
@@ -688,8 +734,22 @@ def list_scenarios(ctx: RunContext = Depends(run_auth),
         select(Scenario).where(Scenario.project_id == ctx.project.id,
                                Scenario.retired_at.is_(None))
     ).scalars()
+    from yaaf.core.models import Change
+
+    failing: dict[str, list[dict]] = {}
+    for change in session.execute(
+        select(Change).where(Change.project_id == ctx.project.id,
+                             Change.status.in_(changes.LIVE[:2]))
+    ).scalars():
+        run = change.scenario_results or {}
+        if run.get("sha") != change.head_sha:
+            continue
+        for sid, said in (run.get("why") or {}).items():
+            failing.setdefault(sid, []).append({"change": change.number, "printed": said})
     return {"scenarios": [{"id": r.id, "requirement_id": r.requirement_id, "name": r.name,
-                           "command": r.command} for r in rows],
+                           "command": r.command,
+                           **({"failing_on": failing[r.id]} if r.id in failing else {})}
+                          for r in rows],
             "counts": changes.scenario_counts(session, ctx.project)}
 
 

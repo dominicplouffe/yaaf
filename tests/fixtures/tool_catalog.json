@@ -1301,7 +1301,26 @@
     "name": "scenario_add"
   },
   {
-    "description": "Code Factory. Challenge seats read the hidden scenarios; any other seat reads only how many guard each requirement.",
+    "description": "Code Factory, challenge seats only. Withdraw a hidden scenario that tests the wrong thing: work a later requirement builds, or a rule its requirement never states. Say why in `reason`; the CEO is told. File the right one on the requirement it really tests with scenario_add.",
+    "input_schema": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "scenario_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "scenario_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "scenario_retire"
+  },
+  {
+    "description": "Code Factory. Challenge seats read the hidden scenarios, and for each one failing on an open change, what it printed; any other seat reads only how many guard each requirement.",
     "input_schema": {
       "properties": {},
       "required": [],
