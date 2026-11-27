@@ -31,6 +31,7 @@ from yaaf.core.models import (
     ChangeStatus,
     Flag,
     FlagKind,
+    FlagStatus,
     Notice,
     NoticeKind,
     Project,
@@ -383,6 +384,25 @@ def test_main_moving_without_the_platform_freezes_merging(client, gh):
     assert gh.merges() == []
     listed = client.get(f"/observe/projects/{project['id']}/changes", headers=ADMIN).json()
     assert listed["merges_frozen"] is not None
+
+
+def test_his_answer_to_the_bypass_lifts_the_freeze(client, gh):
+    """His answer is the only way out of the freeze, so it has to be one."""
+    project = _factory(client)
+    _hook(client, project, "push", {
+        "ref": "refs/heads/main", "after": "b" * 40, "pusher": {"name": "dplouffe"},
+        "sender": {"login": "dplouffe"}}, "push-his")
+    assert _reconcile(project) == 1
+    with db_session() as session:
+        flag = session.query(Flag).filter_by(project_id=project["id"],
+                                             kind=FlagKind.MAIN_BYPASSED).one()
+        flag.status = FlagStatus.RAISED          # the CEO told him, as it must
+        flag_id = flag.id
+    answered = client.post(f"/admin/flags/{flag_id}/ack", headers=ADMIN,
+                           json={"note": "It was me: the approve button did nothing. Keep it."})
+    assert answered.status_code == 200, answered.text
+    with db_session() as session:
+        assert changes.merges_frozen(session, session.get(Project, project["id"])) is None
 
 
 def test_the_platforms_own_merge_arriving_as_a_push_is_accounted_for(client, gh):

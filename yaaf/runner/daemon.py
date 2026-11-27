@@ -293,6 +293,14 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
             return None
         job.check_command = (task.success_test or {}).get("command", "")
         job.timeout_s = min(cons.run_timeout_s, 300)
+        # Judged where the work is. In a Code Factory each seat has its own
+        # checkout and nobody works in the shared tree any more; 27 November
+        # 2026, the Split app: the check ran there, at the repo's first commit,
+        # and failed "test -f .github/workflows/ci.yml" four times while the
+        # builder's own checkout held the file and passed the same command.
+        if task.claimed_by_agent_id:
+            job.workspace_dir = _prepare_workspace(session, project,
+                                                   agent_id=task.claimed_by_agent_id)
         return job
 
     if queued.kind == RunKind.SCENARIO_CHECK:
@@ -303,6 +311,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
         return _materialize_change_scan(session, queued, project, run, job, cons)
 
     if queued.kind == RunKind.REQUIREMENT_CHECK:
+        _refresh_shared_tree(session, project, Path(job.workspace_dir))
         requirement = session.get(Requirement, queued.requirement_id)
         # A daily obligation is judged at its deadline, not on the CHECKING
         # transition: its status stays wherever its work has it (see
@@ -646,6 +655,40 @@ def _prepare_workspace(session: Session, project: Project,
             return str(seat)
     _materialize_mail(session, project, workspace)
     return str(workspace)
+
+
+def _refresh_shared_tree(session: Session, project: Project, workspace: Path) -> None:
+    """Bring a Code Factory's shared tree to the remote's latest main before a
+    requirement is judged in it. Seats work in checkouts of their own, so
+    nothing moves the shared tree after its first clone: an acceptance test run
+    there judges the repo's first commit forever. A seat whose own checkout
+    could not be made falls back to working here, so a tree holding changes is
+    left alone. Never fatal: a failed fetch is judged as before."""
+    import subprocess
+
+    from yaaf.core import shape
+    from yaaf.server import github
+
+    if not (shape.is_factory(project) and project.github_repo and (workspace / ".git").exists()):
+        return
+    token = github.platform_token(session)
+    if not token:
+        return
+    dirty = subprocess.run(["git", "-C", str(workspace), "status", "--porcelain"],
+                           capture_output=True, text=True, timeout=60)
+    if dirty.returncode != 0 or dirty.stdout.strip():
+        log.info("left %s's shared tree as it is: it holds uncommitted work", project.slug)
+        return
+    try:
+        for step in (["git", "-C", str(workspace), "fetch", "-q",
+                      github.clone_url(project.github_repo, token), "HEAD"],
+                     ["git", "-C", str(workspace), "reset", "-q", "--hard", "FETCH_HEAD"]):
+            proc = subprocess.run(step, capture_output=True, text=True, timeout=180)
+            if proc.returncode != 0:
+                raise RuntimeError((proc.stderr or "").replace(token, "<redacted>").strip()[:300])
+    except Exception as exc:
+        log.warning("could not bring %s's shared tree to main: %s", project.slug,
+                    str(exc).replace(token, "<redacted>"))
 
 
 def seat_path(project_slug: str, agent_id: str) -> Path:

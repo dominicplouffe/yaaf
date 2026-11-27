@@ -12,8 +12,9 @@ from sqlalchemy import select
 
 from tests.conftest import ADMIN, make_project
 from yaaf.core.db import db_session
-from yaaf.core.models import AuditLog, Project
+from yaaf.core.models import AuditLog, Project, RunKind, RunQueue, Task, TaskStatus
 from yaaf.runner import daemon
+from yaaf.runner.types import RunJob
 from yaaf.server import github
 
 PLATFORM_TOKEN = "ghp_platform_token_for_tests"
@@ -290,3 +291,67 @@ def test_a_project_that_is_not_a_factory_keeps_its_one_shared_tree(client, monke
         row = session.get(Project, project["id"])
         assert daemon._prepare_workspace(session, row, agent_id="agent_a") == \
             daemon._prepare_workspace(session, row)
+
+
+def _push_to_main(tmp_path: Path, bare: Path, name: str) -> None:
+    newer = tmp_path / f"push-{name}"
+    subprocess.run(["git", "clone", "-q", str(bare), str(newer)], check=True)
+    (newer / name).write_text("merged since\n")
+    _git(newer, "-c", "user.email=t@e", "-c", "user.name=T", "add", ".")
+    _git(newer, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-qm", name)
+    _git(newer, "push", "-q", "origin", "HEAD")
+
+
+def _queued_check(project: dict, kind: str, **fields) -> RunJob | None:
+    from yaaf.core import ids
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        queued = RunQueue(id=ids.new_id(ids.RUN), project_id=row.id, kind=kind,
+                          trigger={"type": kind}, **fields)
+        session.add(queued)
+        session.flush()
+        return daemon._materialize(session, queued, row)
+
+
+def test_a_factory_tasks_check_runs_in_its_builders_own_checkout(client, monkeypatch,
+                                                                tmp_path):
+    """27 November 2026, the Split app: the success check ran in the shared
+    tree, which no seat works in and nothing moves, so it judged the repo's
+    first commit and failed four times while the builder's checkout passed."""
+    project = make_project(client, slug="ghcheck", mode="code_factory")
+    _install_platform_secret(client)
+    bare = _seed_bare_repo(tmp_path)
+    monkeypatch.setattr(github, "clone_url", lambda name, token: f"file://{bare}")
+    _set_github_repo(project["id"], "acme/ghcheck")
+    builder = project["teams"][0]["agents"][0]["id"]
+    with db_session() as session:
+        seat = Path(daemon._prepare_workspace(session, session.get(Project, project["id"]),
+                                              agent_id=builder))
+        task = Task(id="task_ghcheck", project_id=project["id"],
+                    team_id=project["teams"][0]["id"], title="Add CI", goal="CI runs the tests.",
+                    success_test={"type": "command", "command": "test -f ci.yml"},
+                    status=TaskStatus.CHECKING, claimed_by_agent_id=builder,
+                    created_by_agent_id=project["ceo_agent_id"])
+        session.add(task)
+    job = _queued_check(project, RunKind.SUCCESS_CHECK, task_id="task_ghcheck")
+    assert job is not None and Path(job.workspace_dir) == seat
+
+
+def test_a_requirement_is_judged_on_mains_latest_commit(client, monkeypatch, tmp_path):
+    project = make_project(client, slug="ghreq", mode="code_factory")
+    _install_platform_secret(client)
+    bare = _seed_bare_repo(tmp_path)
+    monkeypatch.setattr(github, "clone_url", lambda name, token: f"file://{bare}")
+    _set_github_repo(project["id"], "acme/ghreq")
+    with db_session() as session:
+        shared = Path(daemon._prepare_workspace(session, session.get(Project, project["id"])))
+    _push_to_main(tmp_path, bare, "ci.yml")
+    _queued_check(project, RunKind.REQUIREMENT_CHECK, requirement_id="reqt_none")
+    assert (shared / "ci.yml").exists(), "the shared tree is brought to main first"
+
+    _push_to_main(tmp_path, bare, "later.txt")
+    (shared / "work.txt").write_text("a seat that fell back to here, mid-change\n")
+    _queued_check(project, RunKind.REQUIREMENT_CHECK, requirement_id="reqt_none")
+    assert (shared / "work.txt").exists() and not (shared / "later.txt").exists(), \
+        "a tree holding uncommitted work is left as it is"

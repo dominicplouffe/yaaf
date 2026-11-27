@@ -57,7 +57,12 @@ HISTORICAL_KINDS = (FlagKind.CYCLE_MISSED, FlagKind.STANDING_MISSED)
 #: the janitor's budget sweep against one month's overrun record — but it is
 #: the same shape of news: that month is over, and no arithmetic will ever
 #: un-spend it.
-ACK_CLOSES = (*HISTORICAL_KINDS, FlagKind.BUDGET_OVERRUN)
+#:
+#: `main_bypassed` is a moment too — a push that already happened — and it
+#: freezes merging until he answers. It was left out, so his answer stamped it
+#: and the freeze stood for good: 27 November 2026, the Split app's chairman
+#: merged its CI change by hand and no change could ever merge after it.
+ACK_CLOSES = (*HISTORICAL_KINDS, FlagKind.BUDGET_OVERRUN, FlagKind.MAIN_BYPASSED)
 
 #: Gates that mean a WALL stopped the work, as opposed to the project having
 #: scheduled its own board shut. `dispatcher.activity_state` names each of
