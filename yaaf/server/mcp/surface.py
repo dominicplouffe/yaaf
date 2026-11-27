@@ -194,6 +194,13 @@ WITHHELD = {
     "POST /admin/projects/{project_id}/github":
         "provisioning takes a GitHub token — a credential value, inbound, that the "
         "chairman should paste where only they can read it.",
+    "PUT /admin/projects/{project_id}/factory/push-token":
+        "it takes the GitHub key a Code Factory's seats push with — a credential "
+        "value, inbound, that the chairman should paste where only they can read it.",
+    "GET /admin/projects/{project_id}/factory/setup":
+        "what a Code Factory still needs wired, for the chairman's own Settings card "
+        "and Changes tab; every item on it is fixed on that screen (a key, a repo), "
+        "so a model client reading it could only tell him to go there.",
     "POST /admin/approvals/{approval_id}/extend":
         "moving a pending approval's deadline is for the receiver that could not "
         "reach the chairman — an outage on its side, not a judgment. A model "

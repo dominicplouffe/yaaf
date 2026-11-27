@@ -154,6 +154,15 @@ test("a Code Factory names its own lead and crew", async ({ page }) => {
   await expect(page.getByRole("button", { name: /Software Architect/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Code Reviewer/ })).toBeVisible();
 
+  // Its proof is shipping, so the outside-evidence knobs are not asked; the
+  // repo is, and the rules it takes on by default are said before Create.
+  await expect(page.getByText(/Drought window/)).toHaveCount(0);
+  await expect(page.getByText(/External evidence must be verified/)).toHaveCount(0);
+  await expect(page.getByText(/Your own domains/)).toHaveCount(0);
+  await expect(page.getByText(/Blank creates a new private repo/)).toBeVisible();
+  await expect(page.locator(".orgline", { hasText: "Factory rules" }))
+    .toContainText(/you approve the first release.*hidden tests, security scans, code-health checks/);
+
   // Adopting a repo swaps the crew the form chose; it is still the form's.
   await page.getByRole("radio", { name: /A repo I already have/ }).click();
   await expect(page.getByText(/Filled with the\s+Keep a repo healthy\s+crew/)).toBeVisible();
@@ -163,4 +172,5 @@ test("a Code Factory names its own lead and crew", async ({ page }) => {
   await expect(page.getByText(/always led by its Tech Lead/)).toHaveCount(0);
   await expect(page.locator(".pickcard", { hasText: "CEO / Project Manager" })).toBeVisible();
   await expect(page.locator(".pickcard", { hasText: "Tech Lead" })).toHaveCount(0);
+  await expect(page.getByText(/Drought window/)).toHaveCount(1);
 });

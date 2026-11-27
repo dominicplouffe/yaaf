@@ -554,6 +554,12 @@ def build(client, project_id: str | None, spec: dict, steps: list[dict],
             install_facts.notification_line(install),
             "the workspace — the drill works in a directory it deletes, and a "
             "github_repo in the spec is not cloned into it",
+            *(["the Code Factory's GitHub half — no repo, branch, pull request, CI run, "
+               "review of a change or merge happens in a drill: it rehearses the plan, "
+               "the board and the money. What a factory needs from GitHub is on its "
+               "Settings → Integrations card, checked against the real repo"]
+              if (spec.get("project") if isinstance(spec.get("project"), dict)
+                  else spec).get("mode") == "code_factory" else []),
             *(["email — this project's work runs through email, and a drill sends and "
                "reads none: it started without the mailbox a real start needs, and no "
                "correspondent wrote to it"]

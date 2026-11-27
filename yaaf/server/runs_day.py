@@ -70,6 +70,7 @@ HISTORY_DAYS = 14
 REASON_FAMILY = {
     "claimed_task": "task", "team_task_ready": "task", "assignment_ready": "task",
     "review_owed": "review", "review": "review", "review_reply": "review",
+    "change_review_owed": "review", "scenarios_owed": "review",
     "notices": "notice",
     "messages": "msg",
     "heartbeat": "plan", "daily": "plan", "cycle_plan": "plan",

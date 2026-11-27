@@ -386,3 +386,25 @@ def test_a_runner_without_the_scanners_fails_the_gate_closed(tmp_path, repo):
         fake = Change(head_sha=sha, findings={"scan": {"sha": sha, **data["result"]}})
         assert not changes.scan_gate(fake, ConstitutionDoc()).get("ok")
     assert not (tmp_path / ".scans" / "run_s").exists()
+
+
+def test_a_change_left_waiting_only_on_the_chairman_tells_him_once(client, gh, monkeypatch):
+    """Found by an audit of a new factory: its first change is its CI setup,
+    which waits on the chairman — and the only sign of it was a button on the
+    Changes tab nothing pointed at. Told once, when he is all that is left."""
+    from yaaf.server import notify
+
+    told: list[str] = []
+    monkeypatch.setattr(notify, "chairman_notify",
+                        lambda session, project, subject, body, **kw: told.append(subject))
+    project = _factory(client)
+    change = _ready_but_for(client, project, gh, CI_FILE)
+    _sign_with(client, project, change["id"], allow_ci_change=(
+        "Adds the first CI workflow; it runs the test suite and blocks on failure."))
+    assert told == [f"Change #{change['number']} needs your approval"]
+    with db_session() as session:
+        from yaaf.core.models import Project
+
+        changes.evaluate(session, session.get(Project, project["id"]),
+                         session.get(changes.Change, change["id"]))
+    assert len(told) == 1, "once per commit, however often the gates are read"

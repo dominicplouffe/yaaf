@@ -201,3 +201,27 @@ def test_runner_without_platform_secret_uses_plain_dir(client, monkeypatch):
     workspace = _prepare(project["id"])
     assert workspace.is_dir()
     assert not (workspace / ".git").exists()
+
+
+def test_a_repo_attached_after_the_first_run_is_still_cloned(client, monkeypatch, tmp_path):
+    """Found by an audit of a new factory: the form started the project, the
+    first run wrote its trace into the workspace, and only then was the repo
+    attached — `git clone` refuses a non-empty directory, so every run after
+    worked in a plain dir with no remote and no seat could ever push."""
+    project = make_project(client, slug="ghlate")
+    _install_platform_secret(client)
+    bare = _seed_bare_repo(tmp_path)
+    monkeypatch.setattr(github, "clone_url", lambda name, token: f"file://{bare}")
+    early = _prepare(project["id"])
+    (early / ".yaaf").mkdir(exist_ok=True)
+    (early / ".yaaf" / "trace-run_1.jsonl").write_text("{}\n")
+
+    _set_github_repo(project["id"], "acme/ghlate")
+    workspace = _prepare(project["id"])
+    assert (workspace / ".git").is_dir()
+    assert (workspace / "README.md").read_text() == "seeded\n"
+    assert (workspace / ".yaaf" / "trace-run_1.jsonl").exists(), "the run's files stay"
+    assert not [p for p in workspace.parent.iterdir() if "-clone-" in p.name], "no leftovers"
+    origin = subprocess.run(["git", "-C", str(workspace), "remote", "get-url", "origin"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    assert origin == "https://github.com/acme/ghlate.git"

@@ -191,6 +191,26 @@ def require_project_running(project: Project) -> None:
 # ── evidence facts ──────────────────────────────────────────────────────────────
 
 
+def attest_shipped(session: Session, project, description: str,
+                   source_url: str | None, task_id: str | None = None) -> None:
+    """A Code Factory's outside proof: a change the platform merged, or a
+    release its canary watch passed. Written by the platform, never an agent,
+    and only after every gate held on that exact commit — CI, the scan, an
+    independent review — so it counts the way a signed webhook does. Without
+    it a factory's only work, shipping code, read as a project talking to
+    itself: its evidence drought fired a day after founding and refused the
+    Tech Lead's next task."""
+    from yaaf.core import ids
+    from yaaf.core.models import EvidenceProvenance
+
+    session.add(Evidence(
+        id=ids.new_id(ids.EVIDENCE), project_id=project.id, task_id=task_id,
+        created_by_agent_id=None, kind=EvidenceKind.EXTERNAL,
+        provenance=EvidenceProvenance.PLATFORM_ATTESTED, description=description,
+        source_url=source_url, verification=VerificationStatus.NOT_APPLICABLE,
+        occurred_at=utcnow()))
+
+
 def countable_external_evidence(session: Session, project_id: str, since: datetime) -> int:
     """External evidence that actually counts: platform-attested, or
     agent-claimed AND verified. The most gameable field in the system is only
@@ -612,7 +632,11 @@ def _check_top_level_create(
             status_code=409,
         )
 
-    if drought_active(session, project.id, cons) and not produces_external_evidence:
+    # Not in a Code Factory. Its outside proof is a merge, and a merge needs a
+    # task first — refusing the task during a drought deadlocked it for good.
+    # There the drought is the CEO's notice and the chairman's screen.
+    if drought_active(session, project.id, cons) and not produces_external_evidence \
+            and not shape.is_factory(project):
         raise Refusal(
             f"Evidence drought: no verified external evidence in {cons.drought_hours}h. "
             "While the drought holds you may only create tasks with "
@@ -793,6 +817,23 @@ def review_seats(session: Session, project_id: str) -> list[Agent]:
                Role.category == REVIEW_CATEGORY)
         .order_by(Agent.id)
     ).scalars())
+
+
+def seat_role_slugs(session: Session, seats: list[Agent]) -> dict[str, str]:
+    """Each seat's role, by slug — which of several challenge seats does a
+    given job (the code reviewer reads changes; the test engineer writes the
+    hidden scenarios)."""
+    from yaaf.core.models import Role, RoleVersion
+
+    if not seats:
+        return {}
+    return dict(session.execute(
+        select(Agent.id, Role.slug)
+        .join(Team, Team.id == Agent.team_id)
+        .join(RoleVersion, RoleVersion.id == Team.role_version_id)
+        .join(Role, Role.id == RoleVersion.role_id)
+        .where(Agent.id.in_([s.id for s in seats]))
+    ).all())
 
 
 def is_review_seat(session: Session, agent: Agent) -> bool:

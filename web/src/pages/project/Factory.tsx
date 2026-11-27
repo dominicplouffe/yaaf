@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Dashboard, get, post, put } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import { ProjectCtx } from "../../projectCtx";
@@ -47,6 +48,8 @@ export function Changes({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, seats } = ctx;
   const { data, reload } = usePoll(() => get<ChangesView>(`/observe/projects/${projectId}/changes`),
     10000, [projectId]);
+  const { data: setup } = usePoll(
+    () => get<FactorySetup>(`/admin/projects/${projectId}/factory/setup`), 30000, [projectId]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   if (!data) return <Skeleton />;
@@ -71,9 +74,18 @@ export function Changes({ ctx }: { ctx: ProjectCtx }) {
           The platform still refuses to count anything it did not merge, and freezes merging if main moves without it.</p>
       )}
       {error && <p className="help serious">{error}</p>}
-      {data.changes.length === 0 && (
+      {data.changes.length === 0 && (setup && (!setup.repo || !setup.push_token.set
+        || setup.push_token.missing.length > 0) ? (
+        <div className="card warn-card">
+          <b>Nothing can be built yet.</b>{" "}
+          {!setup.repo ? "This factory has no repository to push to."
+            : "The seats that build have no GitHub key to push with."}{" "}
+          <Link to={`/projects/${projectId}/settings?s=integrations`}>Finish it in Settings → Integrations</Link>.
+          The crew can still write and agree the spec meanwhile.
+        </div>
+      ) : (
         <p className="help">No changes yet. A seat opens one for the task it holds; the platform merges it once every gate is green.</p>
-      )}
+      ))}
       {data.changes.map((c) => {
         const waitsOnYou = (g: Gate | undefined) => !!g && !g.ok && g.detail.includes("chairman");
         const needsYou = (waitsOnYou(c.gates.protected) || waitsOnYou(c.gates.ci_config))
@@ -234,6 +246,106 @@ export function EnvironmentsCard({ projectId, dash }: { projectId: string; dash:
       <button className="primary" onClick={save}
         disabled={!envs.production.deploy.trim() || !envs.production.health_url.trim()}>Save</button>
       {said && <p className="help">{said}</p>}
+    </div>
+  );
+}
+
+type FactorySetup = {
+  platform_token: boolean;
+  repo: string | null;
+  branch_protection: { ok: boolean; detail: string } | null;
+  push_token: { set: boolean; granted: string[]; missing: string[] };
+  notifications: { hook: { ok: boolean; detail: string } | null;
+    last_delivery_at: string | null; polled_every_s: number };
+  environments: string[];
+};
+
+/** Everything a Code Factory needs from GitHub, on one card, in the order it
+    is needed. Each of these used to be found missing by an agent's failed
+    run: the platform's own key, the repo, the key the seats push with, and
+    whether GitHub can reach this install at all. */
+export function FactoryGithub({ projectId }: { projectId: string }) {
+  const { data, reload } = usePoll(
+    () => get<FactorySetup>(`/admin/projects/${projectId}/factory/setup`), 30000, [projectId]);
+  const [platformKey, setPlatformKey] = useState("");
+  const [repo, setRepo] = useState("");
+  const [pushKey, setPushKey] = useState("");
+  const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (!data) return <Skeleton />;
+
+  async function act(what: () => Promise<unknown>, done: string, clear?: () => void) {
+    setBusy(true); setSaid(null);
+    try { await what(); setSaid({ ok: true, text: done }); clear?.(); reload(); }
+    catch (e) { setSaid({ ok: false, text: e instanceof Error ? e.message : String(e) }); }
+    finally { setBusy(false); }
+  }
+  const mark = (ok: boolean) => <span className={`badge ${ok ? "good" : "warn"}`}>{ok ? "done" : "to do"}</span>;
+  const hook = data.notifications.hook;
+
+  return (
+    <div className="card factory-github">
+      <h3>{mark(data.platform_token)} 1. The platform's GitHub key</h3>
+      {data.platform_token ? (
+        <p className="help">Connected. The platform creates the repo, opens pull requests and
+          merges with it. No agent ever holds it.</p>
+      ) : <>
+        <p className="help">A GitHub token for the account the platform acts as: it creates the
+          repo, opens pull requests, reads CI and merges. Fine-grained: Contents, Pull requests,
+          Administration (to protect main) and Webhooks, read and write. Used for every project
+          on this install.</p>
+        <input type="password" value={platformKey} placeholder="github_pat_…"
+          onChange={(e) => setPlatformKey(e.target.value)} aria-label="Platform GitHub key" />
+        <button className="primary" disabled={busy || platformKey.trim().length < 8}
+          onClick={() => act(() => post("/admin/secrets", {
+            project_id: null, name: "github", value: platformKey.trim(), role_scopes: [] }),
+          "Saved.", () => setPlatformKey(""))}>Save</button>
+      </>}
+
+      <h3>{mark(!!data.repo)} 2. The repository</h3>
+      {data.repo ? (
+        <p className="help">Builds in <code>{data.repo}</code>.
+          {data.branch_protection && !data.branch_protection.ok &&
+            ` GitHub could not be told to protect main (${data.branch_protection.detail}); the platform still freezes merging if main moves without it.`}</p>
+      ) : <>
+        <p className="help">A bare name creates a new private repo; owner/name uses one you made
+          (it should be empty for a new build).</p>
+        <input value={repo} placeholder="my-app or owner/my-app" disabled={!data.platform_token}
+          onChange={(e) => setRepo(e.target.value)} aria-label="Repository" />
+        <button className="primary" disabled={busy || !data.platform_token || !repo.trim()}
+          onClick={() => act(() => post(`/admin/projects/${projectId}/github`, { repo: repo.trim() }),
+            "Connected, and main is protected.")}>Connect</button>
+      </>}
+
+      <h3>{mark(data.push_token.set && data.push_token.missing.length === 0)} 3. The agents' GitHub key</h3>
+      <p className="help">
+        {data.push_token.set && data.push_token.missing.length === 0
+          ? `Held for ${data.push_token.granted.join(", ")}. They push branches with it; only the platform merges.`
+          : "A second token, for the seats that build: they push branches with it and never merge. "
+            + "Fine-grained, this repo only: Contents and Workflows, read and write. "
+            + "A separate account is best, so GitHub shows who wrote what."}
+      </p>
+      {!(data.push_token.set && data.push_token.missing.length === 0) && <>
+        <input type="password" value={pushKey} placeholder="github_pat_…" disabled={!data.repo}
+          onChange={(e) => setPushKey(e.target.value)} aria-label="Agents' GitHub key" />
+        <button className="primary" disabled={busy || !data.repo || pushKey.trim().length < 8}
+          onClick={() => act(() => put(`/admin/projects/${projectId}/factory/push-token`,
+            { token: pushKey.trim() }), "Saved: it can push to the repo.", () => setPushKey(""))}>
+          Check and save</button>
+      </>}
+
+      <h3>{mark(true)} 4. Hearing from GitHub</h3>
+      <p className="help">
+        {hook?.ok
+          ? "GitHub tells this install the moment CI finishes or a branch moves."
+          : `The platform checks GitHub every ${Math.round(data.notifications.polled_every_s / 60) || 1} minute` +
+            `${data.notifications.polled_every_s >= 120 ? "s" : ""} for CI results and new pushes. ` +
+            "Nothing to set up. Give this install a public https address (YAAF_PUBLIC_BASE_URL) " +
+            "and reconnect the repo to have GitHub notify it instantly."}
+        {data.notifications.last_delivery_at &&
+          ` Last notification: ${fmtWhen(data.notifications.last_delivery_at)}.`}
+      </p>
+      {said && <p className={`help${said.ok ? "" : " serious"}`}>{said.text}</p>}
     </div>
   );
 }

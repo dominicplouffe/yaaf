@@ -333,7 +333,35 @@ def evaluate(session: Session, project: Project, change: Change,
     change.status = ChangeStatus.READY if ready else ChangeStatus.OPEN
     if ready:
         change.status_reason = None
+    _ask_chairman_if_only_he_is_left(session, project, change, gates)
     return gates
+
+
+#: The gates only the chairman's own yes can pass.
+CHAIRMAN_GATES = ("protected", "ci_config")
+
+
+def _ask_chairman_if_only_he_is_left(session: Session, project: Project, change: Change,
+                                     gates: dict) -> None:
+    """A change whose every other gate is green and which waits only on the
+    chairman's approval of this commit, said to him once per commit. A new
+    factory's first change is nearly always its CI setup, and it waited on a
+    button on the Changes tab that nothing pointed at."""
+    waiting = [g for g in CHAIRMAN_GATES if not gates.get(g, {}).get("ok", True)]
+    if not waiting or any(not d["ok"] for g, d in gates.items() if g not in CHAIRMAN_GATES):
+        return
+    if (change.findings or {}).get("chairman_asked_sha") == change.head_sha:
+        return
+    change.findings = {**(change.findings or {}), "chairman_asked_sha": change.head_sha}
+    from yaaf.server.notify import Attention, chairman_notify
+
+    what = " and ".join(gates[g]["detail"] for g in waiting)
+    chairman_notify(
+        session, project, f"Change #{change.number} needs your approval",
+        f"Change #{change.number} ({change.title}) has passed every other check and is "
+        f"reviewed. It waits only on you: {what}. Approve it on the Changes tab — the "
+        "approval holds for this exact commit only.",
+        attention=Attention.ACTION)
 
 
 # ── what arrives from GitHub ────────────────────────────────────────────────────
@@ -816,11 +844,89 @@ def merge_ready(session: Session, project: Project) -> int:
         change.status_reason = None
         _audit(session, project, "change.merged", change,
                {"sha": sha, "head": change.head_sha, "reviewer": change.reviewer_agent_id})
+        policy.attest_shipped(
+            session, project, f"Change #{change.number} merged to main: {change.title}",
+            f"https://github.com/{project.github_repo}/pull/{change.number}"
+            if project.github_repo and change.number else None, task_id=change.task_id)
         _tell(session, project, change.author_agent_id, NoticeKind.CHANGE_MERGED,
               f"Change #{change.number} ({change.title}) is merged: {sha[:12]}.")
         session.commit()
         merged += 1
     return merged
+
+
+#: How often a factory asks GitHub for what its webhooks would have said.
+POLL_EVERY_S = 60
+_last_poll: dict[str, float] = {}
+
+
+def poll_github(session: Session, project: Project, *, force: bool = False) -> dict:
+    """Read from GitHub what the webhooks carry: each open change's head and
+    state, the checks on that head, and main's head and its checks.
+
+    A webhook needs GitHub to reach this install, and most installs are a box
+    on a desk at localhost — there the checks gate waited forever on "no check
+    has reported on this commit yet". Polling makes the webhook a speed-up
+    rather than a requirement. Every handler it feeds is the webhook's own, and
+    each is fed only what it has not seen, so a hook that does arrive and this
+    poll never count the same thing twice."""
+    import time
+
+    if not shape.is_factory(project) or not project.github_repo:
+        return {"skipped": "no repo"}
+    now = time.monotonic()
+    if not force and now - _last_poll.get(project.id, -1e9) < POLL_EVERY_S:
+        return {"skipped": "polled recently"}
+    _last_poll[project.id] = now
+    from yaaf.server import upkeep
+
+    repo = project.github_repo
+    seen = {"changes": 0, "checks": 0, "main": None}
+    try:
+        for change in list(session.execute(
+            select(Change).where(Change.project_id == project.id,
+                                 Change.status.in_((ChangeStatus.OPEN, ChangeStatus.READY)),
+                                 Change.number.is_not(None))
+        ).scalars()):
+            pr = github.get_pull_request(session, repo, change.number or 0)
+            if pr.get("state") == "closed":
+                pull_request_event(session, project, "closed", pr)
+                continue
+            if (pr.get("head") or {}).get("sha") not in (None, change.head_sha):
+                pull_request_event(session, project, "synchronize", pr)
+            seen["changes"] += 1
+            for run in github.check_runs(session, repo, change.head_sha or ""):
+                conclusion = (run.get("conclusion") or "pending") \
+                    if run.get("status") == "completed" else "pending"
+                if (change.checks or {}).get(str(run.get("name") or "check")[:120]) \
+                        != conclusion:
+                    check_run_event(session, project, run)
+                    seen["checks"] += 1
+        head = github.branch_head(session, repo, _default_branch(project))
+        known = upkeep.main_head(session, project.id)
+        if head and known is None:
+            # The first sighting is where main starts, not a push around the
+            # gates: a new repo's initial commit would otherwise freeze merging
+            # before the factory had made a single change.
+            upkeep.on_push(session, project, head)
+            seen["main"] = head
+        elif head and head != known:
+            pushed = push_event(session, project, {
+                "ref": f"refs/heads/{_default_branch(project)}", "after": head,
+                "pusher": {"name": "seen by polling"}})
+            upkeep.on_push(session, project, pushed.get("main_push"))
+            seen["main"] = head
+        if head:
+            recorded = {(r.key, (r.data or {}).get("conclusion")) for r in
+                        upkeep._signals(session, project.id, "main_check")}
+            for run in github.check_runs(session, repo, head):
+                conclusion = (run.get("conclusion") or "pending") \
+                    if run.get("status") == "completed" else "pending"
+                if (f"{head}:{run.get('name')}", conclusion) not in recorded:
+                    upkeep.on_check_run(session, project, run)
+    except github.GithubError as exc:
+        return {**seen, "error": str(exc)[:300]}
+    return seen
 
 
 def reconcile_main(session: Session, project: Project) -> int:

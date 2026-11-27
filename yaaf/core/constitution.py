@@ -1144,6 +1144,24 @@ def default_briefing(constitution: dict[str, Any]) -> dict[str, Any]:
     return {**constitution, "brief_daily_at": DEFAULT_BRIEF_AT}
 
 
+#: A Code Factory's evidence floors when its founder was silent on them. Its
+#: outside proof is a change the platform merged or a release that passed its
+#: canary (`policy.attest_shipped`), so the share of open tasks that must
+#: "face outward" asks a question its work has no answer to — building is the
+#: work, and the merge is the evidence. The drought stays real and is sized to
+#: a first merge: a spec to accept, then CI and a skeleton, inside three days.
+FACTORY_FLOORS: dict[str, Any] = {"external_ratio_min": 0.0, "drought_hours": 72}
+
+
+def default_factory_floors(mode: str, constitution: dict[str, Any]) -> dict[str, Any]:
+    """A creation-time constitution with a factory's evidence floors filled in,
+    rule by rule, wherever it was silent. Any other kind is returned as given."""
+    if str(mode) != "code_factory":
+        return dict(constitution)
+    return {**{k: v for k, v in FACTORY_FLOORS.items() if k not in constitution},
+            **constitution}
+
+
 def default_tempo(mode: str, constitution: dict[str, Any]) -> dict[str, Any]:
     """A creation-time constitution with the tempo filled in if it was silent.
 

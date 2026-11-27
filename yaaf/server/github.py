@@ -143,6 +143,58 @@ def get_pull_request(session: Session, repo: str, number: int) -> dict:
     return response.json()
 
 
+def check_runs(session: Session, repo: str, sha: str) -> list[dict]:
+    """Every check run GitHub holds for one commit — the same objects a
+    check_run webhook carries, read when no webhook can reach this install."""
+    response = _call(session, "GET", f"/repos/{repo}/commits/{sha}/check-runs?per_page=100")
+    if response.status_code != 200:
+        raise GithubError(f"GitHub could not list checks for {sha[:12]}: "
+                          f"{response.status_code}")
+    return list(response.json().get("check_runs") or [])
+
+
+def branch_head(session: Session, repo: str, branch: str) -> str | None:
+    response = _call(session, "GET", f"/repos/{repo}/branches/{branch}")
+    if response.status_code != 200:
+        return None
+    return ((response.json().get("commit") or {}).get("sha")) or None
+
+
+def ensure_hook(session: Session, project: Project, repo: str) -> dict:
+    """Point the repo's webhook at this install, when GitHub can reach it.
+
+    Without a public address there is nothing GitHub could deliver to, and
+    the platform reads the repo itself every minute (changes.poll_github);
+    the hook then only makes it quicker. Never fatal: the answer is recorded
+    and shown, and polling covers what a missing hook would have carried."""
+    from yaaf.core.config import settings
+
+    base = (settings().public_base_url or "").rstrip("/")
+    if not base.startswith("https://"):
+        return {"ok": False, "detail": "no public https address (YAAF_PUBLIC_BASE_URL); "
+                                       "the platform checks GitHub every minute instead"}
+    secret = (project.integrations or {}).get("github_webhook_secret")
+    if not secret:
+        return {"ok": False, "detail": "the project has no webhook secret"}
+    url = f"{base}/webhooks/github/{project.id}"
+    try:
+        listed = _call(session, "GET", f"/repos/{repo}/hooks")
+        if listed.status_code == 200 and any(
+                (h.get("config") or {}).get("url") == url for h in listed.json()):
+            return {"ok": True, "detail": "already in place", "url": url}
+        made = _call(session, "POST", f"/repos/{repo}/hooks", json={
+            "name": "web", "active": True,
+            "events": ["pull_request", "check_run", "push", "issues", "issue_comment"],
+            "config": {"url": url, "content_type": "json", "secret": secret,
+                       "insecure_ssl": "0"}})
+    except GithubError as exc:
+        return {"ok": False, "detail": str(exc)[:300]}
+    if made.status_code not in (200, 201):
+        return {"ok": False, "detail": f"GitHub refused the webhook ({made.status_code}); "
+                                       "the platform checks GitHub every minute instead"}
+    return {"ok": True, "detail": "created", "url": url}
+
+
 def merge_pull_request(session: Session, repo: str, number: int, *, sha: str,
                        title: str) -> str:
     """Squash-merge, pinned to the head the gates were run on. GitHub refuses

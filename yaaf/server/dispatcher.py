@@ -2194,6 +2194,67 @@ def _daily_wake_due(session: Session, project: Project, cons: ConstitutionDoc,
             "note": f"daily {raw} {cons.timezone} wake"}
 
 
+def _factory_reads_owed(session: Session, agent: Agent, seats: list[Agent]) -> list[dict]:
+    """A Code Factory's two reads, each owed by one challenge seat.
+
+    Nothing used to wake a seat for either: a change sat at "waiting for a
+    challenge seat" and a requirement at "no hidden scenario has been written",
+    unless the Tech Lead happened to message somebody. One seat per item, by
+    the same rule as `review_owed` — the seat whose role does this job when the
+    crew has one, else the first eligible — so four challenge seats do not all
+    pay to read the same change.
+
+    A change is owed its read once CI is green on its head (reading code that
+    CI is about to send back is a read paid twice) and until it is signed or
+    returned on that head. A requirement is owed its scenarios once it is
+    accepted scope and has none."""
+    from yaaf.core import shape
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Change, ChangeStatus, Project, Requirement, RequirementStatus
+    from yaaf.server import changes
+
+    project = session.get(Project, agent.project_id)
+    if project is None or not shape.is_factory(project):
+        return []
+    roles = policy.seat_role_slugs(session, seats)
+
+    def chosen(prefer: str, exclude: str | None = None) -> str | None:
+        eligible = [s for s in seats if s.id != exclude]
+        for seat in eligible:
+            if roles.get(seat.id) == prefer:
+                return seat.id
+        return eligible[0].id if eligible else None
+
+    reasons: list[dict] = []
+    for change in session.execute(
+        select(Change).where(Change.project_id == project.id,
+                             Change.status == ChangeStatus.OPEN,
+                             Change.head_sha.is_not(None))
+    ).scalars():
+        checks = change.checks or {}
+        if not checks or any(c not in changes.GREEN for c in checks.values()):
+            continue
+        if change.reviewed_sha == change.head_sha:
+            continue  # signed, or returned and waiting on the author's push
+        if chosen("code-reviewer", exclude=change.author_agent_id) == agent.id:
+            reasons.append({"kind": "change_review_owed", "change_id": change.id,
+                            "number": change.number})
+    if effective(session, project.id).hidden_scenarios:
+        for requirement in session.execute(
+            select(Requirement).where(
+                Requirement.project_id == project.id,
+                Requirement.key != policy.PLAN_KEY,
+                Requirement.status.in_((RequirementStatus.PENDING,
+                                        RequirementStatus.IN_PROGRESS)))
+        ).scalars():
+            if changes.live_scenarios(session, requirement.id):
+                continue
+            if chosen("test-engineer") == agent.id:
+                reasons.append({"kind": "scenarios_owed", "requirement_id": requirement.id,
+                                "requirement": requirement.key})
+    return reasons
+
+
 def _work_reasons(session: Session, agent: Agent, now) -> list[dict]:
     reasons: list[dict] = []
     if agent.team_id is None:
@@ -2241,6 +2302,8 @@ def _work_reasons(session: Session, agent: Agent, now) -> list[dict]:
             if eligible and eligible[0].id != agent.id:
                 continue
             reasons.append({"kind": "review_owed", "task_id": task.id})
+    if seats and agent.id in {seat.id for seat in seats}:
+        reasons.extend(_factory_reads_owed(session, agent, seats))
 
     # A claim with nothing running behind it: wake to push it forward — unless
     # it's a lead's decomposed task still waiting on open subtasks.

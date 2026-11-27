@@ -653,6 +653,7 @@ def _clone_workspace(session: Session, full_name: str, workspace: Path) -> None:
     own role-scoped secret. Failures log and degrade to the plain dir; log
     lines and exceptions are kept token-free (a TimeoutExpired repr would
     happily print the whole authenticated URL)."""
+    import shutil
     import subprocess
 
     from yaaf.server import github
@@ -663,22 +664,47 @@ def _clone_workspace(session: Session, full_name: str, workspace: Path) -> None:
                     "missing; using a plain local dir", full_name)
         return
     workspace.parent.mkdir(parents=True, exist_ok=True)
+    # A repo attached after the project's first run finds the workspace already
+    # holding that run's traces, and `git clone` refuses a non-empty directory —
+    # every run after fell back to a plain dir with no remote, and no seat could
+    # push. So clone beside it and move the repository in.
+    target = workspace
+    if workspace.exists() and any(workspace.iterdir()):
+        import tempfile
+
+        target = Path(tempfile.mkdtemp(prefix=f".{workspace.name}-clone-",
+                                       dir=workspace.parent)) / "repo"
     try:
         proc = subprocess.run(
-            ["git", "clone", github.clone_url(full_name, token), str(workspace)],
+            ["git", "clone", github.clone_url(full_name, token), str(target)],
             capture_output=True, text=True, timeout=120,
         )
+        if proc.returncode == 0 and target != workspace:
+            shutil.move(str(target / ".git"), str(workspace / ".git"))
+            shutil.rmtree(target.parent, ignore_errors=True)
+            subprocess.run(["git", "-C", str(workspace), "reset", "-q", "--hard"],
+                           capture_output=True, timeout=120, check=True)
     except Exception as exc:
+        if target != workspace:
+            shutil.rmtree(target.parent, ignore_errors=True)
         _scrub_remote(workspace, full_name)  # a killed clone may have written .git
         log.warning("clone of %s failed (%s); using a plain local dir",
                     full_name, type(exc).__name__)
         return
     if proc.returncode != 0:
+        if target != workspace:
+            shutil.rmtree(target.parent, ignore_errors=True)
         _scrub_remote(workspace, full_name)
         log.warning("clone of %s failed; using a plain local dir: %s", full_name,
                     (proc.stderr or "").replace(token, "<redacted>").strip()[:500])
         return
     _scrub_remote(workspace, full_name)
+    # The sandbox runs as an unprivileged user and this clone is the runner's:
+    # open the tree, and tell git to keep every object it writes later
+    # group- and world-writable, or a seat's first commit dies on .git/objects.
+    subprocess.run(["git", "-C", str(workspace), "config", "core.sharedRepository", "0777"],
+                   capture_output=True, timeout=30)
+    _open_to_sandbox(workspace)
     log.info("cloned %s into %s", full_name, workspace)
 
 

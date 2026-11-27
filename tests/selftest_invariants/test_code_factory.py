@@ -354,3 +354,21 @@ def test_a_factory_is_led_by_the_tech_lead_and_nothing_else_is(client):
         "borrowed", mode="deliver", ceo_role_slug="tech-lead"), headers=ADMIN)
     assert borrowed.status_code == 422 and "Code Factory projects only" in \
         borrowed.json()["detail"]
+
+
+def test_a_factory_founded_silent_on_evidence_gets_floors_its_work_can_meet(client):
+    """A factory's work is building, which no task can make "face outward":
+    the default half-outward floor refused its plan. Silent founders get a
+    zero floor and a drought sized to a first merge; a stated rule stands."""
+    from yaaf.core.constitution import effective
+
+    silent = factory(client, slug="silent", start=False)
+    stated = factory(client, slug="stated", start=False,
+                     constitution={"external_ratio_min": 0.25, "drought_hours": 12})
+    other = make_project(client, slug="other", mode="deliver", start=False)
+    with db_session() as session:
+        assert effective(session, silent["id"]).external_ratio_min == 0.0
+        assert effective(session, silent["id"]).drought_hours == 72
+        assert effective(session, stated["id"]).external_ratio_min == 0.25
+        assert effective(session, stated["id"]).drought_hours == 12
+        assert effective(session, other["id"]).external_ratio_min == 0.5
