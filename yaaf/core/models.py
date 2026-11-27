@@ -2262,6 +2262,14 @@ class Run(Base):
     # NULL on runs from before it was recorded, which read it from the
     # project's billing mode as they always did.
     paid_in: Mapped[str | None] = mapped_column(String(8))
+    # Which credential that was, pinned for the same reason: a project may now
+    # hold two for one provider (a Code Factory's billing credential and its
+    # coding key), and either may be replaced while the run is in flight. What
+    # finalize files against a credential — its breaker, its plan meter — and
+    # the token a run mints mid-flight belong to the one that paid, not to
+    # whichever the project names by then. Not a foreign key: a credential
+    # deleted later must not take the history of what it paid with it.
+    paid_by_secret_id: Mapped[str | None] = mapped_column(String(40))
     # How a failed run failed, as its harness classified it: "auth" |
     # "transient" | "fatal". Kept on the row because the credential-failure
     # pause reads the last three runs, not just this one.

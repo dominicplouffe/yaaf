@@ -429,6 +429,12 @@ def _pin_seat(session: Session, run: Run, job: RunJob, seat, agent: Agent | None
     project = session.get(Project, run.project_id)
     run.paid_in = budget.paid_in(session, project, seat.provider, agent=agent) \
         if project else None
+    if project is not None and seat.harness != "mock":
+        from yaaf.core import project_credentials
+
+        payer = project_credentials.credential_for(session, project, seat.provider,
+                                                   agent=agent)
+        run.paid_by_secret_id = payer.id if payer is not None else None
 
 
 def _dial(seat, row, seller) -> bool:
@@ -1232,14 +1238,12 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         # Filing it here is the whole meter: no request to Anthropic, and it
         # refreshes exactly as often as the credential is actually used.
         if result.plan and project is not None:
-            from yaaf.core import plan_usage, project_credentials
+            from yaaf.core import plan_usage
             from yaaf.core.crypto import decrypt
 
             # The credential that paid this run's provider — which, on a
             # project paying two, is not always the billing one.
-            billing = project_credentials.credential_for(
-                session, project, job.provider or DEFAULT_PROVIDER,
-                agent=session.get(Agent, job.agent_id) if job.agent_id else None)
+            billing = _paid_by(session, project, run, job.provider or DEFAULT_PROVIDER)
             if billing is not None:
                 try:
                     plan_usage.record(session, decrypt(billing.ciphertext), result.plan)
@@ -1282,13 +1286,27 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
             _retry_failed_run(session, run)
 
 
+def _paid_by(session: Session, project: Project, run: Run, provider: str):
+    """The credential that paid this run: the one the lease pinned, where it
+    still exists. A run from before the pin, or whose credential has been
+    deleted since, is answered as it always was — by who pays its seat now."""
+    from yaaf.core import project_credentials
+    from yaaf.core.models import Secret
+
+    if run.paid_by_secret_id:
+        pinned = session.get(Secret, run.paid_by_secret_id)
+        if pinned is not None:
+            return pinned
+    return project_credentials.credential_for(
+        session, project, provider,
+        agent=session.get(Agent, run.agent_id) if run.agent_id else None)
+
+
 def _record_breaker(session: Session, project: Project, job: RunJob, run: Run) -> None:
-    from yaaf.core import breakers, project_credentials
+    from yaaf.core import breakers
     from yaaf.core.models import AuditLog
 
-    secret = project_credentials.credential_for(
-        session, project, job.provider,
-        agent=session.get(Agent, job.agent_id) if job.agent_id else None)
+    secret = _paid_by(session, project, run, job.provider)
     if secret is None:
         return
     # In a savepoint, and never raised: a breaker that cannot be written is a

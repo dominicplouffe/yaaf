@@ -217,8 +217,15 @@ def model_token(ctx: RunContext = Depends(run_auth), session: Session = Depends(
     # The fallback counts as held here whether or not a failover is still on:
     # a run leased onto it during an outage keeps running after the billing
     # provider recovers, and its next token must not read as a dead key.
-    secret = project_credentials.credential_for(session, ctx.project, seller.name,
-                                                fallback=True, agent=ctx.agent)
+    # The credential the lease pinned on this run, while it exists: the one it
+    # was started on, whatever the project has been pointed at since.
+    from yaaf.core.models import Secret
+
+    secret = session.get(Secret, ctx.run.paid_by_secret_id) \
+        if ctx.run.paid_by_secret_id else None
+    if secret is None:
+        secret = project_credentials.credential_for(session, ctx.project, seller.name,
+                                                    fallback=True, agent=ctx.agent)
     if secret is None:
         raise HTTPException(status_code=409, detail=f"this project no longer pays {seller.label}")
     try:

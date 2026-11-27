@@ -278,6 +278,34 @@ def test_an_agent_cannot_read_or_move_the_key(world):
     assert pack.status_code == 200 and OAT not in pack.text and "Claude Max" not in pack.text
 
 
+def test_a_run_answers_to_the_key_it_was_leased_on_after_the_key_is_replaced(world):
+    """Replacing the coding key is allowed while the factory runs. A run in
+    flight was paid by the old one: its failure is evidence about that key, and
+    must not open the breaker on a key that never served it."""
+    from yaaf.core.models import CredentialBreaker
+    from yaaf.runner.types import RunResult
+
+    assert _name(world, world["coding"]).status_code == 200
+    assert _start(world).status_code == 200
+    with db_session() as session:
+        session.add(RunQueue(id=ids.new_id(ids.RUN), project_id=world["project"]["id"],
+                             agent_id=world["agents"]["Ada"], kind="agent_run",
+                             trigger={"type": "coding-key-test"}))
+    job = next(j for j in daemon.lease_and_prepare(limit=20)
+               if j.agent_id == world["agents"]["Ada"])
+    with db_session() as session:
+        assert session.get(Run, job.run_id).paid_by_secret_id == world["coding"]
+    other = _credential(world["client"], "Second plan", "anthropic",
+                        "sk-ant-oat01-coding-key-second", mode="subscription")
+    assert _name(world, other).status_code == 200
+    daemon.finalize(job, RunResult(ok=False, error_kind="transient",
+                                   summary="529 overloaded_error"))
+    with db_session() as session:
+        struck = {row.secret_id: row.failures for row in session.query(CredentialBreaker)}
+    assert struck.get(world["coding"]) == 1, struck
+    assert other not in struck and world["billing"] not in struck, struck
+
+
 # ── the Founder ─────────────────────────────────────────────────────────────────
 
 
