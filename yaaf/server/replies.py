@@ -43,8 +43,10 @@ from yaaf.core.models import (
 ANSWER_WINDOW = timedelta(hours=12)
 
 #: A line to the whole room is a new conversation, never a reply to one seat.
+#: "CEO to leads." went under a reply Quinn had made to the CEO's last one.
 _TO_EVERYONE = re.compile(
-    r"\b(?:to )?(?:all (?:leads|seats|of you|teams?)|everyone|everybody|whole team)\b",
+    r"\b(?:all (?:leads|seats|of you|teams?)|everyone|everybody|whole team"
+    r"|to (?:the )?(?:leads|team|teams|room|all))\b",
     re.IGNORECASE)
 
 #: How the chairman's answer to a question begins (Inbox, Boardroom, CLI desk).

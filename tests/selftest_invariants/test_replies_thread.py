@@ -50,6 +50,18 @@ def test_a_line_to_everyone_or_to_someone_else_starts_its_own(client):
     assert to_ceo["thread_id"] is None
 
 
+def test_a_line_to_the_leads_is_new_even_after_a_reply_to_its_last(client):
+    """Snip, 12:57: the CEO's "CEO to leads." went under Quinn's reply to the
+    CEO's previous "CEO to leads." line."""
+    project = make_project(client)
+    leadership = channel_of(client, project["id"], "leadership")
+    first = _say(client, project, "CEO", leadership, "CEO to leads. Lead: ci.yml changes once.")
+    _say(client, project, "Lead", leadership, "Understood, the scenarios follow it.",
+         thread_id=first["id"])
+    again = _say(client, project, "CEO", leadership, "CEO to leads. R-01 is on main.")
+    assert again["thread_id"] is None
+
+
 def test_once_it_has_answered_its_next_line_is_new(client):
     project, team = _team(client)
     _say(client, project, "Lead", team, "Emp2: can you take the pricing page today?")
