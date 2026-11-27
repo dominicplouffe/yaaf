@@ -504,3 +504,12 @@ def test_the_ceo_is_shown_merged_work_waiting_to_go_out(client, gh, health):
     _with_prod(client, project)
     owed = client.get("/agent/context", headers=bearer(ceo)).json()["release_owed"]
     assert owed["merged_since"] == 1 and owed["live"] is None
+
+
+def test_a_deploy_secret_split_by_the_output_cut_does_not_leak():
+    from yaaf.runner import sandbox
+
+    secret = "sk_live_" + "Z" * 40
+    printed = "x" * 7990 + secret + "\ndone\n"
+    out = sandbox._scrubbed(printed, {"DEPLOY_TOKEN": secret})[-8000:]
+    assert "ZZZZ" not in out and "<secret>" in out

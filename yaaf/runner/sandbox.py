@@ -84,7 +84,8 @@ def run_check_command(command: str, workspace_dir: str, timeout_s: int,
         from yaaf.runner import host_jail
 
         if env:
-            return host_jail.run_check(command, workspace_dir, timeout_s, env=env)
+            code, output = host_jail.run_check(command, workspace_dir, timeout_s, env=env)
+            return code, _scrubbed(output, env)
         return host_jail.run_check(command, workspace_dir, timeout_s)
     if mode == "subprocess":
         if _host_holds_the_keys() and not getattr(settings(), "allow_host_success_tests", False):
@@ -109,6 +110,16 @@ def run_check_command(command: str, workspace_dir: str, timeout_s: int,
     return _docker_check(command, workspace_dir, timeout_s)
 
 
+def _scrubbed(output: str, env: dict[str, str] | None) -> str:
+    """The deploy's own secrets taken out of what it printed — BEFORE the
+    output is cut to its last 8,000 characters. Cut first, a secret split by
+    the cut kept its tail, which no exact match would then find."""
+    for key, value in (env or {}).items():
+        if value and len(value) >= 6 and not key.startswith("YAAF_"):
+            output = output.replace(value, "<secret>")
+    return output
+
+
 def _subprocess_check(command: str, workspace_dir: str, timeout_s: int,
                       env: dict[str, str] | None = None) -> tuple[int, str]:
     try:
@@ -126,7 +137,7 @@ def _subprocess_check(command: str, workspace_dir: str, timeout_s: int,
             timeout=timeout_s,
             env={**os.environ, **env} if env else None,
         )
-        return proc.returncode, (proc.stdout + proc.stderr)[-8000:]
+        return proc.returncode, _scrubbed(proc.stdout + proc.stderr, env)[-8000:]
     except subprocess.TimeoutExpired:
         return 124, f"success test timed out after {timeout_s}s"
     except Exception as exc:
@@ -155,7 +166,7 @@ def _docker_check(command: str, workspace_dir: str, timeout_s: int,
         result = container.wait(timeout=timeout_s)
         exit_code = int(result.get("StatusCode", 1))
         output = container.logs(stdout=True, stderr=True, tail=400).decode(errors="replace")
-        return exit_code, output[-8000:]
+        return exit_code, _scrubbed(output, env)[-8000:]
     except Exception as exc:
         with contextlib.suppress(Exception):
             container.kill()

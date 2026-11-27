@@ -5,6 +5,7 @@ import { modelLabel, parseRef } from "./providers";
 import { GrantOption, TeamSwitches } from "./grants";
 import { Why } from "./settingsCopy";
 import { clip, downloadCsv } from "./ui";
+import { useProjectFrame } from "./projectCtx";
 import "./pages/roles-copy.css";
 
 /** Everything the chairman meets when hiring, in one place.
@@ -790,12 +791,23 @@ export function RoleGrants({
   secretName?: string;
   disabled?: boolean;
 }) {
+  const factory = useProjectFrame()?.ctx?.dash.mode === "code_factory";
   if (!org) return <p className="help">Loading the roster…</p>;
+  // A Code Factory deploys with keys no seat ever holds: the server reserves
+  // the "deploy" and "preview" scopes and takes either alone. With no chip for
+  // them, a deploy command that needed a token could not be given one here,
+  // while the agents were told "the chairman manages it in Settings".
+  const options = [...grantOptions(org, askedByAgentId), ...(factory ? DEPLOY_GRANTS : [])];
+  const pick = (next: string[]) => {
+    const added = next.find((s) => !selected.includes(s));
+    onChange(added && RESERVED.includes(added) ? [added]
+      : next.filter((s) => !RESERVED.includes(s) || !added));
+  };
   return (
     <TeamSwitches
-      options={grantOptions(org, askedByAgentId)}
+      options={options}
       selected={selected}
-      onChange={onChange}
+      onChange={factory ? pick : onChange}
       disabled={disabled}
       what={secretName ? <code>${envVarName(secretName)}</code> : "it"}
       emptyHint={<>This project has no teams yet, so there is nobody to give a credential to.
@@ -803,6 +815,14 @@ export function RoleGrants({
     />
   );
 }
+
+const RESERVED = ["deploy", "preview"];
+const DEPLOY_GRANTS: GrantOption[] = [
+  { slug: "deploy", name: "Platform deploy (production and staging)",
+    tags: [{ text: "the platform only, never a seat" }] },
+  { slug: "preview", name: "Preview deploys, per change",
+    tags: [{ text: "unsigned code: never production's keys" }] },
+];
 
 /** The roster as the shared picker draws it: a role per row, named by the
     team(s) running it, with the people under it. */
