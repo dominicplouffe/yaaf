@@ -2577,6 +2577,9 @@ class Approval(Base):
     # evening, the CEO asked him twice to clear the Split app's merge freeze;
     # he said yes twice and the freeze stood, because neither yes reached it.
     flag: Mapped[dict | None] = mapped_column(JSONVariant)
+    # The boardroom line that announced it, when one did. His note on it is
+    # filed under that line, so the Messages page shows it as the answer.
+    announced_in_message_id: Mapped[str | None] = mapped_column(String(40))
 
 
 class DataSourceTool(Base):

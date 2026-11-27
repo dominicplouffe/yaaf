@@ -28,6 +28,7 @@ from yaaf.core.constitution import ConstitutionDoc, effective, propose_amendment
 from yaaf.core.db import notify
 from yaaf.core.models import (
     Account,
+    Agent,
     AgentKind,
     Approval,
     ApprovalKind,
@@ -1266,7 +1267,23 @@ def post_message(
         if held is not None:
             raise Refusal(intent.refusal(held, "Telling the team"), status_code=409)
     policy.check_agent_post(session, ctx.project, ctx.agent, channel)
-    policy.check_thread_not_frozen(session, body.thread_id)
+    from yaaf.server import replies
+
+    try:
+        thread_id = replies.root_of(session, ctx.project.id, channel.id, body.thread_id)
+    except replies.ThreadError as e:
+        raise Refusal(str(e), status_code=422) from e
+    filed_under = None
+    if thread_id is None:
+        if channel.kind == ChannelKind.BOARDROOM:
+            if body.in_reply_to and ctx.agent.kind == AgentKind.CEO:
+                thread_id = replies.answered_line(session, ctx.project.id, channel.id,
+                                                  body.in_reply_to)
+        else:
+            asked = replies.answering(session, ctx.agent, channel, body.body)
+            if asked is not None:
+                thread_id, filed_under = asked.thread_id or asked.id, asked
+    policy.check_thread_not_frozen(session, thread_id)
     policy.check_chairman_report(
         session, ctx.project, ctx.agent, channel, ctx.run, body.override)
     policy.check_plain_to_chairman(
@@ -1276,7 +1293,7 @@ def post_message(
         project_id=ctx.project.id,
         channel_id=channel.id,
         sender_agent_id=ctx.agent.id,
-        thread_id=body.thread_id,
+        thread_id=thread_id,
         body=body.body,
     )
     session.add(message)
@@ -1285,7 +1302,15 @@ def post_message(
 
         chairman_notes.link_answer(session, ctx.project.id, message, body.in_reply_to)
     notify(session, WAKE_CHANNEL, ctx.project.id)
-    return {"id": message.id, "at": message.created_at.isoformat() if message.created_at else None}
+    out = {"id": message.id, "thread_id": thread_id,
+           "at": message.created_at.isoformat() if message.created_at else None}
+    if filed_under is not None:
+        sender = session.get(Agent, filed_under.sender_agent_id)
+        whose = f"{sender.name}'s" if sender is not None else "the"
+        out["note"] = (f"Filed as your reply to {whose} line "
+                       f"{filed_under.id}, which was addressed to you. Next time pass "
+                       f"thread_id: {thread_id} yourself.")
+    return out
 
 
 # ── chairman directives ─────────────────────────────────────────────────────────
@@ -3640,12 +3665,16 @@ def book_spend(
 # tickbox by default, the CEO's own verb when the dial grants it.
 
 
-def _boardroom_system_line(session: Session, project_id: str, body: str) -> None:
+def _boardroom_system_line(session: Session, project_id: str, body: str) -> Message | None:
     """A platform-authored boardroom line. The body lives in `notify` now — the
     janitor needs the same channel to say a delivery is waiting on the chairman."""
     from yaaf.server.notify import boardroom_line
 
-    boardroom_line(session, project_id, body)
+    return boardroom_line(session, project_id, body)
+
+
+def _announced(message: Message | None) -> str | None:
+    return message.id if message is not None else None
 
 
 class AccountIn(BaseModel):
@@ -3811,12 +3840,12 @@ def assist_request(
         body.what + (f"\nWhere: {body.where}" if body.where else ""))
     approval.change = change
     approval.flag = flag
-    _boardroom_system_line(
+    approval.announced_in_message_id = _announced(_boardroom_system_line(
         session, ctx.project.id,
         f"🤝 ASSIST NEEDED ({ctx.agent.name}): {body.what[:400]}"
         + (f"\nWhere: {body.where}" if body.where else "")
         + "\nAnswer it in your Inbox — your note travels back verbatim "
-          "(a code, a 'done', a 'no') and wakes the agent.")
+          "(a code, a 'done', a 'no') and wakes the agent."))
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
         actor=f"agent:{ctx.agent.id}", action="assist.request",
@@ -4253,12 +4282,12 @@ def need_request(
         "\n".join(detail_lines), body.est_usd_per_month)
     cost = (f" (~${body.est_usd_per_month:,.0f}/mo)"
             if body.est_usd_per_month is not None else "")
-    _boardroom_system_line(
+    approval.announced_in_message_id = _announced(_boardroom_system_line(
         session, ctx.project.id,
         f"📋 NEED: {body.title}{cost} — {body.why[:400]}\n"
         f"Give it in your Inbox — you paste the key or login once and "
         f"the right people get it — or decline it there. Unanswered, it expires "
-        f"to no in {cons.approval_timeout_days} days.")
+        f"to no in {cons.approval_timeout_days} days."))
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
         actor=f"agent:{ctx.agent.id}", action="need.request",

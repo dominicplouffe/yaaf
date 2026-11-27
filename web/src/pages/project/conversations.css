@@ -58,6 +58,7 @@
 .cv-empty { padding: 30px 16px; text-align: center; color: var(--muted); font-size: 14px; display: grid; gap: 10px; justify-items: center; }
 
 /* the open conversation */
+.cv-timeline { display: contents; }
 .cv-thread-h { padding: 14px 18px; border-bottom: 1px solid var(--border); display: grid; gap: 6px; }
 .cv-thread-h h2 { margin: 0; font-family: var(--font); font-size: 17px; font-weight: 600; color: var(--ink); }
 .cv-row { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; font-size: var(--t-small); color: var(--muted); }

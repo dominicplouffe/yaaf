@@ -85,7 +85,10 @@ def record(session: Session, project_id: str, source_kind: str, source_id: str,
     row = ChairmanNote(id=ids.new_id(ids.CHAIRMAN_NOTE), project_id=project_id,
                        source_kind=source_kind, source_id=source_id,
                        about=about[:400], body=text)
-    message = _say_in_boardroom(session, project_id, user_id, about, text)
+    from yaaf.server import replies
+
+    message = _say_in_boardroom(session, project_id, user_id, about, text,
+                                replies.question_for_note(session, source_kind, source_id))
     if message is not None:
         row.message_id = message.id
     session.add(row)
@@ -100,7 +103,7 @@ def chat_line(about: str, text: str) -> str:
 
 
 def _say_in_boardroom(session: Session, project_id: str, user_id: str,
-                      about: str, text: str) -> Message | None:
+                      about: str, text: str, thread_id: str | None = None) -> Message | None:
     from yaaf.server import unread
 
     boardroom = session.execute(
@@ -111,6 +114,7 @@ def _say_in_boardroom(session: Session, project_id: str, user_id: str,
         return None
     message = Message(id=ids.new_id(ids.MESSAGE), project_id=project_id,
                       channel_id=boardroom.id, sender_user_id=user_id,
+                      thread_id=thread_id if _in(session, thread_id, boardroom.id) else None,
                       body=chat_line(about, text), created_at=utcnow())
     # No wake of its own: the chat session polls the room every two seconds,
     # and with no session live the dispatcher's next tick sees his line.
@@ -120,6 +124,11 @@ def _say_in_boardroom(session: Session, project_id: str, user_id: str,
         # Whoever speaks has read the room up to what they said.
         unread.mark_boardroom_read(session, project, message.created_at)
     return message
+
+
+def _in(session: Session, message_id: str | None, channel_id: str) -> bool:
+    found = session.get(Message, message_id) if message_id else None
+    return found is not None and found.channel_id == channel_id
 
 
 def unanswered(session: Session, project_id: str) -> list[ChairmanNote]:

@@ -4016,12 +4016,20 @@ def boardroom_post(
             Channel.project_id == project.id, Channel.kind == ChannelKind.BOARDROOM
         )
     ).scalar_one()
+    from yaaf.server import replies
+
+    try:
+        thread_id = replies.root_of(session, project.id, channel.id, body.thread_id)
+    except replies.ThreadError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    # His answer to a question goes under the question.
+    thread_id = thread_id or replies.question_answered(session, project.id, body.body)
     message = Message(
         id=ids.new_id(ids.MESSAGE),
         project_id=project.id,
         channel_id=channel.id,
         sender_user_id=_decider(project),
-        thread_id=body.thread_id,
+        thread_id=thread_id,
         body=body.body,
         created_at=utcnow(),
     )

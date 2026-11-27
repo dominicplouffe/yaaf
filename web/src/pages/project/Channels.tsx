@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Conversation, ConversationsView, get, post } from "../../api";
 import { usePoll } from "../../hooks";
@@ -18,6 +18,8 @@ const ATTENTION = new Set(["waiting", "stuck", "frozen"]);
 const FACES = ["c1", "c3", "c5", "c4", "good"];
 const FIXED: Record<string, string> = { you: "you", yaaf: "yaaf" };
 const DAY_MS = 86_400_000;
+/** The timeline shows this many of the room's latest lines. */
+const TIMELINE_LINES = 150;
 
 const list = (xs: string[]) =>
   xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
@@ -87,6 +89,18 @@ export default function Channels({ ctx }: { ctx: ProjectCtx }) {
     .filter((c) => !who || c.people.includes(who))
     .filter((c) => !needle || (c.title + " " + c.messages.map((m) => m.body).join(" ")).toLowerCase().includes(needle));
   const current = shown.find((c) => c.id === params.get("c")) ?? shown[0] ?? null;
+  // A room whose agents answered each other as new lines rather than replies
+  // (every room before 27 Nov 2026) reads as one-line "conversations" nobody
+  // answered. There it opens as the room's timeline: every line in order.
+  const threaded = inRoom.some((c) => c.replies > 0);
+  const show = params.get("show");
+  const timeline = !agent && (show === "timeline"
+    || (show !== "threads" && !params.get("c") && !threaded && inRoom.length > 1));
+  const lines = timeline ? inRoom.flatMap((c) => c.messages)
+    .filter((m) => !who || m.from === who)
+    .filter((m) => !needle || m.body.toLowerCase().includes(needle))
+    .sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))
+    .slice(-TIMELINE_LINES) : [];
 
   const pick = (next: Record<string, string | null>) => {
     const p = new URLSearchParams(params);
@@ -149,10 +163,14 @@ export default function Channels({ ctx }: { ctx: ProjectCtx }) {
             <input className="cv-search" type="search" placeholder="Search what agents said" aria-label="Search conversations"
               value={q} onChange={(e) => setQ(e.target.value)} />
             {!agent && <div className="cv-filters" role="group" aria-label="Show">
-              <button className="cv-chip" aria-pressed={mode === "attention"} onClick={() => setFilter("attention")}>
+              <button className="cv-chip" aria-pressed={!timeline && mode === "attention"}
+                onClick={() => { setFilter("attention"); pick({ show: "threads" }); }}>
                 Needs attention<span className="n">{open.length}</span></button>
-              <button className="cv-chip" aria-pressed={mode === "all"} onClick={() => setFilter("all")}>
+              <button className="cv-chip" aria-pressed={!timeline && mode === "all"}
+                onClick={() => { setFilter("all"); pick({ show: "threads" }); }}>
                 All<span className="n">{inRoom.length}</span></button>
+              <button className="cv-chip" aria-pressed={timeline} onClick={() => pick({ show: "timeline", c: null })}
+                title="Every line said in this room, in order">Timeline</button>
               <select className="cv-who" aria-label="Agent" value={who} onChange={(e) => setWho(e.target.value)}>
                 <option value="">Anyone</option>
                 {(room?.members ?? []).map((m) => <option key={m} value={m}>{nameOf(m)}</option>)}
@@ -161,7 +179,7 @@ export default function Channels({ ctx }: { ctx: ProjectCtx }) {
           </div>
           <div className="cv-list">
             {shown.length ? shown.map((c) => (
-              <button key={c.id} className="cv-card" aria-current={c.id === current?.id} onClick={() => pick({ c: c.id })}>
+              <button key={c.id} className="cv-card" aria-current={!timeline && c.id === current?.id} onClick={() => pick({ c: c.id, show: "threads" })}>
                 <span className="cv-card-top">
                   <span className="cv-faces">{c.people.map((p) => <Face key={p} id={p} name={nameOf(p)} cls={faceOf(p)} />)}</span>
                   <span className="cv-whois">{agent && <>{roomOf(c.room)} · </>}{c.people.map(nameOf).join(" ↔ ")} · {c.replies ? `${c.replies} ${c.replies === 1 ? "reply" : "replies"}` : "no replies"}</span>
@@ -180,8 +198,11 @@ export default function Channels({ ctx }: { ctx: ProjectCtx }) {
           </div>
         </section>
 
-        <section className="cv-pane cv-thread" aria-label="Conversation">
-          {current ? (
+        <section className="cv-pane cv-thread" aria-label={timeline ? "Timeline" : "Conversation"}>
+          {timeline && room ? (
+            <TimelineView room={room} lines={lines} capped={lines.length === TIMELINE_LINES}
+              threaded={threaded} base={base} nameOf={nameOf} faceOf={faceOf} people={people} />
+          ) : current ? (
             <ThreadView c={current} base={base} nameOf={nameOf} faceOf={faceOf} people={people}
               roomName={roomOf(current.room)} whyOf={(name) => data.agents.find((a) => a.name === name)?.why ?? null} expanded={expanded === current.id} onExpand={() => setExpanded(current.id)}
               canSteer={dash.can_steer !== false} error={error}
@@ -198,6 +219,38 @@ export default function Channels({ ctx }: { ctx: ProjectCtx }) {
   );
 }
 
+/** Every line said in one room, oldest first, opened at the newest: the room
+    read the way it was written. The same message rows as a conversation, with
+    no outcome to claim, because nothing in it says what answers what. */
+function TimelineView({ room, lines, capped, threaded, base, nameOf, faceOf, people }: {
+  room: ConversationsView["rooms"][number]; lines: Conversation["messages"]; capped: boolean; threaded: boolean;
+  base: string; nameOf: (id: string | null) => string; faceOf: (id: string | null) => string;
+  people: ConversationsView["people"];
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  const last = lines[lines.length - 1]?.id;
+  useEffect(() => {
+    const msgs = box.current?.querySelector(".cv-msgs");
+    if (msgs) msgs.scrollTop = msgs.scrollHeight;
+  }, [room.id, last]);
+  if (!lines.length) return <div className="cv-empty">Nothing matches.</div>;
+  const c: Conversation = {
+    id: `room-${room.id}`, room: room.id, title: `Everything said in ${room.name}`, outcome: "note",
+    started_by: null, people: room.members, replies: 0, started_at: lines[0].at,
+    last_at: lines[lines.length - 1].at, frozen: false, to: null, unread: [], unread_ids: [],
+    read: [], asleep: [], refs: [], messages: lines,
+  };
+  return (
+    <div ref={box} className="cv-timeline">
+      <ThreadView c={c} base={base} nameOf={nameOf} faceOf={faceOf} people={people} roomName={room.name}
+        whyOf={() => null} expanded onExpand={() => undefined} canSteer={false} error={null}
+        onAsk={() => undefined} onUnfreeze={() => undefined}
+        lede={`${capped ? `The latest ${lines.length} lines` : `${lines.length} line${lines.length === 1 ? "" : "s"}`}, in order.${threaded ? ""
+          : " The agents here answered each other as new lines, not replies, so each one shows as its own conversation."}`} />
+    </div>
+  );
+}
+
 function Face({ id, name, cls, big }: { id: string; name: string; cls: string; big?: boolean }) {
   return <span className={`cv-face f-${cls}${big ? " big" : ""}`} title={name} data-id={id}>{name.charAt(0).toUpperCase()}</span>;
 }
@@ -206,11 +259,12 @@ function Face({ id, name, cls, big }: { id: string; name: string; cls: string; b
 const withMentions = (body: string, names: string[]) =>
   names.reduce((text, n) => text.replace(new RegExp(`(^|[^\\w\\[])@${n}\\b`, "gi"), `$1[@${n}](#@${n})`), body);
 
-function ThreadView({ c, base, nameOf, faceOf, people, roomName, whyOf, expanded, onExpand, canSteer, error, onAsk, onUnfreeze }: {
+function ThreadView({ c, base, nameOf, faceOf, people, roomName, whyOf, expanded, onExpand, canSteer, error, onAsk, onUnfreeze, lede }: {
   c: Conversation; base: string; nameOf: (id: string | null) => string; faceOf: (id: string | null) => string;
   people: ConversationsView["people"]; roomName: string; whyOf: (name: string) => string | null;
   expanded: boolean; onExpand: () => void;
   canSteer: boolean; error: string | null; onAsk: (draft: string) => void; onUnfreeze: () => void;
+  lede?: string;
 }) {
   const starter = nameOf(c.started_by);
   const task = c.refs.find((r) => r.kind === "task");
@@ -303,6 +357,7 @@ function ThreadView({ c, base, nameOf, faceOf, people, roomName, whyOf, expanded
           {c.people.map((id, i) => <span key={id}>{nameOf(id)} <span className="cv-dim">({people[id]?.role ?? ""})</span>{i < c.people.length - 1 ? "," : ""}</span>)}
           <span>·</span><span>{roomName}</span>
         </div>
+        {lede && <p className="help" style={{ margin: 0 }}>{lede}</p>}
       </div>
       {box && (
         <div className={`cv-outcome ${c.outcome}`}>

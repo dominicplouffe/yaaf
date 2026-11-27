@@ -203,7 +203,7 @@ def inbox_line(item_key: str) -> str:
 
 
 def boardroom_line(session: Session, project_id: str, body: str,
-                   *, slack_ts: str | None = None) -> None:
+                   *, slack_ts: str | None = None) -> Message | None:
     """A platform-authored boardroom line: no sender, so it spends no reporting
     cadence, mirrors to Slack through the bridge, and — because the dispatcher
     skips sender-less lines — never wakes an agent. The one channel that reaches
@@ -221,14 +221,16 @@ def boardroom_line(session: Session, project_id: str, body: str,
                               Channel.kind == ChannelKind.BOARDROOM)
     ).scalar_one_or_none()
     if boardroom is None:
-        return
-    session.add(Message(
+        return None
+    message = Message(
         id=ids.new_id(ids.MESSAGE),
         project_id=project_id,
         channel_id=boardroom.id,
         body=body,
         slack_ts=slack_ts,
-    ))
+    )
+    session.add(message)
+    return message
 
 
 def _rules(session: Session, project: Project):

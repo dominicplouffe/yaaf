@@ -768,6 +768,9 @@ def _unread_messages(session: Session, agent: Agent, since: dict | None = None,
                         }
                         for m in rows
                     ],
+                    **({} if channel.kind == ChannelKind.BOARDROOM else {"reply": (
+                        "To answer a line, post with thread_id set to its thread_id, or "
+                        "its id when that is empty. A new subject goes without one.")}),
                     **({"more_unread": True,
                         "note": (
                             f"Only the oldest {UNREAD_PER_CHANNEL} are shown. More are "
