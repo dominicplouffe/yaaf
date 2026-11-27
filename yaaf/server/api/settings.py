@@ -247,6 +247,64 @@ def check_credential(session: Session) -> dict:
     return {"ok": True, "detail": "the credential reached a model."}
 
 
+class GithubKeyIn(BaseModel):
+    token: str = Field(min_length=8, max_length=400)
+
+
+@router.get("/github", dependencies=[authority.SIGNED_IN])
+def github_status(session: Session = Depends(db)) -> dict:
+    """Whether this install can act on GitHub: the platform's key, which
+    creates a Code Factory's repo, opens its pull requests and merges them."""
+    from yaaf.server import github
+
+    return {"connected": github.platform_token(session) is not None}
+
+
+@router.put("/github", dependencies=[authority.INSTANCE_ADMIN])
+def put_github(body: GithubKeyIn, session: Session = Depends(db)) -> dict:
+    """Save the platform's GitHub key — checked with GitHub first, so a typo is
+    said here rather than by a repo that never appears — and make every repo a
+    Code Factory was founded wanting before the key existed."""
+    from sqlalchemy import select
+
+    from yaaf.core import ids, shape
+    from yaaf.core.crypto import encrypt
+    from yaaf.core.models import Project, Secret
+    from yaaf.server import github
+
+    token = body.token.strip()
+    try:
+        response = github._request("GET", "/user", token)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502,
+                            detail=f"could not reach GitHub: {type(exc).__name__}") from exc
+    if response.status_code != 200:
+        raise HTTPException(status_code=422, detail=(
+            f"GitHub did not accept this key ({response.status_code}). Check it was copied "
+            "whole and has not expired."))
+    login = response.json().get("login")
+    row = session.execute(select(Secret).where(Secret.project_id.is_(None),
+                                               Secret.name == "github")).scalar_one_or_none()
+    if row is None:
+        session.add(Secret(id=ids.new_id(ids.SECRET), project_id=None, name="github",
+                           ciphertext=encrypt(token), role_scopes=[], kind="service"))
+    else:
+        row.ciphertext = encrypt(token)
+    session.flush()
+    made, failed = [], []
+    for project in session.execute(select(Project)).scalars():
+        if not shape.is_factory(project) or project.github_repo \
+                or not (project.integrations or {}).get("repo_wanted"):
+            continue
+        project.integrations = {**(project.integrations or {}), "repo_wanted_tried_at": 0}
+        if github.connect_wanted(session, project):
+            made.append(project.github_repo)
+        else:
+            failed.append({"project": project.slug,
+                           "error": (project.integrations or {}).get("repo_wanted_error")})
+    return {"login": login, "repos_made": made, "repos_failed": failed}
+
+
 #: The platform credential's routes are `/platform-credential`; `/anthropic` is
 #: the name they had when it could pay nobody else, kept for clients written
 #: then. Both reach the same handler.

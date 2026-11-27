@@ -230,6 +230,10 @@ def _janitor_project(session: Session, project: Project) -> None:
     check_delivery_ready(session, project)
     # Code Factory: judge pushes to main first, so a bypass freezes merging
     # before this tick merges anything on top of it.
+    if shape.is_factory(project):
+        from yaaf.server import github
+
+        github.connect_wanted(session, project)
     changes.poll_github(session, project)
     changes.reconcile_main(session, project)
     changes.merge_ready(session, project)

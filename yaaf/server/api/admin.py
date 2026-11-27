@@ -2005,6 +2005,13 @@ def _factory_phase_at_create(body: ProjectCreate) -> str | None:
             detail="a Code Factory that adopts a repo needs the repo: pass "
                    "github_repo as owner/name.")
     _factory_lead_at_create(body)
+    wanted = (body.integrations or {}).get("repo_wanted")
+    if wanted is not None and (not shape.is_factory(body.mode) or not isinstance(wanted, str)
+                               or not re.fullmatch(r"[\w.-]+(/[\w.-]+)?", wanted)):
+        raise HTTPException(
+            status_code=422,
+            detail="repo_wanted is a Code Factory's repo: a bare name for a new private "
+                   "repo, or owner/name")
     return shape.initial_phase(body.mode, body.factory_start)
 
 
@@ -6964,23 +6971,7 @@ def attach_github(project_id: str, body: GithubAttach, session: Session = Depend
     from yaaf.server import github
 
     project = _get_project(session, project_id)
-    full_name = github.provision_repo(session, project, body.repo)
-    project.github_repo = full_name
-    protection = None
-    if shape.is_factory(project):
-        # Only the platform merges in a factory. GitHub's own rule says so too
-        # where the token may set it; where it may not, the platform's push
-        # detection is the rule that holds, and the result is recorded either
-        # way so the project page can say which.
-        protection = github.protect_main(session, full_name)
-        project.integrations = {**(project.integrations or {}),
-                                "branch_protection": protection,
-                                "github_hook": github.ensure_hook(session, project, full_name)}
-    _audit(session, project.id, "project.github_attach", "project", project.id,
-           {"github_repo": full_name,
-            **({"branch_protection": protection} if protection is not None else {})})
-    return {"github_repo": full_name,
-            **({"branch_protection": protection} if protection is not None else {})}
+    return github.connect(session, project, body.repo)
 
 
 class PushTokenIn(BaseModel):
@@ -7027,6 +7018,8 @@ def factory_setup(project_id: str, session: Session = Depends(db)) -> dict:
     return {
         "platform_token": github.platform_token(session) is not None,
         "repo": project.github_repo,
+        "repo_wanted": integrations.get("repo_wanted"),
+        "repo_wanted_error": integrations.get("repo_wanted_error"),
         "branch_protection": integrations.get("branch_protection"),
         "push_token": {"set": push is not None, "granted": granted,
                        "missing": sorted(set(needed) - set(granted))},

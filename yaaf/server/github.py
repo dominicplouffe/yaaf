@@ -9,6 +9,8 @@ is never injected into a sandbox: agents push with their own role-scoped
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -16,6 +18,8 @@ from sqlalchemy.orm import Session
 from yaaf.core.models import Project
 
 API_BASE = "https://api.github.com"
+
+log = logging.getLogger(__name__)
 
 
 def platform_token(session: Session) -> str | None:
@@ -158,6 +162,72 @@ def branch_head(session: Session, repo: str, branch: str) -> str | None:
     if response.status_code != 200:
         return None
     return ((response.json().get("commit") or {}).get("sha")) or None
+
+
+def connect(session: Session, project: Project, name_or_full: str) -> dict:
+    """Create (bare name) or check (owner/name) the project's repo and make it
+    the project's: in a Code Factory, main protected and the webhook pointed
+    here where GitHub can reach it. One path for the Settings card, the form
+    and the janitor's late connect, so none of them half-does it."""
+    from yaaf.core import ids, shape
+    from yaaf.core.models import AuditLog
+
+    full_name = provision_repo(session, project, name_or_full)
+    project.github_repo = full_name
+    integrations = {k: v for k, v in (project.integrations or {}).items()
+                    if k not in ("repo_wanted", "repo_wanted_error", "repo_wanted_tried_at")}
+    protection = None
+    if shape.is_factory(project):
+        # Only the platform merges in a factory. GitHub's own rule says so too
+        # where the token may set it; where it may not, the platform's push
+        # detection is the rule that holds, and the result is recorded either
+        # way so the project page can say which.
+        protection = protect_main(session, full_name)
+        integrations["branch_protection"] = protection
+    project.integrations = integrations
+    if shape.is_factory(project):
+        project.integrations = {**project.integrations,
+                                "github_hook": ensure_hook(session, project, full_name)}
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:github",
+        action="project.github_attach", entity="project", entity_id=project.id,
+        detail={"github_repo": full_name,
+                **({"branch_protection": protection} if protection is not None else {})}))
+    return {"github_repo": full_name,
+            **({"branch_protection": protection} if protection is not None else {})}
+
+
+#: How long a failed late connect waits before it is tried again.
+RETRY_WANTED_S = 600
+
+
+def connect_wanted(session: Session, project: Project) -> dict | None:
+    """The repo a factory was founded wanting, made once it can be.
+
+    The form asks for the repo name and makes it right after Create — with
+    the platform's GitHub key. Founded before that key was saved, the make
+    failed and the name was lost, and the chairman met an empty field. The
+    name is kept (`repo_wanted`) and made here, on the janitor's tick, as soon
+    as the key exists. A refusal (the name is taken, the key may not create
+    repos) is written where the Settings card shows it and tried again later,
+    not every tick."""
+    import time
+
+    wanted = (project.integrations or {}).get("repo_wanted")
+    if project.github_repo or not wanted or platform_token(session) is None:
+        return None
+    tried = float((project.integrations or {}).get("repo_wanted_tried_at") or 0)
+    if time.time() - tried < RETRY_WANTED_S:
+        return None
+    try:
+        return connect(session, project, str(wanted))
+    except (HTTPException, GithubError) as exc:
+        said = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        project.integrations = {**(project.integrations or {}),
+                                "repo_wanted_error": str(said)[:300],
+                                "repo_wanted_tried_at": time.time()}
+        log.warning("could not make %s's repo %s: %s", project.slug, wanted, said)
+        return None
 
 
 def ensure_hook(session: Session, project: Project, repo: str) -> dict:

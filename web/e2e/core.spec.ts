@@ -160,6 +160,9 @@ test("a Code Factory names its own lead and crew", async ({ page }) => {
   await expect(page.getByText(/External evidence must be verified/)).toHaveCount(0);
   await expect(page.getByText(/Your own domains/)).toHaveCount(0);
   await expect(page.getByText(/Blank creates a new private repo/)).toBeVisible();
+  // The demo install has no GitHub key: asked for here, before Create, rather
+  // than found missing by a repo that was never made.
+  await expect(page.getByText(/Connect this install to GitHub first/)).toBeVisible();
   await expect(page.locator(".orgline", { hasText: "Factory rules" }))
     .toContainText(/you approve the first release.*hidden tests, security scans, code-health checks/);
 

@@ -253,6 +253,8 @@ export function EnvironmentsCard({ projectId, dash }: { projectId: string; dash:
 type FactorySetup = {
   platform_token: boolean;
   repo: string | null;
+  repo_wanted: string | null;
+  repo_wanted_error: string | null;
   branch_protection: { ok: boolean; detail: string } | null;
   push_token: { set: boolean; granted: string[]; missing: string[] };
   notifications: { hook: { ok: boolean; detail: string } | null;
@@ -268,11 +270,13 @@ export function FactoryGithub({ projectId }: { projectId: string }) {
   const { data, reload } = usePoll(
     () => get<FactorySetup>(`/admin/projects/${projectId}/factory/setup`), 30000, [projectId]);
   const [platformKey, setPlatformKey] = useState("");
-  const [repo, setRepo] = useState("");
+  const [repo, setRepo] = useState<string | null>(null);
   const [pushKey, setPushKey] = useState("");
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   if (!data) return <Skeleton />;
+  // The name chosen when the project was made, until somebody types another.
+  const repoName = repo ?? data.repo_wanted ?? "";
 
   async function act(what: () => Promise<unknown>, done: string, clear?: () => void) {
     setBusy(true); setSaid(null);
@@ -297,9 +301,10 @@ export function FactoryGithub({ projectId }: { projectId: string }) {
         <input type="password" value={platformKey} placeholder="github_pat_…"
           onChange={(e) => setPlatformKey(e.target.value)} aria-label="Platform GitHub key" />
         <button className="primary" disabled={busy || platformKey.trim().length < 8}
-          onClick={() => act(() => post("/admin/secrets", {
-            project_id: null, name: "github", value: platformKey.trim(), role_scopes: [] }),
-          "Saved.", () => setPlatformKey(""))}>Save</button>
+          onClick={() => act(() => put("/admin/settings/github", { token: platformKey.trim() }),
+          data.repo_wanted && !data.repo
+            ? `Saved. Making ${data.repo_wanted} now.` : "Saved.", () => setPlatformKey(""))}>
+          Check and save</button>
       </>}
 
       <h3>{mark(!!data.repo)} 2. The repository</h3>
@@ -308,12 +313,20 @@ export function FactoryGithub({ projectId }: { projectId: string }) {
           {data.branch_protection && !data.branch_protection.ok &&
             ` GitHub could not be told to protect main (${data.branch_protection.detail}); the platform still freezes merging if main moves without it.`}</p>
       ) : <>
-        <p className="help">A bare name creates a new private repo; owner/name uses one you made
-          (it should be empty for a new build).</p>
-        <input value={repo} placeholder="my-app or owner/my-app" disabled={!data.platform_token}
+        <p className="help">
+          {data.repo_wanted && !data.platform_token
+            ? `It will be made as ${data.repo_wanted} the moment the key above is saved. `
+            : ""}
+          A bare name creates a new private repo; owner/name uses one you made (it should be
+          empty for a new build).</p>
+        {data.repo_wanted_error && (
+          <p className="help serious">GitHub would not make {data.repo_wanted}: {data.repo_wanted_error}.
+            Change the name, or the key's access, and connect again.</p>
+        )}
+        <input value={repoName} placeholder="my-app or owner/my-app" disabled={!data.platform_token}
           onChange={(e) => setRepo(e.target.value)} aria-label="Repository" />
-        <button className="primary" disabled={busy || !data.platform_token || !repo.trim()}
-          onClick={() => act(() => post(`/admin/projects/${projectId}/github`, { repo: repo.trim() }),
+        <button className="primary" disabled={busy || !data.platform_token || !repoName.trim()}
+          onClick={() => act(() => post(`/admin/projects/${projectId}/github`, { repo: repoName.trim() }),
             "Connected, and main is protected.")}>Connect</button>
       </>}
 
