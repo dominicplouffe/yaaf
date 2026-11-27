@@ -770,7 +770,36 @@ def _work_closed_since_last_check(session: Session, requirement, tasks) -> bool:
     ).scalar()
     if last is None:
         return True
-    return any(t.updated_at and t.updated_at > last for t in tasks)
+    if any(t.updated_at and t.updated_at > last for t in tasks):
+        return True
+    # In a Code Factory the work lands when its change merges, which moves no
+    # task: a requirement checked before its change merged would otherwise
+    # never be checked again.
+    from yaaf.core.models import Change, ChangeStatus
+
+    merged = session.execute(
+        select(func.max(Change.merged_at)).where(Change.requirement_id == requirement.id,
+                                                 Change.status == ChangeStatus.MERGED)
+    ).scalar()
+    if merged is None:
+        return False
+    merged = merged if merged.tzinfo else merged.replace(tzinfo=UTC)
+    last = last if last.tzinfo else last.replace(tzinfo=UTC)
+    return merged > last
+
+
+def _change_still_landing(session: Session, requirement) -> bool:
+    """A change serving this requirement is open, ready or merging. In a Code
+    Factory the acceptance test runs on main, so judging now judges main without
+    the work: the Durations factory's parser task closed on its builder's
+    checkout, R-02 was tested on a main still holding the stub, and failed."""
+    from yaaf.core.models import Change
+    from yaaf.server import changes
+
+    return session.execute(
+        select(Change.id).where(Change.requirement_id == requirement.id,
+                                Change.status.in_(changes.LIVE)).limit(1)
+    ).first() is not None
 
 
 def check_finished_requirements(session: Session, project: Project,
@@ -832,6 +861,8 @@ def check_finished_requirements(session: Session, project: Project,
         # it can only burn a container every fifteen seconds and bury the CEO
         # in identical notices.
         if not _work_closed_since_last_check(session, requirement, tasks):
+            continue
+        if shape.is_factory(project) and _change_still_landing(session, requirement):
             continue
 
         from_status = requirement.status

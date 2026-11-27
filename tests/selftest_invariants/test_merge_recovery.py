@@ -243,3 +243,38 @@ def test_a_change_is_not_merged_while_its_ci_is_still_running(client, gh, monkey
     assert "still running" in (_change(change["id"]).status_reason or "")
     monkeypatch.setattr(github, "_request", gh)
     assert _merge(project) == 1
+
+
+def test_a_requirement_is_judged_after_its_change_lands_not_before(client, gh):
+    """The Durations factory: the parser task closed on its builder's checkout,
+    R-02 was tested on a main still holding the stub and failed; and once that
+    had happened, the merge moved no task, so it would never be tested again."""
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Requirement, RequirementStatus, Task, TaskStatus
+    from yaaf.server import janitor, policy
+
+    project = _factory(client)
+    change = _open(client, project, _claimed_task(client, project)).json()
+    with db_session() as session:
+        row = session.get(Change, change["id"])
+        session.get(Task, row.task_id).status = TaskStatus.DONE
+        rid = row.requirement_id
+        session.get(Requirement, rid).status = RequirementStatus.IN_PROGRESS
+
+    def sweep():
+        with db_session() as session:
+            p = session.get(Project, project["id"])
+            janitor.check_finished_requirements(session, p, effective(session, p.id))
+            return session.get(Requirement, rid).status
+
+    assert sweep() == RequirementStatus.IN_PROGRESS, "its change has not landed"
+    with db_session() as session:   # judged once, failed, and then the change merged
+        req = session.get(Requirement, rid)
+        policy.record_requirement_event(session, req, RequirementStatus.IN_PROGRESS,
+                                        "checker", note="FAILED",
+                                        from_status=RequirementStatus.CHECKING)
+        session.flush()
+        row = session.get(Change, change["id"])
+        row.status, row.merged_at, row.merged_sha = (ChangeStatus.MERGED,
+                                                     utcnow() + timedelta(seconds=5), "m" * 40)
+    assert sweep() == RequirementStatus.CHECKING
