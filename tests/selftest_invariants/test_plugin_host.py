@@ -433,11 +433,22 @@ def test_subprocess_mode_is_refused_on_a_box_that_holds_the_docker_socket(tmp_pa
     assert answer == Brief("")
 
 
-def test_docker_mode_fails_closed_and_says_why_until_its_route_exists():
-    pool = H.HostPool(H.HostSpec.from_checkout(EXAMPLE), H.launcher_for_mode("docker"))
-    answer, failure = H.ask_or_fail_closed(pool, HookKey("completion_gate"), [CTX])
-    assert failure.kind == "start" and "docker mode" in failure.message
-    assert answer == [Owed("plugin_unavailable", H.UNAVAILABLE)]
+def test_docker_mode_goes_through_the_runners_broker():
+    assert isinstance(H.launcher_for_mode("docker"), H.BrokerLauncher)
+    assert isinstance(H.launcher_for_mode("anything-else"), H.BrokerLauncher)
+
+
+@pytest.mark.skipif(not Path("/usr/bin/python3.11").exists(), reason="no Python 3.11 here")
+def test_the_host_runs_on_the_sandbox_images_python(monkeypatch):
+    """The sandbox image is Debian's Python 3.11, not the server's 3.12+."""
+    class Py311(H.SubprocessLauncher):
+        def argv(self, spec, scratch):
+            return H.host_command(spec, scratch, python="/usr/bin/python3.11")
+    pool = H.HostPool(H.HostSpec.from_checkout(EXAMPLE), Py311())
+    try:
+        assert pool.call(HookKey("brief"), [CTX]).text.startswith("Draft application.json")
+    finally:
+        pool.close()
 
 
 def test_the_jail_gives_a_host_no_network_and_nothing_writable_but_scratch(tmp_path):

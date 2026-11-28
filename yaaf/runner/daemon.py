@@ -86,6 +86,12 @@ def main() -> None:  # pragma: no cover - process entrypoint
     slots = RunSlots(MAX_PARALLEL)
     log.info("runner %s starting", settings().worker_name)
     threading.Thread(target=chat_supervisor_loop, daemon=True).start()
+    if getattr(settings(), "sandbox_mode", "docker") == "docker":
+        # Only this process holds the Docker socket, so in docker mode it is the
+        # one that starts plugin hosts for the api (yaaf/plugins/broker.py).
+        from yaaf.plugins import broker
+
+        broker.start_in_background()
     while True:
         if not dispatch_tick(pool.submit, slots):
             time.sleep(settings().runner_poll_s)

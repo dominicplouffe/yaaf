@@ -6,7 +6,9 @@ name = "yaaf-plugin-api"
 version = "1.0.0"
 description = "The contract between yaaf and a factory plugin: types, hooks, manifest and view schemas, and the conformance requirements"
 readme = "README.md"
-requires-python = ">=3.12"
+# 3.11, not yaaf's 3.12: the host runs on the sandbox image's Python
+# (Debian's), and a plugin author's machine should not need a newer one.
+requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 # None, on purpose. A plugin installs this beside its own pinned dependencies
 # inside a sandbox, and the host imports it before the plugin: anything listed

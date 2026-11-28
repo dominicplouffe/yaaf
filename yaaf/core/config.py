@@ -88,6 +88,17 @@ class Settings(BaseSettings):
     # whole point of the mode.
     allow_host_success_tests: bool = False
     sandbox_image: str = "yaaf-sandbox:latest"
+    # Factory plugins (yaaf/plugins). Installed plugin checkouts and their built
+    # environments live under plugins_root, shared by the api and the runner at
+    # the same path, as workspaces are. In docker mode the runner starts plugin
+    # hosts and the api reaches them through the runner's broker: bound on the
+    # stack's default network only (the runner is not on the sandbox network,
+    # so no agent container can reach it), authenticated with a key derived
+    # from master_key.
+    plugins_root: str = "/var/lib/yaaf/plugins"
+    plugin_broker_bind: str = "0.0.0.0"
+    plugin_broker_port: int = 24250
+    plugin_broker_address: str = "runner:24250"
     sandbox_network: str = "yaaf_sandbox"
     workspaces_root: str = "/var/lib/yaaf/workspaces"
     artifacts_root: str = "/var/lib/yaaf/artifacts"

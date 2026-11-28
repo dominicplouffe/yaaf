@@ -23,10 +23,10 @@ host can fail into an answer that is safe to act on:
   has only the in-host guard and is refused on a box holding the Docker socket,
   by the same rule as host-mode success tests.
 
-The `docker` launcher is not built: in a docker deployment only the runner
-holds the socket (deploy/docker-compose.yml). How the server reaches a
-runner-launched host is the open decision recorded in the design doc. Until
-then a docker install's plugin calls fail closed, saying why.
+In `docker` mode only the runner holds the Docker socket, so the runner starts
+host containers and the server reaches them through its broker
+(`yaaf/plugins/broker.py`, `BrokerLauncher`). If the runner is down, plugin
+calls fail closed.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ import logging
 import os
 import queue
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -230,13 +231,94 @@ class JailLauncher(Launcher):
         return argv[:split] + binds + argv[split:]
 
 
-class DockerLauncher(Launcher):
+class _SocketProc:
+    """A broker connection, shaped like the Popen a Host drives: stdin, stdout,
+    poll, kill. Closing it is what stops the container on the runner's side."""
+
+    pid = None
+
+    def __init__(self, conn: socket.socket):
+        self.conn = conn
+        self.stdin = conn.makefile("wb")
+        self.stdout = conn.makefile("rb", buffering=0)
+        self.closed = False
+
+    def poll(self):
+        return 0 if self.closed else None
+
+    def kill(self) -> None:
+        self.closed = True
+        with contextlib.suppress(OSError):
+            self.conn.shutdown(socket.SHUT_RDWR)
+        with contextlib.suppress(OSError):
+            self.conn.close()
+
+    def wait(self, timeout=None):
+        return 0
+
+
+class BrokerLauncher(Launcher):
+    """Docker mode: the runner starts the host container (yaaf/plugins/broker.py)
+    and this connects to it. Only the runner holds the Docker socket."""
+
     name = "docker"
 
+    def __init__(self, address: tuple[str, int] | None = None, key: bytes | None = None):
+        self._address = address
+        self._key = key
+
+    def address(self) -> tuple[str, int]:
+        if self._address is not None:
+            return self._address
+        from yaaf.core.config import settings
+
+        host, _, port = settings().plugin_broker_address.rpartition(":")
+        return host, int(port)
+
     def unavailable(self) -> str | None:
-        return ("plugin hosts are not yet available in docker mode: only the runner holds the "
-                "Docker socket, and the server's route to a runner-launched host is not built "
-                "(docs/plans/factory-plugins.md, step 2 decision)")
+        try:
+            self.address()
+            if self._key is None:
+                from yaaf.plugins import broker
+
+                broker.secret()
+        except (RuntimeError, ValueError) as exc:
+            return f"the plugin broker cannot be reached: {exc}"
+        return None
+
+    def spawn(self, spec: HostSpec, scratch: str, stderr) -> _SocketProc:
+        from yaaf.plugins import broker
+
+        why = self.unavailable()
+        if why:
+            raise HostFailure("start", why)
+        key = self._key if self._key is not None else broker.secret()
+        try:
+            conn = socket.create_connection(self.address(), timeout=START_TIMEOUT_S)
+        except OSError as exc:
+            raise HostFailure("start", f"the runner's plugin broker at "
+                                       f"{':'.join(map(str, self.address()))} is not "
+                                       f"reachable ({exc}); is the runner up?") from None
+        reader = conn.makefile("rb", buffering=0)
+        try:
+            challenge = wire.read_frame(reader)
+            nonce = str((challenge or {}).get("challenge", ""))
+            if not nonce:
+                raise HostFailure("start", "the broker sent no challenge")
+            broker.send_frame(conn, {"auth": broker.sign(nonce, key), "spec": {
+                "module": spec.manifest.module, "root": str(spec.root),
+                "paths": [str(p) for p in spec.paths], "memory_mb": spec.memory_mb}})
+            answer = wire.read_frame(reader) or {}
+            if answer.get("broker") != "ok":
+                raise HostFailure("start", f"the broker refused: {answer.get('why', 'no reason')}")
+        except (OSError, wire.WireError) as exc:
+            conn.close()
+            raise HostFailure("start", f"the broker handshake failed: {exc}") from None
+        except HostFailure:
+            conn.close()
+            raise
+        conn.settimeout(None)
+        return _SocketProc(conn)
 
 
 def launcher_for_mode(mode: str | None = None) -> Launcher:
@@ -244,7 +326,7 @@ def launcher_for_mode(mode: str | None = None) -> Launcher:
         from yaaf.core.config import settings
 
         mode = getattr(settings(), "sandbox_mode", "docker")
-    return {"subprocess": SubprocessLauncher, "host": JailLauncher}.get(mode, DockerLauncher)()
+    return {"subprocess": SubprocessLauncher, "host": JailLauncher}.get(mode, BrokerLauncher)()
 
 
 # ── one host ───────────────────────────────────────────────────────────────────

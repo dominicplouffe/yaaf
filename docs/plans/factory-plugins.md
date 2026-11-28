@@ -746,7 +746,7 @@ receipt bug at the type. And a plugin hands core the load-bearing numbers in
 `Accept.load_bearing` when its artifact is accepted, so the review primitive
 compares re-derivations against the subject's numbers and never the review's.
 
-**Step 2 is built** (the plugin host), except the docker launcher:
+**Step 2 is built** (the plugin host and all three launchers):
 
 - `yaaf_plugin_api.wire`: frames (4-byte length + JSON, capped at 64 MB) and a
   codec whose decoder builds only the API's own dataclasses. A message naming
@@ -780,21 +780,35 @@ compares re-derivations against the subject's numbers and never the review's.
   starts. Each ends in the refusing answer. Removing the guard turns 9 of these
   red, and removing core's callback check turns the forged-gateway one red.
 
-### Decision needed: how a docker install reaches a plugin host
+### Decided: a docker install reaches plugin hosts through the runner
 
-In a docker deployment only the runner holds the Docker socket
-(`deploy/docker-compose.yml`). The API server, which asks the gates, does not,
-and should not: it is the internet-facing process, and the socket is root on
-the box. The options:
+In a docker deployment only the runner holds the Docker socket. The API
+server, which asks the gates, does not and should not: it is the
+internet-facing process, and the socket is root on the box. So the **runner
+brokers plugin hosts** (`yaaf/plugins/broker.py`). Rejected alternatives: a
+dedicated socket-holding service (a second root-equivalent process to run and
+patch), and giving the API the socket.
 
-1. **The runner brokers plugin hosts (recommended).** The runner starts host
-   containers with fixed flags (`--network none`, read-only root and plugin,
-   tmpfs scratch, no capabilities, memory and pid caps). The server reaches
-   them over the internal network with a shared secret, speaking the same
-   frames through a `RemoteLauncher`. No new process holds the socket. Cost:
-   with the runner down, plugin gates fail closed. Agents can't act without a
-   runner anyway, but the project-home view would show "could not be read".
-2. **A dedicated plugin-host service** holding the socket and nothing else.
-   It is cleaner to reason about, but it is a second root-holding process to
-   deploy and keep patched.
-3. **Give the API server the socket.** Rejected for the reason above.
+- The runner listens on port 24250 on the stack's default network only. The
+  runner is not on the sandbox network, so no agent container can reach it.
+- The server's `BrokerLauncher` opens one TCP connection per host and answers
+  a challenge with an HMAC under a key derived from `YAAF_MASTER_KEY`, which
+  both services already hold. It names the plugin to run.
+- The broker refuses any path outside `YAAF_PLUGINS_ROOT`. It starts the
+  sandbox image with flags it alone decides: `--network none`, a read-only
+  root and plugin, noexec tmpfs scratch, all capabilities dropped,
+  `no-new-privileges`, and memory and pid caps. It then proxies the host's
+  frames byte for byte. Core checks them on the server exactly as it does for
+  a local host. Closing the connection removes the container.
+- Plugins live under `YAAF_PLUGINS_ROOT` at the same path on the host, the api
+  (read-write: it installs) and the runner (read-only). The sandbox image
+  carries the API package at `/opt/yaaf-plugin-api/src`.
+- If the runner is down, plugin calls fail closed with "is the runner up?".
+- Attacks: `tests/selftest_invariants/test_plugin_broker.py`. A wrong key or a
+  path outside the root starts nothing. A traversal or a symlink out of the
+  root is refused. A host dies with its connection. The flags are the
+  broker's. The compose file keeps the broker off the sandbox network.
+  Removing the HMAC check turns a test red.
+- Not exercised in CI: the Docker SDK attach path itself (`_DockerHost`), since
+  CI has no daemon to start a container in. Its flags are checked as data, and
+  the broker is tested with a local process in the container's place.

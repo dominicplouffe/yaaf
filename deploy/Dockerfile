@@ -41,16 +41,20 @@ WORKDIR /app
 # veto over whether you can deploy at all. A stub package is all setuptools
 # needs to build the metadata and resolve the dependency list.
 COPY pyproject.toml README.md ./
-RUN mkdir -p yaaf && touch yaaf/__init__.py \
+# The plugin API ships inside yaaf (pyproject's packages.find names its src
+# directory), so the dependency layer needs that directory to exist too; its
+# code is copied below with yaaf's own.
+RUN mkdir -p yaaf packages/yaaf_plugin_api/src && touch yaaf/__init__.py \
     && pip install --no-cache-dir --upgrade "setuptools>=68" wheel \
     && pip install --no-cache-dir --no-build-isolation . \
-    && rm -rf yaaf yaaf.egg-info
+    && rm -rf yaaf yaaf.egg-info packages
 
 # The real source. --no-deps because the layer above already installed them,
 # and --no-build-isolation because otherwise pip fetches setuptools into a
 # fresh build env every time — which is the exact request that failed. Between
 # them, the layer that rebuilds on every commit touches the network not at all.
 COPY yaaf ./yaaf
+COPY packages/yaaf_plugin_api ./packages/yaaf_plugin_api
 COPY migrations ./migrations
 COPY alembic.ini ./
 RUN pip install --no-cache-dir --no-deps --no-build-isolation .
