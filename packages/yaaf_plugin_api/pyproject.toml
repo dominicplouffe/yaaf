@@ -1,0 +1,24 @@
+[project]
+name = "yaaf-plugin-api"
+# The API's own version, not yaaf's: a plugin's manifest names a range of this
+# (`api = ">=1.0,<2"`), and the host refuses a plugin whose range excludes it.
+# Kept equal to yaaf_plugin_api.API_VERSION; a test holds the two together.
+version = "1.0.0"
+description = "The contract between yaaf and a factory plugin: types, hooks, manifest and view schemas, and the conformance requirements"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+# None, on purpose. A plugin installs this beside its own pinned dependencies
+# inside a sandbox, and the host imports it before the plugin: anything listed
+# here would be code every plugin runs and no plugin chose.
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"yaaf_plugin_api" = ["schema/*.json", "py.typed"]

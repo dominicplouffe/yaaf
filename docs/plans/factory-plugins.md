@@ -97,8 +97,8 @@ yaaf-amazon-ppc/
 ├── ui/view.json              # the project-home section, in core's view schema (§4.9)
 ├── fixtures/                 # conformance inputs the plugin ships: see §6.3
 │   ├── sources/qore/         #   recorded tool listings and results for a fake MCP source
-│   ├── artifacts/accept/     #   at least one artifact each gate accepts
-│   └── artifacts/refuse/     #   at least one each gate refuses, with the reason expected
+│   ├── artifacts/accept/<artifact name>/   # at least one case each gate accepts
+│   └── artifacts/refuse/<artifact name>/   # at least one it refuses, each with <case>.expect.json
 └── tests/                    # the author's own attacks, run by `yaaf plugin check` and at install
 ```
 
@@ -129,19 +129,25 @@ crews = ["amazon-ppc-audit"]
   shape  = "runs_on_cycles"
   open   = false                        # declared, refused at creation (as PPC_MODES_OPEN does today)
 
-[capabilities]                          # each one opts the plugin into an extended suite (§6.2)
+[capabilities]                          # each one opts the plugin into its hooks and its extended suite (§6.2)
 brief           = true
 plan_gate       = true
 completion_gate = true
+coverage        = true                  # classify_tools: what the connected data can reach
+state           = true                  # the plugin writes kind_state, so migrate_state is required
 artifacts       = ["ppc-audit.json"]    # names whose publication this plugin gates
 platform_pages  = ["ppc-audit.md", "ppc-audit.pptx", "ppc-audit.xlsx", "ppc-changes.csv"]
 review          = { of = "ppc-audit.json", artifact = "ppc-review.json", rederive_tolerance = 0.05 }
-receipts        = { sources = "any" }   # record data-source reads; claims may cite them
-data_actions    = ["analysis"]          # platform-run pulls (§4.7)
-agent_files     = ["kit"]               # files served verbatim to seats (§4.6)
+receipts        = true                  # or { sources = ["qore"] }: record reads; claims may cite them
+agent_files     = { kit = "src/yaaf_amazon_ppc/kit.py" }   # served verbatim to seats (§4.6)
 setup_steps     = ["ads_data"]
 view            = "ui/view.json"
 create_fields   = true                  # extra fields on the New Project form (§4.10)
+
+  [capabilities.data_actions.analysis]  # platform-run pulls (§4.7)
+  description = "Pull the account and run the standard checks"
+  tools       = ["get_stats", "get_timeseries", "query_dataset"]   # the gateway refuses any other
+  outputs     = ["ppc-data.json", "ppc-analysis.json"]           # reserved: no seat may publish them
 
 [limits]                                # optional; core caps each at its own ceiling
 hook_timeout_s   = 10
@@ -507,9 +513,11 @@ failed it) or `n/a` (an extended requirement for a capability not declared).
 - `sources/<vendor>/tools.json` and `sources/<vendor>/calls/*.json`: a
   recorded listing and results, from which the harness builds a **fake MCP
   source** (generalised from `tests/ppc_fake_qore.py`);
-- `artifacts/accept/*` and `artifacts/refuse/*` with a
-  `<name>.expect.json` beside each (the verdict, and for a refusal the
-  substrings its problems must contain);
+- `artifacts/accept/<artifact name>/<case>` and
+  `artifacts/refuse/<artifact name>/<case>`, one folder per gated name (each
+  `artifacts` entry and the review artifact). Every refuse case has
+  `<case>.expect.json` beside it, `{"contains": [...]}`, naming the words its
+  refusal must say; an accept case may have one;
 - `states/*.json`: snapshots at the moments that matter (no data, data
   connected, report published, reviewed).
 
@@ -704,3 +712,35 @@ Each step ships with its attacks (house rule #2) and keeps the suite green.
    plugin can declare obligations against (EXT-CYC-1).
 6. **A plugin cannot add sandbox tools.** Only the three generic ones. This
    keeps the agent-visible surface regression-gated by core.
+
+## Status
+
+**Step 1 is built** (`packages/yaaf_plugin_api`, API 1.0, no core change):
+
+- `types`: the snapshot, the uploads and every return type, all frozen;
+- `hooks`: `FactoryPlugin`, `@hook.*`, `expected(manifest)`,
+  `check_plugin` (MIN-05) and `check_return` (the validators MIN-08, MIN-17
+  and the extended suites use);
+- `manifest`: `yaaf-plugin.toml` parsing and validation, plus the
+  cross-field rules a schema cannot say;
+- `view`: the component set and checks for the declaration and the data;
+- `requirements`: the §6 table as data, with which part of yaaf decides
+  each one (`checked_by`);
+- `repo` and `report`: the static report for a checkout, also available as
+  `python -m yaaf_plugin_api check <path> [--json]`. A requirement only a
+  build, host, harness or core can decide is `pending`, never `pass`;
+- `schema/manifest.schema.json` and `schema/view.schema.json`;
+- `examples/grant-factory`: a complete small plugin that passes every check a
+  checkout can decide.
+
+The attacks are in `tests/selftest_invariants/test_plugin_api.py`. The schema
+and the validator must refuse the same bad manifests. A typo'd capability is
+refused, not ignored. Code that misses, adds or mis-sizes a hook is named. A
+return core couldn't act on is named. The requirement ids must match this doc.
+The package must depend on the standard library only.
+
+Two refinements from building it: the API answers "fields could not be read"
+with `ReadFields.unknown()` and refuses an empty tuple, which closes the PPC
+receipt bug at the type. And a plugin hands core the load-bearing numbers in
+`Accept.load_bearing` when its artifact is accepted, so the review primitive
+compares re-derivations against the subject's numbers and never the review's.

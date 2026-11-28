@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yaaf.dev/schema/plugin-manifest/1.json",
+  "title": "yaaf factory plugin manifest (yaaf-plugin.toml), API 1.x",
+  "description": "The declaration a factory plugin is held to. yaaf_plugin_api.manifest.validate is the source of truth; it also enforces the cross-field rules listed in x-cross-field-rules, which a JSON Schema cannot express.",
+  "x-cross-field-rules": [
+    "every artifact, review, platform page and data-action output name is unique across them",
+    "review.of names an artifact listed in capabilities.artifacts",
+    "platform_pages needs at least one gated artifact to render from",
+    "at least one mode is open, and mode keys are unique",
+    "kind.lead is not also one of kind.crews",
+    "an agent_files path is relative, inside the repo, and not a hidden file",
+    "plugin.api includes the installed API version"
+  ],
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["plugin", "kind"],
+  "$defs": {
+    "slug": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$"},
+    "fileName": {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/\\\\\\u0000\\s](?:[^/\\\\\\u0000]*[^/\\\\\\u0000\\s])?$", "not": {"enum": [".", ".."]}},
+    "fileNames": {"type": "array", "items": {"$ref": "#/$defs/fileName"}, "uniqueItems": true},
+    "repoPath": {"type": "string", "minLength": 1, "maxLength": 300, "pattern": "^(?![/.])(?!.*\\\\)(?!.*//)(?!.*/\\.)(?!.*/$)[^\\u0000]+$"},
+    "text": {"type": "string", "minLength": 1, "pattern": "\\S"}
+  },
+  "properties": {
+    "plugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "version", "api", "module", "description"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$"},
+        "name": {"$ref": "#/$defs/text", "maxLength": 80},
+        "version": {"type": "string", "pattern": "^\\s*\\d+(\\.\\d+){0,2}\\s*$"},
+        "api": {"type": "string", "pattern": "^\\s*(>=|<=|==|>|<)\\s*\\d+(\\.\\d+){0,2}\\s*(,\\s*(>=|<=|==|>|<)\\s*\\d+(\\.\\d+){0,2}\\s*)*$"},
+        "module": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*:[A-Za-z_][A-Za-z0-9_]*$"},
+        "description": {"$ref": "#/$defs/text", "maxLength": 500},
+        "license": {"$ref": "#/$defs/text", "maxLength": 300},
+        "homepage": {"type": "string", "pattern": "^https://\\S", "maxLength": 300}
+      }
+    },
+    "kind": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "modes"],
+      "properties": {
+        "key": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,39}$", "not": {"enum": ["explore", "deliver", "operate", "code_factory"]}},
+        "label": {"$ref": "#/$defs/text", "maxLength": 80},
+        "lead": {"$ref": "#/$defs/slug"},
+        "crews": {"type": "array", "items": {"$ref": "#/$defs/slug"}},
+        "modes": {
+          "type": "array",
+          "minItems": 1,
+          "contains": {"type": "object", "required": ["open"], "properties": {"open": {"const": true}}},
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "shape"],
+            "properties": {
+              "key": {"$ref": "#/$defs/slug"},
+              "label": {"$ref": "#/$defs/text", "maxLength": 80},
+              "shape": {"enum": ["ships_once", "runs_on_cycles"]},
+              "open": {"type": "boolean"}
+            }
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "brief": {"type": "boolean"},
+        "plan_gate": {"type": "boolean"},
+        "completion_gate": {"type": "boolean"},
+        "coverage": {"type": "boolean"},
+        "state": {"type": "boolean"},
+        "create_fields": {"type": "boolean"},
+        "artifacts": {"$ref": "#/$defs/fileNames"},
+        "platform_pages": {"$ref": "#/$defs/fileNames"},
+        "review": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["of", "artifact"],
+          "properties": {
+            "of": {"$ref": "#/$defs/fileName"},
+            "artifact": {"$ref": "#/$defs/fileName"},
+            "rederive_tolerance": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.25},
+            "independent": {"enum": ["hash", "strict"]}
+          }
+        },
+        "receipts": {
+          "oneOf": [
+            {"const": true},
+            {"type": "object", "additionalProperties": false, "properties": {
+              "sources": {"oneOf": [{"const": "any"}, {"type": "array", "items": {"$ref": "#/$defs/text", "maxLength": 64}}]}
+            }}
+          ]
+        },
+        "data_actions": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"pattern": "^[a-z][a-z0-9_-]{0,39}$"},
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tools"],
+            "properties": {
+              "description": {"$ref": "#/$defs/text", "maxLength": 500},
+              "tools": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/text", "maxLength": 128}},
+              "outputs": {"$ref": "#/$defs/fileNames"}
+            }
+          }
+        },
+        "agent_files": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"pattern": "^[a-z][a-z0-9_-]{0,39}$"},
+          "additionalProperties": {"$ref": "#/$defs/repoPath"}
+        },
+        "setup_steps": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/slug"}},
+        "view": {"allOf": [{"$ref": "#/$defs/repoPath"}, {"pattern": "\\.json$"}]}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hook_timeout_s": {"type": "integer", "minimum": 1, "maximum": 30},
+        "action_timeout_s": {"type": "integer", "minimum": 1, "maximum": 1800},
+        "memory_mb": {"type": "integer", "minimum": 1, "maximum": 2048}
+      }
+    }
+  }
+}

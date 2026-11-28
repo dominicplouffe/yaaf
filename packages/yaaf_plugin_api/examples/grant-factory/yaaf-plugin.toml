@@ -1,0 +1,37 @@
+# A small, complete example: a factory that drafts one grant application and
+# has it reviewed by a second seat. Every capability it declares has its hook,
+# and every gate has fixtures — run `python -m yaaf_plugin_api check .` here.
+[plugin]
+id          = "grant-factory"
+name        = "Grant Application Factory"
+version     = "0.1.0"
+api         = ">=1.0,<2"
+module      = "grant_factory:plugin"
+license     = "Apache-2.0"
+description = "Drafts one grant application from a funder's call and has a second seat review it."
+
+[kind]
+key   = "grant_application"
+lead  = "grant-lead"
+crews = ["grant-writers"]
+
+  [[kind.modes]]
+  key   = "draft"
+  shape = "ships_once"
+  open  = true
+
+[capabilities]
+brief           = true
+completion_gate = true
+artifacts       = ["application.json"]
+platform_pages  = ["application.md"]
+review          = { of = "application.json", artifact = "application-review.json", rederive_tolerance = 0.05 }
+receipts        = true
+agent_files     = { budget = "src/grant_factory/budget.py" }
+setup_steps     = ["funder_source"]
+view            = "ui/view.json"
+
+  [capabilities.data_actions.call_for_proposals]
+  description = "Read the funder's call into calls.json"
+  tools       = ["get_call"]
+  outputs     = ["calls.json"]

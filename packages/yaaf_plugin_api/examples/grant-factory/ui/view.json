@@ -1,0 +1,5 @@
+{"version": 1, "sections": [
+  {"id": "state", "component": "status", "title": "Application"},
+  {"id": "ask", "component": "metric", "title": "Amount asked"},
+  {"id": "draft", "component": "artifact", "title": "The draft"}
+]}

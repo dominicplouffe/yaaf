@@ -1,0 +1,1 @@
+{"verdict": "pass", "summary": "Every line cites a rule; the total re-derives.", "rederived": [{"claim": "budget_total", "rederived": 1200, "note": "summed the lines"}]}
