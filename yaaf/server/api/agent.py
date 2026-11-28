@@ -171,6 +171,7 @@ def _task_view(task: Task) -> dict:
         "result_for": task.result_for or ResultFor.TEAM,
         "status": task.status,
         "blocked_reason": task.blocked_reason,
+        "blocked_on": task.blocked_on,
         "claimed_by_agent_id": task.claimed_by_agent_id,
         "hypothesis_id": task.hypothesis_id,
         # What this work is FOR. Outside Explore a task must name a requirement,
@@ -382,6 +383,8 @@ def create_task(
             "decides who does what (including decomposing into assignments). Drop "
             "assignee_agent_id."
         )
+    policy.check_someone_can_claim(session, ctx.agent, session.get(Team, body.team_id),
+                                   body.assignee_agent_id)
     task = Task(
         id=ids.new_id(ids.TASK),
         project_id=ctx.project.id,
@@ -846,6 +849,32 @@ def review_task(
 
 class TaskBlock(BaseModel):
     reason: str = Field(min_length=10)
+    # What it waits on, when that is another task or a change: the janitor
+    # puts the task back on the board the moment that finishes, so nobody has
+    # to kill it and file a copy. A change is its number (#40) or its id.
+    waits_on_task: str | None = None
+    waits_on_change: str | None = None
+
+
+def _blocker(session: Session, project: Project, task: Task, body: TaskBlock) -> dict | None:
+    from yaaf.core.models import Change
+
+    if body.waits_on_task and body.waits_on_change:
+        raise Refusal("Name one thing it waits on: a task or a change.", status_code=422)
+    if body.waits_on_task:
+        other = session.get(Task, body.waits_on_task)
+        if other is None or other.project_id != project.id or other.id == task.id:
+            raise Refusal("waits_on_task is not another task in this project.", 404)
+        return {"task": other.id}
+    if body.waits_on_change:
+        ref = body.waits_on_change.strip().lstrip("#")
+        change = session.execute(select(Change).where(
+            Change.project_id == project.id,
+            Change.number == int(ref) if ref.isdigit() else Change.id == ref)).scalars().first()
+        if change is None:
+            raise Refusal(f"No change {body.waits_on_change} in this project.", 404)
+        return {"change": change.id}
+    return None
 
 
 @router.post("/tasks/{task_id}/block")
@@ -860,9 +889,11 @@ def block_task(
         raise Refusal("Unknown task.", status_code=404)
     if task.status != TaskStatus.CLAIMED or task.claimed_by_agent_id != ctx.agent.id:
         raise Refusal("Only the claimant blocks a task, and only a claimed one.", 409)
+    blocked_on = _blocker(session, ctx.project, task, body)
     from_status = task.status
     task.status = TaskStatus.BLOCKED
     task.blocked_reason = body.reason
+    task.blocked_on = blocked_on
     task.claimed_by_agent_id = None
     policy.record_task_event(session, task, TaskStatus.BLOCKED, f"agent:{ctx.agent.id}",
                              note=body.reason, from_status=from_status)
@@ -880,11 +911,43 @@ def block_task(
                 kind=NoticeKind.TASK_BLOCKED,
                 body=(
                     f"Task '{task.title}' ({task.id}) was BLOCKED by {ctx.agent.name}: "
-                    f"{body.reason[:1500]}\nRe-plan it: change it, kill it, or clear the "
-                    "blocker. A blocked task is a question addressed to you."
+                    f"{body.reason[:1500]}\n"
+                    + ("It goes back on the board by itself when what it waits on "
+                       "finishes. " if blocked_on else "")
+                    + "Re-plan it: clear the blocker and task_unblock it, change it, or "
+                    "kill it. A blocked task is a question addressed to you."
                 ),
             )
         )
+    notify(session, WAKE_CHANNEL, ctx.project.id)
+    return _task_view(task)
+
+
+class TaskUnblock(BaseModel):
+    reason: str = Field(min_length=10)
+
+
+@router.post("/tasks/{task_id}/unblock")
+def unblock_task(
+    task_id: str,
+    body: TaskUnblock,
+    ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    """Put a blocked task back on the board, unclaimed, as it is. Whoever may
+    kill it may unblock it. Before this the only way back was to kill the task
+    and file a copy: one factory did that six times in a day, and each copy
+    started with no history of what had been tried."""
+    task = session.get(Task, task_id)
+    if task is None or task.project_id != ctx.project.id:
+        raise Refusal("Unknown task.", status_code=404)
+    policy.check_task_kill(session, ctx.agent, task)
+    if task.status != TaskStatus.BLOCKED:
+        raise Refusal(f"Task {task.id} is {task.status}, not blocked.", status_code=409)
+    if task.blocked_reason == "hypothesis_expired":
+        raise Refusal("Its hypothesis expired; only the chairman can extend it. Kill the "
+                      "task or make the case to him.", status_code=409)
+    policy.unblock(session, task, f"agent:{ctx.agent.id}", body.reason)
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return _task_view(task)
 
@@ -2058,6 +2121,73 @@ def propose_requirement(
 class RequirementDependency(BaseModel):
     requirement_id: str
     depends_on_requirement_id: str
+
+
+class RequirementRecheck(BaseModel):
+    reason: str = Field(min_length=10, max_length=2000)
+
+
+@router.post("/requirements/{key}/recheck")
+def recheck_requirement(
+    key: str, body: RequirementRecheck, ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    """Ask the platform to run a requirement's acceptance test again, now.
+
+    The CEO's lever when it believes main already holds what a red test asks
+    for. Without it the only way to get a test run was to close a task under
+    the requirement, so one factory filed nineteen "confirm R-xx" tasks — 41
+    runs — whose whole content was a re-run. The verdict is still the
+    platform's: this only queues the check, on a fresh checkout of main. It is
+    refused where the answer cannot change: work still open under it, or main
+    still at the commit the test already failed at."""
+    from yaaf.server import janitor, metrics
+
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("The CEO asks for a re-check. Tell the CEO why you think it would "
+                      "pass now.", status_code=403)
+    requirement = session.execute(select(Requirement).where(
+        Requirement.project_id == ctx.project.id, Requirement.key == key)).scalar_one_or_none()
+    if requirement is None:
+        raise Refusal(f"Unknown requirement {key}.", status_code=404)
+    if requirement.status != RequirementStatus.IN_PROGRESS:
+        raise Refusal(f"{key} is {requirement.status}. Only a requirement in progress is "
+                      "re-checked: a met one is met, one in checking is being judged now, "
+                      "and a pending one has no work to judge.", status_code=409)
+    test = requirement.acceptance_test or {}
+    if test.get("type") != SuccessTestKind.COMMAND or metrics.is_metric(test) \
+            or standing.is_daily(requirement):
+        raise Refusal(f"{key}'s acceptance test is not a command the platform runs on "
+                      "demand (an observable is judged by a person, a metric is read on "
+                      "its schedule, a daily obligation at its deadline).", status_code=409)
+    open_ids = session.execute(select(Task.id).where(
+        Task.requirement_id == requirement.id,
+        Task.status.in_(policy.OPEN_TASK_STATUSES))).scalars().all()
+    if open_ids:
+        raise Refusal(f"Work is still open under {key} ({', '.join(open_ids[:5])}); it is "
+                      "judged by itself when that closes.", status_code=409)
+    if requirement.failed_at_sha and not janitor.main_moved_since_last_check(
+            session, requirement):
+        raise Refusal(
+            f"Main is still at {requirement.failed_at_sha[:7]}, the commit {key}'s test "
+            "already failed at, and the same tree gives the same answer. It is judged "
+            "again by itself when a change merges. If you believe main is right and the "
+            "test is wrong, the test is what needs changing.", status_code=409)
+    from_status = requirement.status
+    requirement.status = RequirementStatus.CHECKING
+    policy.record_requirement_event(session, requirement, RequirementStatus.CHECKING,
+                                    f"agent:{ctx.agent.id}",
+                                    note=f"re-check asked: {body.reason[:500]}",
+                                    from_status=from_status)
+    session.add(RunQueue(id=ids.new_id(ids.RUN), project_id=ctx.project.id, agent_id=None,
+                         kind=RunKind.REQUIREMENT_CHECK,
+                         trigger={"type": "requirement_check",
+                                  "requirement_id": requirement.id},
+                         requirement_id=requirement.id))
+    notify(session, "yaaf_run_queue", ctx.project.id)
+    return {"key": key, "status": requirement.status,
+            "note": "queued: the platform runs the acceptance test on a fresh checkout of "
+                    "main and the verdict arrives as a notice"}
 
 
 @router.post("/requirement_edges")

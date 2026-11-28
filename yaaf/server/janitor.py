@@ -210,6 +210,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     send_mail_after_grace(session, project)
     enforce_budget(session, project, cons)
     release_dead_claims(session, project, cons)
+    release_finished_waits(session, project)
     release_unreadable_reviews(session, project)
     requeue_lost_checks(session, project)
     elect_missing_leads(session, project)
@@ -739,6 +740,33 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
 # ── requirements: is it true yet? ───────────────────────────────────────────────
 
 
+def _last_ruling(session: Session, requirement):
+    last = session.execute(
+        select(func.max(RequirementEvent.at)).where(
+            RequirementEvent.requirement_id == requirement.id,
+            RequirementEvent.from_status == RequirementStatus.CHECKING,
+        )
+    ).scalar()
+    return last if last is None or last.tzinfo else last.replace(tzinfo=UTC)
+
+
+def main_moved_since_last_check(session: Session, requirement) -> bool:
+    """Has any change merged into this project's main since the requirement
+    was last ruled on? Never ruled on → True."""
+    from yaaf.core.models import Change, ChangeStatus
+
+    last = _last_ruling(session, requirement)
+    if last is None:
+        return True
+    merged = session.execute(
+        select(func.max(Change.merged_at)).where(Change.project_id == requirement.project_id,
+                                                 Change.status == ChangeStatus.MERGED)
+    ).scalar()
+    if merged is None:
+        return False
+    return (merged if merged.tzinfo else merged.replace(tzinfo=UTC)) > last
+
+
 def _work_closed_since_last_check(session: Session, requirement, tasks) -> bool:
     """Has any task under this requirement moved since it was last ruled on?
 
@@ -777,9 +805,17 @@ def _work_closed_since_last_check(session: Session, requirement, tasks) -> bool:
     # never be checked again.
     from yaaf.core.models import Change, ChangeStatus
 
+    # A command test is judged on main, so ANY change merged since moves what
+    # it judges: work closed under one requirement often makes another's test
+    # pass. (An observable is a person's verdict on an artifact, and only work
+    # under it changes that, so it is not asked again for somebody else's
+    # merge.) The runner still skips a check at the very commit it failed at.
+    on_main = (requirement.acceptance_test or {}).get("type") == SuccessTestKind.COMMAND
     merged = session.execute(
-        select(func.max(Change.merged_at)).where(Change.requirement_id == requirement.id,
-                                                 Change.status == ChangeStatus.MERGED)
+        select(func.max(Change.merged_at)).where(
+            Change.project_id == requirement.project_id if on_main
+            else Change.requirement_id == requirement.id,
+            Change.status == ChangeStatus.MERGED)
     ).scalar()
     if merged is None:
         return False
@@ -2110,6 +2146,57 @@ def release_dead_claims(session: Session, project: Project, cons: ConstitutionDo
                                  note="claim expired with no active run",
                                  from_status=from_status)
         released += 1
+    return released
+
+
+def release_finished_waits(session: Session, project: Project) -> int:
+    """A blocked task whose claimant named what it waits on goes back on the
+    board when that finishes: a task done, a change merged. A wait that ended
+    the other way (the task killed, the change closed) leaves it blocked and
+    tells its planner, once, that the thing it waited on is not coming.
+
+    Before this a block was a one-way door. The planner was told to "clear the
+    blocker", but a cleared blocker moved nothing, nobody could claim a blocked
+    task, and the CEO killed it and filed a copy — six times in one day on one
+    factory, each copy starting with no record of what had been tried."""
+    from yaaf.core.models import Change, ChangeStatus
+
+    released = 0
+    for task in session.execute(select(Task).where(
+            Task.project_id == project.id, Task.status == TaskStatus.BLOCKED,
+            Task.blocked_on.is_not(None))).scalars():
+        wait = task.blocked_on or {}
+        done = gone = False
+        if "task" in wait:
+            other = session.get(Task, wait["task"])
+            done = other is not None and other.status == TaskStatus.DONE
+            gone = other is None or other.status == TaskStatus.KILLED
+            what = f"task {wait['task']}"
+        elif "change" in wait:
+            change = session.get(Change, wait["change"])
+            done = change is not None and change.status == ChangeStatus.MERGED
+            gone = change is None or change.status in (ChangeStatus.CLOSED,
+                                                        ChangeStatus.REFUSED)
+            what = f"change #{change.number}" if change is not None and change.number \
+                else f"change {wait['change']}"
+        else:
+            continue
+        if done:
+            policy.unblock(session, task, "janitor", f"{what}, which it waited on, finished")
+            released += 1
+        elif gone:
+            task.blocked_on = None      # told once; the planner decides from here
+            planner = policy.planner_of(session, task)
+            if planner is not None:
+                session.add(Notice(
+                    id=ids.new_id(ids.NOTICE), project_id=project.id, agent_id=planner.id,
+                    kind=NoticeKind.TASK_BLOCKED,
+                    body=(f"Task '{task.title}' ({task.id}) is blocked on {what}, which "
+                          "was closed without finishing, so it will not unblock by "
+                          "itself. Re-plan it: task_unblock it if it can go ahead "
+                          "anyway, change it, or kill it.")))
+    if released:
+        notify(session, "yaaf_wake", project.id)
     return released
 
 

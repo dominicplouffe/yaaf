@@ -270,6 +270,24 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
     )
     session.add(run)
     session.flush()
+    try:
+        workspace = _prepare_workspace(session, project, agent_id=queued.agent_id)
+        if queued.kind == RunKind.SUCCESS_CHECK:
+            task = session.get(Task, queued.task_id)
+            if task is not None and task.claimed_by_agent_id:
+                # Judged where the work is. In a Code Factory each seat has its
+                # own checkout and nobody works in the shared tree; 27 November
+                # 2026, the Split app: the check ran there, at the repo's first
+                # commit, and failed "test -f .github/workflows/ci.yml" four
+                # times while the builder's own checkout held the file.
+                workspace = _prepare_workspace(session, project,
+                                               agent_id=task.claimed_by_agent_id)
+    except NoCheckout as exc:
+        run.status = RunStatus.FAILED
+        run.summary = f"not started: {exc}"
+        run.finished_at = utcnow()
+        _flag_no_checkout(session, project, str(exc))
+        return None
 
     job = RunJob(
         run_id=run.id,
@@ -282,7 +300,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
         attempt=queued.attempt,
         timeout_s=cons.run_timeout_s,
         api_base_url=settings().api_base_url,
-        workspace_dir=_prepare_workspace(session, project, agent_id=queued.agent_id),
+        workspace_dir=workspace,
     )
 
     if queued.kind == RunKind.SUCCESS_CHECK:
@@ -294,14 +312,6 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
             return None
         job.check_command = (task.success_test or {}).get("command", "")
         job.timeout_s = min(cons.run_timeout_s, 300)
-        # Judged where the work is. In a Code Factory each seat has its own
-        # checkout and nobody works in the shared tree any more; 27 November
-        # 2026, the Split app: the check ran there, at the repo's first commit,
-        # and failed "test -f .github/workflows/ci.yml" four times while the
-        # builder's own checkout held the file and passed the same command.
-        if task.claimed_by_agent_id:
-            job.workspace_dir = _prepare_workspace(session, project,
-                                                   agent_id=task.claimed_by_agent_id)
         return job
 
     if queued.kind == RunKind.SCENARIO_CHECK:
@@ -312,7 +322,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
         return _materialize_change_scan(session, queued, project, run, job, cons)
 
     if queued.kind == RunKind.REQUIREMENT_CHECK:
-        _refresh_shared_tree(session, project, Path(job.workspace_dir))
+        refresh_mirror(session, project)
         requirement = session.get(Requirement, queued.requirement_id)
         # A daily obligation is judged at its deadline, not on the CHECKING
         # transition: its status stays wherever its work has it (see
@@ -323,6 +333,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
             job.check_command = (requirement.acceptance_test or {}).get("command", "")
             job.requirement_id = requirement.id
             job.timeout_s = min(cons.run_timeout_s, 300)
+            _judge_on_fresh_main(session, project, run, job)
             return job
         if requirement is None or requirement.status != RequirementStatus.CHECKING:
             run.status = RunStatus.FAILED
@@ -332,6 +343,8 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
         job.check_command = (requirement.acceptance_test or {}).get("command", "")
         job.requirement_id = requirement.id
         job.timeout_s = min(cons.run_timeout_s, 300)
+        if _judge_on_fresh_main(session, project, run, job):
+            job.unchanged_since = requirement.failed_at_sha
         return job
 
     agent = session.get(Agent, queued.agent_id)
@@ -651,65 +664,123 @@ def _prepare_workspace(session: Session, project: Project,
     if project.github_repo and not (workspace / ".git").exists():
         _clone_workspace(session, project.github_repo, workspace)
     workspace.mkdir(parents=True, exist_ok=True)
-    if agent_id and shape.is_factory(project) and (workspace / ".git").exists():
+    if agent_id and shape.is_factory(project) and project.github_repo:
+        # Never the shared tree. A seat that fell back to working there made
+        # it somebody's half-finished work, which nothing could then refresh or
+        # judge; a run that cannot have its own checkout does not run.
+        if not (workspace / ".git").exists():
+            raise NoCheckout(f"the platform could not clone {project.github_repo}")
         seat = _seat_workspace(session, project, workspace, agent_id)
-        if seat is not None:
-            _materialize_mail(session, project, seat)
-            return str(seat)
+        if seat is None:
+            raise NoCheckout(f"the platform could not make this seat's own checkout of "
+                             f"{project.github_repo}")
+        _materialize_mail(session, project, seat)
+        return str(seat)
     _materialize_mail(session, project, workspace)
     return str(workspace)
 
 
-def _refresh_shared_tree(session: Session, project: Project, workspace: Path) -> None:
-    """Bring a Code Factory's shared tree to the remote's latest main before a
-    requirement is judged in it. Seats work in checkouts of their own, so
-    nothing moves the shared tree after its first clone: an acceptance test run
-    there judges the repo's first commit forever. A seat whose own checkout
-    could not be made falls back to working here, so a tree holding changes is
-    left alone. Never fatal: a failed fetch is judged as before."""
+def _flag_no_checkout(session: Session, project: Project, why: str) -> None:
+    """A seat's run that could not start for want of its own checkout. Every
+    run in the project will fail the same way until a person acts, so the
+    chairman hears it at most once a day."""
+    from datetime import timedelta
+
+    from yaaf.core.models import AuditLog
+    from yaaf.server.notify import Attention, chairman_notify, project_link
+
+    since = utcnow() - timedelta(hours=UNJUDGEABLE_NOTICE_HOURS)
+    told = session.execute(select(AuditLog.id).where(
+        AuditLog.project_id == project.id, AuditLog.action == "workspace.no_checkout",
+        AuditLog.at >= since).limit(1)).first()
+    session.add(AuditLog(id=ids.new_id(ids.AUDIT), project_id=project.id, actor="runner",
+                         action="workspace.no_checkout", entity="project",
+                         entity_id=project.id, detail={"why": why[:300]}))
+    log.warning("%s: run not started: %s", project.slug, why)
+    if told is None:
+        chairman_notify(
+            session, project, "the team cannot get a copy of the code",
+            f"A run did not start because {why}. Each team member works in a copy "
+            "of the code of their own, so no run in this project can start until "
+            "that works. The usual cause is the platform's GitHub key (Settings → "
+            "Secrets, scope \"github\") or the repository's name."
+            + project_link(project.id, "settings"),
+            attention=Attention.ALARM)
+
+
+class NoCheckout(Exception):
+    """A Code Factory seat whose own checkout could not be made. Its run fails
+    with this reason rather than working in a tree it would share."""
+
+
+def refresh_mirror(session: Session, project: Project) -> None:
+    """Bring a Code Factory's shared tree to the remote's latest main. Nobody
+    works in it and nothing is judged in it: it is what seats' checkouts are
+    cloned from and what the boardroom reads at /project, so it is reset hard,
+    whatever a stray process left in it. Never fatal."""
     import subprocess
 
     from yaaf.core import shape
     from yaaf.server import github
 
+    workspace = Path(settings().workspaces_root) / project.slug
     if not (shape.is_factory(project) and project.github_repo and (workspace / ".git").exists()):
         return
     token = github.platform_token(session)
     if not token:
         return
+
     def git(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(["git", "-C", str(workspace), *args],
                               capture_output=True, text=True, timeout=180)
 
-    # Untracked files do not count: an acceptance test that leaves coverage.xml
-    # behind would otherwise stop the tree from ever being refreshed again. A
-    # tracked edit, or commits main lacks on whatever branch is checked out,
-    # is a fallback seat's work, and a hard reset would throw it away.
-    def held_back(why: str) -> None:
-        log.warning("left %s's shared tree as it is: %s; its requirement checks judge "
-                    "that tree", project.slug, why)
-
-    dirty = git("status", "--porcelain", "--untracked-files=no")
-    if dirty.returncode != 0 or dirty.stdout.strip():
-        return held_back("it holds uncommitted edits")
+    # On the default branch, as the first clone left it: seats are cloned from
+    # here and start on whatever branch this tree is on.
+    branch = (git("symbolic-ref", "--short", "refs/remotes/origin/HEAD").stdout.strip()
+              .removeprefix("origin/")) or "main"
     try:
-        proc = git("fetch", "-q", github.clone_url(project.github_repo, token), "HEAD")
-        if proc.returncode != 0:
-            raise RuntimeError((proc.stderr or "").replace(token, "<redacted>").strip()[:300])
-        # Commits here that main lacks are someone's unpushed work.
-        ahead = git("rev-list", "--count", "FETCH_HEAD..HEAD").stdout.strip()
-        if ahead not in ("", "0"):
-            return held_back(f"it has {ahead} commit(s) main does not")
-        proc = git("reset", "-q", "--hard", "FETCH_HEAD")
-        if proc.returncode != 0:
-            raise RuntimeError((proc.stderr or "").strip()[:300])
+        for step in (("fetch", "-q", github.clone_url(project.github_repo, token), "HEAD"),
+                     ("checkout", "-q", "-f", "-B", branch, "FETCH_HEAD")):
+            proc = git(*step)
+            if proc.returncode != 0:
+                raise RuntimeError((proc.stderr or "").replace(token, "<redacted>").strip()[:300])
     except Exception as exc:
         log.warning("could not bring %s's shared tree to main: %s", project.slug,
                     str(exc).replace(token, "<redacted>"))
         return
-    # The reset runs as root: new directories would be 755 and the check, which
-    # runs as the sandbox's user, could not write into them.
+    # The reset runs as root: new directories would be 755, and the sandbox's
+    # user could not read into them.
     _open_to_sandbox(workspace)
+
+
+def _judge_on_fresh_main(session: Session, project: Project, run, job: RunJob) -> bool:
+    """Point a Code Factory's requirement check at a checkout of main made for
+    it alone, under a directory no agent's workspace contains, and removed
+    after (`_run_check_command`). True when it will run there.
+
+    It used to run in the project's one shared tree, brought to main first,
+    unless the tree held uncommitted edits. 27 November 2026, Snip: R-12's
+    browser test rewrites sixteen screenshots the repo tracks, so after its
+    first check the tree always "held edits", was never moved again, and every
+    acceptance test for the next fourteen hours judged a commit from the night
+    before: five requirements red with "No tests found" while main passed them,
+    and two marked met on code main no longer had. Nothing a test writes can
+    reach the next check now, and nothing anybody is working on is judged.
+
+    A project with no GitHub repo has no main to fetch: its workspace is the
+    work, and is judged where it is. A factory whose repo the platform cannot
+    fetch is judged nowhere, and says so (`_run_check_command`)."""
+    from yaaf.core import shape
+    from yaaf.server import github
+
+    if not (shape.is_factory(project) and project.github_repo):
+        return False
+    token = github.platform_token(session)
+    job.workspace_dir = str(Path(settings().workspaces_root) / ".checks" / run.id)
+    job.check_sha = None
+    job.check_branch = "HEAD"   # the remote's default branch, whatever it is called
+    job.fetch_url = github.clone_url(project.github_repo, token) if token else None
+    return True
 
 
 def seat_path(project_slug: str, agent_id: str) -> Path:
@@ -746,8 +817,8 @@ def _seat_workspace(session: Session, project: Project, main: Path,
     local clone shares the main repository's objects on disk and stands alone.
     It starts at the remote's latest main, fetched with the platform's key,
     and is then pointed at the plain GitHub URL — the seat pushes with its own
-    key, through the image's credential helper. Any failure falls back to the
-    shared tree, as a failed clone always has: a run is never blocked on this."""
+    key, through the image's credential helper. None on failure, and the run
+    does not start (`NoCheckout`): nobody works in the shared tree."""
     import shutil
     import subprocess
 
@@ -780,7 +851,7 @@ def _seat_workspace(session: Session, project: Project, main: Path,
                 raise RuntimeError(said or f"{step[1:4]} failed")
     except Exception as exc:
         shutil.rmtree(seat, ignore_errors=True)
-        log.warning("could not make %s's own checkout of %s; using the shared tree: %s",
+        log.warning("could not make %s's own checkout of %s: %s",
                     agent_id, full_name or project.slug, str(exc).replace(token or "\0", "<redacted>"))
         return None
     _exclude_staging(seat)
@@ -1630,6 +1701,29 @@ def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult
     requirement = session.get(Requirement, job.requirement_id)
     if requirement is None or requirement.status != RequirementStatus.CHECKING:
         return
+    extra = result.extra or {}
+    if extra.get("no_checkout"):
+        # No verdict: the row stays CHECKING and the lost-check pass runs it
+        # again. But a platform that cannot fetch main judges nothing in any
+        # project until a person fixes it, so it is the chairman's to hear.
+        _flag_unjudgeable(session, requirement, extra["no_checkout"])
+        return
+    sha = extra.get("judged_sha") or ""
+    at = f" on main at {sha[:7]}" if sha else ""
+    if extra.get("unchanged"):
+        requirement.status = RequirementStatus.IN_PROGRESS
+        policy.record_requirement_event(
+            session, requirement, RequirementStatus.IN_PROGRESS, "checker",
+            note=f"not run again: main is still at {sha[:7]}, where this test already "
+                 "failed; it is judged again when main has a new commit",
+            from_status=RequirementStatus.CHECKING)
+        _notice_ceo_requirement(
+            session, requirement,
+            f"{requirement.key} was not checked again: main is still at {sha[:7]}, the "
+            f"commit its acceptance test already failed at, and the same tree gives the "
+            f"same answer. It is judged again by itself once a change merges. Closing "
+            f"more work under it, or a task that only re-runs the test, cannot move it.")
+        return
     if _no_verdict(result):
         return
     output = (result.check_output or "")[:4000]
@@ -1640,8 +1734,9 @@ def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult
         requirement.status = RequirementStatus.MET
         requirement.met_at = utcnow()
         requirement.met_by_run_id = job.run_id
+        requirement.failed_at_sha = None
         policy.record_requirement_event(session, requirement, RequirementStatus.MET,
-                                        "checker", note="acceptance test passed",
+                                        "checker", note=f"acceptance test passed{at}",
                                         from_status=from_status)
         _notice_ceo_requirement(
             session, requirement,
@@ -1652,9 +1747,10 @@ def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult
 
     requirement.status = RequirementStatus.IN_PROGRESS
     requirement.failure_load += 1
+    requirement.failed_at_sha = sha or None
     policy.record_requirement_event(
         session, requirement, RequirementStatus.IN_PROGRESS, "checker",
-        note=f"acceptance test FAILED (exit {result.check_exit_code})",
+        note=f"acceptance test FAILED (exit {result.check_exit_code}){at}",
         from_status=from_status,
     )
     try:
@@ -1677,7 +1773,9 @@ def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult
             f"{requirement.key} has now failed its acceptance test {cap} times, each one "
             f"after work closed under it. Stop sending work at it and read the test: "
             f"either the plan is not building what the test asserts, or the test asserts "
-            f"something the plan was never going to build. Deciding which is yours.\n\n"
+            f"something the plan was never going to build. Deciding which is yours. "
+            f"The output's first line names the commit of main it judged; if your own "
+            f"checkout passes the same command, compare commits before anything else.\n\n"
             f"The requirement: {requirement.statement[:300]}\n\n"
             f"What the test printed:\n{output[:1200]}",
         )
@@ -1688,7 +1786,10 @@ def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult
         f"{requirement.key} is NOT met: its acceptance test failed (exit "
         f"{result.check_exit_code}) even though every task under it closed. That gap is "
         f"the thing worth looking at — the work was reported done and the requirement is "
-        f"still false.\n\nWhat the test printed:\n{output[:1200]}",
+        f"still false. It ran on a fresh checkout of main{at}: what is not merged is not "
+        f"judged. It is judged again by itself when a change merges (or ask with "
+        f"requirement_recheck); a task whose only job is to re-run it adds nothing."
+        f"\n\nWhat the test printed:\n{output[-1200:]}",
     )
 
 
@@ -1724,6 +1825,44 @@ def _finalize_standing_check(session: Session, job: RunJob, result: RunResult) -
         f"chairman hears from you, with what happened and what you are doing about it."
         f"\n\nWhat the test printed:\n{(check.check_output or '')[:1200]}",
     )
+
+
+#: How often the chairman is told the platform cannot fetch a factory's main.
+UNJUDGEABLE_NOTICE_HOURS = 24
+
+
+def _flag_unjudgeable(session: Session, requirement, why: str) -> None:
+    """The platform could not check out main to judge a requirement. That is
+    the platform failing, not the work, so it never counts against the
+    requirement; and it fails every check in the project until a person acts,
+    so the chairman hears it, once a day at most, with the reason."""
+    from datetime import timedelta
+
+    from yaaf.core.models import AuditLog
+    from yaaf.server.notify import Attention, chairman_notify, project_link
+
+    project = session.get(Project, requirement.project_id)
+    if project is None:
+        return
+    since = utcnow() - timedelta(hours=UNJUDGEABLE_NOTICE_HOURS)
+    told = session.execute(select(AuditLog.id).where(
+        AuditLog.project_id == project.id, AuditLog.action == "requirement.unjudgeable",
+        AuditLog.at >= since).limit(1)).first()
+    session.add(AuditLog(id=ids.new_id(ids.AUDIT), project_id=project.id, actor="runner",
+                         action="requirement.unjudgeable", entity="requirement",
+                         entity_id=requirement.id, detail={"why": why[:300]}))
+    log.warning("could not check out %s's main to judge %s: %s", project.slug,
+                requirement.key, why[:300])
+    if told is None:
+        chairman_notify(
+            session, project, "the platform cannot check this project's code",
+            f"To judge {requirement.key} the platform fetches main from GitHub into a "
+            f"fresh checkout, and that failed: {why[:300]}\n\nNo requirement in this "
+            "project can be judged until it works; none is marked failed for it, and "
+            "each check is retried. The usual cause is the platform's GitHub key "
+            "(Settings → Secrets, scope \"github\")."
+            + project_link(project.id, "settings"),
+            attention=Attention.ACTION)
 
 
 def _notice_ceo_requirement(session: Session, requirement, body: str) -> None:
@@ -2418,6 +2557,8 @@ def _run_check_command(job: RunJob) -> RunResult:
             check_output=f"the {label} is a command test but its command is empty",
         )
 
+    if job.kind == RunKind.REQUIREMENT_CHECK and job.check_branch:
+        return _run_on_fresh_main(job, command, label)
     exit_code, output = run_check_command(
         command=command,
         workspace_dir=job.workspace_dir,
@@ -2429,3 +2570,41 @@ def _run_check_command(job: RunJob) -> RunResult:
         check_exit_code=exit_code,
         check_output=output,
     )
+
+
+def _run_on_fresh_main(job: RunJob, command: str, label: str) -> RunResult:
+    """Check out main's latest commit where nothing else lives, run the test
+    there, and remove it. What it printed starts with the commit it judged, so
+    a seat whose own checkout passes can see at once whether the two agree on
+    what main is. A commit this test already failed at is not run again: the
+    test is a function of the tree, and the same tree gives the same answer."""
+    import shutil
+    import subprocess
+
+    from yaaf.runner.sandbox import run_check_command
+
+    where = Path(job.workspace_dir)
+    try:
+        if not job.fetch_url:
+            # ok: the run did its part, and a run that fails charges the
+            # requirement it served — this is the platform's failure, not its.
+            return RunResult(ok=True, summary=f"{label} not run: no repo access",
+                             extra={"no_checkout": "the platform's GitHub key is missing, "
+                                                   "so it cannot fetch main"})
+        failed = _checkout(job, where)
+        if failed:
+            return RunResult(ok=True, summary=f"{label} not run: no checkout",
+                             extra={"no_checkout": failed})
+        sha = subprocess.run(["git", "-C", str(where), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=30).stdout.strip()
+        if sha and sha == job.unchanged_since:
+            return RunResult(ok=True, summary=f"{label} not run: main unchanged",
+                             extra={"judged_sha": sha, "unchanged": True})
+        exit_code, output = run_check_command(command=command, workspace_dir=str(where),
+                                              timeout_s=job.timeout_s)
+        head = f"judged main at {sha[:7]}, on a checkout made for this check alone\n"
+        return RunResult(ok=True, summary=f"{label} exit={exit_code} at {sha[:7]}",
+                         check_exit_code=exit_code, check_output=head + (output or "")[-3900:],
+                         extra={"judged_sha": sha})
+    finally:
+        shutil.rmtree(where, ignore_errors=True)

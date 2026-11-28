@@ -423,12 +423,12 @@ def test_a_lead_cannot_assign_itself_the_check_it_wrote(client):
     assert client.post(f"/agent/tasks/{parent_id}/claim",
                        headers=bearer(lead_token)).status_code == 200
 
+    # Refused when it is filed, not left on the board for the claim to refuse:
+    # an assignment nobody can claim sat stuck until someone killed it.
     mine = make_task(client, lead_token, project, None,
                      parent_task_id=parent_id, assignee_agent_id=lead)
-    assert mine.status_code == 200, mine.text
-    refused = client.post(f"/agent/tasks/{mine.json()['id']}/claim", headers=bearer(lead_token))
-    assert refused.status_code == 403
-    assert "judges" in refused.json()["error"]
+    assert mine.status_code == 422, mine.text
+    assert "judges" in mine.json()["error"]
 
     other = [a["id"] for a in project["teams"][0]["agents"] if a["id"] != lead][0]
     theirs = make_task(client, lead_token, project, None,

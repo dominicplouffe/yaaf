@@ -338,33 +338,6 @@ def test_a_factory_tasks_check_runs_in_its_builders_own_checkout(client, monkeyp
     assert job is not None and Path(job.workspace_dir) == seat
 
 
-def test_a_requirement_is_judged_on_mains_latest_commit(client, monkeypatch, tmp_path):
-    project = make_project(client, slug="ghreq", mode="code_factory")
-    _install_platform_secret(client)
-    bare = _seed_bare_repo(tmp_path)
-    monkeypatch.setattr(github, "clone_url", lambda name, token: f"file://{bare}")
-    _set_github_repo(project["id"], "acme/ghreq")
-    with db_session() as session:
-        shared = Path(daemon._prepare_workspace(session, session.get(Project, project["id"])))
-    _push_to_main(tmp_path, bare, "ci.yml")
-    _queued_check(project, RunKind.REQUIREMENT_CHECK, requirement_id="reqt_none")
-    assert (shared / "ci.yml").exists(), "the shared tree is brought to main first"
-
-    _push_to_main(tmp_path, bare, "second.yml")
-    (shared / "coverage.xml").write_text("<coverage/>\n")   # left behind by a check
-    _queued_check(project, RunKind.REQUIREMENT_CHECK, requirement_id="reqt_none")
-    assert (shared / "second.yml").exists(), "an untracked leftover does not stop it"
-    import os
-    assert os.stat(shared).st_mode & 0o777 == 0o777, "the sandbox's user can write in it"
-
-    _push_to_main(tmp_path, bare, "later.txt")
-    (shared / "README.md").write_text("a seat that fell back to here, mid-change\n")
-    _queued_check(project, RunKind.REQUIREMENT_CHECK, requirement_id="reqt_none")
-    assert "mid-change" in (shared / "README.md").read_text() \
-        and not (shared / "later.txt").exists(), \
-        "a tree holding uncommitted work is left as it is"
-
-
 def test_a_changes_health_is_measured_from_where_its_branch_left_main(monkeypatch, tmp_path):
     """Compared with main's tip, every file main changed since the branch was cut
     counted as the change's own, and was judged against code it never saw."""

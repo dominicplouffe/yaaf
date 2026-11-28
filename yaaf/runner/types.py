@@ -67,6 +67,9 @@ class RunJob:
     check_sha: str | None = None
     check_branch: str | None = None
     fetch_url: str | None = None
+    # Requirement checks only: the commit this acceptance test last failed at.
+    # Main still there means the same tree, so the test is not run again.
+    unchanged_since: str | None = None
     # Deploys only: "deploy" or "rollback", and the env the command runs with
     # (secrets granted to the reserved "deploy" scope). Never logged.
     deploy_action: str | None = None

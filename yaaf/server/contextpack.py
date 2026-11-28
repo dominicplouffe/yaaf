@@ -1770,6 +1770,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                  "requirement_id": t.requirement_id,
                  "claimed_by_agent_id": t.claimed_by_agent_id,
                  "blocked_reason": t.blocked_reason,
+                 **({"blocked_on": t.blocked_on} if t.blocked_on else {}),
                  "not_before": t.not_before.isoformat() if t.not_before else None}
                 for t in open_tasks
             ],
@@ -1980,6 +1981,10 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                     "acceptance_test": r.acceptance_test,
                     "blocked_by": blocked[r.id],
                     "failure_load": r.failure_load,
+                    # The commit of main its test last failed at. Main still
+                    # there means a re-run gives the same answer; the verdict
+                    # comes again by itself when a change merges.
+                    **({"failed_on_main_at": r.failed_at_sha[:7]} if r.failed_at_sha else {}),
                     # What the chairman said when he rejected it, on every run
                     # rather than only on the one that consumed the notice. A
                     # rework that takes six runs read his words once, on the
