@@ -347,3 +347,12 @@ export function roster(org: OrgView | null): Teammate[] {
 export function working(people: Teammate[]): number {
   return people.filter((p) => p.working).length;
 }
+
+/** A plugin version as a person names it: "1.0.1 (v1.0.1)", from its manifest
+    and the tag it was installed from; the short commit when neither says. */
+export function versionName(v: { version: string; source?: string; release?: string | null;
+                                  ref?: string | null }): string {
+  // A local install's "ref" is a folder on the server, not a name anyone gave it.
+  const ref = v.source === "github" && v.ref && v.ref !== "HEAD" && v.ref !== v.release && v.ref !== `v${v.release}` ? ` (${v.ref})` : "";
+  return v.release ? `${v.release}${ref}` : v.version.slice(0, 12);
+}

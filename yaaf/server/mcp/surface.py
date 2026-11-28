@@ -109,6 +109,14 @@ WITHHELD = {
         "withdrawing a plugin decides what every chairman on the box may create.",
     "DELETE /admin/plugins/{plugin_id}/versions/{version}":
         "removing installed code is the instance admin's, as installing it is.",
+    "GET /admin/projects/{project_id}/plugin":
+        "which plugin version a project runs on, and which it could move to: read on "
+        "the project's Settings screen, beside the move it exists to inform. No tool "
+        "reaches it yet; a client that needs it is a reason to add one.",
+    "POST /admin/projects/{project_id}/plugin":
+        "moving a project onto other plugin code changes the rules every later "
+        "publication meets; it is the chairman's, with the two versions in front of "
+        "him, as installing that code is the instance admin's.",
     "PUT /admin/projects/{project_id}/environments":
         "the seats write environments with environment_set, and under approve_first a "
         "production or staging command a seat wrote waits for the chairman's yes on a "
