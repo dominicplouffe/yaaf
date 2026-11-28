@@ -338,6 +338,8 @@ yaaf/
 | [Architecture](docs/ARCHITECTURE.md) | How the pieces fit |
 | [Models and providers](docs/PROVIDERS.md) | Which models it runs on, keys, prices, local models |
 | [The `yaaf` command](docs/CLI.md) | Every command, by task |
+| [Factory plugins](docs/PLUGINS.md) | New kinds of project from a GitHub repo: installing them, and writing one |
+| [Plugin brief for AI agents](docs/PLUGIN_AGENT_BRIEF.md) | The page you hand a coding agent so it builds a plugin that passes the spec |
 | [Changelog](CHANGELOG.md) | One release per week |
 
 ---

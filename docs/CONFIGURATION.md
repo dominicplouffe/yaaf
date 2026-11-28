@@ -109,6 +109,24 @@ as `~/.yaaf/master.key.<date>.old`.
 | `YAAF_HOST_RUN_MEMORY_GB` | `2.0` | Memory cap per run, in GB. `0` means no cap. |
 | `YAAF_HOST_JAIL_BINDS` | *(empty)* | Extra read-only paths a run may see, separated by `:`. Use it when a CLI like Codex lives in your home folder. `yaaf setup` fills this for you. |
 
+## Factory plugins
+
+How plugins are installed and run is in [PLUGINS.md](PLUGINS.md).
+
+| Variable | Default | What it does |
+|---|---|---|
+| `YAAF_PLUGINS_ROOT` | `/var/lib/yaaf/plugins` | Installed plugin checkouts and their built environments. The api and the runner must see it at the same path, as with workspaces. |
+| `YAAF_PLUGIN_BROKER_ADDRESS` | `runner:24250` | Docker mode: where the api reaches the runner's plugin-host broker |
+| `YAAF_PLUGIN_BROKER_BIND` | `0.0.0.0` | Docker mode: the address the runner's broker listens on. The runner is not on the sandbox network, so no agent container can reach it. |
+| `YAAF_PLUGIN_BROKER_PORT` | `24250` | Docker mode: the broker's port |
+| `YAAF_PLUGIN_GITHUB_BASE` | `https://github.com` | Where GitHub installs fetch from. Tests point it at a directory of bare repos. |
+| `YAAF_PLUGIN_PIP_ARGS` | *(empty)* | Extra pip arguments for a plugin's dependency build, such as an internal mirror. The plugin's lock and `--require-hashes` still decide what gets installed. |
+| `YAAF_ALLOW_LOCAL_PLUGINS` | `false` | Development only. Lets the instance admin install from a path on this machine (`POST /admin/plugins/local`). **Keep it off on any real server.** |
+| `YAAF_ALLOW_UNVERIFIED_PLUGINS` | `false` | Development only. Lets a version whose checks have not finished (`pending`) be chosen for a project. **Keep it off on any real server.** |
+
+The broker authenticates the api with a key derived from `YAAF_MASTER_KEY`.
+There is no separate key to set.
+
 ## Email and alerts
 
 Optional. Without them, alerts only go to the logs and the dashboard.

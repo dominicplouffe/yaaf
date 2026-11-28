@@ -1,5 +1,9 @@
 # Factory plugins: new kinds of project from a GitHub repo
 
+> **Using plugins or writing one?** Start with [PLUGINS.md](../PLUGINS.md). To
+> hand the work to an AI agent, send [PLUGIN_AGENT_BRIEF.md](../PLUGIN_AGENT_BRIEF.md).
+> This page is the design, and the record of why the design is what it is.
+
 ## In one paragraph
 
 A **factory plugin** adds a kind of project to yaaf (an Amazon PPC audit, a

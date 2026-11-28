@@ -183,6 +183,11 @@ evals/          golden-transcript checks for prompt changes
 examples/       importable example projects
 ```
 
+Factory plugins (new kinds of project, installed from GitHub) run as pure hooks
+in a sandboxed host, and core does every side effect. How to run and write them
+is in [PLUGINS.md](PLUGINS.md), and the full design is in
+[plans/factory-plugins.md](plans/factory-plugins.md).
+
 ## Tech stack
 
 Python 3.12+, FastAPI, SQLAlchemy, Alembic, Postgres 16 or SQLite, React 18,

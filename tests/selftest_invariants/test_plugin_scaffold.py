@@ -110,3 +110,12 @@ def test_two_checkouts_with_one_package_name_are_each_checked_as_themselves(tmp_
                                             brief=True))
     for root in (first, second, first):
         assert report.check(root).failures() == [], root
+
+
+def test_every_scaffold_tells_a_coding_agent_how_to_work_in_it(tmp_path):
+    """A plugin repo is often handed to an AI agent later, with no link to the
+    brief. AGENTS.md carries the check loop and the rules the suite enforces."""
+    scaffold.write(tmp_path / "p", scaffold.Options("grant-writer", artifacts=["report.json"]))
+    text = (tmp_path / "p" / "AGENTS.md").read_text()
+    assert "check . --full" in text and "PLUGIN_AGENT_BRIEF.md" in text
+    assert "src/grant_writer/" in text

@@ -2,7 +2,14 @@
 
 The contract between [yaaf](https://github.com/dominicplouffe/yaaf) and a
 factory plugin: a new kind of project, installed from its own GitHub repo.
-The design is in `docs/plans/factory-plugins.md`.
+The guide is in `docs/PLUGINS.md`, the brief to hand an AI agent is in
+`docs/PLUGIN_AGENT_BRIEF.md`, and the design is in `docs/plans/factory-plugins.md`.
+
+Outside a yaaf checkout, install it with:
+
+```bash
+pip install "git+https://github.com/dominicplouffe/yaaf#subdirectory=packages/yaaf_plugin_api"
+```
 
 What is here (API 1.0):
 
@@ -17,9 +24,11 @@ What is here (API 1.0):
 | `yaaf_plugin_api.conformance` | The conformance suite, given any way to call a hook |
 | `yaaf_plugin_api.client` | A local plugin host, and the runner for your own tests |
 | `yaaf_plugin_api.fixtures`, `.corpus` | What the suite asks with |
+| `yaaf_plugin_api.scaffold` | `new`: a plugin repo that already passes the suite, with `AGENTS.md` |
+| `yaaf_plugin_api.spec` | `spec`: the whole contract as one JSON document |
 | `schema/*.json` | JSON Schemas for the manifest and the view, for editors and AI authors |
 
-Start a new plugin (the result already passes `check --full`):
+Start a new plugin (the result already passes `check --full`; `new --help` lists every flag):
 
 ```bash
 python -m yaaf_plugin_api new my-plugin --id my-plugin --artifact report.json --review --view --lead

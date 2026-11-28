@@ -381,6 +381,45 @@ def _lead_role(o: Options) -> str:
         "tool_permissions": {"files": True}}, indent=2)
 
 
+BRIEF_URL = ("https://github.com/dominicplouffe/yaaf/blob/main/docs/PLUGIN_AGENT_BRIEF.md")
+
+
+def agents_md(o: Options) -> str:
+    """What a coding agent opening this repo later needs first. The brief is
+    the whole procedure; this is the part that must survive a lost link."""
+    return f"""# Working on {o.name}
+
+This repo is a [yaaf](https://github.com/dominicplouffe/yaaf) factory plugin.
+The procedure, the rules and the definition of done are in the plugin brief:
+{BRIEF_URL}. The contract itself, as data:
+`python -m yaaf_plugin_api spec`.
+
+After every change:
+
+```bash
+python -m pytest tests -q
+python -m yaaf_plugin_api check . --full
+```
+
+Done means `check --full` has no `fail`, and only MIN-02, MIN-03 and MIN-07
+are `pending` (only an install decides those).
+
+The rules a check enforces, so none is optional:
+
+- Hooks are pure and deterministic: no network, processes, environment writes
+  or files outside the plugin and scratch; `ctx.today`, never the clock.
+- A hook never raises. Bad input is a `Refuse` whose every reason says what
+  to fix, in at most 500 characters.
+- `yaaf-plugin.toml` and the `@hook` decorators in `src/{o.package}/` match
+  exactly: no capability without its hook, no hook without its capability.
+- Every gate keeps an accept fixture, a refuse fixture and an attack test in
+  `tests/`.
+- State changes only through `Accept(state_patch=...)`.
+- Never weaken a fixture, an expect file or a test to make a check pass. Fix
+  the hook, or say why the fixture was wrong.
+"""
+
+
 def files(o: Options) -> dict[str, str]:
     o.resolve()
     out = {
@@ -394,6 +433,7 @@ def files(o: Options) -> dict[str, str]:
                               f"{o.name} project is worked. Load it first.\n---\n\n"
                               "# Runbook\n\nReplace: how a seat of this kind works.\n"),
         ".gitignore": "__pycache__/\n*.pyc\n.site/\n.pytest_cache/\n",
+        "AGENTS.md": agents_md(o),
         "README.md": (f"# {o.name}\n\nA [yaaf](https://github.com/dominicplouffe/yaaf) "
                       "factory plugin.\n\n```bash\npython -m pytest tests -q\n"
                       "python -m yaaf_plugin_api check . --full\n```\n"),
