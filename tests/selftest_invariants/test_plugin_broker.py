@@ -45,7 +45,7 @@ class LocalHost:
 
     def __init__(self, spec: dict):
         self.scratch = tempfile.mkdtemp(prefix="yaaf-broker-test-")
-        argv = [sys.executable, "-I", "-B", "-c", H.BOOT, str(H.API_SRC),
+        argv = [sys.executable, "-I", "-B", "-S", "-c", H.BOOT, str(H.API_SRC),
                 "--module", spec["module"], "--scratch", self.scratch]
         for p in spec["paths"]:
             argv += ["--path", p]
@@ -175,7 +175,7 @@ def test_the_container_flags_are_the_brokers_not_the_callers():
     assert set(opts["volumes"]) == {spec["root"], *spec["paths"]}
     assert opts["environment"] == {"LANG": "C.UTF-8"}
     assert all("noexec" in v for v in opts["tmpfs"].values())
-    assert opts["command"][:3] == ["python3", "-I", "-B"] and B.IMAGE_API_SRC in opts["command"]
+    assert opts["command"][:4] == ["python3", "-I", "-B", "-S"] and B.IMAGE_API_SRC in opts["command"]
 
 
 def test_the_broker_is_off_the_sandbox_network_and_the_runner_mounts_plugins_read_only():

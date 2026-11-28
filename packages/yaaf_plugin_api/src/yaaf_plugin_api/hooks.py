@@ -33,10 +33,13 @@ RESERVED_BRIEF_HEADINGS = (
     "REFUSED.", "PRECEDENCE:", "MECHANICS:", "PROJECT GOAL:", "THIS PROJECT IS FINISHED.",
     "THIS PROJECT'S KIND", "CORE RULES",
 )
-#: Media types a rendered page may have. No HTML and no SVG: both can carry
-#: script, and a page is opened in the chairman's browser.
+#: Media types a rendered page may have. HTML is allowed because core stamps
+#: every HTML page it stores with a Content-Security-Policy that permits no
+#: script, no network and no form (yaaf/plugins/primitives.py), and the
+#: dashboard previews it in an opaque-origin frame. SVG is not: an SVG is
+#: shown as an image on the dashboard's own origin, where no such stamp applies.
 PAGE_MEDIA_TYPES = frozenset({
-    "text/markdown", "text/plain", "text/csv", "application/json", "application/pdf",
+    "text/html", "text/markdown", "text/plain", "text/csv", "application/json", "application/pdf",
     "image/png", "image/jpeg",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -334,8 +337,9 @@ def _returned(kind: str, key: HookKey, value: Any, manifest: Manifest | None) ->
                 out.append(f"[{i}].name {page.name!r} is rendered twice")
             names.add(page.name)
             if page.media_type not in PAGE_MEDIA_TYPES:
-                out.append(f"[{i}].media_type {page.media_type!r} is not allowed (no HTML or "
-                           "SVG: a page opens in the chairman's browser)")
+                out.append(f"[{i}].media_type {page.media_type!r} is not allowed (no SVG, "
+                           "and nothing that is not a document: a page opens in the "
+                           "chairman's browser)")
             if not isinstance(page.body, bytes):
                 out.append(f"[{i}].body is bytes")
         return out

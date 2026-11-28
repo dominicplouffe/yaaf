@@ -4868,6 +4868,38 @@ def artifact_put(
             "satisfies": [r.key for r in satisfied]}
 
 
+class PluginActionIn(BaseModel):
+    arguments: dict = Field(default_factory=dict)
+
+
+@router.get("/plugin/describe")
+def plugin_describe(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -> dict:
+    """What this project's factory plugin is, as data: its kind, coverage, what
+    it gates and how a review must be written (yaaf/plugins/seat_tools.py)."""
+    from yaaf.plugins import seat_tools
+
+    return seat_tools.describe(session, ctx.project)
+
+
+@router.get("/plugin/file/{name}")
+def plugin_file(name: str, ctx: RunContext = Depends(run_auth),
+                session: Session = Depends(db)) -> dict:
+    """One file the plugin declares for its seats (a kit), verbatim."""
+    from yaaf.plugins import seat_tools
+
+    return seat_tools.agent_file(session, ctx.project, name)
+
+
+@router.post("/plugin/action/{name}")
+def plugin_action(name: str, body: PluginActionIn, ctx: RunContext = Depends(run_auth),
+                  session: Session = Depends(db)) -> dict:
+    """Run one of the plugin's declared data actions. It reaches the data only
+    through the gateway's own checks, and what it stores is the platform's."""
+    from yaaf.plugins import seat_tools
+
+    return seat_tools.run_action(session, ctx.project, ctx.agent, ctx.run.id, name)
+
+
 @router.get("/artifacts")
 def artifact_list(ctx: RunContext = Depends(run_auth)) -> dict:
     """Every deliverable this project has actually shipped. A workspace file is

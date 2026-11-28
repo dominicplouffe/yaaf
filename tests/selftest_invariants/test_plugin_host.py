@@ -460,7 +460,7 @@ def test_the_jail_gives_a_host_no_network_and_nothing_writable_but_scratch(tmp_p
     assert writable == [str(tmp_path)]
     ro = {jail[i + 1] for i, a in enumerate(jail) if a == "--ro-bind"}
     assert {str(spec.root), str(H.API_SRC)} <= ro
-    assert command[:3] == [sys.executable, "-I", "-B"] and "/workspace" in command
+    assert command[:4] == [sys.executable, "-I", "-B", "-S"] and "/workspace" in command
 
 
 def test_the_pool_serves_concurrent_callers_with_at_most_its_size_and_recycles(launcher):

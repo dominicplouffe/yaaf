@@ -333,7 +333,7 @@ def _gate_artifact(session, project, version, manifest, *, agent_id, run_id, fil
             project.kind_state = merge_patch(project.kind_state or {}, verdict.state_patch)
         for page in pages:
             store_platform(session, project, run_id, page.name, page.body, role="page",
-                           reviewed=False, like=row)
+                           reviewed=False, like=row, media_type=page.media_type)
     gate.after.append(record)
     return gate
 
@@ -446,7 +446,7 @@ def _gate_review(session, project, version, manifest, *, agent_id, run_id, data)
                                    verdict=doc["verdict"], subject_sha256=subject.sha256))
         for page in pages:
             store_platform(session, project, run_id, page.name, page.body, role="page",
-                           reviewed=True, like=subject)
+                           reviewed=True, like=subject, media_type=page.media_type)
         if passed:
             from yaaf.server.policy import attest_shipped
 
@@ -458,12 +458,34 @@ def _gate_review(session, project, version, manifest, *, agent_id, run_id, data)
     return gate
 
 
+#: Stamped first in every HTML page a plugin renders. A page's own policy can
+#: only narrow this one, never widen it (browsers enforce every policy given),
+#: so plugin HTML runs no script, loads nothing from anywhere, and posts no
+#: form, whether it is previewed on the dashboard or downloaded and opened.
+PAGE_CSP = ("default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; "
+            "form-action 'none'; base-uri 'none'; frame-ancestors 'self'")
+_CSP_META = f'<meta http-equiv="Content-Security-Policy" content="{PAGE_CSP}">'.encode()
+
+
+def sandboxed_html(body: bytes) -> bytes:
+    """The page with the policy before anything it could use to run."""
+    head = body[:64].lstrip().lower()
+    if head.startswith(b"<!doctype"):
+        cut = body.index(b">") + 1
+        return body[:cut] + b"\n" + _CSP_META + body[cut:]
+    return _CSP_META + b"\n" + body
+
+
 def store_platform(session: Session, project: Project, run_id: str | None, name: str,
                    body: bytes, *, role: str, reviewed: bool = False,
-                   like: Artifact | None = None) -> Artifact:
+                   like: Artifact | None = None, media_type: str | None = None) -> Artifact:
     """An artifact the platform wrote: a rendered page or a data action's output.
     It carries the reader and requirements of the artifact it came from."""
     from yaaf.core.artifacts import store
+
+    if media_type == "text/html" or (media_type is None and name.lower().endswith(
+            (".html", ".htm"))):
+        body = sandboxed_html(body)
 
     key = f"projects/{project.id}/{run_id or 'platform'}/{name}"
     row = Artifact(

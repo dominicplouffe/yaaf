@@ -138,10 +138,17 @@ def _gates(r: _Run) -> dict[str, tuple[bytes, dict]]:
     accepted case, stored as the plugin normalised it, for the review and pages."""
     m, ctx = r.manifest, r.states["new"]
     accepted: dict[str, tuple[bytes, dict]] = {}
+    def in_state(case):
+        if case.state is None:
+            return ctx
+        if case.state not in r.states:
+            r.bad("MIN-13", f"case {case.name} names state {case.state!r}, which "
+                            "fixtures/states/ does not have")
+        return r.states.get(case.state, ctx)
     for name in m.artifacts:
         key = HookKey("check_artifact", name)
         for case in r.fx.accept.get(name, []):
-            verdict = r.twice(key, [ctx, _upload(name, case.data)],
+            verdict = r.twice(key, [in_state(case), _upload(name, case.data)],
                               during=f"on accept case {case.name}")
             if isinstance(verdict, T.Refuse):
                 r.bad("MIN-13", f"{name}: accept case {case.name} was refused: "
@@ -153,7 +160,7 @@ def _gates(r: _Run) -> dict[str, tuple[bytes, dict]]:
                 if verdict.state_patch and not m.state:
                     r.bad("MIN-15", f"{name}: an accept patches kind_state, but the manifest "
                                     "does not declare state = true (so no migrate_state)")
-                ok, again = r.ask(key, [ctx, _upload(name, stored)],
+                ok, again = r.ask(key, [in_state(case), _upload(name, stored)],
                                   during=f"on the stored bytes of {case.name}")
                 if ok and not isinstance(again, T.Accept):
                     r.bad("EXT-ART-2", f"{name}: the bytes stored for accept case {case.name}, "
@@ -161,7 +168,7 @@ def _gates(r: _Run) -> dict[str, tuple[bytes, dict]]:
                 elif ok:
                     r.ok("EXT-ART-2")
         for case in r.fx.refuse.get(name, []):
-            ok, verdict = r.ask(key, [ctx, _upload(name, case.data)],
+            ok, verdict = r.ask(key, [in_state(case), _upload(name, case.data)],
                                 during=f"on refuse case {case.name}")
             if ok and not isinstance(verdict, T.Refuse):
                 r.bad("MIN-13", f"{name}: refuse case {case.name} was accepted")

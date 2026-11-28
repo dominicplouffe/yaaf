@@ -462,9 +462,10 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
 
     chat_entry = getattr(get_backend(seat.harness), "entrypoint", "sandbox_entry.py")
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
-    from yaaf.runner.daemon import _offer_mail
+    from yaaf.runner.daemon import _offer_mail, _offer_plugin_skills
 
     _offer_mail(project, ceo, job)
+    _offer_plugin_skills(session, project, job)
     # Same sources, same cost lesson: the chat lane mounts them exactly as a run
     # does, so it gets the same paragraph describing them.
     job.system_prompt += _data_source_prompt(

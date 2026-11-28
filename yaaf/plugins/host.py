@@ -58,7 +58,11 @@ log = logging.getLogger("yaaf.plugins.host")
 #: imports it from here, before the plugin's own paths.
 API_SRC = Path(api_manifest.__file__).resolve().parent.parent
 #: The host's first lines: put the API on the path, then run the host's main.
-#: Run with -I, so nothing from the server's environment shapes the import path.
+#: Run with -I (nothing from the server's environment shapes the import path)
+#: and -S (no site-packages at all): a plugin imports the standard library,
+#: the API, its own code and the dependencies its lock built, and nothing the
+#: server's Python happens to have installed. An undeclared dependency fails in
+#: the conformance suite instead of working by accident on one machine.
 BOOT = ("import sys; sys.path.insert(0, sys.argv[1]); "
         "from yaaf_plugin_api.host import main; sys.exit(main(sys.argv[2:]))")
 START_TIMEOUT_S = 20.0
@@ -141,7 +145,7 @@ class Callbacks:
 
 
 def host_command(spec: HostSpec, scratch: str, *, python: str | None = None) -> list[str]:
-    argv = [python or sys.executable, "-I", "-B", "-c", BOOT, str(API_SRC),
+    argv = [python or sys.executable, "-I", "-B", "-S", "-c", BOOT, str(API_SRC),
             "--module", spec.manifest.module, "--scratch", scratch]
     for p in spec.paths:
         argv += ["--path", str(p)]

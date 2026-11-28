@@ -141,15 +141,24 @@ def full_check(root: str | Path) -> Report:
     report = check(root)
     if report.status == "failed":
         return report
+    import tempfile
+
     manifest = load_path(root)
-    host = client.LocalHost(root, manifest)
-    try:
-        host.start()
-        decided = conformance.run(root, manifest, host,
-                                  run_tests=lambda: client.run_tests(root))
-        decided.setdefault("MIN-04", ("pass", ["started in a local host"]))
-    except conformance.Failure as exc:
-        decided = {"MIN-04": ("fail", [f"the plugin did not start in a host: {exc.message}"])}
-    finally:
-        host.stop()
+    with tempfile.TemporaryDirectory(prefix="yaaf-plugin-site-") as site:
+        built, why = client.build_site(root, site)
+        if not built:
+            return merge(report, {"MIN-03": ("fail", ["the dependency build failed (pip, "
+                                                      "--require-hashes):", why])})
+        extra = [site] if (root / "requirements.lock").is_file() else []
+        host = client.LocalHost(root, manifest, extra_paths=extra)
+        try:
+            host.start()
+            decided = conformance.run(root, manifest, host, run_tests=lambda: client.run_tests(
+                root, extra_paths=extra))
+            decided.setdefault("MIN-04", ("pass", ["started in a local host"]))
+        except conformance.Failure as exc:
+            decided = {"MIN-04": ("fail", [f"the plugin did not start in a host: "
+                                           f"{exc.message}"])}
+        finally:
+            host.stop()
     return merge(report, decided)

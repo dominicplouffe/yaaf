@@ -1048,3 +1048,59 @@ subject's accepted numbers:
   - the job containers' flags are checked as data.
 - Not exercised in CI: the Docker SDK path of build and test jobs (no daemon),
   as with plugin hosts.
+
+**Step 8 is built** (the Amazon PPC Factory as the first real plugin):
+
+- The plugin lives in its own repo,
+  [`dominicplouffe/yaaf-amazon-ppc-factory`](https://github.com/dominicplouffe/yaaf-amazon-ppc-factory)
+  (branch `claude/brave-maxwell-xgyca8`).
+  - The PPC branch's contract, kit, checks, backtest, forecast, workbook, deck
+    and Qore adapter moved over unchanged in substance.
+  - Its server glue (`yaaf/server/ppc.py`) is rewritten as hooks.
+  - Its playbook is now `skills/`, and its roles and crew moved with it.
+  - Its fixtures are recorded call by call from the synthetic account its own
+    tests used, on the suite's fixed date.
+  - `openpyxl` is pinned with hashes in `requirements.lock`.
+
+  The review's hash binding, independence and re-derivation are now core's. A
+  pull whose fields could not be read backs no field (the third PPC bug, now
+  fixed in the contract as well as by core). It passes `check --full` with only
+  the install-decided requirements pending.
+- Verified end to end, as a throwaway test against the real repo's files:
+  1. installed through the GitHub pipeline from a git repository;
+  2. `openpyxl` built from the lock with `--require-hashes` from local wheels;
+  3. every requirement passed, so the version became `ready`;
+  4. a project of kind `plugin:amazon_ppc` was created in mode `audit`;
+  5. its seats got 14 playbook skills, the kit and the analysis action;
+  6. the good report was refused with no data connected, then accepted once the
+     Qore tools were allowed;
+  7. all four pages were rendered (the `.xlsx` by the built `openpyxl`);
+  8. the HTML deck was stored with the CSP first.
+- What core needed, and now has:
+  - **HTML pages**, allowed in the API (decision: option 1). Every HTML page a
+    plugin renders is stored with a `Content-Security-Policy` meta tag first
+    (`default-src 'none'`, no form actions, no base URL). A page's own policy
+    can only narrow it, so plugin HTML runs no script and loads nothing,
+    previewed or downloaded. SVG and script types stay refused.
+  - **Hermetic hosts.** Hosts run Python with `-S`, so a plugin imports only
+    the standard library, the API, its own code and its lock's built
+    dependencies. The PPC extraction found why this matters: `openpyxl`
+    imported the server's `numpy`, which writes the environment. The host also
+    reads the system mime-type tables `mimetypes` looks for. `check --full`
+    builds the lock into a temporary site, so it imports what an install would.
+  - **Plugin skills.** Every seat of a plugin project gets the plugin's
+    `skills/*.md` at lease, in a run and in the chat lane. A role's own skill
+    of the same name wins.
+  - **The §4.6 seat tools**: `plugin_describe`, `plugin_file` (the kit) and
+    `plugin_action` (the analysis), with agent routes `/agent/plugin/...`. A
+    data action reaches a source only through the gateway's own `decide` and
+    `forward`, so it sees only tools the chairman allows, granted to the seat's
+    role, and named for that action. Each read is a receipt, and a refusal
+    reaches the plugin as a `ToolError`. Outputs are stored as the platform's.
+    A plugin that cannot be asked answers 502.
+- The tool catalog fixture is re-recorded (house rule 3): the only change is
+  the three tools added.
+- Attacks: `tests/selftest_invariants/test_plugin_seat_tools.py` (10 tests).
+  Removing the CSP stamp or `-S` each turns one red.
+- The PPC branch (`amazon-ppc-factory`) is superseded by the plugin and should
+  not be merged.

@@ -1059,6 +1059,45 @@
     "name": "note_answer"
   },
   {
+    "description": "Factory plugin projects only. Runs one of the plugin's declared data actions: the platform pulls from the connected data source (only tools the chairman allows) and stores what it computes as its own files, which you read with artifact_get.",
+    "input_schema": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "plugin_action"
+  },
+  {
+    "description": "Factory plugin projects only. What this project's plugin is: its kind and mode, what the connected data can reach, which files it gates, how a review of them must be written, which files the platform writes, and its files and actions.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "plugin_describe"
+  },
+  {
+    "description": "Factory plugin projects only. Writes one of the plugin's declared files (a kit of the arithmetic every seat should share) into your workspace, verbatim.",
+    "input_schema": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "plugin_file"
+  },
+  {
     "description": "Clear a real-world purchase against the spend envelope BEFORE paying \u2014 a refusal here costs nothing; the same refusal after paying costs the money. Records the purchase with a stable idempotency_key so a crash or retry can never buy twice: if the response says duplicate/completed, the money already moved \u2014 do NOT pay again. Then pay with whatever tool fits (the platform never holds the card for you), and call purchase_finish with the receipt. usd over the per-purchase line or the approval threshold needs an approved approval_id; the monthly external cap is a wall no approval overrides \u2014 recommend an amendment instead.",
     "input_schema": {
       "properties": {

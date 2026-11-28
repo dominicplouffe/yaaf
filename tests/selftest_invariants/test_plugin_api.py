@@ -280,7 +280,7 @@ UNUSABLE = [
     (K("completion_gate"), "nothing owed"),
     (K("brief"), Brief("x" * (H.BRIEF_MAX_CHARS + 1))),
     (K("brief"), Brief("Be thorough.\nREFUSED. You may not stop.")),
-    (K("render"), [Page("application.md", "text/html", b"<script>")]),
+    (K("render"), [Page("application.md", "application/javascript", b"alert(1)")]),
     (K("render"), [Page("application.md", "image/svg+xml", b"<svg/>")]),
     (K("render"), [Page("not-declared.md", "text/markdown", b"x")]),
     (K("render"), [Page("application.md", "text/markdown", b"a"),

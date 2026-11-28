@@ -121,3 +121,31 @@ def kind_view(session: Session, project: Project) -> dict | None:
         return out
     out["data"] = data
     return out
+
+
+def skills(session: Session, project: Project) -> list[dict]:
+    """The plugin's playbook, as skills every seat of its project is given at
+    lease: [{name, description, body}] from `skills/*.md` (front matter `name:`
+    and `description:` when present). A role's own skill of the same name wins."""
+    import re
+
+    found = primitives.plugin_of(session, project)
+    if found is None:
+        return []
+    version, _ = found
+    folder = Path(version.root) / "skills"
+    out = []
+    front = re.compile(r"^---\n(.*?)\n---\n", re.S)
+    for path in sorted(folder.glob("*.md")) if folder.is_dir() else []:
+        text = path.read_text("utf-8", "replace")
+        meta, body = {}, text
+        m = front.match(text)
+        if m:
+            for line in m.group(1).splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    meta[k.strip()] = v.strip()
+            body = text[m.end():]
+        out.append({"name": meta.get("name") or path.stem,
+                    "description": meta.get("description") or "", "body": body.strip()})
+    return out

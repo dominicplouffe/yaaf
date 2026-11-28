@@ -100,7 +100,7 @@ def check_spec(spec: Any, root: Path) -> tuple[dict | None, str | None]:
 def container_options(spec: dict, image: str, labels: dict) -> dict:
     """The one place a plugin host container's flags are decided. Nothing here
     comes from the request except which plugin, already checked by check_spec."""
-    command = ["python3", "-I", "-B", "-c",
+    command = ["python3", "-I", "-B", "-S", "-c",
                "import sys; sys.path.insert(0, sys.argv[1]); "
                "from yaaf_plugin_api.host import main; sys.exit(main(sys.argv[2:]))",
                IMAGE_API_SRC, "--module", spec["module"], "--scratch", SCRATCH]

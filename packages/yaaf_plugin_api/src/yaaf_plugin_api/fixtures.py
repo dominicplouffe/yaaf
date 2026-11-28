@@ -4,6 +4,8 @@
       artifacts/accept/<artifact name>/<case>              cases a gate accepts
       artifacts/refuse/<artifact name>/<case>              cases it refuses, each with
       artifacts/refuse/<artifact name>/<case>.expect.json  {"contains": ["words", ...]}
+                                       (either kind may add "state": "<a states/ name>"
+                                       to be asked in that state, not a new project)
       sources/<source>/tools.json      {"tools": [{"name", "description"}]}
       sources/<source>/calls/<tool>.json
                                        {"arguments": {...}, "result": {...}}  (or a list of them)
@@ -39,6 +41,8 @@ class Case:
     name: str
     data: bytes
     contains: tuple[str, ...] = ()
+    #: The fixture state this case is asked in; None is a new project.
+    state: str | None = None
 
 
 @dataclass
@@ -62,12 +66,15 @@ def _cases(folder: Path) -> list[Case]:
             continue
         expect = path.with_name(path.name + EXPECT_SUFFIX)
         contains: tuple[str, ...] = ()
+        state = None
         if expect.is_file():
             try:
-                contains = tuple(json.loads(expect.read_text("utf-8")).get("contains") or ())
+                body = json.loads(expect.read_text("utf-8"))
+                contains = tuple(body.get("contains") or ())
+                state = body.get("state") if isinstance(body.get("state"), str) else None
             except (ValueError, AttributeError):
                 contains = ()
-        out.append(Case(path.name, path.read_bytes(), contains))
+        out.append(Case(path.name, path.read_bytes(), contains, state))
     return out
 
 

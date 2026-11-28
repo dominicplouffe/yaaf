@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import importlib
+import mimetypes
 import os
 import random
 import sys
@@ -251,7 +252,10 @@ def main(argv: list[str] | None = None) -> int:
     tempfile.tempdir = args.scratch
     roots = [*args.path, sys.prefix, sys.base_prefix, sys.exec_prefix,
              *(p for p in sys.path if p), str(Path(__file__).resolve().parent.parent),
-             "/dev/urandom", "/dev/null", "/etc/localtime", "/usr/share/zoneinfo"]
+             "/dev/urandom", "/dev/null", "/etc/localtime", "/usr/share/zoneinfo",
+             # The files the standard library's own mimetypes reads (public
+             # tables of file types; libraries that write documents ask it).
+             *mimetypes.knownfiles]
     guard = Guard(roots, args.scratch)
     # Armed once, before the plugin's first line runs, and never disarmed: a
     # switch the host could flip is a switch plugin code could find and flip.

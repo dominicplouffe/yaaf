@@ -10,6 +10,11 @@ It is not a sandbox: on your machine the host's in-process guard is all there
 is, as in yaaf's own subprocess mode. The install runs the same program behind
 a jail or a container.
 
+`build_site` installs the plugin's locked dependencies into a directory, as the
+install does (pip, --require-hashes --no-deps --only-binary=:all:), so the host
+imports exactly what the install's would: it runs with -S, and sees no
+site-packages but that one.
+
 `run_tests` runs the plugin's own tests/ with pytest, with the plugin and this
 package importable, and nothing of the caller's environment but PATH.
 """
@@ -42,8 +47,10 @@ def plugin_paths(root: Path) -> list[Path]:
 
 
 class LocalHost:
-    def __init__(self, root: str | Path, manifest: Manifest, *, python: str | None = None):
+    def __init__(self, root: str | Path, manifest: Manifest, *, python: str | None = None,
+                 extra_paths: list | None = None):
         self.root = Path(root).resolve()
+        self.extra_paths = [Path(p) for p in extra_paths or []]
         self.manifest = manifest
         self.python = python or sys.executable
         self.proc: subprocess.Popen | None = None
@@ -53,9 +60,12 @@ class LocalHost:
 
     def start(self) -> None:
         self.scratch = tempfile.mkdtemp(prefix="yaaf-plugin-check-")
-        argv = [self.python, "-I", "-B", "-c", BOOT, str(API_SRC),
+        # A fresh inbox: a host stopped before must not hand its end-of-stream
+        # to the next one, which would read as this one dying at start.
+        self._inbox = queue.Queue()
+        argv = [self.python, "-I", "-B", "-S", "-c", BOOT, str(API_SRC),
                 "--module", self.manifest.module, "--scratch", self.scratch]
-        for p in plugin_paths(self.root):
+        for p in [*plugin_paths(self.root), *self.extra_paths]:
             argv += ["--path", str(p)]
         self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL, cwd=self.scratch,
@@ -178,3 +188,19 @@ def run_tests(root: str | Path, *, python: str | None = None, timeout_s: int = 3
     if proc.returncode == 5:
         return "fail", ["tests/ collected no tests"]
     return "fail", ["the plugin's own tests failed:", *tail]
+
+
+def build_site(root: str | Path, target: str | Path) -> tuple[bool, str]:
+    """The plugin's requirements.lock, installed into `target` the way the
+    install builds it. (True, why) with nothing to do when there is no lock."""
+    root = Path(root).resolve()
+    lock = root / "requirements.lock"
+    if not lock.is_file():
+        return True, "no requirements.lock: nothing to build"
+    proc = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
+         "--no-input", "--require-hashes", "--no-deps", "--only-binary=:all:",
+         "--target", str(target), "-r", str(lock)],
+        capture_output=True, text=True, timeout=900)
+    tail = (proc.stdout + proc.stderr).strip().splitlines()[-6:]
+    return proc.returncode == 0, "\n".join(tail) or "built"
