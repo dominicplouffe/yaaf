@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Dashboard, get, post, put } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import { ProjectCtx } from "../../projectCtx";
-import { Skeleton } from "../../ui";
+import { Drawer, Skeleton } from "../../ui";
 
 /** A Code Factory's two record pages: its changes, every gate on each and who
     checked it; and its releases and incidents. Read from the platform's own
@@ -194,68 +194,117 @@ export function Releases({ ctx }: { ctx: ProjectCtx }) {
 }
 
 type Env = { deploy: string; health_url: string; set_by?: string | null };
-const ENVS: { key: "production" | "staging" | "preview"; label: string; deploy: string;
+const ENVS: { key: "production" | "staging" | "preview"; label: string; required: boolean; deploy: string;
   health: string; note: string }[] = [
-  { key: "production", label: "Production", deploy: "fly deploy -a myapp --strategy canary",
+  { key: "production", label: "Production", required: true, deploy: "fly deploy -a myapp --strategy canary",
     health: "https://myapp.example/healthz",
     note: "Deployed by the platform with secrets granted to deploy alone." },
-  { key: "staging", label: "Staging (optional)", deploy: "fly deploy -a myapp-staging",
+  { key: "staging", label: "Staging", required: false, deploy: "fly deploy -a myapp-staging",
     health: "https://staging.myapp.example/healthz",
     note: "Every release runs here first; your approval, when the dial asks, comes after." },
-  { key: "preview", label: "Preview per change (optional)",
+  { key: "preview", label: "Preview per change", required: false,
     deploy: "fly deploy -a myapp-pr-$YAAF_CHANGE_NUMBER",
     health: "https://pr-{number}.myapp.example/healthz",
-    note: "Builds unsigned code, so it gets only secrets granted to preview — never production's." },
+    note: "Builds unsigned code, so it gets only secrets granted to preview, never production's." },
 ];
 
-/** Where a Code Factory's software runs. The platform deploys with these
-    commands, at the right commit, with secrets granted to the reserved scopes
-    "deploy" or "preview" — which no seat holds — and reads each health URL.
-    Set here or by a seat with environment_set. Unless releases are autonomous,
-    a production or staging command a seat wrote runs only after the chairman
-    approves a release that shows it. */
-export function EnvironmentsCard({ projectId, dash }: { projectId: string; dash: Dashboard }) {
+/** Where a Code Factory's software runs, one row per environment. The
+    platform deploys with these commands, at the right commit, with secrets
+    granted to the reserved scopes "deploy" or "preview" — which no seat holds
+    — and reads each health URL. Set here or by a seat with environment_set.
+    Unless releases are autonomous, a production or staging command a seat
+    wrote runs only after the chairman approves a release that shows it. */
+export function EnvironmentsCard({ projectId, dash, onSaved }: {
+  projectId: string; dash: Dashboard; onSaved?: () => void;
+}) {
   const saved = ((dash.integrations ?? {}) as { environments?: Record<string, Env> })
     .environments ?? {};
-  const [envs, setEnvs] = useState<Record<string, Env>>(() => Object.fromEntries(
-    ENVS.map((e) => [e.key, saved[e.key] ?? { deploy: "", health_url: "" }])));
-  const [said, setSaid] = useState<string | null>(null);
-  const set = (key: string, field: keyof Env, value: string) =>
-    setEnvs((was) => ({ ...was, [key]: { ...was[key], [field]: value } }));
+  const [open, setOpen] = useState<(typeof ENVS)[number] | null>(null);
+  return (
+    <div className="set-card">
+      <div className="table-wrap">
+        <table className="pset-table">
+          <thead><tr><th>Environment</th><th>Deploys with</th><th>Health check</th><th /></tr></thead>
+          <tbody>
+            {ENVS.map((e) => {
+              const env = saved[e.key];
+              return (
+                <tr key={e.key}>
+                  <td><b>{e.label}</b><span className="sub">{e.required ? "Needed before the first release" : "Optional"}</span></td>
+                  <td>{env?.deploy ? <code className="pset-code">{env.deploy}</code> : <span className="help">Not set</span>}
+                    {env?.set_by && <span className="sub">Written by {env.set_by}</span>}</td>
+                  <td>{env?.health_url ? <span className="mono pset-url">{env.health_url}</span>
+                    : e.required ? <span className="badge warn">Not set</span> : <span className="help">—</span>}</td>
+                  <td style={{ textAlign: "right" }}>
+                    <button type="button" className={`small${!env?.deploy && e.required ? " primary" : ""}`}
+                      onClick={() => setOpen(e)}>{env?.deploy ? "Edit" : "Set up"}</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {open && <EnvDrawer projectId={projectId} env={open} saved={saved}
+        onClose={() => setOpen(null)} onSaved={() => { setOpen(null); onSaved?.(); }} />}
+    </div>
+  );
+}
+
+function EnvDrawer({ projectId, env, saved, onClose, onSaved }: {
+  projectId: string;
+  env: (typeof ENVS)[number];
+  saved: Record<string, Env>;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const was = saved[env.key] ?? { deploy: "", health_url: "" };
+  const [deploy, setDeploy] = useState(was.deploy);
+  const [health, setHealth] = useState(was.health_url);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const filled = !!deploy.trim() && !!health.trim();
+  const cleared = !deploy.trim() && !health.trim();
   async function save() {
-    setSaid(null);
-    const body = Object.fromEntries(Object.entries(envs)
-      .filter(([, e]) => e.deploy.trim() && e.health_url.trim())
-      .map(([k, e]) => [k, { deploy: e.deploy.trim(), health_url: e.health_url.trim() }]));
+    setBusy(true);
+    setError(null);
+    // The endpoint takes every environment at once; the others are sent as
+    // they are saved, this one as edited — or left out, which clears it.
+    const body: Record<string, { deploy: string; health_url: string }> = {};
+    for (const e of ENVS) {
+      const src = e.key === env.key ? { deploy, health_url: health } : saved[e.key];
+      if (src?.deploy?.trim() && src.health_url?.trim())
+        body[e.key] = { deploy: src.deploy.trim(), health_url: src.health_url.trim() };
+    }
     try {
       await put(`/admin/projects/${projectId}/environments`, body);
-      setSaid("Saved. The next deploy uses these.");
-    } catch (e) { setSaid(e instanceof Error ? e.message : String(e)); }
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
   }
   return (
-    <div className="card">
-      {ENVS.map((e) => (
-        <div key={e.key} style={{ marginBottom: "var(--s4)" }}>
-          <h3>{e.label}</h3>
-          <label className="field" htmlFor={`env-${e.key}-deploy`}>Deploy command</label>
-          <input id={`env-${e.key}-deploy`} className="mono" value={envs[e.key].deploy}
-            placeholder={e.deploy} onChange={(ev) => set(e.key, "deploy", ev.target.value)} />
-          <label className="field" htmlFor={`env-${e.key}-health`}>Health URL</label>
-          <input id={`env-${e.key}-health`} value={envs[e.key].health_url} placeholder={e.health}
-            onChange={(ev) => set(e.key, "health_url", ev.target.value)} />
-          <p className="help">{e.note}</p>
-          {saved[e.key]?.set_by && e.key !== "preview" && (
-            <p className="help">Written by {saved[e.key].set_by}. Unless releases are
-              autonomous, it runs once you approve the next release, which shows it to you.
-              Saving here approves it now.</p>)}
-          {saved[e.key]?.set_by && e.key === "preview" && (
-            <p className="help">Written by {saved[e.key].set_by}.</p>)}
-        </div>
-      ))}
-      <button className="primary" onClick={save}
-        disabled={!envs.production.deploy.trim() || !envs.production.health_url.trim()}>Save</button>
-      {said && <p className="help">{said}</p>}
-    </div>
+    <Drawer title={env.label} sub={env.note} onClose={onClose}
+      footer={<>
+        <span className="grow help">The next deploy uses it.</span>
+        <button type="button" onClick={onClose}>Cancel</button>
+        <button type="button" className="primary" disabled={busy || (!filled && !(cleared && !env.required))}
+          onClick={() => void save()}>{busy ? "Saving…" : cleared && !env.required ? "Clear" : "Save"}</button>
+      </>}>
+      <label className="field" htmlFor={`env-${env.key}-deploy`}>Deploy command</label>
+      <input id={`env-${env.key}-deploy`} className="mono" value={deploy} placeholder={env.deploy}
+        onChange={(e) => setDeploy(e.target.value)} />
+      <label className="field" htmlFor={`env-${env.key}-health`}>Health URL</label>
+      <input id={`env-${env.key}-health`} value={health} placeholder={env.health}
+        onChange={(e) => setHealth(e.target.value)} />
+      <p className="help">Read after each deploy; failed reads during the canary watch roll the release back.</p>
+      {was.set_by && env.key !== "preview" && (
+        <p className="help">Written by {was.set_by}. Unless releases are autonomous, it runs once you
+          approve the next release, which shows it to you. Saving here approves it now.</p>)}
+      {error && <div className="error">{error}</div>}
+    </Drawer>
   );
 }
 
@@ -271,11 +320,16 @@ type FactorySetup = {
   environments: string[];
 };
 
-/** Everything a Code Factory needs from GitHub, on one card, in the order it
-    is needed. Each of these used to be found missing by an agent's failed
-    run: the platform's own key, the repo, the key the seats push with, and
-    whether GitHub can reach this install at all. */
-export function FactoryGithub({ projectId }: { projectId: string }) {
+/** Everything a Code Factory needs from GitHub, in the order it is needed,
+    as steps. Each of these used to be found missing by an agent's failed run:
+    the platform's own key, the repo, the key the seats push with, and whether
+    GitHub can reach this install at all. A step done is one line; only the
+    step to do now is open; the ones after it say what they wait for. */
+export function FactoryGithub({ projectId, onCount }: {
+  projectId: string;
+  /** How many of the four are done, for the section's state line. */
+  onCount?: (done: number) => void;
+}) {
   const { data, reload } = usePoll(
     () => get<FactorySetup>(`/admin/projects/${projectId}/factory/setup`), 30000, [projectId]);
   const [platformKey, setPlatformKey] = useState("");
@@ -283,91 +337,118 @@ export function FactoryGithub({ projectId }: { projectId: string }) {
   const [pushKey, setPushKey] = useState("");
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [changing, setChanging] = useState<number | null>(null);
+  const pushOk = !!data && data.push_token.set && data.push_token.missing.length === 0;
+  const done = data ? [data.platform_token, !!data.repo, pushOk, true] : [];
+  const count = done.filter(Boolean).length;
+  useEffect(() => { if (data) onCount?.(count); }, [count, !!data]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!data) return <Skeleton />;
   // The name chosen when the project was made, until somebody types another.
   const repoName = repo ?? data.repo_wanted ?? "";
+  const now = done.findIndex((d) => !d);
 
-  async function act(what: () => Promise<unknown>, done: string, clear?: () => void) {
+  async function act(what: () => Promise<unknown>, text: string, clear?: () => void) {
     setBusy(true); setSaid(null);
-    try { await what(); setSaid({ ok: true, text: done }); clear?.(); reload(); }
+    try { await what(); setSaid({ ok: true, text }); clear?.(); setChanging(null); reload(); }
     catch (e) { setSaid({ ok: false, text: e instanceof Error ? e.message : String(e) }); }
     finally { setBusy(false); }
   }
-  const mark = (ok: boolean) => <span className={`badge ${ok ? "good" : "warn"}`}>{ok ? "done" : "to do"}</span>;
   const hook = data.notifications.hook;
+  const every = Math.round(data.notifications.polled_every_s / 60) || 1;
+  const openAt = (i: number) => (i === now || changing === i) && i < 3;
+
+  const steps: { title: string; line: React.ReactNode; body?: React.ReactNode; locked?: string }[] = [
+    {
+      title: "The platform's GitHub key",
+      line: data.platform_token
+        ? "Connected. The platform creates the repo, opens pull requests and merges with it. No agent ever holds it."
+        : "A token for the account the platform acts as: it creates the repo, opens pull requests, reads CI and merges. Used for every project on this install.",
+      body: <>
+        <div className="pset-perms"><span className="badge">Fine-grained</span><span className="badge">Contents: read &amp; write</span>
+          <span className="badge">Pull requests: read &amp; write</span><span className="badge">Administration: read &amp; write</span>
+          <span className="badge">Webhooks: read &amp; write</span></div>
+        <div className="pset-inline">
+          <input type="password" value={platformKey} placeholder="github_pat_…" aria-label="Platform GitHub key"
+            onChange={(e) => setPlatformKey(e.target.value)} />
+          <button type="button" className="primary" disabled={busy || platformKey.trim().length < 8}
+            onClick={() => act(() => put("/admin/settings/github", { token: platformKey.trim() }),
+              data.repo_wanted && !data.repo ? `Saved. Making ${data.repo_wanted} now.` : "Saved.",
+              () => setPlatformKey(""))}>Check and save</button>
+        </div>
+      </>,
+    },
+    {
+      title: "The repository",
+      line: data.repo
+        ? <>Builds in <code>{data.repo}</code>.{data.branch_protection && !data.branch_protection.ok &&
+            ` GitHub couldn't be told to protect main (${data.branch_protection.detail}); the platform still freezes merging if main moves without it.`}</>
+        : "A bare name creates a new private repo; owner/name uses an empty one you made.",
+      locked: "Waits for the platform's key.",
+      body: <>
+        {data.repo_wanted_error && (
+          <p className="help serious">GitHub wouldn&apos;t make {data.repo_wanted}: {data.repo_wanted_error}.
+            Change the name, or the key&apos;s access, and connect again.</p>
+        )}
+        <div className="pset-inline">
+          <input value={repoName} placeholder="my-app or owner/my-app" aria-label="Repository"
+            onChange={(e) => setRepo(e.target.value)} />
+          <button type="button" className="primary" disabled={busy || !repoName.trim()}
+            onClick={() => act(() => post(`/admin/projects/${projectId}/github`, { repo: repoName.trim() }),
+              "Connected, and main is protected.")}>Connect</button>
+        </div>
+      </>,
+    },
+    {
+      title: "The agents' GitHub key",
+      line: pushOk
+        ? `Held by ${data.push_token.granted.join(", ")}. They push branches with it; only the platform merges.`
+        : "A second token, for the seats that build. They push branches and never merge. A separate GitHub account is best, so GitHub shows who wrote what.",
+      locked: "Waits for the repository.",
+      body: <>
+        <div className="pset-perms"><span className="badge">Fine-grained</span><span className="badge">This repo only</span>
+          <span className="badge">Contents: read &amp; write</span><span className="badge">Workflows: read &amp; write</span></div>
+        <div className="pset-inline">
+          <input type="password" value={pushKey} placeholder="github_pat_…" aria-label="Agents' GitHub key"
+            onChange={(e) => setPushKey(e.target.value)} />
+          <button type="button" className="primary" disabled={busy || pushKey.trim().length < 8}
+            onClick={() => act(() => put(`/admin/projects/${projectId}/factory/push-token`, { token: pushKey.trim() }),
+              "Saved: it can push to the repo.", () => setPushKey(""))}>Check and save</button>
+        </div>
+      </>,
+    },
+    {
+      title: "Hearing from GitHub",
+      line: <>{hook?.ok
+        ? "GitHub tells this install the moment CI finishes or a branch moves."
+        : `The platform checks GitHub every ${every} minute${every === 1 ? "" : "s"} for CI results and new pushes. Nothing to set up. Give this install a public https address (YAAF_PUBLIC_BASE_URL) and reconnect the repo to be told instantly.`}
+        {data.notifications.last_delivery_at && ` Last notification: ${fmtWhen(data.notifications.last_delivery_at)}.`}</>,
+    },
+  ];
 
   return (
-    <div className="card factory-github">
-      <h3>{mark(data.platform_token)} 1. The platform's GitHub key</h3>
-      {data.platform_token ? (
-        <p className="help">Connected. The platform creates the repo, opens pull requests and
-          merges with it. No agent ever holds it.</p>
-      ) : <>
-        <p className="help">A GitHub token for the account the platform acts as: it creates the
-          repo, opens pull requests, reads CI and merges. Fine-grained: Contents, Pull requests,
-          Administration (to protect main) and Webhooks, read and write. Used for every project
-          on this install.</p>
-        <input type="password" value={platformKey} placeholder="github_pat_…"
-          onChange={(e) => setPlatformKey(e.target.value)} aria-label="Platform GitHub key" />
-        <button className="primary" disabled={busy || platformKey.trim().length < 8}
-          onClick={() => act(() => put("/admin/settings/github", { token: platformKey.trim() }),
-          data.repo_wanted && !data.repo
-            ? `Saved. Making ${data.repo_wanted} now.` : "Saved.", () => setPlatformKey(""))}>
-          Check and save</button>
-      </>}
-
-      <h3>{mark(!!data.repo)} 2. The repository</h3>
-      {data.repo ? (
-        <p className="help">Builds in <code>{data.repo}</code>.
-          {data.branch_protection && !data.branch_protection.ok &&
-            ` GitHub could not be told to protect main (${data.branch_protection.detail}); the platform still freezes merging if main moves without it.`}</p>
-      ) : <>
-        <p className="help">
-          {data.repo_wanted && !data.platform_token
-            ? `It will be made as ${data.repo_wanted} the moment the key above is saved. `
-            : ""}
-          A bare name creates a new private repo; owner/name uses one you made (it should be
-          empty for a new build).</p>
-        {data.repo_wanted_error && (
-          <p className="help serious">GitHub would not make {data.repo_wanted}: {data.repo_wanted_error}.
-            Change the name, or the key's access, and connect again.</p>
-        )}
-        <input value={repoName} placeholder="my-app or owner/my-app" disabled={!data.platform_token}
-          onChange={(e) => setRepo(e.target.value)} aria-label="Repository" />
-        <button className="primary" disabled={busy || !data.platform_token || !repoName.trim()}
-          onClick={() => act(() => post(`/admin/projects/${projectId}/github`, { repo: repoName.trim() }),
-            "Connected, and main is protected.")}>Connect</button>
-      </>}
-
-      <h3>{mark(data.push_token.set && data.push_token.missing.length === 0)} 3. The agents' GitHub key</h3>
-      <p className="help">
-        {data.push_token.set && data.push_token.missing.length === 0
-          ? `Held for ${data.push_token.granted.join(", ")}. They push branches with it; only the platform merges.`
-          : "A second token, for the seats that build: they push branches with it and never merge. "
-            + "Fine-grained, this repo only: Contents and Workflows, read and write. "
-            + "A separate account is best, so GitHub shows who wrote what."}
-      </p>
-      {!(data.push_token.set && data.push_token.missing.length === 0) && <>
-        <input type="password" value={pushKey} placeholder="github_pat_…" disabled={!data.repo}
-          onChange={(e) => setPushKey(e.target.value)} aria-label="Agents' GitHub key" />
-        <button className="primary" disabled={busy || !data.repo || pushKey.trim().length < 8}
-          onClick={() => act(() => put(`/admin/projects/${projectId}/factory/push-token`,
-            { token: pushKey.trim() }), "Saved: it can push to the repo.", () => setPushKey(""))}>
-          Check and save</button>
-      </>}
-
-      <h3>{mark(true)} 4. Hearing from GitHub</h3>
-      <p className="help">
-        {hook?.ok
-          ? "GitHub tells this install the moment CI finishes or a branch moves."
-          : `The platform checks GitHub every ${Math.round(data.notifications.polled_every_s / 60) || 1} minute` +
-            `${data.notifications.polled_every_s >= 120 ? "s" : ""} for CI results and new pushes. ` +
-            "Nothing to set up. Give this install a public https address (YAAF_PUBLIC_BASE_URL) " +
-            "and reconnect the repo to have GitHub notify it instantly."}
-        {data.notifications.last_delivery_at &&
-          ` Last notification: ${fmtWhen(data.notifications.last_delivery_at)}.`}
-      </p>
-      {said && <p className={`help${said.ok ? "" : " serious"}`}>{said.text}</p>}
+    <div className="set-card">
+      <ol className="pset-steps">
+        {steps.map((st, i) => {
+          const isDone = done[i];
+          const locked = !isDone && now >= 0 && i > now && i < 3;
+          return (
+            <li key={st.title} className={`${isDone ? "done" : ""}${i === now ? " now" : ""}${locked ? " locked" : ""}`}>
+              <span className="n" aria-hidden="true">{isDone ? "✓" : i + 1}</span>
+              <div className="t">
+                <b>{st.title}<span className="sr-only">{isDone ? " — done" : " — to do"}</span></b>
+                <span className="d">{locked && st.locked ? `${st.locked} ${st.line}` : st.line}</span>
+              </div>
+              <span className="a">
+                {isDone && i < 3 && st.body && changing !== i && (
+                  <button type="button" className="small" onClick={() => setChanging(i)}>Change</button>)}
+                {changing === i && <button type="button" className="small" onClick={() => setChanging(null)}>Cancel</button>}
+              </span>
+              {openAt(i) && st.body && !locked && <div className="b">{st.body}</div>}
+            </li>
+          );
+        })}
+      </ol>
+      {said && <div className="pset-foot"><span className={said.ok ? "set-flash" : "error"} role={said.ok ? "status" : "alert"}>{said.text}</span></div>}
     </div>
   );
 }

@@ -94,9 +94,16 @@ export function ProjectSetup({ ctx }: { ctx: ProjectCtx }) {
     the project is fine without it, and the step stays in Settings for later.
 
     `section` is the Settings section on screen, when there is one. */
-export function SetupStrip({ ctx, section }: { ctx: ProjectCtx; section?: string }) {
+export function SetupStrip({ ctx, section, compact }: {
+  ctx: ProjectCtx;
+  section?: string;
+  /** Settings' own version: one line — progress, the next step, "I'm good
+      without" for the step on screen — with the chips folded behind it. */
+  compact?: boolean;
+}) {
   const { setup, projectId, dash } = ctx;
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
   const [params] = useSearchParams();
   if (!setup?.open) return null;
   // A promised credential's step opens its own card in Settings › Credentials,
@@ -113,6 +120,55 @@ export function SetupStrip({ ctx, section }: { ctx: ProjectCtx; section?: string
     ?? inSection.find((s) => s.state === "todo") ?? inSection[0];
   const canWave = !!step && step.state === "todo" && !step.required && dash.can_steer !== false;
   const failed = setup.steps.find((s) => s.state === "failed");
+  const wave = canWave && (
+    <button className="small setup-skip" disabled={busy}
+      title={`The project is fine without ${step!.label}. It stays in Settings if you want it later.`}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await post(`/admin/projects/${projectId}/setup`, { action: "skip", step: step!.key });
+          ctx.reloadSetup();
+        } finally {
+          setBusy(false);
+        }
+      }}>
+      I'm good without {step!.label}
+    </button>
+  );
+  if (compact) {
+    const next = setup.next;
+    return (
+      <nav className="setup-line" aria-label="Setup steps">
+        <span className="setup-line-bar" role="progressbar" aria-valuemin={0} aria-valuemax={setup.total}
+          aria-valuenow={setup.settled} aria-label={`${setup.settled} of ${setup.total} set up`}>
+          <i style={{ width: `${(setup.settled / setup.total) * 100}%` }} />
+        </span>
+        <span className="setup-line-t">
+          <b>Setup: {setup.settled} of {setup.total} done.</b>
+          {failed ? <> <Link to={`/projects/${projectId}/settings?s=${failed.section}`}>Fix {failed.label}</Link></>
+            : next && next.section !== section
+              ? <> Next: <Link to={`/projects/${projectId}/settings?s=${next.section}`} replace>{next.label}</Link></>
+              : next ? <> Next: {next.label}, on this page.</> : null}
+        </span>
+        <span className="grow" />
+        {wave}
+        <button type="button" className="small linkish" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? "Hide steps" : "All steps"}</button>
+        {open && (
+          <span className="setup-line-chips">
+            {setup.steps.map((st) => (
+              <Link key={st.key} to={`/projects/${projectId}/settings?s=${st.section}`} replace
+                className={`setup-chip ${st.credential === "saved" ? "saved" : st.state}${current === st.section ? " on" : ""}`}
+                aria-current={current === st.section ? "step" : undefined} title={st.detail}>
+                {chipText(st)}
+                <span className="sr-only">{st.state === "todo" ? " — to do" : ` — ${st.state}`}</span>
+              </Link>
+            ))}
+          </span>
+        )}
+      </nav>
+    );
+  }
   return (
     <nav className="setup-strip" aria-label="Setup steps">
       <span className="setup-strip-t">Setup {setup.settled} of {setup.total}</span>
@@ -125,21 +181,7 @@ export function SetupStrip({ ctx, section }: { ctx: ProjectCtx; section?: string
           <span className="sr-only">{st.state === "todo" ? " — to do" : ` — ${st.state}`}</span>
         </Link>
       ))}
-      {canWave && (
-        <button className="small setup-skip" disabled={busy}
-          title={`The project is fine without ${step!.label}. It stays in Settings if you want it later.`}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              await post(`/admin/projects/${projectId}/setup`, { action: "skip", step: step!.key });
-              ctx.reloadSetup();
-            } finally {
-              setBusy(false);
-            }
-          }}>
-          I'm good without {step!.label}
-        </button>
-      )}
+      {wave}
       {failed && (
         <Link className="btnlink small" to={`/projects/${projectId}/settings?s=${failed.section}`}>Fix {failed.label}</Link>
       )}

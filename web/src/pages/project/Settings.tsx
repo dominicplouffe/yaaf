@@ -1,2078 +1,287 @@
-import { CodingCard } from "../../coding";
-import { FallbackCard } from "../../fallback";
-import { CredentialPicker, PlanMeter, ProviderCredentials } from "../../llmCredentials";
-import { useProviders } from "../../providers";
-import { PageHead, plainStatus } from "../../ui/kit";
-import { Fragment, useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import {
-  AmendmentRow,
-  CloneResult,
-  Dashboard,
-  get,
-  ConstitutionField,
-  OrgView,
-  patch,
-  post,
-  ProjectBundle,
-  SecretRow,
-  SlackProvision,
-} from "../../api";
-import { fmtWhen, usePoll } from "../../hooks";
-import type { FounderStatus, PresetCard } from "../StartProject";
-import DataSources from "./DataSources";
-import { MailboxSettings } from "./Mailbox";
-import Secrets, { pendingNeeds } from "./Secrets";
-import { ProjectCtx, useProject } from "../../projectCtx";
+// A project's Settings: a rail that reports each section's state, and the
+// section. Every section follows the same shape (settings/kit.tsx): a head
+// with one line on what it is for, its state and at most one main action;
+// settings as rows in a card; edits that need several fields in a drawer;
+// one bar at the bottom for anything unsaved; and what cannot be taken back
+// in a danger zone, said before the click.
+//
+// The sections live in ./settings/ (Brief, Money, Rules, Integrations,
+// Duplicate & export, Advanced) or beside this file (Data sources, Secrets,
+// Email, People, Code Factory). This file is the frame and the shared state:
+// the secrets list several sections read, and the rule edits Money and Rules
+// in force share.
+
+import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Dashboard, get, McpServerEntry, OrgView, SecretRow } from "../../api";
+import { useProject, ProjectCtx } from "../../projectCtx";
 import { SetupStrip } from "../../projectSetup";
 import { CredentialsSection } from "../../credentialNeeds";
 import { PinButton } from "../../shortcuts";
-import { MembersPanel } from "./Members";
 import { SETTINGS_NAV } from "../../nav";
-import { ConfirmModal, fmtUnit, SecretInput, StoredSecret } from "../../ui";
-import { choiceLabel, humanizeHelp, Lede, splitLead, Why } from "../../settingsCopy";
-import { modeLabel } from "../../ui/project";
+import { budgetOf, fmtUnit } from "../../ui";
+import { Icon } from "../../ui/Icon";
+import { PageHead } from "../../ui/kit";
+import { Flash, SectionHead } from "../../settings/kit";
+import DataSources from "./DataSources";
 import { EnvironmentsCard, FactoryGithub } from "./Factory";
+import { MailboxSettings } from "./Mailbox";
+import { MembersPanel } from "./Members";
+import Secrets, { pendingNeeds } from "./Secrets";
+import { BriefSection } from "./settings/brief";
+import { AdvancedSection, DuplicateSection } from "./settings/housekeeping";
+import { IntegrationsSection } from "./settings/integrations";
+import { MoneySection } from "./settings/money";
+import { RulesPending, RulesSection, useRules } from "./settings/rules";
+import "./settings/settings.css";
 
-/** "amazon-audit-v2" → "amazon-audit-v3"; "Acme" → "Acme (clone)". Twins come
-    in numbered runs far more often than they come in ones. */
-function nextInSeries(value: string, fallback: string): string {
-  const match = value.match(/^(.*?)(\d+)$/);
-  return match ? `${match[1]}${Number(match[2]) + 1}` : `${value}${fallback}`;
+type Tone = "critical" | "warn" | "good" | "";
+interface RailNote { text: string; tone: Tone; count?: number }
+
+/** "data" was the page Data sources and Secrets once shared; every old link
+    to it still lands. */
+function sectionOf(asked: string | null): string {
+  const s = asked ?? "brief";
+  return s === "data" ? "secrets" : s;
 }
 
-/** The shared after-action helper: run, show a message (fixed, or computed
-    from the response when the server's answer is the news), reload the dash. */
-type Act = (
-  fn: () => Promise<unknown>,
-  ok: string | ((result: unknown) => string),
-) => Promise<void>;
-
-/** Config addresses a secret by name (`slack.bot_token_secret`, a data source's
-    `url_secret`); revealing one needs its id. One lookup, used by every card. */
-function secretByName(secrets: SecretRow[], name: string | null | undefined) {
-  return name ? secrets.find((s) => s.name === name) : undefined;
-}
-
-function amendmentBadge(status: AmendmentRow["status"]) {
-  const cls = status === "applied" ? "good" : status === "pending" ? "warn" : "";
-  return <span className={`badge ${cls}`}>{plainStatus(status)}</span>;
-}
-
-function hoursUntil(iso: string): number {
-  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 3_600_000));
-}
-
-interface SlackConfig {
-  /** Every field optional now: an absent one is inherited from the app-wide
-      Slack connection, and `enabled: false` switches Slack off for this project
-      however the platform is wired. */
-  enabled?: boolean;
-  bot_token_secret?: string;
-  signing_secret?: string;
-  app_token_secret?: string;
-  chairman_slack_user?: string;
-  channel_prefix?: string;
-  channel_visibility?: string;
-  channel_map: Record<string, string>;
-}
-
-/** What the server says this project's Slack wiring actually resolves to, and
-    where each field came from. The sources are the point: an empty "bot token"
-    box means nothing on its own — "not configured" and "inherited from the
-    connection you set up once" are opposite situations and look identical. */
-interface SlackView {
-  enabled: boolean;
-  global_configured: boolean;
-  can_mirror: boolean;
-  can_receive: boolean;
-  sources: Record<string, string>;
-  chairman_slack_user: string;
-  channel_prefix: string;
-  channel_visibility: string;
-  overrides: Record<string, string | null>;
-  rooms: { key: string; label: string; expected_name: string; channel_id: string | null }[];
-  events_url: string;
-}
-
-/** "inherited" / "this project's" — said once, in one place, so every row of
-    the form says it the same way. */
-function Origin({ source }: { source: string | undefined }) {
-  if (source === "project") return <span className="badge">this project</span>;
-  if (source === "global") return <span className="badge good">inherited</span>;
-  return null;
-}
-
-function SlackBridge({
-  projectId,
-  dash,
-  secrets,
-  act,
-  busy,
-}: {
+export default function Settings({ projectId, dash, org, reload }: {
   projectId: string;
   dash: Dashboard;
-  secrets: SecretRow[];
-  act: Act;
-  busy: boolean;
-}) {
-  const existing = (dash.integrations["slack"] as SlackConfig | null | undefined) ?? null;
-  const [view, setView] = useState<SlackView | null>(null);
-  const [org, setOrg] = useState<OrgView | null>(null);
-  const [botToken, setBotToken] = useState("");
-  const [signingSecret, setSigningSecret] = useState("");
-  const [appToken, setAppToken] = useState("");
-  const [chairmanUser, setChairmanUser] = useState(existing?.chairman_slack_user ?? "");
-  const [prefix, setPrefix] = useState(existing?.channel_prefix ?? "");
-  const [channels, setChannels] = useState<Record<string, string>>(existing?.channel_map ?? {});
-  const [provisioned, setProvisioned] = useState<SlackProvision | null>(null);
-  const [showOverrides, setShowOverrides] = useState(false);
-
-  const loadView = useCallback(() => {
-    get<SlackView>(`/admin/projects/${projectId}/slack`).then(setView).catch(() => {});
-  }, [projectId]);
-
-  useEffect(() => {
-    get<OrgView>(`/observe/projects/${projectId}/org`).then(setOrg).catch(() => {});
-    loadView();
-  }, [projectId, loadView]);
-
-  // The dash reloads after every save; the channel map may have been rewritten
-  // by a provisioning run, so the inputs follow it rather than the other way.
-  useEffect(() => {
-    setChannels(existing?.channel_map ?? {});
-  }, [existing?.channel_map]);
-
-  function setChannel(key: string, value: string) {
-    setChannels((prev) => ({ ...prev, [key]: value }));
-  }
-
-  const off = existing?.enabled === false;
-  const mapped = Object.entries(channels).filter(([, v]) => v.trim());
-  const eventsUrl = `${location.origin}/webhooks/slack/${projectId}`;
-  const anyToken = view?.sources.bot_token !== undefined;
-  const overriding = ["bot_token", "signing_secret", "app_token", "chairman_slack_user",
-                      "channel_prefix"].filter((f) => view?.sources[f] === "project");
-
-  /** The whole slack block, rebuilt from state. PATCH merges at the level of
-      `integrations`, so a partial block would silently drop the fields it
-      omits — this is the one place that decides what the block contains. */
-  function slackBlock(overrides: Partial<SlackConfig> = {}): SlackConfig {
-    const block: SlackConfig = {
-      channel_map: Object.fromEntries(mapped.map(([k, v]) => [k, v.trim()])),
-    };
-    if (botToken.trim() || existing?.bot_token_secret) block.bot_token_secret = "slack-bot";
-    if (signingSecret.trim() || existing?.signing_secret) block.signing_secret = "slack-signing";
-    if (appToken.trim() || existing?.app_token_secret) block.app_token_secret = "slack-app";
-    if (chairmanUser.trim()) block.chairman_slack_user = chairmanUser.trim();
-    if (prefix.trim()) block.channel_prefix = prefix.trim();
-    if (existing?.channel_visibility) block.channel_visibility = existing.channel_visibility;
-    if (existing?.enabled === false) block.enabled = false;
-    return { ...block, ...overrides };
-  }
-
-  function channelInput(key: string, label: string, expected?: string) {
-    return (
-      <div key={key}>
-        <label className="field">{label}</label>
-        <input
-          value={channels[key] ?? ""}
-          onChange={(e) => setChannel(key, e.target.value)}
-          placeholder={expected ? `C… (blank = not mirrored; #${expected} when created)`
-                               : "C… (blank = not mirrored)"}
-        />
-      </div>
-    );
-  }
-
-  const teamRooms = (org?.teams ?? []).map((team) => ({
-    key: `team:${team.id}`, label: `Team room: ${team.name}`,
-  }));
-  const expectedByKey = Object.fromEntries(
-    (view?.rooms ?? []).map((room) => [room.key, room.expected_name]));
-
-  return (
-    <>
-      <Lede>Mirror this project&apos;s rooms into Slack, and talk to the CEO from there.</Lede>
-      <Why>
-        The bus in Postgres stays the source of truth; Slack is a mirror plus an inbound path
-        for you alone. Mapped channels mirror outward within ~15s. A Slack outage never blocks
-        the project — messages queue and retry.
-      </Why>
-
-      {/* Where this project's wiring comes from. Everything below is read
-          against this sentence, so it goes first. */}
-      {off ? (
-        <p className="help">
-          <span className="badge warn">off for this project</span> nothing mirrors or arrives,
-          whatever the app-wide connection says. The bus keeps every message.
-        </p>
-      ) : view?.can_mirror ? (
-        <p className="help">
-          <span className="badge good">connected</span> mirroring {mapped.length} channel(s)
-          {" "}using{" "}
-          {overriding.length === 0
-            ? "the app-wide Slack connection"
-            : `this project's own ${overriding.length === 1 ? "token" : "tokens"}`}
-          {view.can_receive ? "; inbound enabled for " : "; outbound only"}
-          {view.can_receive ? <code>{view.chairman_slack_user}</code> : null}.
-        </p>
-      ) : view?.global_configured ? (
-        <p className="help">
-          <span className="badge good">ready</span> inherits the app-wide connection; it
-          needs only its channels.
-        </p>
-      ) : (
-        <p className="help">
-          <span className="badge warn">not connected</span> connect it once in{" "}
-          <a href="#/settings">Settings → Slack connection</a>, or give this project its own
-          tokens below.
-        </p>
-      )}
-
-      {/* The rooms. This is the part that is genuinely per-project, so it is
-          the part the screen leads with. */}
-      <label className="field">Channels — Slack channel IDs, bot invited to each</label>
-      <div className="row">
-        {channelInput("boardroom", "Boardroom (chairman ↔ CEO)", expectedByKey["boardroom"])}
-        {channelInput("leadership", "Leadership (CEO + leads)", expectedByKey["leadership"])}
-      </div>
-      <div className="row">
-        {teamRooms.map((room) => channelInput(room.key, room.label, expectedByKey[room.key]))}
-      </div>
-
-      {!off && (view?.global_configured || anyToken) && (
-        <>
-          <div className="actions">
-            <button
-              disabled={busy}
-              onClick={() =>
-                act(async () => {
-                  const result = await post<SlackProvision>(
-                    `/admin/projects/${projectId}/slack/channels`);
-                  setProvisioned(result);
-                  loadView();
-                  return result;
-                }, (result) => (result as SlackProvision).detail)
-              }
-            >
-              Create missing channels
-            </button>
-            <span className="help" style={{ margin: 0 }}>
-              Makes the {view?.channel_visibility ?? "private"} rooms still missing and invites
-              you. Safe to run twice.
-            </span>
-          </div>
-          <Why>
-            Leadership and one room per team, named{" "}
-            <code>{`${view?.channel_prefix ?? dash.slug}-leadership`}</code> and so on; the
-            boxes above fill themselves. Creating a project only makes its boardroom; this is
-            the button for the rest, and for the rooms a team hired later still needs. An
-            existing name is adopted, never duplicated.
-          </Why>
-          {provisioned && (
-            <table>
-              <tbody>
-                {provisioned.channels.map((row) => (
-                  <tr key={row.key}>
-                    <td style={{ width: "30%" }}>{row.label}</td>
-                    <td>
-                      {row.error ? (
-                        <span className="error">{row.error}</span>
-                      ) : (
-                        <>
-                          <code>#{row.name}</code>{" "}
-                          <span className="help">
-                            {row.already_mapped ? "already mapped"
-                              : row.created ? (row.invited ? "created, you are in it"
-                                                           : "created")
-                              : "adopted"}
-                          </span>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </>
-      )}
-
-      {/* Overrides. Folded away by default because the answer for almost every
-          project is "inherit everything and just map channels". */}
-      <div className="actions">
-        <button className="small" onClick={() => setShowOverrides(!showOverrides)}>
-          {showOverrides ? "Hide" : "Override the Slack connection for this project"}
-          {overriding.length > 0 && !showOverrides ? ` (${overriding.length} set)` : ""}
-        </button>
-      </div>
-
-      {showOverrides && (
-        <>
-          <p className="help">
-            Blank fields inherit. For a project in a <em>different</em> Slack workspace — it
-            needs only its own tokens.
-          </p>
-
-          {existing && (
-            <>
-              <label className="field">This project&apos;s own stored tokens</label>
-              <table>
-                <tbody>
-                  {([
-                    ["Bot token", existing.bot_token_secret],
-                    ["Signing secret", existing.signing_secret],
-                    ["App token", existing.app_token_secret],
-                  ] as [string, string | undefined][]).map(([label, name]) => {
-                    const secret = secretByName(secrets, name);
-                    if (!secret) return null;
-                    return (
-                      <tr key={label}>
-                        <td style={{ width: "30%" }}>{label}</td>
-                        <td>
-                          <StoredSecret
-                            secretId={secret.id}
-                            onRotate={async (value) => {
-                              await post("/admin/secrets", {
-                                project_id: projectId, name: secret.name, value,
-                                role_scopes: [],
-                              });
-                            }}
-                            note="These never enter a sandbox — the bridge decrypts them
-                                  server-side."
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </>
-          )}
-
-          <div className="row">
-            <div>
-              <label className="field">
-                Bot token (xoxb-…) <Origin source={view?.sources.bot_token} />
-              </label>
-              <SecretInput value={botToken} placeholder="xoxb-… (blank = inherit)"
-                           onChange={setBotToken} />
-            </div>
-            <div>
-              <label className="field">
-                Signing secret <Origin source={view?.sources.signing_secret} />
-              </label>
-              <SecretInput value={signingSecret} placeholder="blank = inherit"
-                           onChange={setSigningSecret} />
-            </div>
-            <div>
-              <label className="field">
-                App token (xapp-…) <Origin source={view?.sources.app_token} />
-              </label>
-              <SecretInput value={appToken} placeholder="xapp-… (blank = inherit)"
-                           onChange={setAppToken} />
-            </div>
-          </div>
-          <div className="row">
-            <div>
-              <label className="field">
-                Your Slack member ID (U…){" "}
-                <Origin source={view?.sources.chairman_slack_user} />
-              </label>
-              <input value={chairmanUser}
-                     placeholder={view?.chairman_slack_user
-                       ? `blank = inherit ${view.chairman_slack_user}` : "U…"}
-                     onChange={(e) => setChairmanUser(e.target.value)} />
-            </div>
-            <div>
-              <label className="field">
-                Channel name prefix <Origin source={view?.sources.channel_prefix} />
-              </label>
-              <input value={prefix}
-                     placeholder={`blank = ${view?.channel_prefix ?? dash.slug}`}
-                     onChange={(e) => setPrefix(e.target.value)} />
-            </div>
-          </div>
-        </>
-      )}
-
-      <div className="actions">
-        <button
-          className="primary"
-          disabled={busy}
-          onClick={() =>
-            act(async () => {
-              // Credentials are stored as ungranted service secrets: the bridge
-              // decrypts them server-side; no agent sandbox ever receives them.
-              for (const [name, value] of [
-                ["slack-bot", botToken], ["slack-signing", signingSecret],
-                ["slack-app", appToken],
-              ] as [string, string][]) {
-                if (value.trim()) {
-                  await post("/admin/secrets", { project_id: projectId, name,
-                    value: value.trim(), role_scopes: [], kind: "service" });
-                }
-              }
-              await patch(`/admin/projects/${projectId}`,
-                          { integrations: { slack: slackBlock() } });
-              setBotToken("");
-              setSigningSecret("");
-              setAppToken("");
-              loadView();
-            }, "Saved. Mirroring follows within seconds.")
-          }
-        >
-          Save Slack settings
-        </button>
-        {!off ? (
-          <button
-            disabled={busy}
-            onClick={() => {
-              if (!confirm("Turn Slack off for this project? It stops mirroring and stops "
-                           + "accepting inbound messages, whatever the app-wide Slack "
-                           + "connection says. The bus keeps everything."))
-                return;
-              act(
-                () => patch(`/admin/projects/${projectId}`,
-                            { integrations: { slack: slackBlock({ enabled: false }) } })
-                  .then(loadView),
-                "Slack is off for this project. The bus is unaffected.",
-              );
-            }}
-          >
-            Turn off for this project
-          </button>
-        ) : (
-          <button
-            disabled={busy}
-            onClick={() =>
-              act(
-                () => patch(`/admin/projects/${projectId}`,
-                            { integrations: { slack: slackBlock({ enabled: true }) } })
-                  .then(loadView),
-                "Slack is on again for this project.",
-              )
-            }
-          >
-            Turn back on
-          </button>
-        )}
-        {overriding.length > 0 && (
-          <button
-            disabled={busy}
-            onClick={() => {
-              if (!confirm("Drop this project's own Slack tokens and inherit the app-wide "
-                           + "Slack connection again? The channel map is kept."))
-                return;
-              act(async () => {
-                await patch(`/admin/projects/${projectId}`, {
-                  integrations: {
-                    slack: {
-                      channel_map: Object.fromEntries(mapped.map(([k, v]) => [k, v.trim()])),
-                    },
-                  },
-                });
-                setChairmanUser("");
-                setPrefix("");
-                loadView();
-              }, "Back to the app-wide Slack connection.");
-            }}
-          >
-            Reset to the app-wide connection
-          </button>
-        )}
-      </div>
-
-      <Why label="Chatting from Slack">
-        Socket Mode is set up once in{" "}
-        <a href="#/settings">Settings → Slack connection</a> and inherited here. The Event
-        Subscriptions request URL <code>{eventsUrl}</code> remains the alternative for
-        boxes that are publicly reachable.
-      </Why>
-    </>
-  );
-}
-
-function GithubWorkspace({
-  projectId,
-  dash,
-  act,
-  busy,
-}: {
-  projectId: string;
-  dash: Dashboard;
-  act: Act;
-  busy: boolean;
-}) {
-  const [repo, setRepo] = useState("");
-  return (
-    <>
-      <Lede>A private repo the agents share as their workspace.</Lede>
-      <Why>
-        The runner clones it into the sandbox at lease time, so work persists between runs
-        instead of dying with the container.
-      </Why>
-      {dash.github_repo ? (
-        <p className="help" style={{ marginBottom: 0 }}>
-          <span className="badge good">connected</span> workspace repo:{" "}
-          <code>{dash.github_repo}</code>
-        </p>
-      ) : (
-        <>
-          <label className="field">
-            Repo — a bare name creates a private repo; owner/name attaches an existing one
-          </label>
-          <input
-            value={repo}
-            onChange={(e) => setRepo(e.target.value)}
-            placeholder="my-project or owner/my-project"
-          />
-          <div className="actions">
-            <button
-              className="small primary"
-              disabled={busy || !repo.trim()}
-              onClick={() =>
-                act(
-                  () =>
-                    post<{ github_repo: string }>(`/admin/projects/${projectId}/github`, {
-                      repo: repo.trim(),
-                    }),
-                  (result) =>
-                    `Workspace repo ready: ${(result as { github_repo: string }).github_repo}. ` +
-                    "The runner clones it at lease time.",
-                )
-              }
-            >
-              Attach workspace repo
-            </button>
-          </div>
-        </>
-      )}
-    </>
-  );
-}
-
-/** A rule the platform is not currently reading, and why.
- *
- *  Only one budget cap is ever enforced — `policy.check_budget` picks it from
- *  the project's billing mode — and the cycle rhythm exists for Operate
- *  projects only. The old page *hid* the unused USD cap, which is the same
- *  mistake as a hand-kept editable list: a rule you cannot see is a rule you
- *  cannot change. These stay on screen, dimmed, saying why they are asleep. */
-function dormantReason(key: string, dash: Dashboard): string | null {
-  if (key === "monthly_usd_cap" && dash.billing_mode !== "api_key")
-    return "Not enforced right now — this project bills by subscription, so the token cap is the live budget.";
-  if (key === "monthly_token_cap" && dash.billing_mode === "api_key")
-    return "Not enforced right now — this project bills by API key, so the USD cap is the live budget.";
-  if ((key === "cycle_frequency" || key === "cycle_day") && dash.shape !== "operate")
-    return dash.mode === "code_factory"
-      ? "Takes effect once the build is handed over to upkeep — until then no cycle rolls."
-      : `Operate projects only — this one is in ${dash.mode} mode, so no cycle rolls.`;
-  return null;
-}
-
-/** Two rules move money but live on other tabs by their group. Naming them
-    beats copying them onto Money: a rule editable in two places with one shared
-    edit state is exactly what this page is being dug out of. */
-const MONEY_ELSEWHERE = [
-  { key: "max_usd_per_run", theme: "Pace & brakes" },
-  { key: "approval_threshold_usd", theme: "Autonomy" },
-];
-
-/** The IANA zones this browser knows. `timezone` is validated server-side
-    against exactly this list, so typing it blind was a guessing game. */
-function timezoneList(): string[] {
-  const intl = Intl as unknown as { supportedValuesOf?: (k: string) => string[] };
-  try {
-    return intl.supportedValuesOf?.("timeZone") ?? [];
-  } catch {
-    return [];
-  }
-}
-
-/** One rule, one row: the sentence on the left, the value on the right.
-    Numbers get their real bounds, booleans a checkbox, a rule with a fixed set
-    of answers gets that set — and every row says what it was and what it is
-    about to become. */
-function RuleField({
-  field, value, onChange, current, dormant, flash, labelOf,
-}: {
-  field: ConstitutionField;
-  value: string;
-  onChange: (raw: string) => void;
-  current: unknown;
-  dormant: string | null;
-  flash: boolean;
-  /** Another rule's label, for help that names it by key. */
-  labelOf: (key: string) => string | undefined;
-}) {
-  const changed = value !== String(current ?? "");
-  // "Changed from default" is the only cheap way to see what this project has
-  // actually been tuned away from stock without diffing against the docs.
-  const stock = field.default === null || field.default === undefined
-    ? "" : String(field.default);
-  const offStock = String(current ?? "") !== stock;
-  // The schema's sentence, led by its first line; the reasoning folds away. A
-  // rule with a menu keeps what each answer does in sight while it is short —
-  // that sentence is how the reader picks one.
-  const [lead, rest] = splitLead(humanizeHelp(field.help, field.choices, labelOf),
-                                 8, 32, field.choices ? 40 : 22);
-  const said = (raw: string) => (field.choices && raw ? choiceLabel(raw) : raw);
-  return (
-    <div className={`rule${changed ? " dirty" : ""}${dormant ? " dimmed" : ""}` +
-                    `${flash ? " flash" : ""}`} id={`rule-${field.key}`}>
-      <div>
-        <div className="lbl">
-          {field.label}
-          {offStock && !changed && (
-            <span className="badge" style={{ marginLeft: 8 }}>changed from default</span>
-          )}
-        </div>
-        <p className="help">
-          {lead}
-          {stock !== "" && <> <span className="mono">default {said(stock)}</span></>}
-          {dormant && <><br /><i>{dormant}</i></>}
-          {changed && (
-            <>
-              <br />
-              <b>{said(String(current ?? "")) || "(blank)"} → {said(value) || "(blank)"}</b>
-            </>
-          )}
-        </p>
-        <Why>{rest}</Why>
-      </div>
-      <div className="ctl">
-        {field.type === "boolean" ? (
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <input
-              type="checkbox"
-              style={{ width: "auto" }}
-              checked={value === "true"}
-              onChange={(e) => onChange(String(e.target.checked))}
-            />
-            {value === "true" ? "yes" : "no"}
-          </label>
-        ) : field.choices ? (
-          <select value={value} onChange={(e) => onChange(e.target.value)}>
-            {field.choices.map((choice) => (
-              <option key={choice} value={choice}>{choiceLabel(choice)}</option>
-            ))}
-          </select>
-        ) : field.key === "timezone" ? (
-          <>
-            <input list="tzlist" value={value} onChange={(e) => onChange(e.target.value)} />
-            <datalist id="tzlist">
-              {timezoneList().map((zone) => <option key={zone} value={zone} />)}
-            </datalist>
-          </>
-        ) : field.type === "string" ? (
-          <input value={value} onChange={(e) => onChange(e.target.value)} />
-        ) : (
-          <input
-            type="number"
-            value={value}
-            min={field.minimum ?? undefined}
-            max={field.maximum ?? undefined}
-            step={field.type === "integer" ? 1 : "any"}
-            onChange={(e) => onChange(e.target.value)}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** The reason box, the save button, and the confirmation that stands between
-    them. A constitution change is in force from the next agent call, so the
-    last thing before it lands should be a plain statement of what is about to
-    be different — not a button that quietly did it.
-
-    It rides in a tray pinned to the bottom of the pane, because edits span
-    tabs: the question the old flat page could not answer was "what have I
-    actually touched?", and scrolling thirty-nine fields to find out is not an
-    answer. Nothing pending, no tray. */
-function AmendmentSave({
-  projectId, changes, reason, setReason, act, busy, onSaved, onDiscard,
-  extraJson, schema, cons,
-}: {
-  projectId: string;
-  changes: Record<string, unknown>;
-  reason: string;
-  setReason: (value: string) => void;
-  act: Act;
-  busy: boolean;
-  onSaved: () => void;
-  onDiscard: () => void;
-  extraJson?: string;
-  schema: ConstitutionField[];
-  cons: Record<string, unknown>;
-}) {
-  const [confirming, setConfirming] = useState(false);
-  const count = Object.keys(changes).length;
-  const advanced = (extraJson ?? "{}").trim() || "{}";
-  const nothing = count === 0 && advanced === "{}";
-  const labelOf = (key: string) => schema.find((f) => f.key === key)?.label ?? key;
-  // Values as a reader says them: a stored choice as its word, nothing as "(blank)".
-  const shown = (key: string, value: unknown) => {
-    if (value === null || value === undefined || value === "") return "(blank)";
-    return schema.find((f) => f.key === key)?.choices ? choiceLabel(String(value)) : String(value);
-  };
-  // A raw-JSON overlay bypasses the typed form, so it is worth naming in the
-  // confirmation rather than letting it land unannounced alongside the fields.
-  let advancedKeys: string[] = [];
-  try {
-    advancedKeys = Object.keys(JSON.parse(advanced));
-  } catch {
-    advancedKeys = [];
-  }
-  const badJson = advanced !== "{}" && advancedKeys.length === 0;
-
-  async function save() {
-    setConfirming(false);
-    await act(async () => {
-      const merged = { ...JSON.parse(advanced), ...changes };
-      if (Object.keys(merged).length === 0)
-        throw new Error("Nothing changed — edit a value first.");
-      const result = await post<{ note: string }>(
-        `/admin/projects/${projectId}/amendments`,
-        { reason, changes: merged },
-      );
-      setReason("");
-      onSaved();
-      return result;
-    }, (result) => (result as { note: string }).note);
-  }
-
-  // No pending edit, no tray — the bar only exists to answer a question the
-  // chairman has actually asked by typing in a box.
-  if (nothing && !badJson) return null;
-
-  return (
-    <>
-      <div className="rule-tray">
-        <b>
-          {count > 0
-            ? `${count} pending change${count === 1 ? "" : "s"}`
-            : "A pending change from the JSON overlay"}
-        </b>
-        {count > 0 && (
-          <p className="diffs">
-            {Object.entries(changes).map(([key, value], i) => (
-              <Fragment key={key}>
-                {i > 0 && " · "}
-                {labelOf(key)} <span className="mono">{shown(key, cons[key])}→{shown(key, value)}</span>
-              </Fragment>
-            ))}
-          </p>
-        )}
-        <label className="field">Why this change? (required — recorded, shown to the CEO)</label>
-        <input
-          value={reason}
-          placeholder="e.g. this is a memory-heavy job and forty facts is not enough"
-          onChange={(e) => setReason(e.target.value)}
-        />
-        <div className="actions">
-          <button
-            className="primary"
-            disabled={busy || reason.trim().length < 10 || nothing || badJson}
-            onClick={() => setConfirming(true)}
-          >
-            {count > 0 ? `Review ${count} change${count === 1 ? "" : "s"}` : "Review change"}
-          </button>
-          <button type="button" disabled={busy} onClick={onDiscard}>Discard</button>
-          {reason.trim().length > 0 && reason.trim().length < 10 && (
-            <span className="help">the reason needs a real sentence (10+ characters)</span>
-          )}
-          {badJson && <span className="help">the JSON overlay is not valid JSON</span>}
-        </div>
-      </div>
-
-      {confirming && (
-        <ConfirmModal
-          title="This changes the rules your project runs under"
-          confirmLabel="Change the rules"
-          busy={busy}
-          onConfirm={save}
-          onCancel={() => setConfirming(false)}
-        >
-          <table>
-            <thead>
-              <tr><th>Rule</th><th>Now</th><th>Becomes</th></tr>
-            </thead>
-            <tbody>
-              {Object.entries(changes).map(([key, value]) => (
-                <tr key={key}>
-                  <td>{labelOf(key)}</td>
-                  <td className="mono">{shown(key, cons[key])}</td>
-                  <td className="mono"><b>{shown(key, value)}</b></td>
-                </tr>
-              ))}
-              {advancedKeys.map((key) => (
-                <tr key={`raw:${key}`}>
-                  <td>{labelOf(key)}<div className="help">from the JSON overlay</div></td>
-                  <td className="mono">{shown(key, cons[key])}</td>
-                  <td className="mono"><b>{shown(key, JSON.parse(advanced)[key])}</b></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p>When you confirm:</p>
-          <ul style={{ margin: "0 0 10px", paddingLeft: 18 }}>
-            <li>
-              <b>It is in force immediately</b> — from the very next agent call, including runs
-              already in flight.
-            </li>
-            <li>
-              <b>There is no undo window.</b> To go back, amend again; the old version stays in
-              the history.
-            </li>
-            <li>
-              <b>The CEO is told</b>, with your reason, and re-plans against the new limits.
-            </li>
-            <li>
-              Loosening a limit can cost real money: ceilings, brakes and budgets are what stop a
-              project spending through the night.
-            </li>
-          </ul>
-          <p style={{ marginBottom: 0 }} className="help">
-            Recorded as: “{reason.trim()}”
-          </p>
-        </ConfirmModal>
-      )}
-    </>
-  );
-}
-
-interface GoalGrade {
-  elements: { element: string; verdict: "present" | "weak" | "missing"; note: string }[];
-  summary: string;
-  ready: boolean;
-}
-
-/** The goal checked against the goal-writing rules the Founder uses today.
-
-    A project keeps the goal it was founded with, and the rules for writing one
-    have moved since some projects were made. This is the way to find out
-    whether yours is missing something those rules now ask for. It calls a
-    model, so it runs only when pressed, and it changes nothing: what it finds
-    is for the chairman to fix in the goal above, or not. */
-function GoalCheck({ projectId }: { projectId: string }) {
-  const [grade, setGrade] = useState<GoalGrade | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const gaps = (grade?.elements ?? []).filter((e) => e.verdict !== "present");
-  return (
-    <div style={{ marginTop: 14 }}>
-      <button type="button" className="small" disabled={busy} onClick={async () => {
-        setBusy(true); setError(null);
-        try {
-          setGrade(await post<GoalGrade>(`/admin/projects/${projectId}/regrade-goal`, {}));
-        } catch (e) {
-          setError(e instanceof Error ? e.message : String(e));
-        } finally {
-          setBusy(false);
-        }
-      }}>
-        {busy ? "Checking…" : "Check the goal against today's rules"}
-      </button>{" "}
-      <span className="help">One model call. Changes nothing.</span>
-      {error && <div className="error">{error}</div>}
-      {grade && (
-        <div className="help" style={{ marginTop: 8 }}>
-          {gaps.length === 0 ? (
-            <b>Nothing missing. {grade.summary}</b>
-          ) : (
-            <>
-              <b>{grade.summary}</b>
-              <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
-                {gaps.map((e) => (
-                  <li key={e.element}>
-                    <b>{e.element.replace(/_/g, " ")}</b>
-                    {e.verdict === "weak" ? " is weak" : " is missing"}: {e.note}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Turn the edited strings back into the types the constitution expects, and
-    keep only what actually differs from what is in force. */
-
-/** Re-pick a card on a project that is already running.
-
-    The rules a card writes have always been editable here, one box at a time —
-    which for the tempo card is thirteen boxes across three tabs, and is the
-    "too many levers" problem relocated from the creation form to this page
-    rather than solved. Picking a card stages the whole bundle into the same
-    dirty-field state a typed edit uses, so the existing save files it as ONE
-    amendment with one written reason, in force from the next agent call.
-
-    A project whose rules were edited individually is reported as hand-tuned and
-    never rounded to the nearest card. Telling a chairman he is "on Working
-    hours" when he is not is how he later reads a blurb as a description of his
-    own project and believes something untrue about what it costs. */
-function CardPicker({
-  title, help, cards, cons, edits, setEdits,
-}: {
-  title: string;
-  help: string;
-  cards: PresetCard[];
-  cons: Record<string, unknown>;
-  edits: Record<string, string>;
-  setEdits: (fn: (prev: Record<string, string>) => Record<string, string>) => void;
-}) {
-  if (!cards.length) return null;
-  const asEdit = (value: unknown) => String(value ?? "");
-  // What the project IS right now, and what it would be if the staged edits
-  // were saved. The second is what the picker highlights: a chairman who has
-  // just clicked a card should see that card selected, before he saves.
-  const matches = (card: PresetCard, read: (key: string) => unknown) =>
-    Object.entries(card.constitution).every(([k, v]) => asEdit(read(k)) === asEdit(v));
-  const staged = cards.find((c) => matches(c, (k) => (k in edits ? edits[k] : cons[k])));
-  const inForce = cards.find((c) => matches(c, (k) => cons[k]));
-
-  return (
-    <div className="card" style={{ marginBottom: 12 }}>
-      <label className="field">{title}</label>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-        gap: 10, marginTop: 6 }}>
-        {cards.map((card) => (
-          <button key={card.value} type="button"
-            onClick={() => setEdits((prev) => ({
-              ...prev,
-              ...Object.fromEntries(
-                Object.entries(card.constitution).map(([k, v]) => [k, asEdit(v)])),
-            }))}
-            className="textblock"
-            style={{
-              font: "inherit", textAlign: "left", cursor: "pointer",
-              background: staged?.value === card.value
-                ? "rgba(var(--accent-rgb), 0.09)" : "var(--surface)",
-              border: staged?.value === card.value
-                ? "1px solid var(--accent)" : "1px solid var(--border)",
-              borderRadius: 8, padding: "12px 14px",
-            }}>
-            <div style={{ fontWeight: 650, fontSize: 14.5, color: "var(--ink)" }}>
-              {staged?.value === card.value ? "◉" : "○"} {card.label}
-            </div>
-            {card.headline && (
-              <div style={{ fontSize: 12.5, color: "var(--accent)", marginTop: 4,
-                fontVariantNumeric: "tabular-nums" }}>{card.headline}</div>
-            )}
-            <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 6 }}>{card.blurb}</div>
-          </button>
-        ))}
-      </div>
-      <p className="help" style={{ marginTop: 10, marginBottom: 10 }}>
-        {inForce
-          ? <>In force: <b>{inForce.label}</b>. </>
-          : <>In force: <b>hand-tuned</b>, so no card describes this project. </>}
-        Picking a card replaces all of its rules.
-      </p>
-      <Why>{help}</Why>
-      {staged && inForce && staged.value !== inForce.value && (
-        <p className="help" style={{ marginTop: 6, color: "var(--warning)" }}>
-          Staged, not saved: {Object.keys(staged.constitution).length} rules move from
-          {" "}<b>{inForce.label}</b> to <b>{staged.label}</b>, some on other tabs. Save with a
-          reason below; it binds from the next agent call.
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** The three dials, read before the rulebook: which card each family is set
-    to, in one line apiece, so "how is this project set up?" is answered
-    without opening three tabs. Each line jumps to the tab that changes it. */
-function DialSummary({
-  presets, cons, usd, onOpen,
-}: {
-  presets: FounderStatus["presets"];
-  cons: Record<string, unknown>;
-  usd: boolean;
-  onOpen: (theme: string) => void;
-}) {
-  const cap = Number(usd ? cons.monthly_usd_cap : cons.monthly_token_cap) || 0;
-  const wall = cap * (Number(cons.hard_stop_multiple) || 1);
-  // A budget for the whole job, when the project has one: then it is the
-  // money that ends the work, and the month is only matched to it.
-  const job = Number(usd ? cons.project_usd_budget : cons.project_token_budget) || 0;
-  const amount = (n: number) => usd ? fmtUnit(Math.round(n), "usd") : `${fmtUnit(n, "tokens")} tokens`;
-  // Two lines ask him about a purchase — the threshold (at or over) and the
-  // per-purchase line (over, when set) — and the lower one is the one he meets.
-  const threshold = Number(cons.approval_threshold_usd) || 0;
-  const perPurchase = Number(cons.max_usd_per_purchase) || 0;
-  const asksAt = perPurchase > 0 && perPurchase < threshold
-    ? { usd: perPurchase, words: "over" } : { usd: threshold, words: "at or over" };
-  const asEdit = (value: unknown) => String(value ?? "");
-  const inForce = (cards: PresetCard[]) => cards.find((card) =>
-    Object.entries(card.constitution).every(([k, v]) => asEdit(cons[k]) === asEdit(v)));
-  const dials: { name: string; theme: string; cards: PresetCard[] }[] = [
-    { name: "Say-so", theme: "Autonomy", cards: presets.autonomy },
-    { name: "Pace", theme: "Pace & brakes", cards: presets.tempo },
-    { name: "Quality bar", theme: "The bar", cards: presets.bar },
-  ];
-  return (
-    <div className="dial-summary">
-      <div className="dial-row">
-        <span className="dial-name">Money</span>
-        <span className="dial-value">
-          {job
-            ? <><b>{amount(job)} for the whole job</b>
-                <span className="help"> · stops when it is spent, the last
-                  {" "}{Math.round(Number(cons.budget_reserve_ratio ?? 0.05) * 100)}% kept for the hand-in</span></>
-            : <><b>{amount(cap)} a month</b>
-                <span className="help"> · pauses itself at {amount(wall)}</span></>}
-          <span className="help">
-            {asksAt.usd > 0
-              ? ` · asks you before any purchase ${asksAt.words} $${asksAt.usd.toLocaleString()}`
-              : " · asks you before every purchase"}</span>
-        </span>
-        <button className="small" onClick={() => onOpen("Money")}>Change</button>
-      </div>
-      {dials.filter((d) => d.cards.length).map((d) => {
-        const card = inForce(d.cards);
-        return (
-          <div key={d.name} className="dial-row">
-            <span className="dial-name">{d.name}</span>
-            <span className="dial-value">
-              <b>{card ? card.label : "Hand-tuned"}</b>
-              {card?.headline && <span className="help"> · {card.headline}</span>}
-              {!card && <span className="help"> · set rule by rule, so no preset describes it</span>}
-            </span>
-            <button className="small" onClick={() => onOpen(d.theme)}>Change</button>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function changedRules(
-  fields: ConstitutionField[],
-  edits: Record<string, string>,
-  cons: Record<string, unknown>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const field of fields) {
-    const raw = edits[field.key];
-    if (raw === undefined || raw === String(cons[field.key] ?? "")) continue;
-    if (field.type === "boolean") out[field.key] = raw === "true";
-    else if (field.type === "string") out[field.key] = raw.trim() === "" ? null : raw.trim();
-    else {
-      const parsed = Number(raw);
-      if (!Number.isFinite(parsed)) continue;
-      out[field.key] = parsed;
-    }
-  }
-  return out;
-}
-
-function Section({ on, children }: { on: boolean; children: React.ReactNode }) {
-  return on ? <>{children}</> : null;
-}
-
-/** The unforgeable-evidence doors. Secrets are shown exactly once — at project
-    creation or on regenerate — because a secret the UI can always re-show is a
-    secret every screen-share leaks. */
-function WebhookEndpoints({ projectId }: { projectId: string }) {
-  const [fresh, setFresh] = useState<{ github: string; generic: string } | null>(null);
-  const origin = window.location.origin;
-  return (
-    <div>
-      <Lede>Signed evidence sent here counts as <b>platform-attested</b>: no agent can forge it.</Lede>
-      <Why>
-        The signing secrets never enter a sandbox. Point GitHub&apos;s webhook (HMAC,{" "}
-        <code>X-Hub-Signature-256</code>) and any other sender (<code>X-Yaaf-Signature</code>)
-        at these addresses.
-      </Why>
-      <table>
-        <tbody>
-          <tr>
-            <td>GitHub</td>
-            <td><code>{origin}/webhooks/github/{projectId}</code></td>
-          </tr>
-          <tr>
-            <td>Generic</td>
-            <td><code>{origin}/webhooks/generic/{projectId}</code></td>
-          </tr>
-        </tbody>
-      </table>
-      {fresh ? (
-        <div className="strip" style={{ marginTop: 10 }}>
-          <div className="grow">
-            <b>New secrets — copy them now; they are not shown again.</b>
-            <div className="sb" style={{ fontFamily: "var(--mono, monospace)", userSelect: "all" }}>
-              github: {fresh.github}
-            </div>
-            <div className="sb" style={{ fontFamily: "var(--mono, monospace)", userSelect: "all" }}>
-              generic: {fresh.generic}
-            </div>
-          </div>
-        </div>
-      ) : (
-        <p className="s-must">
-          The secrets were shown once, at creation. Regenerating invalidates the old ones
-          everywhere they are configured.
-        </p>
-      )}
-      <button className="small danger" style={{ marginTop: 6 }}
-        onClick={async () => {
-          const out = await post<{ github_webhook_secret: string; webhook_secret: string }>(
-            `/admin/projects/${projectId}/webhook_secrets`, {});
-          setFresh({ github: out.github_webhook_secret, generic: out.webhook_secret });
-        }}>
-        Regenerate secrets…
-      </button>
-    </div>
-  );
-}
-
-export default function Settings({
-  projectId,
-  dash,
-  org,
-  reload,
-}: {
-  projectId: string;
-  dash: Dashboard;
-  /** The roster, polled once for the whole project page — the tabs used to
-      fetch /org each and disagree with each other. */
+  /** The roster, polled once for the whole project page. */
   org: OrgView | null;
   reload: () => void;
 }) {
-  const needs = pendingNeeds(useProject().approvals);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // In the URL, not in a useState: half a dozen places across the app say
-  // "Settings → Rules in force", and every one of them used to land the
-  // chairman on Brief with no way to link any deeper.
+  const { approvals } = useProject();
+  const needs = pendingNeeds(approvals);
+  // In the URL, so every "Settings → Rules in force" link can land exactly.
   const [params, setParams] = useSearchParams();
-  // "data" was the page both of these shared; every link to it still lands.
-  const asked = params.get("s") ?? "brief";
-  const section = asked === "data" ? "secrets" : asked;
+  const section = sectionOf(params.get("s"));
   const theme = params.get("t") ?? "";
-  const go = (next: string, tab?: string) =>
-    setParams(tab ? { s: next, t: tab } : { s: next }, { replace: true });
+  const go = useCallback((next: string, tab?: string) =>
+    setParams(tab ? { s: next, t: tab } : { s: next }, { replace: true }), [setParams]);
 
-  const [billingCredentialId, setBillingCredentialId] = useState(dash.billing_secret_id ?? "");
-  const [busy, setBusy] = useState(false);
-  const registry = useProviders();
-
-  const [runtime, setRuntime] = useState(String(dash.integrations["runtime"] ?? "agent_sdk"));
-
-  const navigate = useNavigate();
-  const [cloneSlug, setCloneSlug] = useState(() => nextInSeries(dash.slug, "-2"));
-  const [cloneName, setCloneName] = useState(() => nextInSeries(dash.name, " (clone)"));
-  // The usual reason to duplicate a project is to aim it at the next thing —
-  // so the mandate is a field on the form, not something to fix afterwards.
-  const [cloneGoal, setCloneGoal] = useState(dash.goal);
-  const [goal, setGoal] = useState(dash.goal);
-  const savedOrders = (dash.standing_orders ?? []).join("\n");
-  const savedRetired = (dash.retired_orders ?? []).join("\n");
-  const [orders, setOrders] = useState(savedOrders);
-  const [retired, setRetired] = useState(savedRetired);
-  const briefLines = (text: string) =>
-    text.split("\n").map((l) => l.replace(/^\s*[-•*]\s*/, "").trim()).filter(Boolean);
-  const briefDirty = goal.trim() !== dash.goal || orders.trim() !== savedOrders
-    || retired.trim() !== savedRetired;
-
-  const [amendReason, setAmendReason] = useState("");
-  const [amendChanges, setAmendChanges] = useState("{}");
-  // Every rule the constitution holds, described by the server well enough to
-  // render an editor for. Values start at what is enforced right now; saving
-  // proposes an amendment carrying only the ones you changed.
-  const cons = dash.constitution as Record<string, unknown>;
-  const [schema, setSchema] = useState<ConstitutionField[]>([]);
-  const [edits, setEdits] = useState<Record<string, string>>({});
-  useEffect(() => {
-    get<ConstitutionField[]>("/admin/constitution/schema")
-      .then((fields) => {
-        setSchema(fields);
-        setEdits(Object.fromEntries(fields.map((f) => [f.key, String(cons[f.key] ?? "")])));
-      })
-      .catch(() => {});
-    // Re-seeding on every dash poll would fight the chairman's typing; the
-    // constitution only moves when this page saves, and that calls reload().
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
-  const setRule = (key: string, raw: string) => setEdits((prev) => ({ ...prev, [key]: raw }));
-  const ruleLabel = (key: string) => schema.find((f) => f.key === key)?.label;
-  const changedGuardrails = changedRules(schema, edits, cons);
-  const discardEdits = () => {
-    setEdits(Object.fromEntries(schema.map((f) => [f.key, String(cons[f.key] ?? "")])));
-    setAmendChanges("{}");
-    setAmendReason("");
-  };
-  // The tabs, ordered by the server. Fourteen groups become six headings a
-  // chairman recognises; the groups survive as subheads inside one.
-  const themes = [...new Set(
-    [...schema].sort((a, b) => a.theme_rank - b.theme_rank).map((f) => f.theme),
-  )];
-  const activeTheme = themes.includes(theme) ? theme : themes[0] ?? "";
-  const dirtyPerTheme = (name: string) =>
-    schema.filter((f) => f.theme === name && f.key in changedGuardrails).length;
-  // A rule linked to from another tab gets a moment of highlight, otherwise
-  // "Most one run may spend is over on Pace & brakes" just moves the hunt.
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => { setNote(null); }, [section]);
+  const rules = useRules(projectId, dash);
   const [flashKey, setFlashKey] = useState<string | null>(null);
-  function jumpToRule(key: string, tab: string) {
-    go("rules", tab);
-    setFlashKey(key);
-    window.setTimeout(() => {
-      document.getElementById(`rule-${key}`)?.scrollIntoView({
-        behavior: "smooth", block: "center",
-      });
-    }, 0);
-    window.setTimeout(() => setFlashKey(null), 1600);
-  }
-  const { data: amendments, reload: reloadAmendments } = usePoll(
-    () => get<AmendmentRow[]>(`/admin/projects/${projectId}/amendments`),
-    10000,
-  );
-  // The same cards the new-project form offers, from the same endpoint, so a
-  // card cannot read one way while it is being picked and another way
-  // afterwards. Best-effort: the pickers simply do not render without them,
-  // and every rule underneath stays editable by hand as it always was.
-  const [presets, setPresets] = useState<FounderStatus["presets"] | null>(null);
-  useEffect(() => {
-    get<FounderStatus>("/admin/founder/status")
-      .then((found) => setPresets(found.presets))
-      .catch(() => {});
-  }, []);
+  const [factoryDone, setFactoryDone] = useState<number | null>(null);
 
-  // One fetch for the whole page: the billing card, the data sources and the
-  // credentials table all need the same list, and the two cards that address a
-  // secret by name (config only stores names) need it to find the id.
+  // One fetch for the page: Money, Data sources, Integrations and Secrets all
+  // address a secret by name and need the list to find it.
   const [secrets, setSecrets] = useState<SecretRow[]>([]);
   const refreshSecrets = useCallback(() => {
     get<SecretRow[]>(`/admin/secrets?project_id=${projectId}`).then(setSecrets).catch(() => {});
   }, [projectId]);
   useEffect(refreshSecrets, [refreshSecrets, dash.billing_secret_id]);
 
-  const notice = (text: string) => {
-    setError(null);
-    setMessage(text);
-    reload();
-    // A data source's address and token are secrets too; the locked group on
-    // Secrets & variables must not wait for a page load to show a new one.
-    refreshSecrets();
+  const saved = (text: string) => { setNote({ ok: true, text }); reload(); refreshSecrets(); };
+  const failed = (text: string) => setNote({ ok: false, text });
+  // The shape Data sources and Secrets were written against.
+  const notice = (text: string) => saved(text);
+
+  const openRules = (tab = "Money", key?: string) => {
+    go("rules", tab);
+    if (!key) return;
+    setFlashKey(key);
+    window.setTimeout(() => document.getElementById(`rule-${key}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+    window.setTimeout(() => setFlashKey(null), 1600);
   };
 
-  const act: Act = async (fn, okMessage) => {
-    setError(null);
-    setMessage(null);
-    setBusy(true);
-    try {
-      const result = await fn();
-      setMessage(typeof okMessage === "function" ? okMessage(result) : okMessage);
-      reload();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // An empty pick on a project that has a credential is a detach: the server
-  // takes "" as "none", the project cannot run until another is assigned, and
-  // the credential is free to be deleted. Nothing else on this page can free one.
-  const detaching = !billingCredentialId && !!dash.billing_secret_id;
-  async function connectBilling() {
-    await act(() => patch(`/admin/projects/${projectId}`, {
-      billing_secret_id: billingCredentialId,
-    }), detaching
-      ? "Credential detached. Agents cannot run until one is assigned again."
-      : "Billing credential updated. New runs use this credential.");
-  }
-
-  async function testBilling() {
-    setError(null);
-    setMessage(null);
-    setBusy(true);
-    try {
-      const check = await post<{ ok: boolean; detail: string }>(
-        `/admin/projects/${projectId}/billing_check`, {});
-      if (check.ok) setMessage(check.detail);
-      else setError(check.detail);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const billingReady = dash.billing_secret_id !== null;
-  // Which provider the billing credential pays, so the page says "OpenAI" or
-  // "Anthropic" rather than assuming one.
-  const billingProvider = (dash.credentials ?? []).find((c) => c.billing) ?? null;
-  const billingSeller = registry.find((p) => p.name === billingProvider?.provider);
-  const runtimeNow = String(dash.integrations["runtime"] ?? "agent_sdk");
-  // The plan and the wall behind it, in the unit this project is billed in.
-  const tokenBilled = dash.billing_mode === "subscription";
-  const monthlyCap = Number(dash.constitution[tokenBilled ? "monthly_token_cap" : "monthly_usd_cap"]) || 0;
-  const hardStop = Number(dash.constitution["hard_stop_multiple"] ?? 3);
-  const wall = monthlyCap * hardStop;
-  const budgetUnit = (n: number) => {
-    const said = n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-    return tokenBilled ? `${said} tokens` : `$${said}`;
-  };
-
-  async function cloneProject() {
-    setError(null);
-    setBusy(true);
-    try {
-      const twin = await post<CloneResult>(`/admin/projects/${projectId}/clone`, {
-        slug: cloneSlug.trim(),
-        name: cloneName.trim() || null,
-        goal: cloneGoal.trim() || null,
-      });
-      // The twin's own data sources were tested with its own copied
-      // credentials — a failure here is news worth stopping for, not a badge
-      // to discover later.
-      const broken = twin.copied.data_sources.filter((source) => !source.check.ok);
-      if (broken.length) {
-        alert(
-          `Twin "${twin.slug}" created, but ${broken.length === 1 ? "a data source is" : "its data sources are"} ` +
-            `not answering:\n\n${broken.map((s) => `"${s.name}": ${s.check.detail}`).join("\n")}\n\n` +
-            "Fix the address in the twin's Settings → Data sources before starting it.",
-        );
-      }
-      // The tokens made it but the rooms did not — said now, while the
-      // chairman is looking, not discovered three days into a silent mirror.
-      if (twin.copied.slack_rooms_dropped) {
-        alert(
-          `Twin "${twin.slug}" created with the Slack tokens but no rooms: the channel map ` +
-            "stays behind so two projects never post into one room. Map the twin's rooms in " +
-            "its Settings → Integrations when you want it mirrored.",
-        );
-      }
-      // An Explore twin whose source window had already passed starts without
-      // one. Silence here would read as "it kept the deadline", and mode is
-      // frozen — so the window is the only part of the shape still settable.
-      if (twin.copied.deadline_dropped) {
-        alert(
-          `Twin "${twin.slug}" created without a deadline: the window it was copied from ` +
-            "has already passed, and inheriting it would have closed this project at birth. " +
-            "Set a new one in the twin's Settings.",
-        );
-      }
-      // The source's credential has since been hidden, so the twin has none.
-      // It cannot run that way, and finding out at the first run is finding
-      // out too late.
-      if (twin.copied.billing_credential_hidden) {
-        alert(
-          `Twin "${twin.slug}" created without a billing credential: the source paid with ` +
-            `"${twin.copied.billing_credential_hidden}", which has since been hidden. ` +
-            "Pick a credential in the twin's Settings → Money before starting it.",
-        );
-      }
-      navigate(`/projects/${twin.id}`);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function downloadSetup() {
-    setError(null);
-    try {
-      const bundle = await get<ProjectBundle>(
-        `/admin/projects/${projectId}/export?include_values=true`);
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${bundle.source_slug}-setup.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
+  const runtime = String(dash.integrations["runtime"] ?? "agent_sdk");
+  const notes = railNotes(dash, rules.count, secrets, needs.length, factoryDone);
 
   return (
-    <div className="settings-lay">
-      <div className="srail">
-        {SETTINGS_NAV.filter((item) => !("only" in item) || item.only === dash.mode).map((item) =>
-          "group" in item ? (
-            <div className="grp" key={item.group}>{item.group}</div>
-          ) : (
-            <button
-              key={item.key}
-              className={section === item.key ? "active" : ""}
-              onClick={() => go(item.key)}
-            >
-              {item.label}
-              {item.key === "secrets" && needs.length > 0 && (
-                <span className="srail-count" title="Credentials your agents asked for">{needs.length}</span>
-              )}
-            </button>
-          ),
+    <div className="set-lay pset-lay">
+      <ProjectRail dash={dash} section={section} notes={notes} onPick={(k) => go(k)} />
+
+      <div className="set-main pset-main">
+        {runtime === "mock" ? (
+          <div className="pset-alert warn" role="status">
+            <span className="dot warn" aria-hidden="true" />
+            <span className="grow"><b>Test stand-ins are running this project.</b> Scripted fakes, free; nothing real happens.</span>
+            {section !== "advanced" && <button type="button" className="small" onClick={() => go("advanced")}>Use real agents</button>}
+          </div>
+        ) : dash.billing_secret_id === null && section !== "money" ? (
+          <div className="pset-alert critical" role="status">
+            <span className="dot critical" aria-hidden="true" />
+            <span className="grow"><b>Agents have no way to pay for their model.</b> Every real run fails until a credential is connected.</span>
+            <button type="button" className="small" onClick={() => go("money")}>Open Money</button>
+          </div>
+        ) : null}
+        <Flash note={note} />
+
+        {section === "brief" && (
+          <BriefSection projectId={projectId} dash={dash} onSaved={saved} onError={failed} />
         )}
-      </div>
-
-      <div>
-      {message && <div className="notice-box">{message}</div>}
-      {error && <div className="error">{error}</div>}
-
-      {/* The all-clear belongs on the page that pays; elsewhere it was a green
-          box above unrelated work. The warning stays everywhere — a project that
-          cannot pay is news on any page — with the way to the page that fixes it. */}
-      {billingReady && runtimeNow === "agent_sdk" ? section === "money" && (
-        <div className="notice-box" style={{ borderColor: "var(--good)", background: "rgba(var(--good-rgb), 0.1)" }}>
-          ✓ <strong>Nothing needs doing here.</strong> Model
-          calls{billingProvider ? ` to ${billingProvider.label}` : ""} pay with{" "}
-          <strong>
-            {dash.billing_secret_name}
-            {dash.billing_mode === "subscription"
-              ? " (a subscription, metered in tokens)"
-              : " (an API key, billed per call)"}
-          </strong>.
-        </div>
-      ) : (
-        <div className="error">
-          {/* Mock first: a mock project needs nothing to pay with, and telling
-              it to add a key sent the reader after the wrong fix. */}
-          {runtimeNow === "mock"
-            ? <>⚠ This project runs FAKE test agents (mock runtime) — nothing real will happen.
-                Switch it under{" "}
-                {section === "advanced" ? "Agent execution below"
-                  : <button className="linklike" onClick={() => go("advanced")}>Advanced</button>}.</>
-            : <>⚠ Agents have no way to pay for their model yet — every real run fails until a
-                credential is connected{section === "money" ? " below" : <> under{" "}
-                <button className="linklike" onClick={() => go("money")}>Money</button></>}.</>}
-        </div>
-      )}
-
-      <Section on={section === "brief"}>
-      <h2>The brief</h2>
-      <div className="card">
-        <Lede>
-          What every agent reads first, on every run.
-          {dash.brief_confirmed_at && <> Last confirmed {fmtWhen(dash.brief_confirmed_at)}.</>}
-        </Lede>
-        <Why>
-          <p>
-            The goal, then your standing orders, then what you have taken back. A change
-            replaces the old version everywhere — nothing is added next to it.
-          </p>
-          <p>
-            Edited here, the CEO is told to bring its files and checks into line. Asked in chat,
-            the CEO writes the whole brief back — the goal, every standing order, what no longer
-            applies — and it shows in your Inbox beside the brief in force.
-          </p>
-        </Why>
-        {/* Two doors to the same brief, said side by side so neither is a
-            surprise: editing here is immediate; asking the CEO gets the change
-            drafted with what it means for the plan, for you to confirm. */}
-        <div className="dial-summary" style={{ marginTop: 10 }}>
-          <div className="dial-row">
-            <span className="dial-name">Edit it here</span>
-            <span className="dial-value help">In force from every agent&apos;s next run.</span>
-          </div>
-          <div className="dial-row">
-            <span className="dial-name">Or ask the CEO</span>
-            <span className="dial-value help">
-              It drafts the change; nothing moves until you confirm it in your Inbox.
-            </span>
-            <Link className="btnlink small" to={`/projects/${projectId}/chat`}
-              state={{ draft: "I want to change direction: " }}>Ask the CEO</Link>
-          </div>
-        </div>
-        <label className="grant-label" htmlFor="brief-goal">The goal</label>
-        <textarea id="brief-goal" value={goal} onChange={(e) => setGoal(e.target.value)} minLength={10} />
-        <label className="grant-label" htmlFor="brief-orders">Standing orders — one per line, with the number</label>
-        <textarea id="brief-orders" value={orders} rows={Math.max(3, briefLines(orders).length + 1)}
-          placeholder={"e.g. Max 15% of the book in one name\nNo stop-loss on core holdings"}
-          onChange={(e) => setOrders(e.target.value)} />
-        <label className="grant-label" htmlFor="brief-retired">No longer applies — one per line</label>
-        <textarea id="brief-retired" value={retired} rows={Math.max(2, briefLines(retired).length + 1)}
-          placeholder="e.g. 25% trailing stop on every position"
-          onChange={(e) => setRetired(e.target.value)} />
-        <div className="actions">
-          <button
-            className="primary"
-            disabled={busy || goal.trim().length < 10 || !briefDirty}
-            onClick={() =>
-              act(
-                () => patch(`/admin/projects/${projectId}`, {
-                  goal: goal.trim(),
-                  standing_orders: briefLines(orders),
-                  retired_orders: briefLines(retired),
-                }),
-                "Brief saved. Every agent reads it from its next run; the CEO has been told to bring its files in line.",
-              )
-            }
-          >
-            Save the brief
-          </button>
-          {briefDirty && (
-            <button type="button" className="small" onClick={() => {
-              setGoal(dash.goal); setOrders(savedOrders); setRetired(savedRetired);
-            }}>
-              Revert
-            </button>
-          )}
-        </div>
-        <GoalCheck projectId={projectId} />
-      </div>
-
-      </Section>
-
-      <Section on={section === "money"}>
-      <h2>How agents pay for their models</h2>
-      <div className="card">
-        <Lede>The credential every agent&apos;s model calls pay with.</Lede>
-        <div className="s-state">
-          <span>
-            Now:{" "}
-            {billingReady ? (
-              <>
-                <b>{dash.billing_secret_name}</b> — {dash.billing_mode === "subscription"
-                  ? `a ${billingProvider?.label ?? ""} subscription: plan rate limits, no per-call charges`
-                  : `an API key: each call bills your ${billingProvider?.label ?? "provider"} account in dollars`}
-              </>
-            ) : (
-              <b>none connected</b>
+        {section === "money" && (
+          <MoneySection projectId={projectId} dash={dash} rules={rules} reload={reload}
+            onSaved={saved} onError={failed} openRules={() => openRules("Money")} />
+        )}
+        {section === "factory" && (dash.mode === "code_factory" ? <>
+          <SectionHead title="Code Factory"
+            lede="Where this project builds and where it ships. The repository is needed before the first change; the environments only before the first release.">
+            {factoryDone !== null && (
+              <span className={`badge ${factoryDone === 4 ? "good" : "warn"}`}>Repository: {factoryDone} of 4 done</span>
             )}
-          </span>
-          <span>
-            Budget: <b>{budgetUnit(monthlyCap)} a month</b> · pauses itself at{" "}
-            <b>{budgetUnit(wall)}</b> ({hardStop}×, the hard stop)
-          </span>
-        </div>
-        {dash.install_payer && (
-          <p className="help">
-            Anything this project does not pay for runs on the app&apos;s own{" "}
-            <b>{dash.install_payer.label}</b> key —{" "}
-            <Link to="/settings?section=providers">Settings → Providers</Link>.
-          </p>
-        )}
-        <CredentialPicker value={billingCredentialId} onChange={id => setBillingCredentialId(id)} disabled={busy} />
-        <div className="actions">
-          <button className={detaching ? "danger" : "primary"} disabled={busy || billingCredentialId === (dash.billing_secret_id ?? "")} onClick={connectBilling}>{detaching ? "Detach credential" : "Save assignment"}</button>
-          <button disabled={busy || !billingReady} onClick={testBilling}>Test connection</button>
-        </div>
-        <p className="s-must">
-          Applies to new runs. Clearing the pick detaches the credential: the project cannot run
-          until one is assigned.
-        </p>
-        <Why>
-          The provider it pays becomes the project&apos;s own: every seat whose role names a
-          class — Frontier, Balanced, Fast — runs on that provider&apos;s model for it. The
-          selected credential also decides whether budgets count USD or tokens. A detached
-          project keeps its rules, and the credential can then be deleted in Settings.
-        </Why>
-        <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode}
-          meters={!!billingSeller?.plan_meter}
-          title={`Plan usage for ${dash.billing_secret_name ?? "this credential"}`} />
-        <CodingCard projectId={projectId} dash={dash} disabled={busy} onChanged={reload} />
-        <FallbackCard projectId={projectId} dash={dash} disabled={busy} onChanged={reload} />
-        <ProviderCredentials projectId={projectId} disabled={busy}
-          fallbackId={dash.fallback?.credential_id ?? null} />
-      </div>
-
-      </Section>
-
-      <Section on={section === "sources"}>
-        <DataSources projectId={projectId} dash={dash} org={org} secrets={secrets}
-                     notice={notice} reload={reload} />
-      </Section>
-
-      <Section on={section === "credentials"}>
-        <CredentialsSection projectId={projectId} canSteer={dash.can_steer !== false}
-          focus={params.get("need")} onSaved={reload} />
-      </Section>
-
-      <Section on={section === "secrets"}>
-        <Secrets projectId={projectId} dash={dash} org={org} secrets={secrets}
-                 refreshSecrets={refreshSecrets} notice={notice} />
-      </Section>
-
-      <Section on={section === "factory"}>
-        {dash.mode === "code_factory" ? <>
-          <h2>GitHub</h2>
-          <FactoryGithub projectId={projectId} />
-          <h2>Environments</h2>
-          <p className="help">Needed before the first release, not before the first change:
-            where each release is deployed, and the URL the platform watches to roll it back.</p>
-          <EnvironmentsCard projectId={projectId} dash={dash} />
+          </SectionHead>
+          <section className="set-group">
+            <div className="set-group-h">Repository <span className="c">· four steps, in order</span></div>
+            <FactoryGithub projectId={projectId} onCount={setFactoryDone} />
+          </section>
+          <section className="set-group">
+            <div className="set-group-h">Environments <span className="c">· needed before the first release</span></div>
+            <EnvironmentsCard projectId={projectId} dash={dash} onSaved={() => saved("Saved. The next deploy uses it.")} />
+          </section>
         </> : (
-          <p className="help">This project is not a Code Factory, so it has no repo or deploy
-            settings of its own. Its GitHub workspace is under Integrations.</p>
+          <>
+            <SectionHead title="Code Factory" />
+            <div className="set-card pad help">This project is not a Code Factory, so it has no repo or deploy settings of its own.
+              Its GitHub workspace is under <a href={`#/projects/${projectId}/settings?s=integrations`}>Integrations</a>.</div>
+          </>
+        ))}
+        {section === "sources" && (
+          <DataSources projectId={projectId} dash={dash} org={org} secrets={secrets} notice={notice} reload={reload} />
         )}
-      </Section>
-
-      <Section on={section === "integrations"}>
-      <h2>Slack bridge</h2>
-      <div className="card">
-        <SlackBridge
-          projectId={projectId}
-          dash={dash}
-          secrets={secrets}
-          act={act}
-          busy={busy}
-        />
-      </div>
-
-      </Section>
-
-      <Section on={section === "integrations"}>
-      {dash.mode !== "code_factory" && <>
-      <h2>GitHub workspace</h2>
-      <div className="card">
-        <GithubWorkspace projectId={projectId} dash={dash} act={act} busy={busy} />
-      </div>
-      </>}
-
-      <h2>Inbound evidence webhooks</h2>
-      <div className="card">
-        <WebhookEndpoints projectId={projectId} />
-      </div>
-
-      </Section>
-
-      <Section on={section === "mail"}>
-        <MailboxSettings projectId={projectId} />
-      </Section>
-
-      <Section on={section === "duplicate"}>
-      <h2>Duplicate this project</h2>
-      <div className="card">
-        <Lede>
-          A running twin: same teams, people, rules and role versions — none of this
-          project&apos;s history.
-        </Lede>
-        <p className="s-must warn">
-          ⚠ Kind ({modeLabel(dash.mode)}) and teams are frozen at creation. To change them, download the
-          setup file below and use the New Project page instead.
-        </p>
-        <p className="s-must warn">
-          ⚠ Slack rooms and webhook senders do not carry over — re-map and re-point them in the
-          twin&apos;s Settings → Integrations.
-        </p>
-        <Why>
-          <p>
-            The twin runs the <i>exact</i> role versions this project runs — not whatever the
-            role library has moved on to. Service credentials are copied and the shared LLM
-            credential stays assigned, so there is nothing to re-paste; the twin&apos;s data
-            sources are tested with its own copies before you land on it.
-          </p>
-          <p>
-            Left behind on purpose: this project&apos;s history — runs, tasks, messages, memory,
-            files, amendments.
-          </p>
-          <p>
-            Slack tokens come along but the channel map does not: two projects posting into one
-            room helps nobody. The twin mints its own webhook signing secrets, so its inbound
-            evidence is attested only once outside senders use the twin&apos;s URLs and secrets.
-          </p>
-        </Why>
-        <div className="row">
-          <div>
-            <label className="field">Twin's slug (a-z, 0-9, dashes)</label>
-            <input
-              value={cloneSlug}
-              onChange={(e) => setCloneSlug(e.target.value)}
-              pattern="[a-z0-9-]{2,64}"
-            />
-          </div>
-          <div>
-            <label className="field">Twin's name</label>
-            <input value={cloneName} onChange={(e) => setCloneName(e.target.value)} />
-          </div>
-        </div>
-        <label className="field">Twin&apos;s goal — point it wherever you like</label>
-        <textarea value={cloneGoal} onChange={(e) => setCloneGoal(e.target.value)} minLength={10} />
-        <div className="actions">
-          <button
-            className="primary"
-            disabled={busy || !/^[a-z0-9-]{2,64}$/.test(cloneSlug.trim())}
-            onClick={cloneProject}
-          >
-            {busy ? "Duplicating…" : "Create the twin"}
-          </button>
-          <span className="help">Starts stopped — review it, then press Start.</span>
-        </div>
-      </div>
-
-      </Section>
-
-      <Section on={section === "duplicate"}>
-      <h2>Setup file</h2>
-      <div className="card">
-        <Lede>
-          This whole project as one JSON file. Upload it on the New Project page and the form
-          prefills.
-        </Lede>
-        <p className="s-must warn">
-          ⚠ It holds credential values, decrypted. Store it the way you store passwords.
-        </p>
-        <Why>
-          <p>
-            Teams and their schedules, role definitions, the constitution, configuration, data
-            sources — and project service credential <i>values</i>, Slack tokens and webhook
-            signing keys. Shared LLM values stay in Settings: on the New Project page, select an
-            administrator-managed LLM credential for billing.
-          </p>
-          <p>Duplicating on this install is simpler still — use the twin above.</p>
-        </Why>
-        <div className="actions">
-          <button onClick={downloadSetup}>Download setup file</button>
-        </div>
-      </div>
-
-      </Section>
-
-      <Section on={section === "advanced"}>
-      <h2>Advanced</h2>
-      <details className="card">
-        <summary>
-          Agent execution — you almost never need to touch this
-        </summary>
-        <div className="row" style={{ marginTop: 12 }}>
-          <div>
-            <label className="field">
-              Agent execution — are the agents real, or test stand-ins?
-            </label>
-            <select value={runtime} onChange={(e) => setRuntime(e.target.value)}>
-              <option value="agent_sdk">Real agents, each on its own harness (normal)</option>
-              <option value="mock">
-                Test stand-ins — scripted fakes for platform development; free, do nothing real
-              </option>
-            </select>
-          </div>
-        </div>
-        <div className="actions">
-          <button
-            disabled={busy}
-            onClick={() =>
-              act(
-                () =>
-                  patch(`/admin/projects/${projectId}`, {
-                    integrations: { runtime },
-                  }),
-                "Applied.",
-              )
-            }
-          >
-            Apply
-          </button>
-        </div>
-
-        <label className="field">Webhook signing secrets</label>
-        <p className="help" style={{ marginTop: 0 }}>
-          They sign inbound evidence. Regenerating invalidates the old pair.
-        </p>
-        <Why>
-          They live only in project config — no run ever holds one, which is what makes webhook
-          evidence impossible for an agent to forge. Point your senders at them.
-        </Why>
-        {dash.integrations["webhook_secret"] || dash.integrations["github_webhook_secret"] ? (
-          <div className="row">
-            <div>
-              <label className="field">GitHub</label>
-              <SecretInput readOnly value={String(dash.integrations["github_webhook_secret"] ?? "")} />
-            </div>
-            <div>
-              <label className="field">Generic evidence sender</label>
-              <SecretInput readOnly value={String(dash.integrations["webhook_secret"] ?? "")} />
-            </div>
-          </div>
-        ) : (
-          <p className="help">Not generated yet.</p>
+        {section === "credentials" && (
+          <CredentialsSection projectId={projectId} canSteer={dash.can_steer !== false}
+            focus={params.get("need")} onSaved={reload} />
         )}
-        <div className="actions">
-          <button
-            disabled={busy}
-            onClick={() => {
-              if (
-                dash.integrations["webhook_secret"] &&
-                !confirm("Regenerate? Any sender still using the old secrets stops verifying.")
-              )
-                return;
-              act(
-                () => post(`/admin/projects/${projectId}/webhook_secrets`, {}),
-                "New signing secrets generated — update your senders.",
-              );
-            }}
-          >
-            {dash.integrations["webhook_secret"] ? "Regenerate" : "Generate signing secrets"}
-          </button>
-        </div>
-      </details>
-
-      </Section>
-
-      <Section on={section === "people"}>
-      <h2>People</h2>
-      <Lede>Who may decide on this project, and who may only read it.</Lede>
-      <MembersPanel projectId={projectId} dash={dash} reload={reload} />
-      </Section>
-
-      <Section on={section === "rules"}>
-      <h2>Rules in force</h2>
-      <div className="card">
-        <Lede>
-          Every limit the platform enforces. A change is <b>in force from the next agent
-          call</b>.
-        </Lede>
-        <Why>
-          Agents cannot move these limits; you can. Change one, say why, and it is recorded with
-          your reason and disclosed to the CEO.
-        </Why>
-        {schema.length === 0 && <p className="help">Loading the rulebook…</p>}
-        {presets && <DialSummary presets={presets} cons={cons}
-          usd={dash.billing_mode === "api_key"} onOpen={(t) => go("rules", t)} />}
-
-        {/* Six tabs rather than fourteen headings on one scroll. The dot says
-            which tab holds an edit, so a pending change is never somewhere you
-            have to remember. */}
-        <div className="tabs">
-          {themes.map((name) => {
-            const dirty = dirtyPerTheme(name);
-            return (
-              <button
-                key={name}
-                className={`tab${name === activeTheme ? " active" : ""}`}
-                onClick={() => go("rules", name)}
-              >
-                {name}
-                {dirty > 0 && <span className="badge accent" style={{ marginLeft: 6 }}>{dirty}</span>}
-              </button>
-            );
-          })}
-        </div>
-
-        {activeTheme === "Pace & brakes" && presets && (
-          <CardPicker
-            title="How often should it think?"
-            help={"Thirteen rules: the daily and hourly run ceilings, how often each agent "
-              + "may wake, whether agents buy a run just to read each other's messages, how "
-              + "often the CEO plans, and how far ahead work may be scheduled. Getting the "
-              + "tempo wrong at creation is the cheapest mistake on this page to fix."}
-            cards={presets.tempo} cons={cons} edits={edits} setEdits={setEdits} />
+        {section === "secrets" && (
+          <Secrets projectId={projectId} dash={dash} org={org} secrets={secrets}
+            refreshSecrets={refreshSecrets} notice={notice} />
         )}
-        {activeTheme === "The bar" && presets && (
-          <CardPicker
-            title="How good does it have to be?"
-            help={"Which model the writing and checking seats are hired on, who reads the "
-              + "work before you do, and whether evidence has to be verified before it "
-              + "counts. Set from the brief at creation; the money is under Money and no "
-              + "card here moves it."}
-            cards={presets.bar} cons={cons} edits={edits} setEdits={setEdits} />
+        {section === "integrations" && (
+          <IntegrationsSection projectId={projectId} dash={dash} secrets={secrets} onSaved={saved} onError={failed} />
         )}
-        {activeTheme === "Autonomy" && presets && (
-          <CardPicker
-            title="Who holds the verbs?"
-            help={"Five rules deciding who accepts scope, changes the plan, signs the date, "
-              + "judges an unverifiable close, and scopes the credentials. Your routes, "
-              + "your veto and your pause never close either way."}
-            cards={presets.autonomy} cons={cons} edits={edits} setEdits={setEdits} />
+        {section === "mail" && <MailboxSettings projectId={projectId} />}
+        {section === "people" && <MembersPanel projectId={projectId} dash={dash} reload={reload} />}
+        {section === "rules" && (
+          <RulesSection rules={rules} dash={dash} theme={theme} flashKey={flashKey}
+            setTheme={(t) => go("rules", t)} />
         )}
-        {[...new Set(schema.filter((f) => f.theme === activeTheme).map((f) => f.group))]
-          .map((group, _i, all) => (
-            <div key={group}>
-              {/* One group on the tab means the subhead only repeats the tab. */}
-              {all.length > 1 && <div className="rule-grp">{group}</div>}
-              {schema
-                .filter((f) => f.theme === activeTheme && f.group === group)
-                .map((f) => (
-                  <RuleField
-                    key={f.key}
-                    field={f}
-                    value={edits[f.key] ?? ""}
-                    current={cons[f.key]}
-                    dormant={dormantReason(f.key, dash)}
-                    flash={flashKey === f.key}
-                    onChange={(raw) => setRule(f.key, raw)}
-                    labelOf={ruleLabel}
-                  />
-                ))}
-            </div>
-          ))}
-
-        {activeTheme === "Money" && (
-          <p className="help" style={{ marginTop: 14 }}>
-            Also moving money, on other tabs:{" "}
-            {MONEY_ELSEWHERE.map((item, i) => {
-              const field = schema.find((f) => f.key === item.key);
-              if (!field) return null;
-              return (
-                <Fragment key={item.key}>
-                  {i > 0 && " and "}
-                  <button className="small" onClick={() => jumpToRule(item.key, item.theme)}>
-                    {field.label}
-                  </button>{" "}
-                  ({item.theme})
-                </Fragment>
-              );
-            })}
-            .
-          </p>
+        {section === "duplicate" && <DuplicateSection projectId={projectId} dash={dash} onError={failed} />}
+        {section === "advanced" && (
+          <AdvancedSection projectId={projectId} dash={dash} rules={rules} onSaved={saved} onError={failed}
+            openRules={() => openRules("Money")} />
         )}
 
-        <AmendmentSave
-          projectId={projectId}
-          changes={changedGuardrails}
-          reason={amendReason}
-          setReason={setAmendReason}
-          act={act}
-          busy={busy}
-          schema={schema}
-          cons={cons}
-          extraJson={amendChanges}
-          onDiscard={discardEdits}
-          onSaved={() => {
-            setAmendChanges("{}");
-            reloadAmendments();
-          }}
-        />
-
-        <details style={{ marginTop: 16 }}>
-          <summary className="help">Change history</summary>
-          {amendments && amendments.length > 0 ? (
-            /* Nothing new lands here as pending any more, but rows written
-               while the old cooling-off existed can still be waiting, so the
-               countdown and cancel stay. */
-            <table style={{ marginTop: 8 }}>
-              <thead>
-                <tr>
-                  <th>Status</th>
-                  <th style={{ width: "28%" }}>Reason</th>
-                  <th style={{ width: "30%" }}>Changes</th>
-                  <th>Effective</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {amendments.map((amendment) => (
-                  <tr key={amendment.id}>
-                    <td>
-                      {amendmentBadge(amendment.status)}
-                      {amendment.disclosed && <div className="help">disclosed to CEO</div>}
-                    </td>
-                    <td>{amendment.reason}</td>
-                    <td>
-                      {/* Said in the rules' own labels; the raw keys are the
-                          JSON overlay's business, not the record's. */}
-                      {Object.entries(amendment.changes).map(([key, value]) => {
-                        const field = schema.find((f) => f.key === key);
-                        const said = value === null || value === undefined || value === ""
-                          ? "(blank)" : field?.choices ? choiceLabel(String(value)) : String(value);
-                        return (
-                          <div key={key}>
-                            {field?.label ?? key} <span className="mono">→ {said}</span>
-                          </div>
-                        );
-                      })}
-                    </td>
-                    <td className="mono">
-                      {fmtWhen(amendment.effective_at)}
-                      {amendment.status === "pending" && (
-                        <div className="help">takes effect in {hoursUntil(amendment.effective_at)}h</div>
-                      )}
-                    </td>
-                    <td>
-                      {amendment.status === "pending" && (
-                        <button
-                          className="small danger"
-                          disabled={busy}
-                          onClick={() => {
-                            if (!confirm("Cancel this amendment? Its changes will never take effect."))
-                              return;
-                            act(async () => {
-                              await post(`/admin/amendments/${amendment.id}/cancel`);
-                              reloadAmendments();
-                            }, "Amendment cancelled — the constitution stays as it is.");
-                          }}
-                        >
-                          cancel
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <p className="help">Nothing amended yet — this project runs on the rules it was born with.</p>
-          )}
-        </details>
-
-        <details>
-          <summary className="help">Advanced: amend by raw JSON</summary>
-          <textarea
-            className="mono"
-            style={{ marginTop: 8 }}
-            value={amendChanges}
-            onChange={(e) => setAmendChanges(e.target.value)}
-          />
-        </details>
-      </div>
-
-      </Section>
-
-      <Section on={section === "money"}>
-      <h2>Budget in force</h2>
-      <div className="card">
-        <Lede>
-          Enforced on this project&apos;s spending right now. Changing one takes a written
-          reason, shown to the CEO.
-        </Lede>
-        <dl className="kv">
-          {schema
-            .filter((f) => f.theme === "Money" || MONEY_ELSEWHERE.some((m) => m.key === f.key))
-            .filter((f) => !dormantReason(f.key, dash))
-            // The budget itself leads; the two levers filed elsewhere follow.
-            .sort((a, b) => Number(a.theme !== "Money") - Number(b.theme !== "Money"))
-            .map((f) => (
-              <Fragment key={f.key}>
-                <dt>{f.label}</dt>
-                <dd className="mono">{String(cons[f.key])}</dd>
-              </Fragment>
-            ))}
-        </dl>
-        <div className="actions">
-          <button className="primary" onClick={() => go("rules", "Money")}>
-            Change these rules →
-          </button>
-        </div>
-      </div>
-
-      </Section>
+        {(section === "rules" || section === "money") && (
+          <RulesPending projectId={projectId} rules={rules} onSaved={saved} onError={failed} />
+        )}
       </div>
     </div>
   );
 }
 
+/** What each rail entry says about its section, from what the page already
+    holds: a state, never a description. */
+function railNotes(dash: Dashboard, ruleEdits: number, secrets: SecretRow[], needs: number,
+                   factoryDone: number | null): Record<string, RailNote> {
+  const n: Record<string, RailNote> = {};
+  const integ = dash.integrations;
+  n.brief = dash.brief_confirmed_at
+    ? { text: `Confirmed ${new Date(dash.brief_confirmed_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`, tone: "" }
+    : { text: "Not confirmed yet", tone: "" };
+
+  const b = budgetOf(dash);
+  const said = (x: number) => b.unit === "usd" ? fmtUnit(x, "usd") : `${fmtUnit(x, "tokens")} tokens`;
+  n.money = dash.billing_secret_id === null ? { text: "No billing credential", tone: "critical" }
+    : dash.coding?.applies && !dash.coding.credential_id ? { text: "No coding key", tone: "critical" }
+    : dash.fallback?.active ? { text: "Running on the fallback", tone: "warn" }
+    : b.cap > 0 ? { text: `${said(b.spent)} of ${said(b.cap)} this month`, tone: b.frac >= b.warnRatio ? "warn" : "" }
+    : { text: `${said(b.spent)} this month`, tone: "" };
+
+  n.factory = factoryDone !== null
+    ? { text: factoryDone === 4 ? "Repository connected" : `${factoryDone} of 4 steps done`, tone: factoryDone === 4 ? "" : "warn" }
+    : dash.github_repo ? { text: dash.github_repo, tone: "" } : { text: "No repository yet", tone: "warn" };
+
+  const sources = (integ["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
+  n.sources = { text: sources.length ? `${sources.length} connected` : "None", tone: "" };
+  n.credentials = { text: "Access you promised", tone: "" };
+  const own = secrets.filter((s) => s.kind !== "billing").length;
+  n.secrets = needs
+    ? { text: `${needs} asked for by an agent`, tone: "warn", count: needs }
+    : { text: own ? `${own} variable${own === 1 ? "" : "s"}` : "None yet", tone: "" };
+
+  const slack = (integ["slack"] ?? null) as { enabled?: boolean; channel_map?: Record<string, string> } | null;
+  const rooms = Object.values(slack?.channel_map ?? {}).filter((v) => v.trim()).length;
+  n.integrations = slack?.enabled === false ? { text: "Slack is off", tone: "" }
+    : { text: rooms ? `Slack: ${rooms} room${rooms === 1 ? "" : "s"}` : "Slack not mapped", tone: "" };
+
+  const mail = (integ["mail"] ?? null) as { enabled?: boolean; address?: string } | null;
+  n.mail = dash.mail_start_refusal ? { text: "Needed to start", tone: "critical" }
+    : mail?.address ? { text: mail.enabled === false ? "Off" : mail.address, tone: "" }
+    : { text: "Not set up", tone: "" };
+
+  n.people = { text: dash.chairman ? `Chaired by ${dash.chairman.display_name}` : "Who decides", tone: "" };
+  n.rules = ruleEdits ? { text: `${ruleEdits} unsaved change${ruleEdits === 1 ? "" : "s"}`, tone: "warn" }
+    : { text: "Every limit in force", tone: "" };
+  n.duplicate = { text: "Twin or setup file", tone: "" };
+  n.advanced = String(integ["runtime"] ?? "agent_sdk") === "mock"
+    ? { text: "Test stand-ins", tone: "warn" } : { text: "Real agents", tone: "" };
+  return n;
+}
+
+/** The rail: one entry per section, each carrying its state, grouped as the
+    nav says, with a box that finds a section by what it holds. */
+function ProjectRail({ dash, section, notes, onPick }: {
+  dash: Dashboard;
+  section: string;
+  notes: Record<string, RailNote>;
+  onPick: (key: string) => void;
+}) {
+  const [find, setFind] = useState("");
+  const q = find.trim().toLowerCase();
+  const items = SETTINGS_NAV.filter((item) => !("only" in item) || item.only === dash.mode);
+  const rows: React.ReactNode[] = [];
+  let group: string | null = null;
+  for (const item of items) {
+    if ("group" in item) { group = item.group; continue; }
+    if (q && !`${item.label} ${item.words}`.toLowerCase().includes(q)) continue;
+    if (group) { rows.push(<div className="set-rail-grp" key={`g-${group}`}>{group}</div>); group = null; }
+    const note = notes[item.key] ?? { text: "", tone: "" };
+    const on = section === item.key;
+    rows.push(
+      <button type="button" key={item.key} className={`set-rail-item${on ? " on" : ""}`}
+        aria-current={on ? "page" : undefined} onClick={() => onPick(item.key)}>
+        <span className="l">{item.label}</span>
+        {note.count ? <span className="cnt" aria-label={`${note.count} need you`}>{note.count}</span> : <span />}
+        <span className={`s ${note.tone === "critical" || note.tone === "warn" ? note.tone : ""}`}>
+          {(note.tone === "critical" || note.tone === "warn") && <span className={`dot ${note.tone}`} aria-hidden="true" />}
+          <span>{note.text || " "}</span>
+        </span>
+      </button>,
+    );
+  }
+  return (
+    <nav className="set-rail pset-rail" aria-label="Project settings sections">
+      <label className="pset-find">
+        <Icon name="search" size={14} />
+        <input type="search" value={find} placeholder="Find a setting" aria-label="Find a setting"
+          onChange={(e) => setFind(e.target.value)} />
+      </label>
+      {rows.length ? rows : <p className="help" style={{ padding: "6px 10px" }}>Nothing matches “{find.trim()}”.</p>}
+    </nav>
+  );
+}
+
 /** The project's Settings as a page of its own, under the gear on the project
-    in the sidebar. While the project is being set up, every setup step sits
-    in a strip across the top, so moving from one to the next is one click
-    and never a trip back to the Inbox. */
+    in the sidebar. While the project is being set up, its progress is one
+    line across the top, with the next step one click away. */
 export function SettingsPage({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, dash } = ctx;
   const [params] = useSearchParams();
-  const asked = params.get("s") ?? "brief";
-  const section = asked === "data" ? "secrets" : asked;
+  const section = sectionOf(params.get("s"));
   const label = SETTINGS_NAV.find((i) => "key" in i && i.key === section);
   return (
     <>
       <PageHead title="Settings"
-        lede="Its brief, how it pays, what it connects to, and who can open it."
         actions={label && "key" in label
           ? <PinButton projectId={projectId} to={`settings?s=${section}`} label={label.label} />
           : undefined} />
-      <SetupStrip ctx={ctx} section={section} />
+      <SetupStrip ctx={ctx} section={section} compact />
       <Settings projectId={projectId} dash={dash} org={ctx.org} reload={() => { ctx.reload(); ctx.reloadSetup(); }} />
     </>
   );
 }
-

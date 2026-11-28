@@ -249,3 +249,81 @@ export function useMedia(query: string): boolean {
   }, [query]);
   return matches;
 }
+
+/** Unsaved edits, said once, at the bottom of the screen: how many, what
+    saving does, Discard and the one Save. It rises only while something is
+    unsaved, so a section never shows a grey Save that cannot be pressed, and
+    edits spread down a long page are counted where the reader can see them.
+    `children` is what the save needs besides a click — the reason a rule
+    change is recorded with. */
+export function PendingBar({ count, what, note, onDiscard, onSave, saveLabel = "Save", busy,
+                             blocked, chips, children }: {
+  count: number;
+  /** "to the brief": the count reads "2 unsaved changes to the brief". */
+  what: string;
+  note?: ReactNode;
+  onDiscard: () => void;
+  onSave: () => void;
+  saveLabel?: string;
+  busy?: boolean;
+  /** Why Save cannot be pressed yet, said beside it. */
+  blocked?: string | null;
+  /** Each change, as "Rule: old → new". */
+  chips?: string[];
+  children?: ReactNode;
+}) {
+  if (count <= 0) return null;
+  return (
+    <div className="set-pending" role="region" aria-label="Unsaved changes">
+      <div className="set-pending-text">
+        <b>{count} unsaved change{count === 1 ? "" : "s"} {what}</b>
+        {note && <span>{note}</span>}
+      </div>
+      <div className="set-pending-acts">
+        {blocked && <span className="set-pending-why">{blocked}</span>}
+        <button type="button" disabled={busy} onClick={onDiscard}>Discard</button>
+        <button type="button" className="go" disabled={busy || !!blocked} onClick={onSave}>
+          {busy ? "Saving…" : saveLabel}</button>
+      </div>
+      {chips && chips.length > 0 && (
+        <div className="set-pending-chips">{chips.map((c) => <span key={c}>{c}</span>)}</div>
+      )}
+      {children && <div className="set-pending-more">{children}</div>}
+    </div>
+  );
+}
+
+/** What cannot be taken back, kept apart at the bottom of a section. Each row
+    says what it costs before the button. */
+export function DangerZone({ children }: { children: ReactNode }) {
+  return (
+    <section className="set-group set-danger-zone" aria-label="Danger zone">
+      <div className="set-group-h set-danger-h">Danger zone</div>
+      <div className="set-card set-danger">{children}</div>
+    </section>
+  );
+}
+
+/** A number in its unit: "$ [400]", "[80] %", "[30] min". */
+export function UnitInput({ value, onChange, prefix, suffix, id, label, min, max, step, wide }: {
+  value: string;
+  onChange: (v: string) => void;
+  prefix?: string;
+  suffix?: string;
+  id: string;
+  label: string;
+  min?: number | null;
+  max?: number | null;
+  step?: number | "any";
+  wide?: boolean;
+}) {
+  return (
+    <span className={`unit-in${wide ? " wide" : ""}`}>
+      {prefix && <span className="u">{prefix}</span>}
+      <input id={id} type="number" inputMode="decimal" value={value} aria-label={label}
+        min={min ?? undefined} max={max ?? undefined} step={step ?? "any"}
+        onChange={(e) => onChange(e.target.value)} />
+      {suffix && <span className="u">{suffix}</span>}
+    </span>
+  );
+}
