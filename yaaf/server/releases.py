@@ -59,9 +59,93 @@ IN_FLIGHT = (ReleaseStatus.PROPOSED, ReleaseStatus.APPROVED, ReleaseStatus.DEPLO
              ReleaseStatus.WATCHING)
 
 
+ENVIRONMENTS = ("production", "staging", "preview")
+#: The environments that deploy with production's keys. A command an agent
+#: wrote for one of them runs only once the chairman has said yes to a release
+#: that showed it to him: written by a seat and run unseen with the "deploy"
+#: scope, it would be one `curl` from handing those keys to the seat. Preview
+#: is not here: it runs unsigned code with the "preview" scope by design.
+KEYED = ("production", "staging")
+
+
 def environment(project: Project, name: str = "production") -> dict | None:
     env = ((project.integrations or {}).get("environments") or {}).get(name)
     return env if isinstance(env, dict) and env.get("deploy") and env.get("health_url") else None
+
+
+def unvouched(env: dict | None, name: str) -> str | None:
+    """Who wrote this keyed environment, when it was a seat and the chairman
+    has not yet approved a release that ran it. None: nothing to show him."""
+    if name not in KEYED or not env:
+        return None
+    return env.get("set_by") or None
+
+
+def agent_view(project: Project) -> dict:
+    """What a seat reads of the environments: every field, and whether each
+    command is still waiting on the chairman's yes. Never a credential: those
+    are secrets granted to "deploy" and "preview", which reach no seat."""
+    out = {}
+    for name in ENVIRONMENTS:
+        env = environment(project, name)
+        if env is None:
+            continue
+        who = unvouched(env, name)
+        out[name] = {"deploy": env["deploy"], "health_url": env["health_url"],
+                     "page_url": env.get("page_url"), "set_by": env.get("set_by"),
+                     "runs": ("only once the chairman approves a release that shows it "
+                              f"to him (written by {who})") if who else "as saved"}
+    return out
+
+
+def set_environment(session: Session, project: Project, agent: Agent, name: str, *,
+                    deploy: str, health_url: str, page_url: str | None,
+                    reason: str) -> dict:
+    """A seat writes an environment. The values are wiring the team owns: the
+    chairman typing a command the CEO dictated to him made him the slowest
+    step in every fix. What stays his is the yes before a keyed command it
+    wrote first runs (see KEYED), said on the release that runs it."""
+    from yaaf.server import changes
+    from yaaf.server.notify import Attention, chairman_notify
+
+    changes.require_factory(project)
+    if name not in ENVIRONMENTS:
+        raise Refusal(f"An environment is one of {', '.join(ENVIRONMENTS)}.",
+                      status_code=422)
+    if name in KEYED:
+        busy = session.execute(
+            select(Release).where(Release.project_id == project.id,
+                                  Release.status.in_(IN_FLIGHT))).scalars().first()
+        if busy is not None:
+            # The command approved with a release, or run by its rollback,
+            # is the one it was approved with: changing it underneath an
+            # in-flight release would run what nobody saw.
+            raise Refusal(f"Release {busy.version} is {busy.status}. Change the {name} "
+                          "environment once it is live, failed or refused.",
+                          status_code=409)
+    was = environment(project, name)
+    env = {"deploy": deploy.strip(), "health_url": health_url.strip(),
+           "page_url": (page_url or "").strip() or None,
+           "set_by": agent.name, "set_at": utcnow().isoformat()}
+    if was is not None and not unvouched(was, name) and all(
+            (was.get(k) or None) == env[k] for k in ("deploy", "health_url", "page_url")):
+        env = was  # the same values the chairman already vouched for
+    environments = dict((project.integrations or {}).get("environments") or {})
+    environments[name] = env
+    project.integrations = {**(project.integrations or {}), "environments": environments}
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor=f"agent:{agent.id}",
+        action="project.environment", entity="project", entity_id=project.id,
+        detail={"name": name, "was": was, "now": env, "reason": reason}))
+    waits = unvouched(env, name)
+    chairman_notify(
+        session, project, f"{agent.name} set the {name} environment",
+        f"Deploy command: {env['deploy']}\nHealth URL: {env['health_url']}\n"
+        f"Was: {(was or {}).get('deploy') or '(not set)'}\nIts reason: {reason}\n"
+        + ("It runs only once you approve a release; that approval will show it to you."
+           if waits else "No approval needed: a preview never holds production's keys."),
+        attention=Attention.FYI)
+    return {"environment": name, **agent_view(project).get(name, {})}
 
 
 def _version(raw: str) -> tuple[int, int, int]:
@@ -89,9 +173,18 @@ def _ever_live(session: Session, project_id: str) -> bool:
 
 
 def needs_chairman(session: Session, project: Project, cons: ConstitutionDoc,
-                   version: tuple[int, int, int]) -> str | None:
+                   version: tuple[int, int, int], name: str = "production") -> str | None:
     """Why this release waits for the chairman, or None. The reason is said
     on the approval, because "the dial says so" teaches him nothing."""
+    env = environment(project, name)
+    if (who := unvouched(env, name)) is not None:
+        # Before the dial: "autonomous" delegated shipping, not who runs
+        # what with production's keys.
+        return (f"its {name} deploy command was written by {who}, not you, and has never "
+                f"run. Saying yes also approves that command:\n\n    {env['deploy']}\n\n"
+                f"Health URL: {env['health_url']}")
+    if name != "production":
+        return None
     if cons.release_authority == "autonomous":
         return None
     previous = last_live(session, project.id)
@@ -140,9 +233,10 @@ def propose(session: Session, project: Project, agent: Agent, *, version: str,
         raise Refusal("The project is not running.", status_code=409)
     if environment(project) is None:
         raise Refusal(
-            "There is no production environment to release to: the chairman sets its "
-            "deploy command and health URL in Settings → Code Factory → Environments. "
-            "Until then the "
+            "There is no production environment to release to. Set its deploy command "
+            "and health URL with environment_set (the chairman approves the command "
+            "with the first release that runs it), or he sets them in Settings → Code "
+            "Factory → Environments. Until then the "
             "factory ships a repo, not a running service.", status_code=409)
     if changes.merges_frozen(session, project) is not None:
         raise Refusal("Main moved without the platform and that is not answered yet; "
@@ -184,6 +278,11 @@ def propose(session: Session, project: Project, agent: Agent, *, version: str,
         # The chairman's question, when the dial asks one, comes after it
         # has run clean — so he is asked about something that has run.
         release.environment = "staging"
+        if unvouched(environment(project, "staging"), "staging") is not None:
+            _to_chairman(session, project, release, "staging",
+                         needs_chairman(session, project, effective(session, project.id),
+                                        wanted, "staging") or "")
+            return release
         release.status = ReleaseStatus.APPROVED
         _audit(session, project, "release.staging", release, {})
         queue_deploy(session, project, release, "deploy")
@@ -203,13 +302,19 @@ def _to_production(session: Session, project: Project, release: Release) -> None
         release.status = ReleaseStatus.APPROVED
         queue_deploy(session, project, release, "deploy")
         return
+    _to_chairman(session, project, release, "production", why)
+
+
+def _to_chairman(session: Session, project: Project, release: Release, name: str,
+                 why: str) -> None:
     agent = session.get(Agent, release.proposed_by_agent_id)
+    cons = effective(session, project.id)
     staged = (" It ran clean on staging for the canary window first."
               if (release.probes or {}).get("staging_ok") else "")
     approval = Approval(
         id=ids.new_id(ids.APPROVAL), project_id=project.id, kind=ApprovalKind.RELEASE,
         requested_by_agent_id=release.proposed_by_agent_id,
-        title=f"Release {release.version} to production: {release.title}"[:300],
+        title=f"Release {release.version} to {name}: {release.title}"[:300],
         body=(f"{agent.name if agent else 'A seat'} proposes releasing {release.version} "
               f"({len(release.change_ids or [])} change(s), commit {release.sha[:12]}). It "
               f"waits for you because {why}.{staged} Every change in it passed the merge "
@@ -233,6 +338,7 @@ def decided(session: Session, project: Project, approval: Approval, approve: boo
     if approve:
         release.status = ReleaseStatus.APPROVED
         _audit(session, project, "release.approved", release, {"by": "the chairman"})
+        _vouch(project, release.environment)
         queue_deploy(session, project, release, "deploy")
     else:
         release.status = ReleaseStatus.REFUSED
@@ -242,6 +348,17 @@ def decided(session: Session, project: Project, approval: Approval, approve: boo
           f"Release {release.version} was {'approved' if approve else 'refused'} by the "
           "chairman" + (f": {note}" if note else "."))
     return release
+
+
+def _vouch(project: Project, name: str) -> None:
+    """The chairman approved a release whose approval showed this command:
+    it is his now. No seat can have changed it since — set_environment
+    refuses while a release is in flight."""
+    environments = dict((project.integrations or {}).get("environments") or {})
+    env = environments.get(name)
+    if isinstance(env, dict) and env.get("set_by"):
+        environments[name] = {k: v for k, v in env.items() if k not in ("set_by", "set_at")}
+        project.integrations = {**(project.integrations or {}), "environments": environments}
 
 
 # ── deploying ───────────────────────────────────────────────────────────────────
@@ -522,6 +639,7 @@ def listing(session: Session, project: Project) -> dict:
             select(Incident).where(Incident.project_id == project.id)
             .order_by(Incident.opened_at.desc()).limit(100)).scalars()],
         "production": environment(project) is not None,
+        "environments": agent_view(project),
     }
 
 

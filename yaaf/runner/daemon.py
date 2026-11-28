@@ -2220,10 +2220,15 @@ def _materialize_deploy(session: Session, queued, project: Project, run, job: Ru
     preview = name == "preview"
     target = (session.get(Change, trigger.get("change_id")) if preview
               else session.get(Release, trigger.get("release_id")))
+    # The refusal behind the release gate: a keyed command a seat wrote never
+    # runs with production's keys until the chairman's yes has vouched for it.
+    seat_written = releases.unvouched(env, name)
     if target is None or env is None or not project.github_repo or token is None \
-            or (preview and target.head_sha != trigger.get("sha")):
+            or seat_written or (preview and target.head_sha != trigger.get("sha")):
         run.status = RunStatus.FAILED
-        run.summary = f"deploy with no target, no {name} environment, or no repo"
+        run.summary = (f"the {name} deploy command was written by {seat_written} and no "
+                       "release that shows it has been approved" if seat_written else
+                       f"deploy with no target, no {name} environment, or no repo")
         run.finished_at = utcnow()
         if not preview and target is not None:
             # Said, not dropped: the release would otherwise stay approved and

@@ -143,10 +143,10 @@ is settled — none of them may be skipped:
     of their own, entered after Create on Settings → Code Factory.
     Neither goes in `credentials_promised`, and no key ever goes in the draft.
   - *Where it runs.* Ask whether the software will be hosted, and where, or
-    not yet. Hosted: name the host in the goal; its deploy command, health
-    URL and deploy key are set after Create on Settings → Code Factory
-    → Environments, which the ledger says. Not yet: the goal's finish line says
-    so, and the ledger says releases wait until Environments is filled in.
+    not yet. Hosted: name the host in the goal; its deploy key is saved after
+    Create on Settings → Code Factory, which the ledger says. The team writes
+    the deploy command and health URL itself, and he approves the command with
+    the first release that runs it. Not yet: the goal's finish line says so.
 - **Access he says he will give** — when he says he will give the project
   access to something ("my WordPress login", "a Google Analytics service
   account", "my AWS account", "Beehiiv"), add one entry per service to the

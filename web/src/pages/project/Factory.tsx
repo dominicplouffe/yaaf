@@ -154,8 +154,9 @@ export function Releases({ ctx }: { ctx: ProjectCtx }) {
   return (
     <div className="factory">
       {!data.production && (
-        <p className="help">No production environment yet: set its deploy command and health URL in
-          Settings → Code Factory → Environments. Until then the factory ships a repo, not a running service.</p>
+        <p className="help">No production environment yet. The team sets its deploy command and health URL,
+          or you can in Settings → Code Factory → Environments. Until then the factory ships a repo,
+          not a running service.</p>
       )}
       {data.incidents.length > 0 && <h3>Incidents</h3>}
       {data.incidents.map((i) => (
@@ -192,7 +193,7 @@ export function Releases({ ctx }: { ctx: ProjectCtx }) {
   );
 }
 
-type Env = { deploy: string; health_url: string };
+type Env = { deploy: string; health_url: string; set_by?: string | null };
 const ENVS: { key: "production" | "staging" | "preview"; label: string; deploy: string;
   health: string; note: string }[] = [
   { key: "production", label: "Production", deploy: "fly deploy -a myapp --strategy canary",
@@ -210,7 +211,8 @@ const ENVS: { key: "production" | "staging" | "preview"; label: string; deploy: 
 /** Where a Code Factory's software runs. The platform deploys with these
     commands, at the right commit, with secrets granted to the reserved scopes
     "deploy" or "preview" — which no seat holds — and reads each health URL.
-    Set here, by a person, and never by a model. */
+    Set here or by a seat with environment_set. A production or staging command
+    a seat wrote runs only after the chairman approves a release that shows it. */
 export function EnvironmentsCard({ projectId, dash }: { projectId: string; dash: Dashboard }) {
   const saved = ((dash.integrations ?? {}) as { environments?: Record<string, Env> })
     .environments ?? {};
@@ -241,6 +243,11 @@ export function EnvironmentsCard({ projectId, dash }: { projectId: string; dash:
           <input id={`env-${e.key}-health`} value={envs[e.key].health_url} placeholder={e.health}
             onChange={(ev) => set(e.key, "health_url", ev.target.value)} />
           <p className="help">{e.note}</p>
+          {saved[e.key]?.set_by && e.key !== "preview" && (
+            <p className="help">Written by {saved[e.key].set_by}. It runs once you approve
+              the next release, which shows it to you. Saving here approves it now.</p>)}
+          {saved[e.key]?.set_by && e.key === "preview" && (
+            <p className="help">Written by {saved[e.key].set_by}.</p>)}
         </div>
       ))}
       <button className="primary" onClick={save}

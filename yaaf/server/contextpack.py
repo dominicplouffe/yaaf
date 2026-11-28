@@ -2078,6 +2078,10 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
 
             if (owed := releases.unreleased(session, project)) is not None:
                 pack["release_owed"] = owed
+            # The CEO used to ask the chairman to paste the deploy command
+            # back, because nothing it could read held it.
+            if envs := releases.agent_view(project):
+                pack["environments"] = envs
         owed = _overrun_owed(session, project)
         if owed is not None:
             pack["overrun"] = owed

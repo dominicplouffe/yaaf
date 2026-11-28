@@ -575,8 +575,26 @@ async def t_release_propose(args):
                        {"version": args["version"], "title": args["title"]}))
 
 
-@tool("releases_list", "Code Factory only. Releases and incidents, as the platform "
-      "recorded them.", {})
+@tool(
+    "environment_set",
+    "Code Factory only. Write an environment the platform deploys to: `name` is "
+    "production, staging or preview; `deploy` is the shell command run at the release's "
+    "commit, in a fresh checkout on a machine with nothing preinstalled, with the "
+    "secrets granted to \"deploy\" (preview: \"preview\") as env vars; `health_url` is what "
+    "the canary guard reads. Never put a key in the command: keys are secrets. A "
+    "production or staging command you write runs only after the chairman approves a "
+    "release, whose approval shows it to him. Say why in `reason`. releases_list shows "
+    "what is saved now.",
+    {"name": str, "deploy": str, "health_url": str, "reason": str},
+)
+async def t_environment_set(args):
+    return _text(_call("POST", "/agent/environments",
+                       {k: args[k] for k in ("name", "deploy", "health_url", "reason")}
+                       | ({"page_url": args["page_url"]} if args.get("page_url") else {})))
+
+
+@tool("releases_list", "Code Factory only. Releases, incidents, and each environment's "
+      "saved deploy command and health URL, as the platform recorded them.", {})
 async def t_releases_list(args):
     return _text(_call("GET", "/agent/releases"))
 
@@ -1959,7 +1977,7 @@ ALL_TOOLS = [
     t_board, t_requirements, t_task_create, t_task_claim, t_task_complete, t_task_review,
     t_task_block, t_task_kill,
     t_change_open, t_changes_list, t_change_review, t_scenario_add, t_scenario_retire, t_scenarios_list,
-    t_release_propose, t_releases_list, t_incident_postmortem,
+    t_release_propose, t_environment_set, t_releases_list, t_incident_postmortem,
     t_requirement_propose, t_requirement_depends_on,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_ask_chairman, t_ask_close,

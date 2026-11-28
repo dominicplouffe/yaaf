@@ -574,6 +574,37 @@ def propose_release(body: ReleasePropose, ctx: RunContext = Depends(run_auth),
     return releases.view(release)
 
 
+class EnvironmentSet(BaseModel):
+    name: str = Field(pattern=r"^(production|staging|preview)$")
+    deploy: str = Field(min_length=3, max_length=2000)
+    health_url: str = Field(min_length=1, max_length=2000)
+    page_url: str | None = Field(default=None, max_length=2000)
+    reason: str = Field(min_length=5, max_length=1000)
+
+    @field_validator("health_url", "page_url")
+    @classmethod
+    def _web_address(cls, value: str | None) -> str | None:
+        # Said in the handler's words rather than as a pattern, so the
+        # surface's patterned fields stay alternations of literals.
+        if value is not None and not re.match(r"^https?://", value):
+            raise Refusal("A health or page URL starts with http:// or https://.",
+                          status_code=422)
+        return value
+
+
+@router.post("/environments")
+def environment_set(body: EnvironmentSet, ctx: RunContext = Depends(run_auth),
+                    session: Session = Depends(db)) -> dict:
+    """Code Factory: write where the software runs. A production or staging
+    command written here runs only after the chairman approves a release that
+    shows it to him; the platform refuses it before then."""
+    from yaaf.server import releases
+
+    return releases.set_environment(session, ctx.project, ctx.agent, body.name,
+                                    deploy=body.deploy, health_url=body.health_url,
+                                    page_url=body.page_url, reason=body.reason)
+
+
 @router.get("/releases")
 def list_releases(ctx: RunContext = Depends(run_auth),
                   session: Session = Depends(db)) -> dict:

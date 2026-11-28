@@ -95,9 +95,11 @@ REACHED = {
 #: get to it" is a fine answer, but it has to be written down as one.
 WITHHELD = {
     "PUT /admin/projects/{project_id}/environments":
-        "where a Code Factory deploys production, and with what command, is set by "
-        "the chairman on his own screen; a model client writing the deploy command "
-        "would be a model choosing what runs with production credentials.",
+        "the seats write environments with environment_set, and a production or "
+        "staging command a seat wrote waits for the chairman's yes on a release. "
+        "Saving on this route is that yes without a release, so it stays a person's, "
+        "on his own screen: a model client here would be a model vouching for what "
+        "runs with production credentials.",
     "POST /admin/changes/{change_id}/approve":
         "a Code Factory path the chairman marked as needing a person is approved "
         "by that person, with the diff in front of him. A model client approving "
