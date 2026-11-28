@@ -47,6 +47,8 @@ AUTH_TIMEOUT_S = 10.0
 #: Where the API package's source sits in the sandbox image (deploy/sandbox/Dockerfile).
 IMAGE_API_SRC = "/opt/yaaf-plugin-api/src"
 SCRATCH = "/scratch"
+#: Every tmpfs a plugin container writes is open to the sandbox user, as /tmp is.
+OPEN = "mode=1777"
 
 
 def secret() -> bytes:
@@ -110,7 +112,11 @@ def container_options(spec: dict, image: str, labels: dict) -> dict:
     return {
         "image": image, "command": command, "labels": labels, "volumes": mounts,
         "network_mode": "none", "read_only": True,
-        "tmpfs": {SCRATCH: "rw,noexec,nosuid,size=64m", "/tmp": "rw,noexec,nosuid,size=16m"},
+        # mode=1777: the image has no /scratch, so docker makes the mount point
+        # root's, the tmpfs takes that mode, and the sandbox's own user (not
+        # root) could write nothing there. openpyxl's first temp file failed.
+        "tmpfs": {SCRATCH: f"rw,noexec,nosuid,size=64m,{OPEN}",
+                  "/tmp": f"rw,noexec,nosuid,size=16m,{OPEN}"},
         "working_dir": SCRATCH, "environment": {"LANG": "C.UTF-8"},
         "mem_limit": f"{spec['memory_mb']}m", "memswap_limit": f"{spec['memory_mb']}m",
         "nano_cpus": 1_000_000_000, "pids_limit": 32, "cap_drop": ["ALL"],
@@ -163,7 +169,7 @@ def job_options(job: dict, image: str, labels: dict, network: str) -> dict:
     return {
         "image": image, "command": command, "labels": labels, "volumes": volumes,
         "network_mode": net, "read_only": True,
-        "tmpfs": {"/tmp": "rw,nosuid,size=256m", SCRATCH: "rw,nosuid,size=64m"},
+        "tmpfs": {"/tmp": f"rw,nosuid,size=256m,{OPEN}", SCRATCH: f"rw,nosuid,size=64m,{OPEN}"},
         "working_dir": SCRATCH, "mem_limit": "1g", "pids_limit": 256,
         "environment": {"LANG": "C.UTF-8", "HOME": SCRATCH, "PIP_NO_CACHE_DIR": "1",
                         "PYTHONDONTWRITEBYTECODE": "1",
