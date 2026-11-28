@@ -12,6 +12,7 @@ import {
   requirementName,
   ResultsView,
   VitalsView,
+  type PpcView,
 } from "../../api";
 import { ProjectBrief } from "../../briefing";
 import { FailoverBanner } from "../../fallback";
@@ -1116,6 +1117,8 @@ export default function Overview({
         )}
       </header>
 
+      {dash.ppc && <PpcCoverage ppc={dash.ppc} base={base} />}
+
       {/* Setup leads only when it is the reason nothing can run. Otherwise it
           is a link in the header: on a running — or finished — project, a
           six-step checklist above the decisions was configuration outranking
@@ -1198,5 +1201,40 @@ export default function Overview({
       <AsOf at={ctx.asOf} error={ctx.error} />
       </>}
     </>
+  );
+}
+
+/** An Amazon PPC Factory's audit, as far as its data goes: which parts of the
+    investigation the connected source can reach (the platform's answer, not the
+    crew's), and whether the report is published, and reviewed. */
+function PpcCoverage({ ppc, base }: { ppc: PpcView; base: string }) {
+  const covered = ppc.sections.filter((s) => s.available);
+  const uncovered = ppc.sections.filter((s) => !s.available);
+  return (
+    <section className="card" style={{ marginBottom: 14 }} aria-label="The audit's data">
+      <strong>The audit's data</strong>{" "}
+      <span className="help">
+        {covered.length} of {ppc.sections.length} parts of the audit can be done from the
+        connected data{ppc.scale.available ? ", and the scale tiers can be priced" : ""}.
+      </span>
+      {ppc.data_owed && (
+        <p className="np-note" style={{ marginTop: 8 }}>
+          {ppc.data_owed} <Link to={`${base}/settings?s=sources`}>Connect a data source →</Link>
+        </p>
+      )}
+      {uncovered.length > 0 && !ppc.data_owed && (
+        <p className="help" style={{ marginTop: 6 }}>
+          Not covered, and reported as such:{" "}
+          {uncovered.map((s) => s.title.toLowerCase()).join(", ")}.
+        </p>
+      )}
+      <p style={{ margin: "6px 0 0" }}>
+        {ppc.reviewed
+          ? <>The audit is reviewed and final: <Link to={`${base}/deliverables`}>{ppc.report_page} →</Link></>
+          : ppc.report_published
+            ? <>A draft is published and waiting for its review ({ppc.review}): <Link to={`${base}/deliverables`}>{ppc.report_page} →</Link></>
+            : <span className="help">The report ({ppc.report}) is checked by the platform when it is published, and stays a draft until a different seat's review passes.</span>}
+      </p>
+    </section>
   );
 }

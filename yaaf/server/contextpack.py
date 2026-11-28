@@ -52,7 +52,7 @@ from yaaf.core.models import (
     Team,
     utcnow,
 )
-from yaaf.server import brief, plain, policy, repo_guidance
+from yaaf.server import brief, plain, policy, ppc, repo_guidance
 from yaaf.server.rows import seat_row
 
 UNTRUSTED_NOTE = (
@@ -562,6 +562,7 @@ def build_system_prompt(session: Session, agent: Agent, project: Project,
         "repeating work you suspect has been tried. "
         f"{WORKSPACE_CHAT if lane == 'chat' else _workspace_run()}\n\n"
         f"{repo_guidance.block(session, project)}"
+        f"{ppc.block(session, project)}"
         f"{UNTRUSTED_NOTE}"
     )
 

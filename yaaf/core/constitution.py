@@ -1314,13 +1314,21 @@ def default_briefing(constitution: dict[str, Any]) -> dict[str, Any]:
 #: "face outward" asks a question its work has no answer to — building is the
 #: work, and the merge is the evidence. The drought stays real and is sized to
 #: a first merge: a spec to accept, then CI and a skeleton, inside three days.
+#:
+#: An Amazon PPC Factory takes the same floors for the same reason: its work is
+#: reading one account through the platform's own data-source gateway, and its
+#: outside proof is the report the platform checked against that data and
+#: attested on publish. A third of its tasks "facing outward" asks a question
+#: an audit has no answer to, and a 24-hour drought would refuse the lead's
+#: next task while the analysts are still pulling sixty days of rows.
 FACTORY_FLOORS: dict[str, Any] = {"external_ratio_min": 0.0, "drought_hours": 72}
+FLOORED_KINDS = ("code_factory", "ppc_factory")
 
 
 def default_factory_floors(mode: str, constitution: dict[str, Any]) -> dict[str, Any]:
     """A creation-time constitution with a factory's evidence floors filled in,
     rule by rule, wherever it was silent. Any other kind is returned as given."""
-    if str(mode) != "code_factory":
+    if str(mode) not in FLOORED_KINDS:
         return dict(constitution)
     return {**{k: v for k, v in FACTORY_FLOORS.items() if k not in constitution},
             **constitution}

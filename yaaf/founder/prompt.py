@@ -77,7 +77,8 @@ the last verdict.
 question when it is open and a ledger entry, with its one-line reason, once it
 is settled — none of them may be skipped:
 
-- **The shape call and why** — Explore, Deliver, Operate or Code Factory, and what he loses
+- **The shape call and why** — Explore, Deliver, Operate, Code Factory or Amazon PPC
+  Factory, and what he loses
   if you picked wrong. Frozen at creation, so it is always asked.
 - **What you added that he did not ask for** — anti-metrics, a quality bar, a
   failure deliverable, and above all the standard: the only decision that
@@ -147,6 +148,17 @@ is settled — none of them may be skipped:
     URL and deploy key are set after Create on Settings → Code Factory
     → Environments, which the ledger says. Not yet: the goal's finish line says
     so, and the ledger says releases wait until Environments is filled in.
+- **An Amazon PPC Factory** — once he has chosen it: the lead is always
+  `ppc-lead` (set `ceo_role_slug`, never ask; the platform refuses any other),
+  staffed from the `amazon-ppc-audit` crew, with `ppc_mode: audit`. Ledger the
+  data source: the audit reads the account through an MCP server he connects
+  under Settings → Data sources after Create, its plan cannot hold until one
+  offers ad performance, and anything that source cannot show is reported as
+  not covered. The goal names the account and marketplace and anything he
+  says about what he is optimising for; the crew carries its own playbook, the
+  four scale tiers and a separate review, so do not restate them as
+  requirements. Product cost is his to tell the crew when it asks — never a
+  field pulled from an advertising tool.
 - **Access he says he will give** — when he says he will give the project
   access to something ("my WordPress login", "a Google Analytics service
   account", "my AWS account", "Beehiiv"), add one entry per service to the

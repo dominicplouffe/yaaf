@@ -371,7 +371,8 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
         # often. A chairman learning that from an invoice is the bad way.
         "tempo": _tempo_line(body.get("mode") or "explore",
                              body.get("constitution") or {},
-                             factory_start=body.get("factory_start")),
+                             factory_start=body.get("factory_start"),
+                             ppc_mode=body.get("ppc_mode")),
         # The money, in the shape the spec gives it: a budget for the whole
         # job is a wall the project stops at, a monthly one is a plan it may
         # pass and account for. Said, because the two read alike as numbers.
@@ -615,7 +616,8 @@ def _budget_line(constitution: dict) -> str:
             "and the project pauses at the hard stop, a multiple of it.")
 
 
-def _tempo_line(mode: str, constitution: dict, *, factory_start: str | None = None) -> str:
+def _tempo_line(mode: str, constitution: dict, *, factory_start: str | None = None,
+                ppc_mode: str | None = None) -> str:
     """One sentence naming the pace this spec will actually be created at, and
     whether the spec asked for it or the platform derived it from the mode."""
     # Merged over the field defaults, not read raw: `default_tempo` stands the
@@ -625,7 +627,9 @@ def _tempo_line(mode: str, constitution: dict, *, factory_start: str | None = No
     from yaaf.core import shape
 
     filled = {**ConstitutionDoc().model_dump(),
-              **default_tempo(shape.behaves_as(mode, shape.initial_phase(mode, factory_start)),
+              **default_tempo(shape.behaves_as(
+                  mode, shape.initial_ppc_mode(mode, ppc_mode)
+                  or shape.initial_phase(mode, factory_start)),
                               default_factory_floors(mode, constitution))}
     # What the spec CHOSE, which is not what the project ends up equalling:
     # `live` is the field defaults, so a spec naming `queue_ceiling: 8` and

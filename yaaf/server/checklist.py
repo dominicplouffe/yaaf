@@ -65,7 +65,11 @@ FACTORY = (
     Step("push", "Agents' GitHub key", "factory", required=True),
     Step("deploy", "Where it deploys", "factory"),
 )
-BY_KEY = {s.key: s for s in (*STEPS, EMAIL, *FACTORY)}
+#: An Amazon PPC Factory audits through a data source, so one that offers ad
+#: performance is required right after the key: without it there is nothing
+#: to audit and its plan cannot hold (`yaaf.server.ppc.data_owed`).
+PPC = (Step("ads_data", "Advertising data", "sources", required=True),)
+BY_KEY = {s.key: s for s in (*STEPS, EMAIL, *FACTORY, *PPC)}
 
 
 def steps_for(project: Project) -> tuple[Step, ...]:
@@ -74,7 +78,8 @@ def steps_for(project: Project) -> tuple[Step, ...]:
     and its first run."""
     from yaaf.core import shape
 
-    head = (STEPS[0], *(FACTORY if shape.is_factory(project) else ()))
+    head = (STEPS[0], *(FACTORY if shape.is_factory(project) else ()),
+            *(PPC if shape.is_ppc_factory(project) else ()))
     if not (project.needs_mail or (project.integrations or {}).get("mail")):
         return (*head, *STEPS[1:])
     email = Step(EMAIL.key, EMAIL.label, EMAIL.section, required=bool(project.needs_mail))
@@ -169,6 +174,15 @@ def _done(session: Session, project: Project, step: Step) -> tuple[bool, str]:
         gaps = mail_settings.missing(project)
         return False, (f"Still needs {', '.join(gaps)}." if gaps
                        else "Set up, and switched off.")
+    if step.key == "ads_data":
+        from yaaf.server import ppc
+
+        cov = ppc.coverage(session, project)
+        runs = [s for s in cov["sections"] if s["available"]]
+        if ppc.data_owed(session, project) is None:
+            return True, f"Enough data for {len(runs)} of {len(cov['sections'])} parts of the audit."
+        return False, ("Connect the MCP server that holds the advertising account: "
+                       "nothing can be audited until one offers ad performance.")
     if step.key == "people":
         others = session.execute(
             select(func.count()).select_from(ProjectMember).where(

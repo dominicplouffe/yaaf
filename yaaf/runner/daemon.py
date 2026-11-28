@@ -372,6 +372,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     job.agent_kind = agent.kind
     _offer_mail(project, agent, job)
+    _offer_kind_skills(project, job)
     source_specs = _merge_project_data_sources(session, project, role_version, job)
     _talk_only_if_held(session, run, job)
     role_secrets = _role_secret_env(session, project, role_version)
@@ -564,6 +565,21 @@ def _offer_mail(project: Project, agent, job: RunJob) -> None:
 
     if agent.kind == AgentKind.CEO and enabled(project):
         job.tool_permissions = {**job.tool_permissions, "mail": True}
+
+
+def _offer_kind_skills(project: Project, job: RunJob) -> None:
+    """A project kind's own skills, beside the role's: every seat of an Amazon
+    PPC Factory gets the audit playbook (`yaaf.server.ppc.skills`). The role's
+    own skills win on a name clash; the kind's are added, never substituted."""
+    from yaaf.server import ppc
+
+    extra = ppc.skills(project)
+    if not extra:
+        return
+    own = list(job.tool_permissions.get("skills") or [])
+    names = {str(s.get("name", "")) for s in own}
+    job.tool_permissions = {**job.tool_permissions,
+                            "skills": own + [s for s in extra if s["name"] not in names]}
 
 
 def _merge_project_data_sources(session: Session, project: Project, role_version,

@@ -919,6 +919,10 @@ class ProjectCreate(BaseModel):
     # Code Factory only: start from nothing ("new", built first) or from a repo
     # that already exists ("repo", which starts in upkeep and needs github_repo).
     factory_start: str | None = Field(default=None, pattern="^(new|repo|repo_build)$")
+    # Amazon PPC Factory only: audit one account and report ("audit"), or keep
+    # it inside its goals on a rhythm ("operate", not open yet). Omitted on a
+    # PPC Factory, an audit.
+    ppc_mode: str | None = Field(default=None, pattern="^(audit|operate)$")
     controlled_domains: list[str] = Field(default_factory=list)
     # The repo evidence webhooks attest against. Part of the design, so a
     # setup file carries it and a restore does not come back half-wired.
@@ -1669,6 +1673,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         raise HTTPException(status_code=422, detail=f"the CEO's model: {bad}")
     body.ceo_harness_override = canonical_harness(body.ceo_harness_override)
     phase = _factory_phase_at_create(body)
+    ppc_mode = _ppc_mode_at_create(body)
+    phase = phase or ppc_mode
     # The constitution freezes at creation. Overrides are validated against the
     # schema; a spec with no opinion about the authority dial — or about how
     # often the project should think — is given one here, so the form, the
@@ -1744,7 +1750,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         billing_mode=billing.llm_mode if billing else (body.billing_mode or "api_key"),
         billing_secret_id=billing.id if billing else None,
         mode=body.mode,
-        factory_phase=phase,
+        factory_phase=None if shape.is_ppc_factory(body.mode) else phase,
+        ppc_mode=ppc_mode,
         controlled_domains=body.controlled_domains,
         github_repo=body.github_repo,
         needs_mail=body.needs_mail,
@@ -2155,26 +2162,63 @@ def _factory_phase_at_create(body: ProjectCreate) -> str | None:
     return shape.initial_phase(body.mode, body.factory_start)
 
 
+#: Who leads each kind that has a fixed lead, said the way a refusal says it.
+_LEADS = {
+    shape.FACTORY_LEAD_ROLE: ("Code Factory", "the Tech Lead",
+                              "the lead whose brief is the factory's spec, gates and releases"),
+    shape.PPC_LEAD_ROLE: ("Amazon PPC Factory", "the PPC Lead",
+                          "the lead whose brief is the audit doctrine, the data it may "
+                          "rest on and the report the platform checks"),
+}
+
+
 def _factory_lead_at_create(body: ProjectCreate) -> None:
-    """A Code Factory has one lead, and nothing else has it. The kind already
-    answers who runs it: a generic CEO has none of the factory's verbs in its
-    brief, and the Tech Lead has nothing but. Asking the chairman to pick
-    between them was a question with one right answer, so an unnamed lead is
-    filled and a different one refused."""
-    if shape.is_factory(body.mode):
+    """A Code Factory has one lead, and nothing else has it; so does an Amazon
+    PPC Factory. The kind already answers who runs it: a generic CEO has none
+    of the factory's verbs in its brief, and the factory's lead has nothing
+    but. Asking the chairman to pick between them was a question with one
+    right answer, so an unnamed lead is filled and a different one refused."""
+    fixed = shape.lead_role(body.mode)
+    if fixed is not None:
+        kind, who, why = _LEADS[fixed]
         if "ceo_role_slug" not in body.model_fields_set:
-            body.ceo_role_slug = shape.FACTORY_LEAD_ROLE
-        elif body.ceo_role_slug != shape.FACTORY_LEAD_ROLE:
+            body.ceo_role_slug = fixed
+        elif body.ceo_role_slug != fixed:
             raise HTTPException(
                 status_code=422,
-                detail=f"a Code Factory is led by the Tech Lead "
-                       f"({shape.FACTORY_LEAD_ROLE}), not {body.ceo_role_slug}: it is "
-                       "the lead whose brief is the factory's spec, gates and releases.")
-    elif body.ceo_role_slug == shape.FACTORY_LEAD_ROLE:
+                detail=f"a {kind} is led by {who} ({fixed}), not {body.ceo_role_slug}: "
+                       f"it is {why}.")
+    elif body.ceo_role_slug in _LEADS:
+        kind, who, _ = _LEADS[body.ceo_role_slug]
         raise HTTPException(
             status_code=422,
-            detail=f"the Tech Lead ({shape.FACTORY_LEAD_ROLE}) leads Code Factory "
+            detail=f"{who[0].upper()}{who[1:]} ({body.ceo_role_slug}) leads {kind} "
                    f"projects only; this one is {body.mode}.")
+
+
+def _ppc_mode_at_create(body: ProjectCreate) -> str | None:
+    """How an Amazon PPC Factory runs, refused rather than guessed when the
+    spec contradicts itself — the same three answers factory_start gets. A
+    setup file carries the mode in its wiring, so a restore runs as its source
+    did. Operate is refused until its goals are boundaries the server holds
+    (see `shape.PPC_MODES_OPEN`): an account kept to a target ACOS by a prompt
+    alone is a sentence, not a rule."""
+    if body.ppc_mode is None and shape.is_ppc_factory(body.mode):
+        body.ppc_mode = (body.integrations or {}).get("ppc_mode")
+    if body.ppc_mode is not None and not shape.is_ppc_factory(body.mode):
+        raise HTTPException(
+            status_code=422,
+            detail="ppc_mode belongs to an Amazon PPC Factory project; this one is "
+                   f"{body.mode}.")
+    mode = shape.initial_ppc_mode(body.mode, body.ppc_mode)
+    if mode is not None and mode not in shape.PPC_MODES_OPEN:
+        raise HTTPException(
+            status_code=422,
+            detail="an Amazon PPC Factory can audit an account today; operating one "
+                   "to its goals is not open yet. Create it with ppc_mode 'audit'.")
+    if mode is not None:
+        body.integrations = {**(body.integrations or {}), "ppc_mode": mode}
+    return mode
 
 
 def _factory_start_recorded(integrations: dict | None, mode: str,
@@ -2282,6 +2326,8 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         # factory that was built and is now kept is cloned to be built again.
         factory_phase=shape.initial_phase(
             source.mode, (source.integrations or {}).get("factory_start")),
+        # An audit is cloned to audit again; the mode is the source's word.
+        ppc_mode=shape.initial_ppc_mode(source.mode, source.ppc_mode),
         # The org shape, for the same reason mode is here: the twin rebuilds the
         # source's teams and people exactly, so the source's recorded shape is
         # true of it by construction — but omitting it let the model default

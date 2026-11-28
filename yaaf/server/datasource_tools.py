@@ -702,6 +702,17 @@ def forward(session: Session, project: Project, agent: Agent, decision: Decision
     session.commit()  # a refreshed OAuth token, kept even if the call fails
     with Upstream(url, token) as upstream:
         result = upstream.call_tool(decision.row.name, arguments)
+    if decision.row.kind == "read":
+        # An Amazon PPC audit's every number must cite the pull it came from,
+        # so its reads are written down: the receipt rides back on the result
+        # and the report is refused for citing one that is not on file.
+        from yaaf.server import ppc
+
+        receipt = ppc.record_read(session, project, agent, decision.entry["name"],
+                                  decision.row.name, arguments, result, run_id)
+        if receipt is not None:
+            result = {**result, "_meta": {**(result.get("_meta") or {}),
+                                          "yaaf/receipt": receipt}}
     if decision.row.kind != "read":
         # Reads are the common case and are not written down call by call. A
         # tool that may change the chairman's account is, every time — and it

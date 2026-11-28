@@ -284,7 +284,12 @@ PROPOSE_SCHEMA = {
                 "name": {"type": "string"},
                 "goal": {"type": "string"},
                 "mode": {"type": "string",
-                         "enum": ["explore", "deliver", "operate", "code_factory"]},
+                         "enum": ["explore", "deliver", "operate", "code_factory",
+                                  "ppc_factory"]},
+                "ppc_mode": {"type": "string", "enum": ["audit"],
+                             "description": "ppc_factory only: audit one Amazon "
+                             "advertising account and report on it. Operating an "
+                             "account to its goals is not open yet."},
                 "factory_start": {"type": "string", "enum": ["new", "repo", "repo_build"],
                                   "description": "code_factory only: build from "
                                   "nothing, adopt the repo named in `repo` to keep it, "
@@ -821,8 +826,7 @@ def as_bundle(project: dict) -> dict:
             "teams": [],
             # A Code Factory has one lead (shape.FACTORY_LEAD_ROLE), and a draft
             # that named none was otherwise refused at Create for naming "ceo".
-            "ceo_role_slug": (shape.FACTORY_LEAD_ROLE if project.get("mode") == "code_factory"
-                              else "ceo"),
+            "ceo_role_slug": shape.lead_role(project.get("mode") or "explore") or "ceo",
             "ceo_name": "CEO",
             **project,
         },
@@ -860,12 +864,16 @@ def validate(bundle: dict) -> list[str]:
     # a draft it would refuse at Create is a draft with a problem now.
     from fastapi import HTTPException
 
-    from yaaf.server.api.admin import _factory_lead_at_create
+    from yaaf.server.api.admin import _factory_lead_at_create, _ppc_mode_at_create
 
     try:
         _factory_lead_at_create(parsed)
     except HTTPException as exc:
         return [f"ceo_role_slug: {exc.detail}"]
+    try:
+        _ppc_mode_at_create(parsed)
+    except HTTPException as exc:
+        return [f"ppc_mode: {exc.detail}"]
     return date_problems(project) + constitution_problems(project.get("constitution") or {})
 
 
@@ -1232,7 +1240,8 @@ def date_problems(project: dict) -> list[str]:
     if not project.get("deadline"):
         return []
     mode = project.get("mode") or "explore"
-    phase = shape.initial_phase(mode, project.get("factory_start"))
+    phase = (shape.initial_ppc_mode(mode, project.get("ppc_mode"))
+             or shape.initial_phase(mode, project.get("factory_start")))
     if shape.runs_on_cycles(mode, phase):
         return ["deadline: " + ("a Code Factory that adopts a repo starts in upkeep, "
                                 "which" if shape.is_factory(mode) else "Operate")

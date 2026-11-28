@@ -199,3 +199,30 @@ test("a Code Factory's home shows each change and what it waits on", async ({ pa
   await expect(page.getByText(/Approve change #1/).first()).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("an Amazon PPC audit is created led by its PPC Lead, with its reviewer", async ({ page }) => {
+  /* The kind answers who leads and who is hired; Create makes an audit whose
+     home says what its data can reach and that the report is checked, then
+     reviewed. */
+  const errors = failOnPageErrors(page);
+  await page.goto("/app/#/projects/new");
+  await page.getByRole("button", { name: /Fill in the form/ }).click();
+  await page.getByRole("button", { name: "All on one page" }).click();
+  await page.getByRole("radio", { name: /Amazon PPC Factory/ }).click();
+  await expect(page.getByText(/always led by its PPC Lead/)).toBeVisible();
+  await expect(page.getByText(/Filled with the\s+An Amazon PPC audit\s+crew/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /Audit Reviewer/ })).toBeVisible();
+  await expect(page.getByText(/stays a draft until a separate reviewer passes it/)).toBeVisible();
+  await page.locator("#np-goal").fill(
+    "Audit the Acme US Amazon advertising account and say where an extra $25k a month should go.");
+  await page.locator("#np-name").fill("Acme Amazon ads");
+  const create = page.getByRole("button", { name: "Create project" });
+  await expect(create).toBeEnabled();
+  await create.click();
+  await expect(page.getByRole("heading", { name: "Project created" })).toBeVisible();
+  await page.getByRole("button", { name: "Open the project" }).click();
+  await expect(page.getByText(/The audit's data/)).toBeVisible();
+  await expect(page.getByText(/Connect a data source/)).toBeVisible();
+  await expect(page.getByText(/stays a draft until a different seat's review passes/)).toBeVisible();
+  expect(errors).toEqual([]);
+});

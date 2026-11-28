@@ -11,6 +11,7 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import json
 import re
 import weakref
 from datetime import datetime, timedelta
@@ -4751,6 +4752,32 @@ def artifact_put(
         if stamped is not None and stamped.key != policy.PLAN_KEY:
             satisfied.append(stamped)
 
+    # An Amazon PPC audit's report is checked here, before a byte is stored,
+    # against what this project's data can support; its readable page is the
+    # platform's to write from the report it accepted, never a second text the
+    # crew could make say something else (`yaaf.server.ppc`).
+    audit = None
+    passed = None
+    if shape.is_ppc_factory(ctx.project):
+        from yaaf import ppc as catalogue
+        from yaaf.server import ppc
+
+        if filename in catalogue.PLATFORM_PAGES or filename in (ppc.DATA, ppc.ANALYSIS):
+            raise Refusal(
+                f"{filename} is written by the platform (from the accepted "
+                f"{catalogue.REPORT}, or by ppc_analysis); publish the JSON and the page, "
+                "the presentation, the workbook and the change sheet follow.", 422)
+        if filename == catalogue.REPORT:
+            audit = ppc.check(session, ctx.project, data)
+            # What is stored is the checked report: the platform's not-covered
+            # areas and its list of load-bearing claims are in the record.
+            data = json.dumps(audit, indent=2, ensure_ascii=False).encode("utf-8")
+        elif filename == catalogue.REVIEW:
+            review, reviewed_audit = ppc.check_review(
+                session, ctx.project, ctx.agent.id if ctx.agent else None, data)
+            if review["verdict"] == "pass":
+                passed = reviewed_audit
+
     reader = _reader_of(session, ctx, body.result_for)
     key = f"projects/{ctx.project.id}/{ctx.run.id}/{filename}"
     uri = store().put_bytes(key, data)
@@ -4779,6 +4806,22 @@ def artifact_put(
     )
     session.add(row)
     session.flush()
+    if audit is not None:
+        # A draft until a different seat's review passes.
+        _publish_audit_page(session, ctx, row, audit, reviewed=False)
+    if passed is not None:
+        from yaaf.server import ppc
+
+        report_row = ppc.latest(session, ctx.project, catalogue.REPORT)
+        _publish_audit_page(session, ctx, report_row, passed, reviewed=True)
+        # Outside proof, written by the platform after its own check and an
+        # independent review — the audit's equivalent of a merged change
+        # (`policy.attest_shipped`).
+        policy.attest_shipped(
+            session, ctx.project,
+            f"Amazon PPC audit reviewed: {catalogue.REPORT} v{report_row.version} passed "
+            f"{filename} v{version}, checked against the connected data", uri,
+            task_id=ctx.run.task_id)
     chairman_notify(
         session, ctx.project, f"deliverable published: {filename} v{version}",
         f"{filename} (v{version}, {len(data)} bytes) is in the artifact store"
@@ -4821,6 +4864,57 @@ def artifact_put(
     return {"uri": uri, "key": key, "size": len(data), "sha256": digest,
             "artifact_id": row.id, "version": version, "result_for": reader,
             "satisfies": [r.key for r in satisfied]}
+
+
+def _publish_audit_page(session: Session, ctx: RunContext, report_row, audit: dict,
+                        reviewed: bool) -> None:
+    """The readable audit, the presentation, the workbook and the change sheet,
+    rendered from the accepted report and stored beside it, for the same
+    reader and requirements — marked draft until a review passes."""
+    from yaaf import ppc as catalogue
+    from yaaf.core.artifacts import store
+    from yaaf.core.models import Artifact
+
+    for name, page in catalogue.outputs(audit, reviewed):
+        key = f"projects/{ctx.project.id}/{ctx.run.id}/{name}"
+        version = 1 + (session.execute(
+            select(func.max(Artifact.version)).where(
+                Artifact.project_id == ctx.project.id, Artifact.name == name)
+        ).scalar_one() or 0)
+        session.add(Artifact(
+            id=ids.new_id(ids.ARTIFACT), project_id=ctx.project.id, name=name,
+            version=version, sha256=hashlib.sha256(page).hexdigest(), size_bytes=len(page),
+            storage_key=key, uri=store().put_bytes(key, page),
+            published_by_agent_id=report_row.published_by_agent_id, run_id=ctx.run.id,
+            requirement_ids=list(report_row.requirement_ids or []),
+            opening=(writing.opening(name, page) if name == catalogue.REPORT_MD else None),
+            reader=report_row.reader, announced_at=report_row.announced_at))
+    session.flush()
+
+
+@router.get("/ppc/kit")
+def ppc_kit(ctx: RunContext = Depends(run_auth)) -> dict:
+    """The audit's arithmetic, verbatim — the file the platform imports itself —
+    for the `ppc_kit` tool to write into the workspace as ppckit.py."""
+    from yaaf import ppc as catalogue
+    from yaaf.ppc import kit
+
+    if not shape.is_ppc_factory(ctx.project):
+        raise Refusal("only an Amazon PPC Factory has the PPC kit", 422)
+    return {"filename": "ppckit.py", "version": kit.VERSION, "source": catalogue.kit_source()}
+
+
+@router.post("/ppc/analysis")
+def ppc_analysis(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -> dict:
+    """The platform pulls the advertising account through its data source and
+    computes the standard checks, the headroom pools, the forecast and its
+    backtest. The numbers are the platform's: an agent reads them
+    (ppc-analysis.json, ppc-data.json) and decides what they mean — it cannot
+    change one. Run it once the source is connected and again before the report
+    if the data has moved on."""
+    from yaaf.server import ppc
+
+    return ppc.summary(ppc.analyse(session, ctx.project, run_id=ctx.run.id))
 
 
 @router.get("/artifacts")

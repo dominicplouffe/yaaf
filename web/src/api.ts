@@ -435,13 +435,17 @@ export interface Dashboard {
   retired_orders: string[];
   brief_confirmed_at: string | null;
   billing_mode: string;
-  /** explore | deliver | operate | code_factory — what the chairman chose. */
+  /** explore | deliver | operate | code_factory | ppc_factory — what the chairman chose. */
   mode: string;
   /** What the screens gate on: explore | deliver | operate. A Code Factory
       being built reads as deliver, one in upkeep as operate. */
   shape: "explore" | "deliver" | "operate";
   /** Code Factory only: build, then upkeep. */
   factory_phase: "build" | "upkeep" | null;
+  /** Amazon PPC Factory only: audit (reads as deliver) or operate. */
+  ppc_mode?: "audit" | "operate" | null;
+  /** Amazon PPC Factory only: what its data can support, and its report. */
+  ppc?: PpcView | null;
   month_to_date: {
     usd: number;
     tokens_in: number;
@@ -1938,10 +1942,27 @@ export interface PlanBurnup {
   met_points: { at: string; count: number }[];
 }
 
+/** An Amazon PPC Factory's data and report, computed by the platform from the
+    data-source tools the project may call (`yaaf.server.ppc`). */
+export interface PpcView {
+  capabilities: string[];
+  sections: { key: string; title: string; available: boolean; missing: string[];
+    thinner_without: string[] }[];
+  scale: { available: boolean; missing: string[] };
+  /** Why the audit cannot be planned yet, or null. */
+  data_owed: string | null;
+  report: string;
+  report_page: string;
+  report_published: boolean;
+  /** The latest report has a passing review by a different seat: final, not draft. */
+  reviewed: boolean;
+  review: string;
+}
+
 export interface PlanView {
   /** Narrowed from `string` so a mis-typed mode in a gate is a build error
       rather than a chart that silently never draws. */
-  mode: "explore" | "deliver" | "operate" | "code_factory";
+  mode: "explore" | "deliver" | "operate" | "code_factory" | "ppc_factory";
   /** What the plan gates on; see Dashboard.shape. Absent when planless. */
   shape?: "explore" | "deliver" | "operate";
   planless: boolean;

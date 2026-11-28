@@ -486,6 +486,44 @@ async def t_change_open(args):
         "title": args["title"], "summary": args["summary"]}))
 
 
+@tool(
+    "ppc_analysis",
+    "Amazon PPC Factory only, where the data source has a platform adapter. The "
+    "platform pulls the advertising account and runs a first pass of standard checks "
+    "(waste, harvesting, duplicates, placements, bids, automatic groups, budgets, "
+    "retail readiness, branded share), headroom pools, a forecast and its backtest, "
+    "stored as ppc-data.json and ppc-analysis.json (read them with artifact_get). They "
+    "are leads to test, not findings: a check cannot see why a term stopped selling or "
+    "whether two campaigns advertise different products. ppc-data.json may be cited as "
+    "evidence.",
+    {},
+)
+async def t_ppc_analysis(args):
+    return _text(_call("POST", "/agent/ppc/analysis", {}))
+
+
+@tool(
+    "ppc_kit",
+    "Amazon PPC Factory only. Writes ppckit.py into your workspace: the audit's "
+    "statistics (zero-order probability, clicks needed, shrunk rates, credible "
+    "intervals, recent-vs-prior rate changes), economics (first-order break-even, "
+    "lifetime value, LTV ACoS ceiling, payback, cost per new customer), bid and budget "
+    "math, the scale forecast and its backtest. `import ppckit` from your scripts so "
+    "every seat — and the reviewer re-running your script — computes the same number.",
+    {},
+)
+async def t_ppc_kit(args):
+    result = _call("GET", "/agent/ppc/kit")
+    body = result.get("body") if isinstance(result, dict) else None
+    if not (isinstance(body, dict) and body.get("source")):
+        return _text(result)
+    target = WORKSPACE / body.get("filename", "ppckit.py")
+    target.write_text(body["source"])
+    return _text({"status": 200, "body": {
+        "path": str(target.relative_to(WORKSPACE)), "version": body.get("version"),
+        "note": "import ppckit — see its docstring for the functions."}})
+
+
 @tool("changes_list",
       "Code Factory only. Open changes and every gate on each: serves, size, checks, "
       "review.", {})
@@ -1932,7 +1970,9 @@ async def t_data_fetch(args):
     resolved.write_bytes(data)
 
     preview = body[:DATA_FETCH_PREVIEW_CHARS]
+    receipt = _meta_of(result).get("yaaf/receipt")
     return _text({"status": 200, "body": {
+        **({"receipt": receipt} if receipt else {}),
         "path": str(resolved.relative_to(workspace)),
         "bytes": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),
@@ -1959,7 +1999,7 @@ ALL_TOOLS = [
     t_board, t_requirements, t_task_create, t_task_claim, t_task_complete, t_task_review,
     t_task_block, t_task_kill,
     t_change_open, t_changes_list, t_change_review, t_scenario_add, t_scenario_retire, t_scenarios_list,
-    t_release_propose, t_releases_list, t_incident_postmortem,
+    t_release_propose, t_releases_list, t_incident_postmortem, t_ppc_analysis, t_ppc_kit,
     t_requirement_propose, t_requirement_depends_on,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_ask_chairman, t_ask_close,

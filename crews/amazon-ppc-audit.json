@@ -1,0 +1,49 @@
+{
+  "slug": "amazon-ppc-audit",
+  "name": "An Amazon PPC audit",
+  "outcome": "One reviewed audit of an Amazon advertising account: what the business can afford to pay for a sale against what it pays today, what is working, what is not, where 10k, 25k, 50k or 100k more a month would sell the most, and a week-by-week plan — every claim with its evidence.",
+  "ceo_role_slug": "ppc-lead",
+  "domains": [
+    "data"
+  ],
+  "source": "examples/15-an-amazon-ppc-audit",
+  "teams": [
+    {
+      "name": "Analytics",
+      "role_slug": "ppc-analyst",
+      "employees": [
+        "Rae",
+        "Tomas"
+      ],
+      "lead": "Rae"
+    },
+    {
+      "name": "Strategy",
+      "role_slug": "ppc-strategist",
+      "employees": [
+        "Idris"
+      ]
+    },
+    {
+      "name": "Numbers",
+      "role_slug": "data-skeptic",
+      "employees": [
+        "Wren"
+      ]
+    },
+    {
+      "name": "Executability",
+      "role_slug": "executability-checker",
+      "employees": [
+        "Nadia"
+      ]
+    },
+    {
+      "name": "Review",
+      "role_slug": "ppc-reviewer",
+      "employees": [
+        "Hale"
+      ]
+    }
+  ]
+}

@@ -1032,6 +1032,24 @@
     "name": "note_answer"
   },
   {
+    "description": "Amazon PPC Factory only, where the data source has a platform adapter. The platform pulls the advertising account and runs a first pass of standard checks (waste, harvesting, duplicates, placements, bids, automatic groups, budgets, retail readiness, branded share), headroom pools, a forecast and its backtest, stored as ppc-data.json and ppc-analysis.json (read them with artifact_get). They are leads to test, not findings: a check cannot see why a term stopped selling or whether two campaigns advertise different products. ppc-data.json may be cited as evidence.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "ppc_analysis"
+  },
+  {
+    "description": "Amazon PPC Factory only. Writes ppckit.py into your workspace: the audit's statistics (zero-order probability, clicks needed, shrunk rates, credible intervals, recent-vs-prior rate changes), economics (first-order break-even, lifetime value, LTV ACoS ceiling, payback, cost per new customer), bid and budget math, the scale forecast and its backtest. `import ppckit` from your scripts so every seat \u2014 and the reviewer re-running your script \u2014 computes the same number.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "ppc_kit"
+  },
+  {
     "description": "Clear a real-world purchase against the spend envelope BEFORE paying \u2014 a refusal here costs nothing; the same refusal after paying costs the money. Records the purchase with a stable idempotency_key so a crash or retry can never buy twice: if the response says duplicate/completed, the money already moved \u2014 do NOT pay again. Then pay with whatever tool fits (the platform never holds the card for you), and call purchase_finish with the receipt. usd over the per-purchase line or the approval threshold needs an approved approval_id; the monthly external cap is a wall no approval overrides \u2014 recommend an amendment instead.",
     "input_schema": {
       "properties": {

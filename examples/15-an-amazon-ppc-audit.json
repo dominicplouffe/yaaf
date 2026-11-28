@@ -1,0 +1,78 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "an-amazon-ppc-audit",
+  "exported_at": "2026-11-27T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "an-amazon-ppc-audit",
+    "name": "An Amazon PPC audit",
+    "goal": "Audit this Amazon advertising account through its connected data source, the way a senior strategist would: understand what the business sells and what it can afford to pay for a sale, find where demand is and what the ads capture, say what is working and should be left alone, what is not and what to change first with what it is worth a month, and where 10k, 25k, 50k or 100k more a month would sell the most — with a week-by-week plan. Every claim cites the Amazon data it came from; anything the data cannot show is said, not guessed; the audit is final only once a separate reviewer passes it.",
+    "billing_mode": "api_key",
+    "mode": "ppc_factory",
+    "controlled_domains": [],
+    "github_repo": null,
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 4.0,
+      "chairman_report_window_local": "08:00-20:00",
+      "timezone": "America/Toronto",
+      "monthly_usd_cap": 150,
+      "approval_threshold_usd": 15,
+      "max_usd_per_run": 3.0,
+      "stakes": "normal"
+    },
+    "integrations": {
+      "runtime": "agent_sdk",
+      "ppc_mode": "audit"
+    },
+    "billing_secret_name": null,
+    "ceo_role_slug": "ppc-lead",
+    "ceo_name": "Mara",
+    "ceo_daily_at": null,
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "name": "Analytics",
+        "role_slug": "ppc-analyst",
+        "employees": [
+          "Rae",
+          "Tomas"
+        ],
+        "lead": "Rae"
+      },
+      {
+        "name": "Strategy",
+        "role_slug": "ppc-strategist",
+        "employees": [
+          "Idris"
+        ]
+      },
+      {
+        "name": "Numbers",
+        "role_slug": "data-skeptic",
+        "employees": [
+          "Wren"
+        ]
+      },
+      {
+        "name": "Executability",
+        "role_slug": "executability-checker",
+        "employees": [
+          "Nadia"
+        ]
+      },
+      {
+        "name": "Review",
+        "role_slug": "ppc-reviewer",
+        "employees": [
+          "Hale"
+        ]
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": []
+}

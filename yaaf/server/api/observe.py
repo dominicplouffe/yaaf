@@ -819,6 +819,20 @@ def _install_payer_view(session, project) -> dict | None:
             "billing": False, "install": True}
 
 
+def _ppc_view(session: Session, project: Project) -> dict | None:
+    """The audit's data and its report, as the project page shows them."""
+    if not shape.is_ppc_factory(project):
+        return None
+    from yaaf import ppc as catalogue
+    from yaaf.server import ppc
+
+    return {**ppc.coverage(session, project),
+            "data_owed": ppc.data_owed(session, project),
+            "report": catalogue.REPORT, "report_page": catalogue.REPORT_MD,
+            "report_published": ppc.report_published(session, project),
+            "reviewed": ppc.reviewed(session, project), "review": catalogue.REVIEW}
+
+
 @router.get("/projects/{project_id}", dependencies=[authority.READ])
 def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     from yaaf.server.api.admin import coding_view, fallback_view, provider_credentials_view
@@ -931,6 +945,11 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         # A Code Factory's half of its life: build (reads as Deliver) or upkeep
         # (reads as Operate). Null for every other mode.
         "factory_phase": project.factory_phase,
+        # An Amazon PPC Factory's half: audit (reads as Deliver) or operate
+        # (reads as Operate), with what its data can support and whether the
+        # checked report exists. Null for every other mode.
+        "ppc_mode": shape.ppc_mode(project),
+        "ppc": _ppc_view(session, project),
         # What the screens gate on: explore | deliver | operate. A factory being
         # built reads as Deliver and one in upkeep as Operate, so no screen has
         # to learn a fourth shape to draw the right one of three.

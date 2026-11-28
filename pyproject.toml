@@ -22,6 +22,9 @@ dependencies = [
     # subscription token is a CLI credential and not a Messages API one.
     "claude-agent-sdk>=0.1.0",
     "docker>=7.1",
+    # An Amazon PPC audit's workbook (yaaf.ppc.workbook), written by the server
+    # from the checked report.
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -90,6 +93,7 @@ include = ["yaaf*"]
 # goal grader, so it has to be in the wheel — not just in the checkout.
 [tool.setuptools.package-data]
 "yaaf.founder" = ["*.md"]
+"yaaf.ppc" = ["playbook/*.md"]
 # The dated price snapshot an install with no route to the price feed imports
 # (yaaf.core.price_feed).
 "yaaf.runtimes" = ["*.json"]

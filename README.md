@@ -243,7 +243,7 @@ from the team.
 
 Flow: `Goal → CEO plans → you accept scope → teams claim work → the platform verifies → you sign off`
 
-### Four kinds of project
+### Five kinds of project
 
 | Mode | For |
 |---|---|
@@ -251,6 +251,7 @@ Flow: `Goal → CEO plans → you accept scope → teams claim work → the plat
 | **operate** | A standing job that runs every day or week: a triage desk, a digest, an overnight crew |
 | **explore** | An open question with a time box: find one idea worth building, and prove it |
 | **code_factory** | Software, built and then kept: from an empty repo to v1.0 by a date, then weekly upkeep. Or adopt a repo you already have and keep it patched and shipping |
+| **ppc_factory** | An Amazon advertising account, investigated through the MCP data source that holds it by a crew carrying a strategist's playbook: what the business can afford to pay for a sale, what works, what does not, where 10k–100k more a month would go, and a week-by-week plan. The platform holds what makes it trustworthy — every number cites a recorded pull of Amazon data, and the audit is a draft until a separate reviewer passes it ([plan](docs/plans/amazon-ppc-factory.md)) |
 
 ### Guardrails that hold
 
@@ -284,6 +285,7 @@ first, then create it for real with `yaaf create-project --from-file`.
 | [`12-a-content-engine`](examples/12-a-content-engine.json) | operate | Publish posts that earn a reader, on a subject you know |
 | [`13-a-booking-app`](examples/13-a-booking-app.json) | code_factory | A booking web app built from an empty repo to v1.0, then kept weekly |
 | [`14-keep-a-repo-healthy`](examples/14-keep-a-repo-healthy.json) | code_factory | Adopt a repo you already have: read it, propose a charter, keep it patched and shipping |
+| [`15-an-amazon-ppc-audit`](examples/15-an-amazon-ppc-audit.json) | ppc_factory | Audit an Amazon ads account through its data source, and price where more spend would go |
 
 ---
 

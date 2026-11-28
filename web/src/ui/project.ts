@@ -57,13 +57,17 @@ export function chairmanDecides(
     rather than leaving a reader to infer it from an empty list. */
 /** A project's kind in words. "code_factory" is a value, not a name. */
 export function modeLabel(mode: string): string {
-  return mode === "code_factory" ? "Code Factory" : mode.charAt(0).toUpperCase() + mode.slice(1);
+  if (mode === "code_factory") return "Code Factory";
+  if (mode === "ppc_factory") return "Amazon PPC Factory";
+  return mode.charAt(0).toUpperCase() + mode.slice(1);
 }
 
-/** The kind, and for a factory which half of its life it is in. */
-export function kindLabel(dash: Pick<Dashboard, "mode" | "factory_phase">): string {
+/** The kind, and for a factory which half of its life it is in — or, for an
+    Amazon PPC Factory, whether it audits or operates. */
+export function kindLabel(dash: Pick<Dashboard, "mode" | "factory_phase" | "ppc_mode">): string {
   const label = modeLabel(dash.mode);
-  return dash.factory_phase ? `${label} · ${dash.factory_phase}` : label;
+  const second = dash.factory_phase ?? dash.ppc_mode;
+  return second ? `${label} · ${second}` : label;
 }
 
 export function fullyAutonomous(dash: Dashboard): boolean {

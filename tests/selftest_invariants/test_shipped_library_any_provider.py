@@ -24,7 +24,7 @@ from tests.conftest import ADMIN
 from yaaf.core import ids
 from yaaf.core.db import db_session
 from yaaf.core.models import RunQueue
-from yaaf.core.shape import FACTORY_LEAD_ROLE
+from yaaf.core.shape import FACTORY_LEAD_ROLE, PPC_LEAD_ROLE
 from yaaf.runner.daemon import lease_and_prepare
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -64,7 +64,8 @@ def _crew_project(client, crew: dict, slug: str, billing: str) -> dict:
     teams = [{**team, "employees": team.get("employees") or []} for team in crew["teams"]]
     # A crew the Tech Lead leads is a Code Factory's, and is built as one — the
     # only kind that lead may run (yaaf.core.shape.FACTORY_LEAD_ROLE).
-    kind = {"mode": "code_factory"} if crew["ceo_role_slug"] == FACTORY_LEAD_ROLE else {}
+    kind = ({"mode": "code_factory"} if crew["ceo_role_slug"] == FACTORY_LEAD_ROLE
+            else {"mode": "ppc_factory"} if crew["ceo_role_slug"] == PPC_LEAD_ROLE else {})
     created = client.post("/admin/projects", headers=ADMIN, json={**kind,
         "slug": slug, "name": crew["name"][:60], "chairman_email": "chair@example.com",
         "goal": crew["outcome"] + " Measured by what ships, not by activity.",

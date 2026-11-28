@@ -317,10 +317,11 @@ def make_project(
                 headers=ADMIN)
     seed_role(client, "ceo", is_ceo=True)
     seed_role(client, "worker")
-    factory = project_overrides.get("mode") == "code_factory"
+    factory = project_overrides.get("mode") in ("code_factory", "ppc_factory")
     if factory:
         # Unnamed on purpose: a factory's lead is the server's to fill.
-        seed_role(client, "tech-lead", is_ceo=True)
+        seed_role(client, "tech-lead" if project_overrides["mode"] == "code_factory"
+                  else "ppc-lead", is_ceo=True)
     body = {
         "slug": slug,
         "name": slug.title(),

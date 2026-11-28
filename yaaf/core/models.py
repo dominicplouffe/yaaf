@@ -186,6 +186,9 @@ class ProjectMode(enum.StrEnum):
     builds software and then keeps it: a DELIVER while it is built, an OPERATE
     once it is in upkeep (`FactoryPhase`), without being rebuilt in between —
     the yes/no questions each phase answers live in `yaaf.core.shape`.
+    PPC_FACTORY runs an Amazon advertising account through an MCP data source:
+    an audit is a DELIVER (one report, then done), operating to goals is an
+    OPERATE (`PpcMode`).
 
     The field exists from the first stage of the rebuild because the rules
     differ by mode: outside EXPLORE a task must serve a requirement. What later
@@ -197,6 +200,22 @@ class ProjectMode(enum.StrEnum):
     DELIVER = "deliver"
     OPERATE = "operate"
     CODE_FACTORY = "code_factory"
+    PPC_FACTORY = "ppc_factory"
+
+
+class PpcMode(enum.StrEnum):
+    """What an Amazon PPC Factory is for, chosen once at creation.
+
+    AUDIT reads a whole account and ships one report: what is working, what is
+    not, and where 10k, 25k, 50k or 100k more a month would sell more at the
+    ACOS or TACOS the account runs at today. It ships once, like Deliver.
+    OPERATE keeps an account inside the goals it is given (a target ACOS, a
+    TACOS ceiling, a budget) on a rhythm, like Operate. Only AUDIT is open:
+    OPERATE is answered by `yaaf.core.shape` so the readers are ready for it,
+    and refused at creation until its boundaries are enforced server-side."""
+
+    AUDIT = "audit"
+    OPERATE = "operate"
 
 
 class FactoryPhase(enum.StrEnum):
@@ -802,6 +821,9 @@ class Project(Base):
     # Code Factory only: build, then upkeep (FactoryPhase). Null for every
     # other mode, so no reader can mistake an Operate project for a factory.
     factory_phase: Mapped[str | None] = mapped_column(String(16))
+    # Amazon PPC Factory only: audit or operate (PpcMode). Null for every other
+    # mode, for the same reason factory_phase is.
+    ppc_mode: Mapped[str | None] = mapped_column(String(16))
     chairman_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     # "api_key" | "subscription" — decides the budget's native unit (usd vs tokens)
     billing_mode: Mapped[str] = mapped_column(String(16), default="api_key")

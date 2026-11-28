@@ -1399,6 +1399,16 @@ def delivery_outstanding(session: Session, project: Project) -> list[str]:
     open_tasks = open_top_level_tasks(session, project.id)
     if open_tasks:
         outstanding.append(f"{len(open_tasks)} task(s) still open")
+    from yaaf.server import ppc
+
+    if ppc.report_owed(session, project):
+        # An audit's deliverable is its checked report. Requirements met in
+        # words with no accepted report would complete an audit nobody can read.
+        from yaaf import ppc as catalogue
+
+        outstanding.append(
+            f"no reviewed {catalogue.REPORT} yet: the audit is its report, and it is a draft "
+            f"until a different seat publishes a passing {catalogue.REVIEW}")
     return outstanding
 
 
@@ -1803,6 +1813,13 @@ def evaluate_plan(session: Session, project: Project, cons: ConstitutionDoc) -> 
             f"it first and publish {INTAKE_REPORT} — tests, coverage, flaky tests, CI, "
             "packages, advisories, licences, leaked secrets, runtimes out of support, "
             "and 90 days of delivery — then propose the charter from it.")
+        return missing
+    from yaaf.server import ppc
+
+    if (owed := ppc.data_owed(session, project)) is not None:
+        # The same gate an adopted repo's intake is: a plan for an audit with
+        # no data to audit is a guess about someone else's account.
+        missing.append(owed)
         return missing
     scope = scope_requirements(session, project.id)
     accepted = [r for r in scope if r.status not in (RequirementStatus.PROPOSED,)]

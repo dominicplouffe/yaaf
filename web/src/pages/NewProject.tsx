@@ -64,6 +64,15 @@ const FACTORY_CREW: Record<FactoryStart, string> = {
   repo_build: "build-a-product",
 };
 
+/** The one lead an Amazon PPC Factory has (`yaaf.core.shape.PPC_LEAD_ROLE`),
+    filled by the server for the same reason the Tech Lead is. */
+export const PPC_LEAD = "ppc-lead";
+/** The crew an Amazon PPC audit starts with. */
+const PPC_CREW = "amazon-ppc-audit";
+/** Leads that belong to one kind each: never offered in the picker, and their
+    crews offered only to their own kind. */
+const FIXED_LEADS: readonly string[] = [FACTORY_LEAD, PPC_LEAD];
+
 function crewTeams(crew: CrewSummary): TeamDraft[] {
   return crew.teams.map((t) => ({
     role_slug: t.role_slug,
@@ -177,7 +186,8 @@ function Compare({ cards, children }: {
 /** A row of pick-one cards, each a name and at most two short lines. */
 function Cards({ label, options, value, onPick }: {
   label: string;
-  options: { value: string; label: string; headline?: string; line?: string }[];
+  options: { value: string; label: string; headline?: string; line?: string;
+    disabled?: boolean }[];
   value: string;
   onPick: (value: string) => void;
 }) {
@@ -186,6 +196,7 @@ function Cards({ label, options, value, onPick }: {
       {options.map((o) => (
         <button key={o.value} type="button" role="radio" aria-checked={value === o.value}
           className={`textblock np-card${value === o.value ? " on" : ""}`}
+          disabled={o.disabled} aria-disabled={o.disabled}
           onClick={() => onPick(o.value)}>
           <span className="np-card-t">{value === o.value ? "◉" : "○"} {o.label}</span>
           {o.headline && <span className="np-card-h">{o.headline}</span>}
@@ -263,6 +274,9 @@ const MODES = [
   { value: "code_factory", label: "Code Factory",
     blurb: "Build software and keep it healthy. The platform tests every change and only it can merge.",
     example: "\u201CA booking app for physio clinics\u201D, or \u201Ckeep our invoice API patched and shipping.\u201D" },
+  { value: "ppc_factory", label: "Amazon PPC Factory",
+    blurb: "Audit an Amazon advertising account through its data source: what the business can afford, what works, what does not, and where more money would sell more.",
+    example: "\u201CAudit our Amazon ads and tell us where an extra $25k a month should go.\u201D" },
 ] as const;
 
 // The authority dial: who holds the verbs. A preset is
@@ -500,6 +514,10 @@ export default function NewProject() {
   const [hireOpen, setHireOpen] = useState<number | null>(null);
   const [crews, setCrews] = useState<CrewSummary[]>([]);
   const factory = mode === "code_factory";
+  // An Amazon PPC Factory: audit only, for now (`shape.PPC_MODES_OPEN`).
+  const ppc = mode === "ppc_factory";
+  const fixedLead = factory ? FACTORY_LEAD : ppc ? PPC_LEAD : null;
+  const fixedCrew = factory ? FACTORY_CREW[factoryStart] : ppc ? PPC_CREW : null;
   // The Code Factory rules, with their defaults, straight from the server's
   // model: the form shows none of them as fields, so the review step says
   // what the project is agreeing to instead of letting it take them unseen.
@@ -587,16 +605,16 @@ export default function NewProject() {
     const blank = teams.length === 1 && !teams[0].role_slug && !teams[0].name.trim()
       && !teams[0].employees.trim();
     const ours = blank || JSON.stringify(teams) === autoCrew.current;
-    if (factory) {
-      setCeoSlug(FACTORY_LEAD);
-      const crew = crews.find((c) => c.slug === FACTORY_CREW[factoryStart]);
+    if (fixedLead) {
+      setCeoSlug(fixedLead);
+      const crew = crews.find((c) => c.slug === fixedCrew);
       if (ours && crew && crew.missing_role_slugs.length === 0) {
         const filled = crewTeams(crew);
         autoCrew.current = JSON.stringify(filled);
         setTeams(filled);
       }
     } else {
-      setCeoSlug((current) => (current === FACTORY_LEAD
+      setCeoSlug((current) => (FIXED_LEADS.includes(current)
         ? (roles.find((r) => r.slug === "ceo")?.slug ?? "") : current));
       if (autoCrew.current && JSON.stringify(teams) === autoCrew.current) {
         setTeams([{ role_slug: "", name: "", employees: "", lead: "" }]);
@@ -605,7 +623,7 @@ export default function NewProject() {
     }
     // teams is read, not watched: an edit must never re-fill the crew.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [factory, factoryStart, crews, roles, bundle]);
+  }, [fixedLead, fixedCrew, crews, roles, bundle]);
   // Access he promised while founding: one card each, tested here before the
   // project exists, stored on its promises once it does.
   const [promiseCards, setPromiseCards] = useState<PromiseCard[]>([]);
@@ -1286,8 +1304,8 @@ export default function NewProject() {
     setDrillError(null);
     setDrill(null);
     try {
-      const chosenCeo = factory ? FACTORY_LEAD
-        : bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
+      const chosenCeo = fixedLead
+        ?? bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
       if (!chosenCeo) throw new Error("Pick a CEO role first.");
       // Role definitions a fresh library lacks travel with the spec, so the
       // drill can resolve them without anything being written here.
@@ -1320,8 +1338,8 @@ export default function NewProject() {
   /** Every seat on the form and the model it would run on — its role's, or
       the override a setup file carries. */
   function seatModels(): { who: string; model: string }[] {
-    const chosenCeo = factory ? FACTORY_LEAD
-        : bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
+    const chosenCeo = fixedLead
+        ?? bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
     const ceoModel = bundle?.project.ceo_model_override
       ?? roles.find((r) => r.slug === chosenCeo)?.model ?? "";
     const out = [{ who: "the CEO", model: ceoModel }];
@@ -1357,6 +1375,7 @@ export default function NewProject() {
           ...(mode === "explore" && exploreDeadline
             ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
           ...(mode === "code_factory" ? { factory_start: factoryStart } : {}),
+          ...(ppc ? { ppc_mode: "audit" } : {}),
           ...(mode === "code_factory" && adopts && factoryRepo.trim()
             ? { github_repo: factoryRepo.trim() } : {}),
           controlled_domains: factory ? [] : controlledDomains
@@ -1538,8 +1557,8 @@ export default function NewProject() {
       }
       // The file's choice wins when one was loaded — its teams were designed
       // around that CEO — otherwise the chairman's.
-      const chosenCeo = factory ? FACTORY_LEAD
-        : bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
+      const chosenCeo = fixedLead
+        ?? bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
       if (!chosenCeo) throw new Error("No CEO role in the library — create one on the Roles page first.");
       const body = projectBody(chosenCeo);
       const created = await post<{
@@ -1972,6 +1991,24 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               </Why>
             </div>
           )}
+          {ppc && (
+            <div style={{ marginTop: 14 }}>
+              <label className="field">What it does</label>
+              <Cards label="What it does" value="audit" onPick={() => {}}
+                options={[
+                  { value: "audit", label: "Audit an account",
+                    line: "One reviewed audit: what your business can afford to pay for a sale, what works, what does not, where 10k–100k more a month would go, and a week-by-week plan." },
+                  { value: "operate", label: "Run it to goals — coming soon", disabled: true,
+                    line: "Keep the account inside a target ACOS, a TACOS ceiling or a budget, every week." },
+                ]} />
+              <p className="help" style={{ marginTop: 8 }}>
+                The audit reads the account through a data source: connect the MCP server that
+                holds it under Settings → Data sources after Create. Every number cites the
+                Amazon data it came from, anything that source cannot show is reported as not
+                covered, and the audit stays a draft until a separate reviewer passes it.
+              </p>
+            </div>
+          )}
           {mode === "code_factory" && (
             <div style={{ marginTop: 14 }}>
               <label className="field">Start from</label>
@@ -2068,7 +2105,18 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           </Why>
         </div>
         <div className="card" style={{ marginBottom: 10 }}>
-          {factory ? (
+          {ppc ? (
+            <p style={{ margin: 0 }}>
+              <strong>{roles.find((r) => r.slug === PPC_LEAD)?.name ?? "PPC Lead"}</strong>
+              {" "}— an Amazon PPC Factory is always led by its PPC Lead, who starts from
+              what the business sells and can afford, asks you what only you know, and runs
+              the investigation to a reviewed audit.
+              {rolesLoaded && !roles.some((r) => r.slug === PPC_LEAD) && (
+                <> This install's library has no PPC Lead yet: run{" "}
+                  <code>deploy/update_single_server.sh --no-pull</code>.</>
+              )}
+            </p>
+          ) : factory ? (
             <p style={{ margin: 0 }}>
               <strong>{roles.find((r) => r.slug === FACTORY_LEAD)?.name ?? "Tech Lead"}</strong>
               {" "}— a Code Factory is always led by its Tech Lead, who turns your goal into a
@@ -2079,7 +2127,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               )}
             </p>
           ) : (
-            <CeoPicker roles={roles.filter((r) => r.slug !== FACTORY_LEAD)}
+            <CeoPicker roles={roles.filter((r) => !FIXED_LEADS.includes(r.slug))}
               value={ceoSlug} onChange={setCeoSlug} />
           )}
         </div>
@@ -2090,6 +2138,15 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <strong>{crews.find((c) => c.slug === FACTORY_CREW[factoryStart])?.name}</strong> crew,
             which covers every gate: builders, a reviewer who signs each change, hidden tests,
             security and releases. Change any of it, here or later.
+          </p>
+        )}
+        {ppc && !bundle && autoCrew.current !== null && (
+          <p className="subtitle">
+            Filled with the{" "}
+            <strong>{crews.find((c) => c.slug === PPC_CREW)?.name}</strong> crew: analysts who
+            compute every figure from the account's data, a strategist who prices the scale
+            tiers and writes the plan, a skeptic and an executability checker who attack both,
+            and a reviewer who passes or returns the audit. Change any of it, here or later.
           </p>
         )}
         {missingRoleSlugs.length > 0 && (
@@ -2668,8 +2725,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         <div className="card" style={{ marginBottom: 10 }}>
           <div className="orgline">
             <strong>CEO</strong>
-            <span className="chip accent">{roleLabel(factory ? FACTORY_LEAD
-              : bundle?.project.ceo_role_slug ?? ceoSlug)}</span>
+            <span className="chip accent">{roleLabel(fixedLead
+              ?? bundle?.project.ceo_role_slug ?? ceoSlug)}</span>
             <span className="help">the only agent that speaks to you</span>
           </div>
           {effectiveTeams.map((t, i) => (
@@ -3030,7 +3087,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         {hireOpen !== null && (
           <HirePanel
             roles={roles}
-            crews={crews.filter((c) => (c.ceo_role_slug === FACTORY_LEAD) === factory)}
+            crews={crews.filter((c) => (fixedLead ? c.ceo_role_slug === fixedLead
+              : !FIXED_LEADS.includes(c.ceo_role_slug ?? "")))}
             loaded={rolesLoaded}
             selected={teams[hireOpen]?.role_slug ? [teams[hireOpen].role_slug] : []}
             goal={goal}

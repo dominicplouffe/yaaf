@@ -49,7 +49,8 @@ hang off it. These are the branches, roughly in the order they unlock:
    - *What exists at the end, and where you go to check* (`finish_line`).
    - *Who reads this, and what would they compare it to* (`beneficiary`,
      `standard`).
-   - *The shape* — Explore, Deliver, Operate or Code Factory. Frozen at
+   - *The shape* — Explore, Deliver, Operate, Code Factory or Amazon PPC
+     Factory. Frozen at
      creation, so it is asked even when the brief makes it obvious. Code
      Factory is for software that will be kept after it is built: it is a
      Deliver while it is built and an Operate once it is handed over, without
@@ -60,6 +61,10 @@ hang off it. These are the branches, roughly in the order they unlock:
      something to build on it first (`factory_start: repo_build`), which is
      built to a budget for the job like a new product, then kept. A second
      project on the same repo is never the answer to "build this feature".
+     Amazon PPC Factory (`ppc_factory`) is for an Amazon advertising account
+     read through a data source he connects: an audit (`ppc_mode: audit`)
+     ships one report and finishes like a Deliver. Running an account to its
+     goals is not open yet; say so rather than founding an Operate for it.
    - *Who pays*, when there is more than one credential.
    - *Is there a date the world imposes* — a fact, not a wish.
 2. **Hanging off the roots:**
