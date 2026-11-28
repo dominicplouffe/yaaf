@@ -77,7 +77,8 @@ An install is checked before it can be used. yaaf runs these steps in order:
    This checks every minimum requirement, plus the extended requirement for
    each capability the plugin declares. The plugin's own `tests/` run as well.
 4. Check the plugin's roles, crews and skills against this box's library
-   rules, and add its lead role to the library.
+   rules. Its roles and crews join the library when they aren't there already,
+   so *New Project* fills in the kind's own team.
 
 The result is a **report**, with one line for each requirement:
 

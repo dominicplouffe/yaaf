@@ -428,6 +428,8 @@ export default function NewProject() {
   }, []);
   const chosenKind = kinds.find((k) => k.kind === kindChoice) ?? null;
   const pluginLead = chosenKind?.lead ?? null;
+  // A plugin's crew is led by its kind's lead, so it belongs only to that kind.
+  const pluginLeads = new Set(kinds.map((k) => k.lead).filter((l): l is string => !!l));
   const kindMode = chosenKind?.modes?.[0]?.key;
   function pickKind(value: string) {
     const k = kinds.find((x) => x.kind === value);
@@ -638,8 +640,18 @@ export default function NewProject() {
         autoCrew.current = JSON.stringify(filled);
         setTeams(filled);
       }
+    } else if (chosenKind?.crews?.length) {
+      // A plugin kind ships its own crew, led by its fixed lead: the team its
+      // playbook was written for. Filled the way the Code Factory's is, and
+      // only into a form nobody has typed teams into.
+      const crew = crews.find((c) => c.slug === chosenKind.crews![0]);
+      if (ours && crew && crew.missing_role_slugs.length === 0) {
+        const filled = crewTeams(crew);
+        autoCrew.current = JSON.stringify(filled);
+        setTeams(filled);
+      }
     } else {
-      setCeoSlug((current) => (current === FACTORY_LEAD
+      setCeoSlug((current) => (current === FACTORY_LEAD || pluginLeads.has(current)
         ? (roles.find((r) => r.slug === "ceo")?.slug ?? "") : current));
       if (autoCrew.current && JSON.stringify(teams) === autoCrew.current) {
         setTeams([{ role_slug: "", name: "", employees: "", lead: "" }]);
@@ -648,7 +660,7 @@ export default function NewProject() {
     }
     // teams is read, not watched: an edit must never re-fill the crew.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [factory, factoryStart, crews, roles, bundle]);
+  }, [factory, factoryStart, crews, roles, bundle, chosenKind]);
   // Access he promised while founding: one card each, tested here before the
   // project exists, stored on its promises once it does.
   const [promiseCards, setPromiseCards] = useState<PromiseCard[]>([]);
@@ -3144,7 +3156,9 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         {hireOpen !== null && (
           <HirePanel
             roles={roles}
-            crews={crews.filter((c) => (c.ceo_role_slug === FACTORY_LEAD) === factory)}
+            crews={crews.filter((c) => pluginLead
+              ? c.ceo_role_slug === pluginLead
+              : !pluginLeads.has(c.ceo_role_slug) && (c.ceo_role_slug === FACTORY_LEAD) === factory)}
             loaded={rolesLoaded}
             selected={teams[hireOpen]?.role_slug ? [teams[hireOpen].role_slug] : []}
             goal={goal}
