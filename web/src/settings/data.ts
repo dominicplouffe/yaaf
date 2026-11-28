@@ -4,7 +4,7 @@
 // when one changes something it calls `reload` and the rail follows.
 
 import { useCallback, useEffect, useState } from "react";
-import { get, InstallSpend, PersonalToken, SearchSettings, UserRow } from "../api";
+import { get, InstallSpend, PersonalToken, PluginRow, SearchSettings, UserRow } from "../api";
 import type { Credential } from "../llmCredentials";
 import { DEFAULT_PROVIDER } from "../providers";
 import { Evidence, Readiness, READINESS } from "../readiness";
@@ -65,6 +65,8 @@ export interface SettingsData {
   creds: Credential[] | null;
   /** This month so far, across every project — the Spend entry's state. */
   spend: InstallSpend | null;
+  /** Installed factory plugins and their versions, newest first. */
+  plugins: PluginRow[] | null;
   error: string | null;
   reload: () => void;
   reloadUsers: () => void;
@@ -82,6 +84,7 @@ export function useSettingsData(admin: boolean): SettingsData {
   const [tokens, setTokens] = useState<PersonalToken[] | null>(null);
   const [creds, setCreds] = useState<Credential[] | null>(null);
   const [spend, setSpend] = useState<InstallSpend | null>(null);
+  const [plugins, setPlugins] = useState<PluginRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
@@ -95,6 +98,8 @@ export function useSettingsData(admin: boolean): SettingsData {
     get<Credential[]>("/admin/settings/llm-credentials?include_hidden=true").then(setCreds)
       .catch(() => {});
     get<InstallSpend>(monthToDateUrl()).then(setSpend).catch(() => {});
+    get<{ plugins: PluginRow[] }>("/admin/plugins").then((r) => setPlugins(r.plugins))
+      .catch(() => setPlugins([]));
   }, [admin]);
 
   const reloadUsers = useCallback(() => {
@@ -107,8 +112,8 @@ export function useSettingsData(admin: boolean): SettingsData {
   useEffect(reload, [reload]);
   useEffect(reloadUsers, [reloadUsers]);
 
-  return { admin, settings, readiness, users, usersError, models, search, tokens, creds, spend, error,
-    reload, reloadUsers };
+  return { admin, settings, readiness, users, usersError, models, search, tokens, creds, spend,
+    plugins, error, reload, reloadUsers };
 }
 
 /** "Ines Laurent, Sam Okafor and Priya Raman". */

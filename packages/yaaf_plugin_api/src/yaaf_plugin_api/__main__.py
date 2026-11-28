@@ -26,7 +26,13 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--full", action="store_true",
                    help="also run the conformance suite through a local plugin host, and the "
                         "plugin's own tests: the checks the install runs")
+    sub.add_parser("spec", help="print the plugin spec as JSON")
     args = parser.parse_args(argv)
+    if args.command == "spec":
+        from yaaf_plugin_api.spec import spec
+
+        print(json.dumps(spec(), indent=2))
+        return 0
     report = full_check(args.path) if args.full else check(args.path,
                                                            load_module=not args.no_import)
     if args.json:

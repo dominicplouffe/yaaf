@@ -10,6 +10,7 @@ import { spendNote } from "./spend";
 
 export type SectionKey =
   | "overview" | "providers" | "models" | "prices" | "spend" | "search" | "founder" | "slack" | "people"
+  | "plugins"
   | "account";
 
 export type NoteTone = "good" | "warn" | "critical" | "hollow" | "";
@@ -27,6 +28,7 @@ export const SECTIONS: ({ group: string; admin: boolean } | { key: SectionKey; l
   { key: "founder", label: "Founder", admin: true },
   { key: "slack", label: "Slack", admin: true },
   { key: "people", label: "People", admin: true },
+  { key: "plugins", label: "Plugins", admin: true },
   { group: "You", admin: false },
   { key: "account", label: "Account", admin: false },
 ];
@@ -71,6 +73,17 @@ export function railNote(key: SectionKey, d: SettingsData, email: string): RailN
     if (!d.readiness) return { text: "…", tone: "" };
     return count ? { text: `${count} need${count === 1 ? "s" : ""} you`, tone: "", count }
       : { text: "Nothing needs you", tone: "good" };
+  }
+  if (key === "plugins") {
+    if (!d.plugins) return { text: "…", tone: "" };
+    const latest = d.plugins.map((p) => p.versions[0]).filter(Boolean);
+    const ready = latest.filter((v) => v.status === "ready").length;
+    const failed = latest.filter((v) => v.status === "failed").length;
+    const installing = latest.filter((v) => v.status === "installing").length;
+    if (!latest.length) return { text: "None installed", tone: "hollow" };
+    if (installing) return { text: `${plural(installing, "install")} running`, tone: "" };
+    if (failed) return { text: `${ready} ready · ${failed} failed`, tone: "warn" };
+    return { text: `${plural(ready, "kind")} ready`, tone: "good" };
   }
   if (key === "people") {
     if (!d.users) return { text: "…", tone: "" };

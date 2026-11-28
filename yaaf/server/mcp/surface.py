@@ -61,6 +61,7 @@ REACHED = {
     # create
     "GET /admin/roles": "catalog",
     "GET /admin/crews": "catalog",
+    "GET /admin/kinds": "catalog (kinds)",
     "POST /admin/rehearse": "rehearse",
     "POST /admin/projects": "create_project",
     "POST /admin/founder/quick": "quick_project — and quick_project_status reads the "
@@ -108,9 +109,6 @@ WITHHELD = {
         "withdrawing a plugin decides what every chairman on the box may create.",
     "DELETE /admin/plugins/{plugin_id}/versions/{version}":
         "removing installed code is the instance admin's, as installing it is.",
-    "GET /admin/kinds":
-        "the create tool does not take a plugin kind yet; it learns them, and this "
-        "list with them, in build step 9 of docs/plans/factory-plugins.md.",
     "PUT /admin/projects/{project_id}/environments":
         "the seats write environments with environment_set, and under approve_first a "
         "production or staging command a seat wrote waits for the chairman's yes on a "

@@ -442,6 +442,11 @@ export interface Dashboard {
   shape: "explore" | "deliver" | "operate";
   /** Code Factory only: build, then upkeep. */
   factory_phase: "build" | "upkeep" | null;
+  /** A factory plugin's kind ("plugin:<key>") and its mode; null otherwise. */
+  kind?: string | null;
+  kind_mode?: string | null;
+  /** The project-home section the plugin declares, its data, or why not. */
+  kind_view?: KindView | null;
   month_to_date: {
     usd: number;
     tokens_in: number;
@@ -2167,4 +2172,73 @@ export interface SearchSettings {
   /** Its last test, forgotten whenever it is changed. */
   last_test?: { ok: boolean; at: string; detail: string } | null;
   backends: SearchBackend[];
+}
+
+
+// ── factory plugins (docs/plans/factory-plugins.md) ──────────────────────────
+
+export interface KindFieldSpec {
+  key: string;
+  type: "string" | "text" | "integer" | "number" | "boolean" | "enum";
+  label: string;
+  help: string;
+  required: boolean;
+  choices: string[];
+  default: unknown;
+}
+
+/** One entry of GET /admin/kinds: a built-in mode, or an offered plugin kind. */
+export interface ProjectKind {
+  kind: string;
+  label: string;
+  built_in: boolean;
+  plugin?: string;
+  version?: string;
+  status?: string;
+  description?: string;
+  lead?: string | null;
+  crews?: string[];
+  modes?: { key: string; shape: "ships_once" | "runs_on_cycles"; open: boolean; label: string }[];
+  fields?: KindFieldSpec[];
+}
+
+export interface KindViewSection { id: string; component: string; title: string; help?: string }
+
+export interface KindView {
+  kind: string;
+  mode: string | null;
+  label: string;
+  plugin: string;
+  version: string;
+  status: string;
+  doc: { version: number; sections: KindViewSection[] } | null;
+  data: Record<string, any> | null;
+  error: string | null;
+}
+
+export interface PluginResult { id: string; status: "pass" | "fail" | "pending" | "n/a"; text: string; why: string[] }
+
+export interface PluginVersionRow {
+  id: string;
+  plugin: string;
+  version: string;
+  source: "github" | "local";
+  status: "installing" | "pending" | "ready" | "failed" | "disabled";
+  selectable: boolean;
+  api_version: string;
+  installed_at: string;
+  kind: string | null;
+  name: string | null;
+  counts: Partial<Record<PluginResult["status"], number>>;
+  report?: { results: PluginResult[]; interrupted?: string };
+  ref?: string | null;
+}
+
+export interface PluginRow {
+  id: string;
+  name: string;
+  kind_key: string;
+  enabled: boolean;
+  repo_url: string | null;
+  versions: PluginVersionRow[];
 }

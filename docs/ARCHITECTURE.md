@@ -170,6 +170,8 @@ yaaf/runner     run leasing, sandboxes, harness entry points, chat sessions
 yaaf/runtimes   harness, provider and model registries
 yaaf/core       data models, config, encryption, prices, shared logic
 yaaf/founder    the Founder: drafts a project from a conversation
+yaaf/plugins    factory plugins: registry, sandboxed hosts, the runner's broker, core's primitives
+packages/       yaaf_plugin_api: the plugin contract, its conformance suite and host program
 yaaf/rehearsal  `yaaf rehearse`: runs a project spec for $0
 yaaf/cli        the `yaaf` command
 web/            the dashboard (React + Vite)

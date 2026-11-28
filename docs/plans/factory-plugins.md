@@ -1104,3 +1104,60 @@ subject's accepted numbers:
   Removing the CSP stamp or `-S` each turns one red.
 - The PPC branch (`amazon-ppc-factory`) is superseded by the plugin and should
   not be merged.
+
+**Step 9 is built** (surfaces):
+
+- **MCP.** `catalog` takes `what: "kinds"` (the built-in modes and each offered
+  plugin kind, with its open modes, lead, crews and create fields).
+  `create_project` passes `kind`, `kind_mode` and `kind_fields` through the
+  same route and checks as the form. A new `plugin_spec` tool returns the whole
+  spec (`yaaf_plugin_api.spec`): API version, repo layout, manifest and view
+  schemas, the hook table, limits, the review envelope, the fixtures format,
+  and the requirement table. It is always returned whole, because a trimmed
+  spec would describe a plugin the install refuses. **Departure from §8.3:**
+  there is no `plugin_install` tool, and the install, list and report routes
+  stay withheld from MCP. Installing puts code on the whole box (decision
+  §11.1), so a model client is never the one to do it. `GET /admin/kinds` is
+  the one plugin route a model client reaches.
+- **The Founder** has a ninth read-only tool, `list_kinds`. Its draft schema
+  takes `kind`, `kind_mode` and `kind_fields`, and its prompt has one paragraph:
+  propose a listed kind when the brief is one, with the kind's fixed lead, and
+  never imitate an unlisted kind with a built-in mode. The test that pins its
+  tool count was raised from eight to nine on purpose, and still proves it has
+  no way to act.
+- **The CLI**: `yaaf plugins install | list | report | kinds | disable |
+  remove` over the REST routes, and `yaaf plugin check` / `yaaf plugin spec`
+  from the API package (also `python -m yaaf_plugin_api spec`). They are
+  documented in `docs/CLI.md`.
+- **The web app**:
+  - **Settings → Plugins** (instance admin): install from a URL and an optional
+    ref, versions with status and counts, each one's open requirements, disable
+    and remove, a rail state ("2 kinds ready", "1 ready · 1 failed"), and
+    polling while an install runs. The install box says the trust line.
+  - **New Project**: offered plugin kinds appear as cards beside the built-in
+    modes. Choosing one sets the built-in mode its shape behaves as, fixes the
+    lead, shows the kind's create fields, and sends `kind`, `kind_mode` and
+    `kind_fields`.
+  - **Project home**: the `kind_view` section, drawn by a generic renderer
+    (`web/src/ui/KindView.tsx`) from the eight components. Values are escaped
+    text, and links are the project's own deliverables or https only.
+  - **The header's kind label** names a plugin project by its kind and mode
+    ("Amazon PPC Factory · audit").
+- `/admin/kinds` now carries each kind's create fields, from its plugin, and
+  none when the plugin cannot be asked (creation then refuses, saying why).
+- **Sibling footprint.** Diffing Code Factory's `factory_phase` footprint
+  against the plugin kind's left two files:
+  - `web/src/ui/project.ts`, the kind label, now handled;
+  - `yaaf/server/factory_view.py`, Code Factory's own page model, which does
+    not apply.
+
+  The settings browser test's "every section opens" list includes Plugins.
+  The MCP `project` read tool rides the dashboard, so it carries `kind` and
+  `kind_view` with no change.
+- Attacks: `tests/selftest_invariants/test_plugin_surfaces.py` (6 tests). An
+  MCP client sees the kinds and the whole spec, and no tool installs. A plugin
+  project created over MCP gets the plugin's own refusals. The Founder's
+  `list_kinds` and draft schema. The CLI commands go through the routes.
+  `yaaf plugin check` exits 1 on a bad checkout.
+- Not built: a browser test that creates a plugin project through the form
+  (the demo seed installs no plugin), and the `yaaf plugin new` scaffold.

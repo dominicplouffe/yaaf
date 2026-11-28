@@ -71,14 +71,17 @@ MAX_DRILL_DAYS = 90
         "provider's lineup and every catalog model with whether it can be metered. "
         "`harnesses` lists what can drive a seat's model; name one in a team's "
         "`harness_overrides` only when the chairman asks for it — absent, a seat runs on "
-        "its credential's default."
+        "its credential's default. `kinds` lists what a project may be created as: the "
+        "built-in modes, and each factory plugin kind installed and offered here, with its "
+        "open modes, fixed lead, crews and create fields (pass `kind`, `kind_mode` and "
+        "`kind_fields` to `create_project`)."
     ),
     input_schema={
         "type": "object",
         "properties": {
             "what": {"type": "string",
                      "enum": ["roles", "crews", "credentials", "models", "harnesses",
-                              "providers"]},
+                              "providers", "kinds"]},
             "query": {"type": "string"},
             "category": {"type": "string",
                          "enum": ["leadership", "research", "build", "content",
@@ -107,11 +110,35 @@ def catalog(principal: Principal, session: Session, arguments: dict) -> dict:
         payload = list_models(session)
     elif what == "crews":
         payload = founder_tools.search_crews(session, query=arguments.get("query"))
+    elif what == "kinds":
+        payload = founder_tools.list_kinds(session)
     else:
         payload = founder_tools.search_roles(
             session, query=arguments.get("query"), category=arguments.get("category"),
             domain=arguments.get("domain"))
     return envelope.fit(payload, arguments.get("detail"))
+
+
+@register(
+    "plugin_spec",
+    scope="create",
+    description=(
+        "The factory plugin spec, as data, for writing a plugin that adds a new kind of "
+        "project (docs/plans/factory-plugins.md): the API version, the manifest and view "
+        "JSON Schemas, every hook with its arguments and what it returns, the conformance "
+        "requirements an install holds a plugin to, and the fixtures format. A plugin is "
+        "its own public GitHub repo; this install's instance admin installs it. Nothing "
+        "here installs anything."
+    ),
+    input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+)
+def plugin_spec(principal: Principal, session: Session, arguments: dict) -> dict:
+    """Always whole. A spec trimmed to fit a summary (three requirements of
+    thirty-four, a schema cut mid-way) would describe a plugin the install
+    refuses; the whole document is about 18 KB, inside the full budget."""
+    from yaaf_plugin_api.spec import spec
+
+    return envelope.fit(spec(), "full")
 
 
 @register(

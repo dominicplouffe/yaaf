@@ -278,6 +278,20 @@ Covered in [PROVIDERS.md](PROVIDERS.md).
 | `yaaf mcp-token mint NAME --scopes read` | A token for an MCP client. Scopes: `read`, `steer`, `create`, `configure`. |
 | `yaaf mcp-token list` / `revoke` | See and revoke client tokens |
 
+## Factory plugins
+
+New kinds of project, each from a public GitHub repo
+([the design](plans/factory-plugins.md)). Installing is the instance admin's.
+
+| Command | What it does |
+|---|---|
+| `yaaf plugins install https://github.com/OWNER/REPO --ref TAG` | Install at the commit the ref names now; waits for the build and the conformance suite, then prints what failed, if anything |
+| `yaaf plugins list` / `report PLUGIN VERSION` | What is installed, and one version's report |
+| `yaaf plugins kinds` | What a project may be created as here |
+| `yaaf plugins disable` / `remove PLUGIN VERSION` | Stop new projects choosing a version; remove one no project runs on |
+| `yaaf plugin check [PATH]` | Run the install's checks on a plugin checkout, before you push (`--static` for files only) |
+| `yaaf plugin spec` | The plugin spec as JSON |
+
 ## Libraries and Slack
 
 | Command | What it does |

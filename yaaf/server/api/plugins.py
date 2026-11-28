@@ -134,9 +134,29 @@ def kinds(session: Session = Depends(db)) -> dict:
     plugins = []
     for v in registry.offered(session):
         m = v.manifest or {}
+        fields = _create_fields(v)
         plugins.append({"kind": m.get("kind"), "label": m.get("kind_label"), "built_in": False,
                         "plugin": v.plugin_id, "version": v.version, "status": v.status,
                         "description": m.get("description"), "lead": m.get("lead"),
                         "crews": m.get("crews", []),
-                        "modes": [x for x in m.get("modes", []) if x.get("open")]})
+                        "modes": [x for x in m.get("modes", []) if x.get("open")],
+                        "fields": fields})
     return {"kinds": built_in + plugins}
+
+
+def _create_fields(version) -> list[dict]:
+    """The kind's create fields, as its plugin declares them, for the form, the
+    Founder and the MCP create tool. None offered when the plugin cannot be
+    asked: creation itself then refuses, saying why."""
+    from yaaf_plugin_api import hooks as api_hooks
+
+    from yaaf.plugins import host as H
+
+    manifest = registry.manifest_for(version)
+    if not manifest.create_fields:
+        return []
+    specs, _ = H.ask_or_fail_closed(registry.pool_for(version),
+                                    api_hooks.HookKey("create_fields"), [])
+    return [{"key": f.key, "type": f.type, "label": f.label, "help": f.help,
+             "required": f.required, "choices": list(f.choices), "default": f.default}
+            for f in specs or []]

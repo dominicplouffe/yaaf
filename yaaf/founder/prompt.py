@@ -147,6 +147,13 @@ is settled — none of them may be skipped:
     Create on Settings → Code Factory, which the ledger says. The team writes
     the deploy command and health URL itself, and he approves the command with
     the first release that runs it. Not yet: the goal's finish line says so.
+- **A factory plugin kind** — an install may offer kinds beyond the built-in
+  shapes, each a plugin its administrator installed (an Amazon PPC audit,
+  say). `list_kinds` says which. When the brief is one of them, propose it:
+  set `kind`, one of its open `kind_mode`s and its `kind_fields`, and leave
+  `mode` out (the kind decides it). Its lead is fixed (`ceo_role_slug` is
+  the kind's lead) and its crews are a starting roster. A kind not listed is
+  not installed here; say so rather than imitate it with a built-in mode.
 - **Access he says he will give** — when he says he will give the project
   access to something ("my WordPress login", "a Google Analytics service
   account", "my AWS account", "Beehiiv"), add one entry per service to the

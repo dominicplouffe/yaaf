@@ -2449,5 +2449,112 @@ app.registered_commands.sort(key=_place)
 for _group in app.registered_groups:
     _group.rich_help_panel = "Set up the install"
 
+plugins_cli = typer.Typer(
+    no_args_is_help=True,
+    help="Factory plugins: new kinds of project, installed from a public GitHub repo.")
+app.add_typer(plugins_cli, name="plugins")
+
+
+@plugins_cli.command("list")
+def plugins_list() -> None:
+    """Every installed plugin, its versions and their status (ready, pending, failed)."""
+    with _client() as client:
+        _show(client.get("/admin/plugins"))
+
+
+@plugins_cli.command("install")
+def plugins_install(
+    url: str = typer.Argument(..., help="https://github.com/<owner>/<repo>"),
+    ref: str = typer.Option(None, "--ref", help="A branch, tag or commit; the default "
+                            "branch when omitted. Pinned to the commit it names now."),
+    wait: bool = typer.Option(True, "--wait/--no-wait",
+                              help="Wait for the build and the conformance suite"),
+) -> None:
+    """Install a plugin (the instance admin only). The answer comes once the commit
+    is fetched and checked; the build, the conformance suite and the plugin's own
+    tests then run, and the version ends ready or failed with its report."""
+    import time
+
+    with _client() as client:
+        response = client.post("/admin/plugins", json={"url": url, **({"ref": ref} if ref
+                                                                       else {})})
+        if response.status_code != 200 or not wait:
+            _show(response)
+            return
+        body = response.json()
+        path = f"/admin/plugins/{body['plugin']}/versions/{body['version']}"
+        deadline = time.monotonic() + 1800
+        while body.get("status") == "installing" and time.monotonic() < deadline:
+            time.sleep(2)
+            body = client.get(path).json()
+        _report(body)
+
+
+@plugins_cli.command("report")
+def plugins_report(plugin: str, version: str) -> None:
+    """One version's conformance report: every requirement, and why one failed."""
+    with _client() as client:
+        response = client.get(f"/admin/plugins/{plugin}/versions/{version}")
+        if response.status_code != 200:
+            _show(response)
+            return
+        _report(response.json())
+
+
+def _report(body: dict) -> None:
+    typer.echo(f"{body.get('plugin')}@{body.get('version')}: {body.get('status')}")
+    for r in (body.get("report") or {}).get("results", []):
+        if r.get("status") in ("fail", "pending"):
+            typer.echo(f"  {r['status']:<7} {r['id']:<11} {r['text']}")
+            for why in r.get("why") or []:
+                typer.echo(f"            ↳ {why}")
+
+
+@plugins_cli.command("disable")
+def plugins_disable(plugin: str, version: str) -> None:
+    """Stop new projects choosing a version. Projects on it keep running."""
+    with _client() as client:
+        _show(client.post(f"/admin/plugins/{plugin}/versions/{version}/disable"))
+
+
+@plugins_cli.command("remove")
+def plugins_remove(plugin: str, version: str) -> None:
+    """Remove a version and its code. Refused while a project runs on it."""
+    with _client() as client:
+        _show(client.delete(f"/admin/plugins/{plugin}/versions/{version}"))
+
+
+@plugins_cli.command("kinds")
+def plugins_kinds() -> None:
+    """What a project may be created as here: built-in modes and plugin kinds."""
+    with _client() as client:
+        _show(client.get("/admin/kinds"))
+
+
+plugin_cli = typer.Typer(no_args_is_help=True, help="Writing a factory plugin.")
+app.add_typer(plugin_cli, name="plugin")
+
+
+@plugin_cli.command("check")
+def plugin_check(
+    path: str = typer.Argument(".", help="The plugin's checkout"),
+    full: bool = typer.Option(True, "--full/--static",
+                              help="Run the conformance suite and the plugin's tests too"),
+) -> None:
+    """Check a plugin checkout against the spec, on this machine: what the install
+    will check, before you push. Exits 1 when a requirement fails."""
+    from yaaf_plugin_api.__main__ import main as check_main
+
+    raise typer.Exit(check_main(["check", path, *(["--full"] if full else [])]))
+
+
+@plugin_cli.command("spec")
+def plugin_spec() -> None:
+    """The plugin spec as JSON: schemas, hooks, requirements, fixtures format."""
+    from yaaf_plugin_api.__main__ import main as check_main
+
+    raise typer.Exit(check_main(["spec"]))
+
+
 if __name__ == "__main__":
     app()
