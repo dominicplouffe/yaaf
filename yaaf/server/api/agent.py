@@ -3421,7 +3421,9 @@ async def data_source_gateway(
         return Response(status_code=202)  # a notification: nothing to answer
     listing_all = (request.headers.get(datasource_tools.LISTING_HEADER) or "") == "all"
     run_id, agent_id, project_id = ctx.run.id, ctx.agent.id, ctx.project.id
-    session.commit()
+    # On a thread: a commit can wait on a row lock, and a wait on the event
+    # loop stops every request on the server (see webhooks._raw_body).
+    await anyio.to_thread.run_sync(session.commit)
     session.close()
     answer = await anyio.to_thread.run_sync(
         _gateway_answer, run_id, agent_id, project_id, source, message,
