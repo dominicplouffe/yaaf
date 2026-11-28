@@ -153,3 +153,31 @@ def test_yaaf_plugin_check_is_the_api_packages_own_check(tmp_path):
     assert out.exit_code == 1
     out = runner.invoke(cli.app, ["plugin", "spec"])
     assert out.exit_code == 0 and json.loads(out.output)["api_version"] == "1.0"
+
+
+def test_a_founder_draft_of_a_plugin_kind_is_created_as_drafted(client, installed):
+    """The Founder's draft names the kind and leaves the lead and the mode out,
+    as its prompt says. The draft defaulted the lead to "ceo", which the kind
+    refuses, so a quick founding failed at Create with nothing left to fix it.
+    Now the lead is the endpoint's to fill, and the draft is checked against
+    the kind's rules while the Founder can still fix it."""
+    from yaaf.founder import tools
+
+    make_project(client, slug="seed")
+    seed_role(client, "grant-lead", is_ceo=True)
+    spec = {k: v for k, v in GOOD_SPEC.items() if k not in ("mode", "ceo_role_slug")}
+    draft = tools.as_bundle({**spec, "slug": "garden", "kind": KIND,
+                             "kind_fields": {"funder": "Example Foundation"}})
+    assert "ceo_role_slug" not in draft["project"]
+    with db_session() as s:
+        assert tools.validate(draft) + tools.kind_problems(draft["project"], s) == []
+        missing = tools.as_bundle({**spec, "kind": KIND, "kind_fields": {}})["project"]
+        assert any("funder" in p for p in tools.kind_problems(missing, s))
+        wrong_lead = {**draft["project"], "ceo_role_slug": "ceo"}
+        assert any("led by its plugin's lead" in p for p in tools.kind_problems(wrong_lead, s))
+    r = client.post("/admin/projects", headers=ADMIN,
+                    json={**draft["project"], "chairman_email": "chair@example.com"})
+    assert r.status_code == 200, r.text
+    with db_session() as s:
+        row = s.get(Project, r.json()["id"])
+        assert (row.kind, row.kind_mode) == (KIND, "draft")

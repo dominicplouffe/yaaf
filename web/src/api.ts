@@ -1773,6 +1773,10 @@ export interface ProjectBundle {
     billing_mode: string;
     /** Absent from setup files exported before project shapes existed. */
     mode?: string;
+    /** A factory plugin's kind, its mode and its New Project answers. */
+    kind?: string | null;
+    kind_mode?: string | null;
+    kind_fields?: Record<string, unknown>;
     controlled_domains: string[];
     /** The repo evidence webhooks attest against. */
     github_repo?: string | null;

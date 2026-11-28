@@ -661,6 +661,13 @@ export default function NewProject() {
     // teams is read, not watched: an edit must never re-fill the crew.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [factory, factoryStart, crews, roles, bundle, chosenKind]);
+  // A loaded draft that names a plugin kind: its lead and shape, once the
+  // kinds have loaded (the draft can arrive first).
+  useEffect(() => {
+    if (!bundle || !chosenKind) return;
+    if (chosenKind.lead) setCeoSlug(chosenKind.lead);
+    setMode(chosenKind.modes?.[0]?.shape === "runs_on_cycles" ? "operate" : "deliver");
+  }, [bundle, chosenKind]);
   // Access he promised while founding: one card each, tested here before the
   // project exists, stored on its promises once it does.
   const [promiseCards, setPromiseCards] = useState<PromiseCard[]>([]);
@@ -1096,7 +1103,14 @@ export default function NewProject() {
       setSlug(dedupedSlug(p.slug));
       setGoal(p.goal);
       setBillingMode(p.billing_mode);
-      if (p.mode) {
+      // A plugin kind: a Founder draft names it and leaves mode out (the kind
+      // decides it). Unread, the draft landed here as a plain project and was
+      // posted as one, or was told it predated project shapes.
+      setKindChoice(p.kind ?? null);
+      setKindFields(p.kind ? { ...(p.kind_fields ?? {}) } : {});
+      if (p.kind) {
+        setModeNotice(null);
+      } else if (p.mode) {
         setMode(p.mode);
         setModeNotice(null);
         if (p.mode === "code_factory") {
