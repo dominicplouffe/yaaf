@@ -69,12 +69,21 @@ def import_plugin(root: Path, module_ref: str):
     module_name, _, attr = module_ref.partition(":")
     paths = [str(root / "src"), str(root)]
     saved = list(sys.path)
+    top = module_name.split(".")[0]
+
+    def forget() -> None:
+        # Two checkouts can share a package name (two versions of one plugin,
+        # two scaffolds): without this the second check imports the first's code.
+        for name in [n for n in sys.modules if n == top or n.startswith(top + ".")]:
+            del sys.modules[name]
+    forget()
     sys.path[:0] = paths
     try:
         module = importlib.import_module(module_name)
         return getattr(module, attr)
     finally:
         sys.path[:] = saved
+        forget()
 
 
 def check(root: str | Path, *, load_module: bool = True) -> Report:

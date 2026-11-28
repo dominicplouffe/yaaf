@@ -1161,3 +1161,27 @@ subject's accepted numbers:
   `yaaf plugin check` exits 1 on a bad checkout.
 - Not built: a browser test that creates a plugin project through the form
   (the demo seed installs no plugin), and the `yaaf plugin new` scaffold.
+
+**The scaffold is built** (`yaaf plugin new`, `python -m yaaf_plugin_api new`;
+`yaaf_plugin_api/scaffold.py`):
+
+- It writes a repo that already passes the spec: the manifest, a stub hook per
+  capability asked for, fixtures for every gate, an attack test per gate, and
+  only the optional files the flags ask for (a lead role, a view, a recorded
+  data source).
+- Every stub behaves the way the suite requires. The placeholder gate accepts a
+  JSON object with a non-empty `title` *and* `summary` (a title alone would
+  accept the fuzz corpus's unicode case). The data action catches `ToolError`.
+  The view fills its view.
+- A combination of flags that cannot work is refused before a file is written,
+  and a scaffold never writes into a non-empty directory.
+- Attacks: `tests/selftest_invariants/test_plugin_scaffold.py`. Six flag
+  combinations each pass `check --full` with only MIN-02/03/07 pending, and the
+  plugin's own tests pass. The everything-on scaffold installs into yaaf and
+  becomes `ready`, so its lead role passes the library's real rules.
+- Building it found two bugs in the checker, both fixed:
+  - `report.import_plugin` reused a cached module, so two checkouts sharing a
+    package name were checked as the first one. It now clears that package from
+    `sys.modules` before and after importing, with a test that fails without it.
+  - A plugin declaring no hooks was left `pending` on every hook requirement;
+    with nothing to ask, those requirements now pass and say so.

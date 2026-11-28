@@ -289,6 +289,7 @@ New kinds of project, each from a public GitHub repo
 | `yaaf plugins list` / `report PLUGIN VERSION` | What is installed, and one version's report |
 | `yaaf plugins kinds` | What a project may be created as here |
 | `yaaf plugins disable` / `remove PLUGIN VERSION` | Stop new projects choosing a version; remove one no project runs on |
+| `yaaf plugin new PATH --id ID [--artifact NAME --review --pages --view --lead ...]` | Write a new plugin repo that already passes the full conformance suite: the manifest, a stub hook per capability, fixtures and an attack test per gate |
 | `yaaf plugin check [PATH]` | Run the install's checks on a plugin checkout, before you push (`--static` for files only) |
 | `yaaf plugin spec` | The plugin spec as JSON |
 

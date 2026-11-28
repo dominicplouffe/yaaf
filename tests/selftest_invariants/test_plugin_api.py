@@ -130,7 +130,6 @@ def test_the_example_plugin_is_built_in_the_shape_the_spec_requires():
     assert decided["EXT-CYC-1"] == "n/a"  # it declares no mode that runs on cycles
     sys.path.insert(0, str(EXAMPLE / "tests"))
     try:
-        report.import_plugin(EXAMPLE, "grant_factory:plugin")
         from test_application_gate import test_a_budget_line_with_no_rule_is_refused
         test_a_budget_line_with_no_rule_is_refused()
     finally:
@@ -215,7 +214,11 @@ def _plugin_from_example(**overrides):
 
 @pytest.fixture(scope="module", autouse=True)
 def _example_importable():
-    report.import_plugin(EXAMPLE, "grant_factory:plugin")
+    """The example's package on the path for this file's tests, which import it
+    by name. (`report.import_plugin` leaves nothing behind, on purpose.)"""
+    sys.path.insert(0, str(EXAMPLE / "src"))
+    yield
+    sys.path.remove(str(EXAMPLE / "src"))
 
 
 def test_a_declared_capability_with_no_hook_is_named():

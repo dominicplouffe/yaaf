@@ -19,6 +19,12 @@ What is here (API 1.0):
 | `yaaf_plugin_api.fixtures`, `.corpus` | What the suite asks with |
 | `schema/*.json` | JSON Schemas for the manifest and the view, for editors and AI authors |
 
+Start a new plugin (the result already passes `check --full`):
+
+```bash
+python -m yaaf_plugin_api new my-plugin --id my-plugin --artifact report.json --review --view --lead
+```
+
 Check a plugin checkout:
 
 ```bash

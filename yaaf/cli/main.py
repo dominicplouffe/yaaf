@@ -2548,6 +2548,19 @@ def plugin_check(
     raise typer.Exit(check_main(["check", path, *(["--full"] if full else [])]))
 
 
+@plugin_cli.command("new", context_settings={"allow_extra_args": True,
+                                            "ignore_unknown_options": True})
+def plugin_new(ctx: typer.Context, path: str = typer.Argument(..., help="A new directory")) -> None:
+    """Write a new plugin repo that already passes the spec: the manifest, a
+    stub hook per capability, fixtures and an attack test per gate. Flags as
+    `python -m yaaf_plugin_api new --help`: --id ID (required), --artifact NAME,
+    --review, --pages, --brief, --plan-gate, --completion-gate, --view, --lead,
+    --create-fields, --receipts, --action NAME --action-tool TOOL, --setup-step KEY."""
+    from yaaf_plugin_api.__main__ import main as api_main
+
+    raise typer.Exit(api_main(["new", path, *ctx.args]))
+
+
 @plugin_cli.command("spec")
 def plugin_spec() -> None:
     """The plugin spec as JSON: schemas, hooks, requirements, fixtures format."""

@@ -424,6 +424,11 @@ def run(root: str | Path, manifest: Manifest, call: Call, *,
         elif rid in ("MIN-15",) and not manifest.state:
             out[rid] = ("pass", ["the plugin keeps no state"])
         elif BY_ID[rid].checked_by == "harness" or rid in ("MIN-10", "MIN-12"):
-            # Decided by this run: nothing failed, and what ran, ran clean.
-            out[rid] = ("pass", []) if r.checked else ("pending", ["nothing was asked"])
+            # Decided by this run: nothing failed, and what ran, ran clean. A
+            # plugin that declares no hooks has nothing to ask, which is a pass.
+            from yaaf_plugin_api.hooks import expected
+
+            out[rid] = ("pass", []) if r.checked else (
+                ("pass", ["the plugin declares no hooks, so there is nothing to ask"])
+                if not expected(manifest) else ("pending", ["nothing was asked"]))
     return out
