@@ -41,6 +41,9 @@ dev = [
     # The Code Factory health ratchet measures complexity with lizard in the
     # sandbox image; its tests run the same tool on a real checkout.
     "lizard==1.17.10",
+    # The plugin API publishes JSON Schemas beside its Python validators; the
+    # suite holds the two to the same verdict (test_plugin_api.py).
+    "jsonschema>=4.18",
     # The deployment tests read deploy/docker-compose.yml as data.
     "pyyaml>=6",
     # The sandbox's Messages API client (deploy/sandbox/Dockerfile), never the
@@ -84,6 +87,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
+# The plugin API ships inside yaaf (core imports it to talk to plugin hosts) and
+# is also its own distribution (packages/yaaf_plugin_api/pyproject.toml) for
+# plugin authors, who should not have to install all of yaaf to write one.
+where = [".", "packages/yaaf_plugin_api/src"]
 include = ["yaaf*"]
 
 # The goal grammar is read at runtime by the Founder's prompt and by the
@@ -93,6 +100,7 @@ include = ["yaaf*"]
 # The dated price snapshot an install with no route to the price feed imports
 # (yaaf.core.price_feed).
 "yaaf.runtimes" = ["*.json"]
+"yaaf_plugin_api" = ["schema/*.json", "py.typed"]
 
 [tool.ruff]
 line-length = 100
@@ -109,6 +117,10 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The plugin API is its own package (packages/yaaf_plugin_api) with no
+# dependencies, versioned apart from yaaf. The suite imports it from the
+# checkout, so CI and a fresh clone need no second install to test it.
+pythonpath = ["packages/yaaf_plugin_api/src"]
 # The one paid test in the repo is opt-in. CONTRIBUTING and CLAUDE.md both
 # document `pytest -n auto` as offline and $0, and it is — this marker is what
 # keeps that true on a developer box that has ANTHROPIC_API_KEY exported, which

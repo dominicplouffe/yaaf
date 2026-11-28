@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yaaf.dev/schema/plugin-view/1.json",
+  "title": "yaaf factory plugin view (ui/view.json), version 1",
+  "description": "The project-home section a plugin declares. Each section is a component the dashboard already draws; the plugin's view hook fills it with data (yaaf_plugin_api.view).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "sections"],
+  "properties": {
+    "version": {"const": 1},
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "component", "title"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$"},
+          "component": {"enum": ["status", "metric", "markdown", "link", "artifact", "checklist", "table", "coverage"]},
+          "title": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "\\S"},
+          "help": {"type": "string"}
+        }
+      }
+    }
+  }
+}

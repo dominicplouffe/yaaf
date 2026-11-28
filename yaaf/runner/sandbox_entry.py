@@ -486,6 +486,37 @@ async def t_change_open(args):
         "title": args["title"], "summary": args["summary"]}))
 
 
+@tool("plugin_describe",
+      "Factory plugin projects only. What this project's plugin is: its kind and mode, "
+      "what the connected data can reach, which files it gates, how a review of them must "
+      "be written, which files the platform writes, and its files and actions.", {})
+async def t_plugin_describe(args):
+    return _text(_call("GET", "/agent/plugin/describe"))
+
+
+@tool("plugin_file",
+      "Factory plugin projects only. Writes one of the plugin's declared files (a kit of "
+      "the arithmetic every seat should share) into your workspace, verbatim.",
+      {"name": str})
+async def t_plugin_file(args):
+    result = _call("GET", f"/agent/plugin/file/{args['name']}")
+    body = result.get("body") if isinstance(result, dict) else None
+    if not (isinstance(body, dict) and isinstance(body.get("source"), str)):
+        return _text(result)
+    target = WORKSPACE / Path(body.get("filename") or f"{args['name']}.py").name
+    target.write_text(body["source"])
+    return _text({"status": 200, "body": {"path": str(target.relative_to(WORKSPACE))}})
+
+
+@tool("plugin_action",
+      "Factory plugin projects only. Runs one of the plugin's declared data actions: the "
+      "platform pulls from the connected data source (only tools the chairman allows) and "
+      "stores what it computes as its own files, which you read with artifact_get.",
+      {"name": str})
+async def t_plugin_action(args):
+    return _text(_call("POST", f"/agent/plugin/action/{args['name']}", {}))
+
+
 @tool("changes_list",
       "Code Factory only. Open changes and every gate on each: serves, size, checks, "
       "review.", {})
@@ -1980,7 +2011,11 @@ async def t_data_fetch(args):
     resolved.write_bytes(data)
 
     preview = body[:DATA_FETCH_PREVIEW_CHARS]
+    # A factory plugin's projects record each read; the receipt is what a claim
+    # cites to say which pull its numbers came from.
+    receipt = _meta_of(result).get("yaaf/receipt")
     return _text({"status": 200, "body": {
+        **({"receipt": receipt} if receipt else {}),
         "path": str(resolved.relative_to(workspace)),
         "bytes": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),
@@ -2008,6 +2043,7 @@ ALL_TOOLS = [
     t_task_block, t_task_unblock, t_task_kill,
     t_change_open, t_changes_list, t_change_review, t_scenario_add, t_scenario_retire, t_scenarios_list,
     t_release_propose, t_environment_set, t_releases_list, t_incident_postmortem,
+    t_plugin_describe, t_plugin_file, t_plugin_action,
     t_requirement_propose, t_requirement_depends_on, t_requirement_recheck,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_ask_chairman, t_ask_close,

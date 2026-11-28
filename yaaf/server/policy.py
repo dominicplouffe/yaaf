@@ -1450,6 +1450,15 @@ def delivery_outstanding(session: Session, project: Project) -> list[str]:
     open_tasks = open_top_level_tasks(session, project.id)
     if open_tasks:
         outstanding.append(f"{len(open_tasks)} task(s) still open")
+    # A factory plugin that declares a review cannot complete without a passing
+    # one of its latest subject: core holds that, so no plugin can forget it.
+    from yaaf.plugins import primitives
+
+    outstanding += primitives.outstanding(session, project)
+    if shape.is_plugin_kind(project):
+        from yaaf.plugins import points
+
+        outstanding += points.completion_owed(session, project)
     return outstanding
 
 
@@ -1855,6 +1864,12 @@ def evaluate_plan(session: Session, project: Project, cons: ConstitutionDoc) -> 
             "packages, advisories, licences, leaked secrets, runtimes out of support, "
             "and 90 days of delivery — then propose the charter from it.")
         return missing
+    if shape.is_plugin_kind(project):
+        # A factory plugin's plan gate: what its kind owes before a plan can
+        # hold (no data to work from, say). It only adds to what is missing.
+        from yaaf.plugins import points
+
+        missing += points.plan_owed(session, project)
     scope = scope_requirements(session, project.id)
     accepted = [r for r in scope if r.status not in (RequirementStatus.PROPOSED,)]
     live = [r for r in accepted if r.status not in CLOSED_REQUIREMENT_STATUSES]

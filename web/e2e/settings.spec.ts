@@ -9,7 +9,7 @@ import { failOnPageErrors } from "./desk";
 const SECTIONS: [rail: RegExp, heading: string][] = [
   [/^Providers/, "Providers"], [/^Models/, "Models"], [/^Model prices/, "Model prices"],
   [/^Spend/, "Spend"], [/^Web search/, "Web search"], [/^Founder/, "Founder"], [/^Slack/, "Slack"],
-  [/^People/, "People"], [/^Account/, "Account"],
+  [/^People/, "People"], [/^Plugins/, "Plugins"], [/^Account/, "Account"],
 ];
 
 test("settings lands on what needs you, and every section opens", async ({ page }) => {

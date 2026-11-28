@@ -278,6 +278,59 @@ Covered in [PROVIDERS.md](PROVIDERS.md).
 | `yaaf mcp-token mint NAME --scopes read` | A token for an MCP client. Scopes: `read`, `steer`, `create`, `configure`. |
 | `yaaf mcp-token list` / `revoke` | See and revoke client tokens |
 
+## Factory plugins
+
+New kinds of project, each one installed from a public GitHub repo. To run
+plugins or write one, read [PLUGINS.md](PLUGINS.md). To hand plugin work to an
+AI agent, send it [PLUGIN_AGENT_BRIEF.md](PLUGIN_AGENT_BRIEF.md).
+
+### Running them (`yaaf plugins`)
+
+Installing, disabling and removing are for the instance admin only. Anyone
+signed in can list plugins and read reports.
+
+| Command | What it does |
+|---|---|
+| `yaaf plugins install https://github.com/OWNER/REPO [--ref REF] [--no-wait]` | Install the commit that `--ref` (a branch, tag or commit; the default branch when you leave it out) names right now. Waits for the dependency build, the conformance suite and the plugin's own tests, then prints `ready` or the requirements that failed. `--no-wait` returns once the commit is fetched |
+| `yaaf plugins list` | Each installed plugin and its versions, with status |
+| `yaaf plugins report PLUGIN VERSION` | One version's conformance report, one line per requirement |
+| `yaaf plugins kinds` | What a project can be created as on this box: the built-in modes, then each plugin kind that can be chosen, with its open modes, lead, crews and New Project fields |
+| `yaaf plugins disable PLUGIN VERSION` | New projects can no longer choose this version. Projects already on it keep running |
+| `yaaf plugins remove PLUGIN VERSION` | Delete a version. Refused while any project runs on it |
+
+### Writing them (`yaaf plugin`)
+
+These run on your machine, against a checkout, and need no server. Outside a
+yaaf checkout, run the same commands as `python -m yaaf_plugin_api ...`.
+
+| Command | What it does |
+|---|---|
+| `yaaf plugin new PATH --id ID [flags]` | Write a new plugin repo that already passes the full conformance suite: the manifest, a stub hook for each capability, fixtures, an attack test for each gate, and `AGENTS.md`. Refuses a directory that is not empty, or flags that cannot work together |
+| `yaaf plugin check [PATH]` | Run the install's checks on a checkout: the manifest and layout, the conformance suite in a local host, and your `tests/`. `--static` checks the files and hooks only. Exits 1 when a requirement fails |
+| `yaaf plugin spec` | The contract as JSON: the repo layout, the schemas, every hook, the limits, the review envelope, the fixture format and every requirement |
+
+Flags for `yaaf plugin new`:
+
+| Flag | Adds |
+|---|---|
+| `--name TEXT` | The display name (default: from the id) |
+| `--kind KEY` | The kind key (default: the id with `-` changed to `_`) |
+| `--artifact NAME.json` | A gated artifact with its `check_artifact` hook. Repeatable |
+| `--review` | A review of the first artifact, `<stem>-review.json` |
+| `--pages` | A platform page, `<stem>.md`, rendered from the first artifact |
+| `--brief` | A `brief` hook, which adds this kind's guidance to every seat's brief |
+| `--plan-gate`, `--completion-gate` | A gate on the plan or on completion |
+| `--view` | A project-home section, `ui/view.json`, with its `view` hook |
+| `--lead` | A fixed lead role, `roles/<id>-lead.json` |
+| `--create-fields` | New Project questions, with `create_fields` and `validate_create` |
+| `--receipts` | Receipts for data-source reads, with `fields_of_read` |
+| `--action NAME --action-tool TOOL` | A platform-run data action that calls TOOL |
+| `--setup-step KEY` | A setup checklist step |
+
+`python -m yaaf_plugin_api check` also takes `--json` (the report as data, for
+CI or an agent) and `--no-import` (files only, without importing the
+plugin's code).
+
 ## Libraries and Slack
 
 | Command | What it does |

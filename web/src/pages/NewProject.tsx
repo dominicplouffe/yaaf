@@ -9,7 +9,7 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import "./newproject.css";
-import { ConstitutionField, CrewSummary, get, McpServerEntry, post, ProjectBundle, put,
+import { ConstitutionField, CrewSummary, get, McpServerEntry, post, ProjectBundle, ProjectKind, put,
   RehearsalReport, RoleSummary, SlackProvision } from "../api";
 import Drill from "../drill";
 import { BLANK_DRAFT, PromiseCard, PromiseDraft, PromisedSection, storePromised } from "../credentialNeeds";
@@ -415,6 +415,33 @@ export default function NewProject() {
     get<typeof modelTable>("/admin/settings/model-prices").then(setModelTable).catch(() => {});
   }, []);
   const [mode, setMode] = useState("explore");
+  // A factory plugin's kind, when one is chosen: the card the chairman picked.
+  // `mode` above is then the built-in shape that kind's mode behaves as, so the
+  // rest of this form draws what it would for that shape (docs/plans/
+  // factory-plugins.md §8.5). Offered kinds come from the server's list.
+  const [kinds, setKinds] = useState<ProjectKind[]>([]);
+  const [kindChoice, setKindChoice] = useState<string | null>(null);
+  const [kindFields, setKindFields] = useState<Record<string, unknown>>({});
+  useEffect(() => {
+    get<{ kinds: ProjectKind[] }>("/admin/kinds")
+      .then((r) => setKinds(r.kinds.filter((k) => !k.built_in))).catch(() => setKinds([]));
+  }, []);
+  const chosenKind = kinds.find((k) => k.kind === kindChoice) ?? null;
+  const pluginLead = chosenKind?.lead ?? null;
+  const kindMode = chosenKind?.modes?.[0]?.key;
+  function pickKind(value: string) {
+    const k = kinds.find((x) => x.kind === value);
+    if (!k) {
+      setKindChoice(null);
+      setMode(value);
+      return;
+    }
+    setKindChoice(value);
+    setMode(k.modes?.[0]?.shape === "runs_on_cycles" ? "operate" : "deliver");
+    setKindFields(Object.fromEntries((k.fields ?? []).filter((f) => f.default !== null
+      && f.default !== undefined).map((f) => [f.key, f.default])));
+    if (k.lead) setCeoSlug(k.lead);
+  }
   // Set when a loaded setup file could not answer the shape question itself —
   // the one prefill that must never be guessed silently, because a project's
   // mode is frozen at creation and Explore hides the Plan tab by design.
@@ -1304,8 +1331,8 @@ export default function NewProject() {
     setDrillError(null);
     setDrill(null);
     try {
-      const chosenCeo = factory ? FACTORY_LEAD
-        : bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
+      const chosenCeo = factory ? FACTORY_LEAD : pluginLead
+        ?? bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
       if (!chosenCeo) throw new Error("Pick a CEO role first.");
       // Role definitions a fresh library lacks travel with the spec, so the
       // drill can resolve them without anything being written here.
@@ -1338,8 +1365,8 @@ export default function NewProject() {
   /** Every seat on the form and the model it would run on — its role's, or
       the override a setup file carries. */
   function seatModels(): { who: string; model: string }[] {
-    const chosenCeo = factory ? FACTORY_LEAD
-        : bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
+    const chosenCeo = factory ? FACTORY_LEAD : pluginLead
+        ?? bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
     const ceoModel = bundle?.project.ceo_model_override
       ?? roles.find((r) => r.slug === chosenCeo)?.model ?? "";
     const out = [{ who: "the CEO", model: ceoModel }];
@@ -1372,6 +1399,9 @@ export default function NewProject() {
           ...(bundle?.project.credentials_promised?.length
             ? { credentials_promised: bundle.project.credentials_promised } : {}),
           mode,
+          ...(chosenKind ? { kind: chosenKind.kind, kind_mode: kindMode,
+            kind_fields: Object.fromEntries(Object.entries(kindFields)
+              .filter(([, v]) => v !== undefined && v !== "")) } : {}),
           ...(mode === "explore" && exploreDeadline
             ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
           ...(mode === "code_factory" ? { factory_start: factoryStart } : {}),
@@ -1560,8 +1590,8 @@ export default function NewProject() {
       }
       // The file's choice wins when one was loaded — its teams were designed
       // around that CEO — otherwise the chairman's.
-      const chosenCeo = factory ? FACTORY_LEAD
-        : bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
+      const chosenCeo = factory ? FACTORY_LEAD : pluginLead
+        ?? bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
       if (!chosenCeo) throw new Error("No CEO role in the library — create one on the Roles page first.");
       const body = projectBody(chosenCeo);
       const created = await post<{
@@ -1948,9 +1978,45 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
 
         <div className="card" style={{ marginBottom: 10 }}>
           <label className="field">What kind of project is this?</label>
-          <Cards label="What kind of project is this?" value={mode}
-            onPick={(value) => { setMode(value); setModeNotice(null); }}
-            options={MODES.map((m) => ({ value: m.value, label: m.label, line: m.blurb }))} />
+          <Cards label="What kind of project is this?" value={kindChoice ?? mode}
+            onPick={(value) => { pickKind(value); setModeNotice(null); }}
+            options={[...MODES.map((m) => ({ value: m.value as string, label: m.label, line: m.blurb })),
+              ...kinds.map((k) => ({ value: k.kind, label: k.label,
+                line: k.description ?? `A factory plugin (${k.plugin}).` }))]} />
+          {chosenKind && (
+            <div className="np-kind" style={{ marginTop: 10 }}>
+              <p className="help">A factory plugin: <code>{chosenKind.plugin}</code> at{" "}
+                <code>{(chosenKind.version ?? "").slice(0, 12)}</code>. Its rules are pinned to
+                this version for the life of the project.</p>
+              {(chosenKind.fields ?? []).map((f) => (
+                <div key={f.key} style={{ marginTop: 8 }}>
+                  <label className="field" htmlFor={`np-kf-${f.key}`}>
+                    {f.label}{f.required ? "" : " (optional)"}</label>
+                  {f.type === "enum" ? (
+                    <select id={`np-kf-${f.key}`} value={String(kindFields[f.key] ?? "")}
+                      onChange={(e) => setKindFields({ ...kindFields, [f.key]: e.target.value })}>
+                      <option value="">—</option>
+                      {f.choices.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  ) : f.type === "boolean" ? (
+                    <input id={`np-kf-${f.key}`} type="checkbox" checked={!!kindFields[f.key]}
+                      onChange={(e) => setKindFields({ ...kindFields, [f.key]: e.target.checked })} />
+                  ) : f.type === "text" ? (
+                    <textarea id={`np-kf-${f.key}`} value={String(kindFields[f.key] ?? "")}
+                      onChange={(e) => setKindFields({ ...kindFields, [f.key]: e.target.value })} />
+                  ) : (
+                    <input id={`np-kf-${f.key}`} value={String(kindFields[f.key] ?? "")}
+                      type={f.type === "number" || f.type === "integer" ? "number" : "text"}
+                      onChange={(e) => setKindFields({ ...kindFields, [f.key]:
+                        f.type === "number" || f.type === "integer"
+                          ? (e.target.value === "" ? undefined : Number(e.target.value))
+                          : e.target.value })} />
+                  )}
+                  {f.help && <p className="help">{f.help}</p>}
+                </div>
+              ))}
+            </div>
+          )}
           {modeNotice && (
             <p className="help" style={{ marginTop: 10, color: "var(--warning)" }}>
               {modeNotice}
@@ -2099,6 +2165,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 <> This install's library has no Tech Lead yet: run{" "}
                   <code>deploy/update_single_server.sh --no-pull</code>.</>
               )}
+            </p>
+          ) : pluginLead ? (
+            <p style={{ margin: 0 }}>
+              <strong>{roles.find((r) => r.slug === pluginLead)?.name ?? pluginLead}</strong>
+              {" "}— a {chosenKind?.label} project is always led by its plugin's lead.
             </p>
           ) : (
             <CeoPicker roles={roles.filter((r) => r.slug !== FACTORY_LEAD)}

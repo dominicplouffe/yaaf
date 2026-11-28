@@ -45,10 +45,10 @@ FETCH_TIMEOUT_S = 20.0
 #: has to name.
 SERVER = "founder"
 
-TOOL_NAMES = ("search_roles", "search_crews", "read_source",
+TOOL_NAMES = ("search_roles", "search_crews", "list_kinds", "read_source",
               "grade_goal", "list_credentials", "propose_bundle", "rehearse", "ask")
 
-#: What the CLI is allowed to run. Only these eight — no Bash, no file writes,
+#: What the CLI is allowed to run. Only these nine — no Bash, no file writes,
 #: no web tools of its own. The Founder drafts a project and asks about it; it
 #: does not act on the world, and the one tool that touches the outside
 #: (`read_source`) reads and labels what it reads as data.
@@ -118,6 +118,14 @@ def search_crews(session: Session, *, query: str | None = None) -> dict:
         out = [c for c in out
                if needle in c["name"].lower() or needle in (c["outcome"] or "").lower()]
     return {"crews": out, "count": len(out)}
+
+
+def list_kinds(session: Session) -> dict:
+    """What a project may be created as here: the built-in modes, and each
+    factory plugin kind installed and offered on this box (GET /admin/kinds)."""
+    from yaaf.server.api.plugins import kinds
+
+    return kinds(session)
 
 
 def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
@@ -298,6 +306,13 @@ PROPOSE_SCHEMA = {
                 "goal": {"type": "string"},
                 "mode": {"type": "string",
                          "enum": ["explore", "deliver", "operate", "code_factory"]},
+                "kind": {"type": "string",
+                         "description": "a factory plugin kind from list_kinds, "
+                                        "plugin:<key>; omit mode when it is set"},
+                "kind_mode": {"type": "string",
+                              "description": "one of the kind's open modes"},
+                "kind_fields": {"type": "object",
+                                "description": "the kind's create fields, by key"},
                 "factory_start": {"type": "string", "enum": ["new", "repo", "repo_build"],
                                   "description": "code_factory only: build from "
                                   "nothing, adopt the repo named in `repo` to keep it, "
@@ -476,7 +491,7 @@ class FounderTools(NamedTuple):
 
 def build_server(session: Session, state: dict, env: dict[str, str],
                  model: str, thread_id: str = "") -> FounderTools:
-    """The eight tools, as an in-process MCP server the CLI can call.
+    """The nine tools, as an in-process MCP server the CLI can call.
 
     `state` is the one mutable thing here — the draft, and the round of
     questions. `propose_bundle` writes the first and `ask` the second, and the
@@ -559,6 +574,13 @@ def build_server(session: Session, state: dict, env: dict[str, str],
             raise
         progress.finish_step(thread_id)
         return ok(grade.to_dict())
+
+    @tool("list_kinds", "What a project may be created as on this install: the "
+          "built-in modes, and each factory plugin kind installed here (an Amazon PPC "
+          "audit, say), with its open modes, its fixed lead, its crews and the fields it "
+          "asks at creation. Call it when the brief may fit a plugin kind.", {})
+    async def _list_kinds(args):
+        return await step("list_kinds", lambda: list_kinds(session))
 
     @tool("list_credentials", "What this install can pay a project's model calls "
           "with — the LLM credentials an administrator stored, by name and billing "
@@ -680,8 +702,9 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         finally:
             progress.finish_step(thread_id)
 
-    built = [_timed(fn) for fn in (_search_roles, _search_crews, _read_source, _grade_goal,
-                                   _list_credentials, _propose_bundle, _rehearse, _ask)]
+    built = [_timed(fn) for fn in (_search_roles, _search_crews, _list_kinds, _read_source,
+                                   _grade_goal, _list_credentials, _propose_bundle, _rehearse,
+                                   _ask)]
     from yaaf.founder.loop import schema
 
     return FounderTools(

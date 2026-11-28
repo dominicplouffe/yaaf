@@ -73,7 +73,7 @@ RUN python3 -m venv /opt/scan \
 # common cases cost zero setup.)
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir \
-        claude-agent-sdk "anthropic>=1.13,<2" httpx pandas duckdb "mcp<2" playwright
+        claude-agent-sdk "anthropic>=1.13,<2" httpx pandas duckdb "mcp<2" playwright pytest
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # The browser lane (CEO Charter, stage E): Chromium via playwright, for the
@@ -112,6 +112,11 @@ RUN git config --system safe.directory '*' \
 # File-shaped credentials need no image support: the runner mounts a tmpfs at
 # /run/yaaf (sandbox.CREDENTIALS_TMPFS) and the entry script makes its own 0700
 # directory inside it. Nothing here, on purpose — a key must never be in a layer.
+# The plugin host (docs/plans/factory-plugins.md §3): in docker mode the runner
+# starts this image with --network none and a plugin mounted read-only, and
+# runs yaaf_plugin_api.host from here. Standard library only, so nothing else
+# is installed for it.
+COPY packages/yaaf_plugin_api/src /opt/yaaf-plugin-api/src
 COPY yaaf/runner/sandbox_entry.py /opt/yaaf/sandbox_entry.py
 COPY yaaf/runner/chat_entry.py /opt/yaaf/chat_entry.py
 # The Claude CLI harness and the stdio MCP server it starts for the yaaf tools.

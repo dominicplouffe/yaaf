@@ -409,6 +409,12 @@ def test_a_search_charge_still_being_written_is_billed_on_the_next_read(monkeypa
     half-written last line used to be counted as read and skipped — a search
     never billed, never held to the cap. And the ledger only ever grows: one
     that shrank was cut, and the run stops rather than go on unmetered."""
+    # The entry module reads its run's identity at import. Set here rather than
+    # inherited from whichever test happened to import it first in this worker:
+    # run alone, or first in its shard, this test used to die with a KeyError.
+    for name, value in {"YAAF_API_BASE_URL": "http://api:8080",
+                        "YAAF_API_TOKEN": "test-token", "YAAF_RUN_ID": "run_ledger"}.items():
+        monkeypatch.setenv(name, value)
     import yaaf.runner.sandbox_entry as base
 
     monkeypatch.setattr(base, "STAGING", tmp_path)

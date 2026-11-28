@@ -27,6 +27,7 @@ import { ProvidersSection } from "../providerCards";
 import { ModelsSection } from "../settingsModels";
 import { Icon } from "../ui/Icon";
 import { founderOf, useSettingsData } from "../settings/data";
+import { PluginsSection } from "../settings/plugins";
 import { FounderSection } from "../settings/founder";
 import { SectionHead, useMedia } from "../settings/kit";
 import { OverviewSection } from "../settings/overview";
@@ -99,6 +100,8 @@ export default function Settings() {
               onChanged={data.reload} />}
             {section === "people" && <People users={data.users} loadError={data.usersError}
               reload={data.reloadUsers} />}
+            {section === "plugins" && <PluginsSection plugins={data.plugins}
+              onChanged={data.reload} />}
             {section === "account" && <AccountSection />}
           </>}
         </div>

@@ -86,6 +86,12 @@ def main() -> None:  # pragma: no cover - process entrypoint
     slots = RunSlots(MAX_PARALLEL)
     log.info("runner %s starting", settings().worker_name)
     threading.Thread(target=chat_supervisor_loop, daemon=True).start()
+    if getattr(settings(), "sandbox_mode", "docker") == "docker":
+        # Only this process holds the Docker socket, so in docker mode it is the
+        # one that starts plugin hosts for the api (yaaf/plugins/broker.py).
+        from yaaf.plugins import broker
+
+        broker.start_in_background()
     while True:
         if not dispatch_tick(pool.submit, slots):
             time.sleep(settings().runner_poll_s)
@@ -385,6 +391,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project,
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     job.agent_kind = agent.kind
     _offer_mail(project, agent, job)
+    _offer_plugin_skills(session, project, job)
     source_specs = _merge_project_data_sources(session, project, role_version, job)
     _talk_only_if_held(session, run, job)
     role_secrets = _role_secret_env(session, project, role_version)
@@ -577,6 +584,25 @@ def _offer_mail(project: Project, agent, job: RunJob) -> None:
 
     if agent.kind == AgentKind.CEO and enabled(project):
         job.tool_permissions = {**job.tool_permissions, "mail": True}
+
+
+def _offer_plugin_skills(session: Session, project: Project, job: RunJob) -> None:
+    """A factory plugin's playbook, beside the role's skills: every seat of a
+    plugin project gets it. The role's own skills win on a name clash; the
+    plugin's are added, never substituted."""
+    from yaaf.core import shape
+
+    if not shape.is_plugin_kind(project):
+        return
+    from yaaf.plugins import points
+
+    extra = points.skills(session, project)
+    if not extra:
+        return
+    own = list(job.tool_permissions.get("skills") or [])
+    names = {str(s.get("name", "")) for s in own}
+    job.tool_permissions = {**job.tool_permissions,
+                            "skills": own + [s for s in extra if s["name"] not in names]}
 
 
 def _merge_project_data_sources(session: Session, project: Project, role_version,

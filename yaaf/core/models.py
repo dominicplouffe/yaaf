@@ -802,6 +802,15 @@ class Project(Base):
     # Code Factory only: build, then upkeep (FactoryPhase). Null for every
     # other mode, so no reader can mistake an Operate project for a factory.
     factory_phase: Mapped[str | None] = mapped_column(String(16))
+    # A factory plugin's kind ("plugin:<key>"), its mode, the plugin version it
+    # was created on, and the plugin's own state (docs/plans/factory-plugins.md
+    # §8.1). Null on every built-in project. `mode` above is still set, to
+    # deliver or operate from the plugin mode's shape, so every reader that
+    # draws one of the built-in shapes keeps working without learning plugins.
+    kind: Mapped[str | None] = mapped_column(String(64))
+    kind_mode: Mapped[str | None] = mapped_column(String(40))
+    plugin_version_id: Mapped[str | None] = mapped_column(ForeignKey("plugin_versions.id"))
+    kind_state: Mapped[dict | None] = mapped_column(JSONVariant)
     chairman_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     # "api_key" | "subscription" — decides the budget's native unit (usd vs tokens)
     billing_mode: Mapped[str] = mapped_column(String(16), default="api_key")
@@ -3335,3 +3344,72 @@ class FoundingThread(Base):
     # {"phase": "drafting" | "creating" | "started" | "failed", "billing":
     # the credential the caller named, ...}. NULL is the conversation.
     quick: Mapped[dict | None] = mapped_column(JSONVariant)
+
+
+class Plugin(Base):
+    """A factory plugin this install knows, by the id its manifest declares
+    (docs/plans/factory-plugins.md). The code is in its versions; this row is
+    the name they share, and the switch that offers it to new projects."""
+
+    __tablename__ = "plugins"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    name: Mapped[str] = mapped_column(String(80))
+    #: The kind every version of this plugin creates. Fixed by its first
+    #: version: a later one that names another kind is refused (MIN-02).
+    kind_key: Mapped[str] = mapped_column(String(40), unique=True)
+    repo_url: Mapped[str | None] = mapped_column(String(300))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class PluginVersion(Base):
+    """One installed version of a plugin: one commit (or, for a development
+    install, one content hash), its manifest, where its code sits, and its
+    conformance report. A project is created against exactly one of these and
+    stays on it."""
+
+    __tablename__ = "plugin_versions"
+    __table_args__ = (UniqueConstraint("plugin_id", "version", name="uq_plugin_version"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    plugin_id: Mapped[str] = mapped_column(ForeignKey("plugins.id"))
+    #: The commit SHA, or "local-<sha256 of the tree>" for a development install.
+    version: Mapped[str] = mapped_column(String(80))
+    source: Mapped[str] = mapped_column(String(16))  # github | local
+    ref: Mapped[str | None] = mapped_column(String(200))
+    manifest: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    api_version: Mapped[str] = mapped_column(String(16))
+    #: installing | pending | ready | failed | disabled. Only `ready` may be
+    #: chosen for a project; `pending` (no conformance suite has run) only when
+    #: the operator allows unverified plugins on a development box.
+    status: Mapped[str] = mapped_column(String(16))
+    report: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    build_log: Mapped[str] = mapped_column(Text, default="")
+    #: The checkout under plugins_root. Empty for a version that failed before it was copied.
+    root: Mapped[str] = mapped_column(String(500), default="")
+    installed_by: Mapped[str | None] = mapped_column(String(40))
+    installed_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class PluginArtifact(Base):
+    """What core decided about one artifact of a plugin project, beside its row.
+
+    The primitives of docs/plans/factory-plugins.md §4.4 hold their facts here
+    rather than trusting the file: a subject's load-bearing numbers (what a
+    review's re-derivations are compared with, so a review cannot choose its
+    own yardstick), a review's verdict and the exact subject hash it reviewed,
+    and which rows the platform wrote itself (rendered pages, data-action
+    outputs) so no seat's file is ever mistaken for one."""
+
+    __tablename__ = "plugin_artifacts"
+
+    artifact_id: Mapped[str] = mapped_column(ForeignKey("artifacts.id"), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(40), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    #: subject | gated | review | page | output
+    role: Mapped[str] = mapped_column(String(16))
+    load_bearing: Mapped[dict | None] = mapped_column(JSONVariant)
+    verdict: Mapped[str | None] = mapped_column(String(16))
+    subject_sha256: Mapped[str | None] = mapped_column(String(64))
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -42,6 +42,7 @@ import {
 } from "./vitals";
 import { DecisionCard } from "../Inbox";
 import { ProjectSetup, SetupStrip } from "../../projectSetup";
+import { KindViewCard } from "../../ui/KindView";
 import { DeliverComingUp, DeliverHero, DeliverNumbers, GoalChecklist, goalsOf, GoalsOverTime } from "./deliverHome";
 
 /** A project's Inbox answers three questions, in the order they are asked:
@@ -1115,6 +1116,10 @@ export default function Overview({
           </div>
         )}
       </header>
+
+      {/* A factory plugin's own section: what its plugin says this project's
+          state is, drawn from components the dashboard knows (ui/KindView). */}
+      {dash.kind_view && <KindViewCard view={dash.kind_view} base={base} />}
 
       {/* Setup leads only when it is the reason nothing can run. Otherwise it
           is a link in the header: on a running — or finished — project, a

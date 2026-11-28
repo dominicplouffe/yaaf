@@ -1,0 +1,1 @@
+{"subject_sha256": "$SUBJECT_SHA256", "verdict": "pass", "summary": "Every line cites a rule; the total re-derives.", "rederived": [{"claim": "budget_total", "value": 1200, "note": "summed the lines"}]}

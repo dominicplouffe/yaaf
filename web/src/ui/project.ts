@@ -60,8 +60,16 @@ export function modeLabel(mode: string): string {
   return mode === "code_factory" ? "Code Factory" : mode.charAt(0).toUpperCase() + mode.slice(1);
 }
 
-/** The kind, and for a factory which half of its life it is in. */
-export function kindLabel(dash: Pick<Dashboard, "mode" | "factory_phase">): string {
+/** The kind, and for a factory which half of its life it is in. A factory
+    plugin's project is named by its kind and mode ("Amazon PPC Factory ·
+    audit"), not by the built-in shape it behaves as. */
+export function kindLabel(
+  dash: Pick<Dashboard, "mode" | "factory_phase" | "kind" | "kind_mode" | "kind_view">,
+): string {
+  if (dash.kind) {
+    const label = dash.kind_view?.label ?? dash.kind.replace(/^plugin:/, "");
+    return dash.kind_mode ? `${label} · ${dash.kind_mode}` : label;
+  }
   const label = modeLabel(dash.mode);
   return dash.factory_phase ? `${label} · ${dash.factory_phase}` : label;
 }

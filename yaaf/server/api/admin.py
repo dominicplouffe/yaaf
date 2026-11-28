@@ -920,6 +920,12 @@ class ProjectCreate(BaseModel):
     # Code Factory only: start from nothing ("new", built first) or from a repo
     # that already exists ("repo", which starts in upkeep and needs github_repo).
     factory_start: str | None = Field(default=None, pattern="^(new|repo|repo_build)$")
+    # A factory plugin's kind ("plugin:<key>"), one of its open modes, and the
+    # fields its create_fields declares (yaaf/plugins/kinds.py). Omitted on a
+    # built-in project, which is chosen by mode alone.
+    kind: str | None = Field(default=None, max_length=64)
+    kind_mode: str | None = Field(default=None, max_length=40)
+    kind_fields: dict = Field(default_factory=dict)
     controlled_domains: list[str] = Field(default_factory=list)
     # The repo evidence webhooks attest against. Part of the design, so a
     # setup file carries it and a restore does not come back half-wired.
@@ -1669,6 +1675,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     if body.ceo_model_override and (bad := catalog.valid_ref(body.ceo_model_override)):
         raise HTTPException(status_code=422, detail=f"the CEO's model: {bad}")
     body.ceo_harness_override = canonical_harness(body.ceo_harness_override)
+    plugin_choice = _plugin_kind_at_create(session, body)
     phase = _factory_phase_at_create(body)
     # The constitution freezes at creation. Overrides are validated against the
     # schema; a spec with no opinion about the authority dial — or about how
@@ -1747,6 +1754,10 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         billing_secret_id=billing.id if billing else None,
         mode=body.mode,
         factory_phase=phase,
+        kind=body.kind if plugin_choice else None,
+        kind_mode=plugin_choice.mode_key if plugin_choice else None,
+        plugin_version_id=plugin_choice.version.id if plugin_choice else None,
+        kind_state=_plugin_kinds().initial_state(plugin_choice) if plugin_choice else None,
         controlled_domains=body.controlled_domains,
         github_repo=body.github_repo,
         needs_mail=body.needs_mail,
@@ -2093,6 +2104,12 @@ def export_project(project_id: str, include_values: bool = False,
             "goal": project.goal,
             "billing_mode": project.billing_mode,
             "mode": project.mode,
+            # A plugin project's kind, mode and creation fields, so an import
+            # rebuilds it as one (and is refused where the kind is not offered).
+            # Its pinned version is not carried: a version is this box's code.
+            "kind": project.kind,
+            "kind_mode": project.kind_mode,
+            "kind_fields": dict((project.kind_state or {}).get("create") or {}),
             "controlled_domains": project.controlled_domains,
             "github_repo": project.github_repo,
             "needs_mail": project.needs_mail,
@@ -2126,6 +2143,36 @@ def export_project(project_id: str, include_values: bool = False,
         "roles": list(roles.values()),
         "secrets": secret_out,
     }
+
+
+def _plugin_kinds():
+    from yaaf.plugins import kinds
+
+    return kinds
+
+
+def _plugin_kind_at_create(session: Session, body: ProjectCreate):
+    """A factory plugin's kind, checked before a row exists: offered on this
+    box, an open mode, its fixed lead, and fields its plugin accepts. The
+    built-in mode is set from the plugin mode's shape, so every reader of mode
+    keeps working; the chosen version is the one the project stays pinned to."""
+    kinds = _plugin_kinds()
+    try:
+        kinds.refuse_stray(body.kind, body.kind_mode, body.kind_fields)
+        if body.kind is None:
+            return None
+        choice = kinds.choose(
+            session, kind=body.kind, kind_mode=body.kind_mode, kind_fields=body.kind_fields,
+            mode=body.mode, mode_given="mode" in body.model_fields_set,
+            ceo_role_slug=body.ceo_role_slug,
+            ceo_role_given="ceo_role_slug" in body.model_fields_set,
+            factory_start=body.factory_start, goal=body.goal, title=body.name)
+    except kinds.KindRefusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+    body.mode = choice.builtin_mode
+    if choice.lead and "ceo_role_slug" not in body.model_fields_set:
+        body.ceo_role_slug = choice.lead
+    return choice
 
 
 def _factory_phase_at_create(body: ProjectCreate) -> str | None:
@@ -2270,6 +2317,20 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     # twin a date that has already passed — a project the janitor closes at
     # birth. A future window carries; a spent one is reported, not inherited.
     deadline_expired = (source.deadline is not None and source.deadline <= utcnow())
+    # A plugin project's twin runs the same code: the same pinned version, if
+    # that version may still be chosen. A disabled one is refused, as a new
+    # project on it would be.
+    if source.plugin_version_id:
+        from yaaf.core.models import PluginVersion
+        from yaaf.plugins import registry
+
+        pinned = session.get(PluginVersion, source.plugin_version_id)
+        if pinned is None or not registry.selectable(pinned):
+            raise HTTPException(
+                status_code=409,
+                detail=f"this project runs on {source.kind} version "
+                       f"{pinned.version if pinned else '?'}, which may no longer be chosen "
+                       "for a new project, so it cannot be cloned onto it")
     project = Project(
         id=ids.new_id(ids.PROJECT),
         slug=body.slug,
@@ -2291,6 +2352,13 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         # claiming a hierarchy it does not have. Like mode, it is frozen at
         # creation, so getting it wrong here cannot be corrected later.
         topology=source.topology,
+        # The kind and its creation fields carry; the plugin's later state is
+        # the source's history, which a twin does not inherit.
+        kind=source.kind,
+        kind_mode=source.kind_mode,
+        plugin_version_id=source.plugin_version_id,
+        kind_state=({"create": dict((source.kind_state or {}).get("create") or {})}
+                    if source.kind else None),
         # The clone is founded NOW, so it is current — unlike `mode` and
         # `topology` above, which are the source's truth carried over. Copying
         # the source's stamp would let a twin of an August project be reported

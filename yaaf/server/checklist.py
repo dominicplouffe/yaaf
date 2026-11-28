@@ -68,17 +68,30 @@ FACTORY = (
 BY_KEY = {s.key: s for s in (*STEPS, EMAIL, *FACTORY)}
 
 
-def steps_for(project: Project) -> tuple[Step, ...]:
+def steps_for(project: Project, session: Session | None = None) -> tuple[Step, ...]:
     """This project's steps, in order. The email step sits right after the key:
     when it is required, it is the second thing standing between a new project
-    and its first run."""
+    and its first run. A factory plugin's own steps follow the key (given a
+    session to find its plugin with)."""
     from yaaf.core import shape
 
-    head = (STEPS[0], *(FACTORY if shape.is_factory(project) else ()))
+    plugin: tuple[Step, ...] = ()
+    if session is not None and shape.is_plugin_kind(project):
+        from yaaf.plugins import points
+
+        plugin = tuple(Step(k, k.removeprefix(points.STEP_PREFIX).replace("_", " ").capitalize(),
+                            "plugin") for k in points.setup_steps(session, project))
+    head = (*_head(project), *plugin)
     if not (project.needs_mail or (project.integrations or {}).get("mail")):
         return (*head, *STEPS[1:])
     email = Step(EMAIL.key, EMAIL.label, EMAIL.section, required=bool(project.needs_mail))
     return (*head, email, *STEPS[1:])
+
+
+def _head(project: Project) -> tuple[Step, ...]:
+    from yaaf.core import shape
+
+    return (STEPS[0], *(FACTORY if shape.is_factory(project) else ()))
 
 
 def _state(project: Project) -> dict:
@@ -89,6 +102,10 @@ def _done(session: Session, project: Project, step: Step) -> tuple[bool, str]:
     """Whether the project already has what the step asks for, and one line
     saying what it has — or what it is missing."""
     integrations = project.integrations or {}
+    if step.key.startswith("plugin:"):
+        from yaaf.plugins import points
+
+        return points.step_state(session, project, step.key)
     if step.key == "key":
         if integrations.get("runtime") == "mock":
             return True, "This project runs test agents, which need no key."
@@ -187,7 +204,7 @@ def view(session: Session, project: Project) -> dict:
     skipped = set(state.get("skipped") or [])
     needs = _needs(session, project)
     steps = []
-    for step in steps_for(project):
+    for step in steps_for(project, session):
         if step.key == "secrets" and needs:
             # Promised credentials are named, one step each, in place of the
             # generic step that ticked itself off for any single secret.
@@ -265,7 +282,7 @@ def act(session: Session, project: Project, action: str, step: str | None,
         if step not in BY_KEY:
             raise Refused(f"there is no setup step called {step!r}")
         if action == "skip":
-            this = next((s for s in steps_for(project) if s.key == step), BY_KEY[step])
+            this = next((s for s in steps_for(project, session) if s.key == step), BY_KEY.get(step))
             if this.required and not _done(session, project, this)[0]:
                 # The one step a project cannot run without. Skipping it would
                 # put the list away over a project whose every run will fail.

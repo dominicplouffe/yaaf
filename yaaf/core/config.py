@@ -88,6 +88,31 @@ class Settings(BaseSettings):
     # whole point of the mode.
     allow_host_success_tests: bool = False
     sandbox_image: str = "yaaf-sandbox:latest"
+    # Factory plugins (yaaf/plugins). Installed plugin checkouts and their built
+    # environments live under plugins_root, shared by the api and the runner at
+    # the same path, as workspaces are. In docker mode the runner starts plugin
+    # hosts and the api reaches them through the runner's broker: bound on the
+    # stack's default network only (the runner is not on the sandbox network,
+    # so no agent container can reach it), authenticated with a key derived
+    # from master_key.
+    plugins_root: str = "/var/lib/yaaf/plugins"
+    plugin_broker_bind: str = "0.0.0.0"
+    plugin_broker_port: int = 24250
+    plugin_broker_address: str = "runner:24250"
+    # Development only, both off by default. allow_local_plugins lets the
+    # instance admin install a plugin from a path on this machine instead of a
+    # pinned GitHub commit. allow_unverified_plugins lets a version whose
+    # conformance suite has not run ("pending") be chosen for a project. A
+    # production box leaves both off: there, only a GitHub install that passed
+    # every requirement is ever offered.
+    allow_local_plugins: bool = False
+    allow_unverified_plugins: bool = False
+    # Where GitHub plugin installs fetch from. GitHub itself; a directory of
+    # bare repos in tests, so the real git commands run without a network.
+    plugin_github_base: str = "https://github.com"
+    # Extra arguments for the dependency build's pip (an internal index or
+    # mirror, say). The lock and --require-hashes still decide what is installed.
+    plugin_pip_args: str = ""
     sandbox_network: str = "yaaf_sandbox"
     workspaces_root: str = "/var/lib/yaaf/workspaces"
     artifacts_root: str = "/var/lib/yaaf/artifacts"

@@ -4914,6 +4914,18 @@ def artifact_put(
         if stamped is not None and stamped.key != policy.PLAN_KEY:
             satisfied.append(stamped)
 
+    # A factory plugin's primitives (docs/plans/factory-plugins.md §4.4): a
+    # gated artifact is the plugin's to accept and may be normalised, a review
+    # is held to its subject's own numbers, and a platform page is no seat's to
+    # publish. Decided before a byte is stored; a refusal stores nothing.
+    from yaaf.plugins import primitives
+
+    gate = primitives.gate_publication(
+        session, ctx.project, agent_id=ctx.agent.id if ctx.agent else None,
+        run_id=ctx.run.id, filename=filename, data=data)
+    if gate is not None:
+        data = gate.data
+
     reader = _reader_of(session, ctx, body.result_for)
     key = f"projects/{ctx.project.id}/{ctx.run.id}/{filename}"
     uri = store().put_bytes(key, data)
@@ -4942,6 +4954,8 @@ def artifact_put(
     )
     session.add(row)
     session.flush()
+    for after in (gate.after if gate is not None else []):
+        after(row)
     chairman_notify(
         session, ctx.project, f"deliverable published: {filename} v{version}",
         f"{filename} (v{version}, {len(data)} bytes) is in the artifact store"
@@ -4984,6 +4998,38 @@ def artifact_put(
     return {"uri": uri, "key": key, "size": len(data), "sha256": digest,
             "artifact_id": row.id, "version": version, "result_for": reader,
             "satisfies": [r.key for r in satisfied]}
+
+
+class PluginActionIn(BaseModel):
+    arguments: dict = Field(default_factory=dict)
+
+
+@router.get("/plugin/describe")
+def plugin_describe(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -> dict:
+    """What this project's factory plugin is, as data: its kind, coverage, what
+    it gates and how a review must be written (yaaf/plugins/seat_tools.py)."""
+    from yaaf.plugins import seat_tools
+
+    return seat_tools.describe(session, ctx.project)
+
+
+@router.get("/plugin/file/{name}")
+def plugin_file(name: str, ctx: RunContext = Depends(run_auth),
+                session: Session = Depends(db)) -> dict:
+    """One file the plugin declares for its seats (a kit), verbatim."""
+    from yaaf.plugins import seat_tools
+
+    return seat_tools.agent_file(session, ctx.project, name)
+
+
+@router.post("/plugin/action/{name}")
+def plugin_action(name: str, body: PluginActionIn, ctx: RunContext = Depends(run_auth),
+                  session: Session = Depends(db)) -> dict:
+    """Run one of the plugin's declared data actions. It reaches the data only
+    through the gateway's own checks, and what it stores is the platform's."""
+    from yaaf.plugins import seat_tools
+
+    return seat_tools.run_action(session, ctx.project, ctx.agent, ctx.run.id, name)
 
 
 @router.get("/artifacts")

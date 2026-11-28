@@ -702,6 +702,17 @@ def forward(session: Session, project: Project, agent: Agent, decision: Decision
     session.commit()  # a refreshed OAuth token, kept even if the call fails
     with Upstream(url, token) as upstream:
         result = upstream.call_tool(decision.row.name, arguments)
+    if decision.row.kind == "read":
+        # A factory plugin that declares receipts has its reads written down,
+        # and the receipt rides back so a claim can cite the pull it came
+        # from (yaaf/plugins/primitives.py). Every other project: nothing.
+        from yaaf.plugins import primitives
+
+        receipt = primitives.record_read(session, project, agent, decision.entry["name"],
+                                         decision.row.name, arguments, result, run_id)
+        if receipt is not None:
+            result = {**result, "_meta": {**(result.get("_meta") or {}),
+                                          "yaaf/receipt": receipt}}
     if decision.row.kind != "read":
         # Reads are the common case and are not written down call by call. A
         # tool that may change the chairman's account is, every time — and it

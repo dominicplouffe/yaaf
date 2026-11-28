@@ -170,6 +170,8 @@ yaaf/runner     run leasing, sandboxes, harness entry points, chat sessions
 yaaf/runtimes   harness, provider and model registries
 yaaf/core       data models, config, encryption, prices, shared logic
 yaaf/founder    the Founder: drafts a project from a conversation
+yaaf/plugins    factory plugins: registry, sandboxed hosts, the runner's broker, core's primitives
+packages/       yaaf_plugin_api: the plugin contract, its conformance suite and host program
 yaaf/rehearsal  `yaaf rehearse`: runs a project spec for $0
 yaaf/cli        the `yaaf` command
 web/            the dashboard (React + Vite)
@@ -180,6 +182,11 @@ tests/          integration tests that drive the real app over HTTP
 evals/          golden-transcript checks for prompt changes
 examples/       importable example projects
 ```
+
+Factory plugins (new kinds of project, installed from GitHub) run as pure hooks
+in a sandboxed host, and core does every side effect. How to run and write them
+is in [PLUGINS.md](PLUGINS.md), and the full design is in
+[plans/factory-plugins.md](plans/factory-plugins.md).
 
 ## Tech stack
 
