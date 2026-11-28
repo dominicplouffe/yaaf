@@ -60,7 +60,18 @@ hang off it. These are the branches, roughly in the order they unlock:
      something to build on it first (`factory_start: repo_build`), which is
      built to a budget for the job like a new product, then kept. A second
      project on the same repo is never the answer to "build this feature".
-   - *Who pays*, when there is more than one credential.
+   - *Who pays*, when there is more than one credential — and, on a Code
+     Factory, *what codes*: its coding key, which pays the seats that hold
+     the repo and which it cannot start without. It may be the billing
+     credential or a second one for the same provider (a subscription to
+     code on, beside an API key that talks).
+   - On a Code Factory, *what still waits for the chairman*. The authority
+     dial does not reach a factory's two gates, and both ask him by default:
+     CI changes need his yes (`ci_changes_need_chairman`) and he approves the
+     first and every major release (`release_authority: approve_first`). A
+     chairman who asked for an autonomous factory gets both turned off
+     (`false`, `autonomous`) — a challenge seat's signed reason and the
+     canary still guard them — and is told so; anyone else is asked.
    - *Is there a date the world imposes* — a fact, not a wish.
 2. **Hanging off the roots:**
    - `stakes` — hangs off who reads it: a stranger judging the chairman by it

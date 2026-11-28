@@ -1466,3 +1466,17 @@ def test_the_founder_sees_whether_github_is_connected(client):
         "project_id": None, "name": "github", "value": "github_pat_x", "role_scopes": []})
     with db_session() as session:
         assert 'github: {"connected": true}' in agent.library(session)
+
+
+def test_an_autonomous_factory_is_drafted_without_the_two_gates_that_ask(client):
+    """The authority dial does not reach a factory's own gates — CI changes
+    and the first release both wait for the chairman by default — and the
+    Founder was never told, so a chairman who asked for an autonomous factory
+    was asked to approve its very first pull request. It is taught both now,
+    and a draft that turns them off is one the platform accepts."""
+    from yaaf.founder import prompt, tools
+
+    text = prompt.system_prompt()
+    assert "ci_changes_need_chairman" in text and "release_authority" in text
+    assert tools.constitution_problems(
+        {"ci_changes_need_chairman": False, "release_authority": "autonomous"}) == []

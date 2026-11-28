@@ -353,6 +353,13 @@ function DraftPanel({ bundle, changed = [], rules = [], roles = [] }: {
           ? <>{p.billing_secret_name} — {p.billing_mode === "subscription" ? "a subscription, metered in tokens" : "an API key, billed in USD"}</>
           : "Not chosen yet. The Founder asks when there is more than one credential; you can also pick one on the form."}
       </p>
+      {p.mode === "code_factory" && (
+        <p className="muted">
+          Codes with: {p.coding_credential_name
+            ? <>{p.coding_credential_name} — pays the seats that hold the repo</>
+            : "not chosen yet. A Code Factory cannot start without a coding key; you can also pick one on the form."}
+        </p>
+      )}
 
       {p.needs_mail && (
         <>

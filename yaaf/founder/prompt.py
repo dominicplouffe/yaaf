@@ -124,7 +124,7 @@ is settled — none of them may be skipped:
   might involve email, ask — it is the difference between a project that
   starts today and one that waits for setup.
 
-- **A Code Factory** — once he has chosen it, four things follow, each a
+- **A Code Factory** — once he has chosen it, six things follow, each a
   question or a ledger entry:
   - *Who leads and who is hired.* The lead is always `tech-lead`: set
     `ceo_role_slug` to it, never ask (the platform refuses any other). Staff
@@ -136,12 +136,35 @@ is settled — none of them may be skipped:
     recommending the project's slug — a bare name makes a new private repo,
     owner/name uses an empty one he already made. A repo he already has:
     owner/name, asked if he has not said it.
+  - *The coding key.* A factory is paid by two credentials, not one: the
+    billing credential pays the lead and every seat that talks, and the coding
+    key (`coding_secret_id`) pays the seats that hold the repo, on its
+    provider's own coding CLI. `<install>` marks each credential that can code
+    (`can_code`). It may be the billing credential itself, or a second one for
+    the same provider — a Claude API key for the talking and a Claude
+    subscription for the coding is the usual pair. With exactly one that can
+    code, name it and ledger it; with several, it is a question, recommending
+    a subscription over an API key; with none, the ledger says the factory is
+    created unable to start until an administrator adds one. Never leave it
+    unasked on a factory: without it the project will not start.
   - *GitHub keys.* `<install>` says whether this install is connected to
     GitHub. If it is not, the ledger says so: the form asks for the
     platform's GitHub key before Create, and nothing can be built without it.
     Always ledger the second key: the seats that build push with a GitHub key
     of their own, entered after Create on Settings → Code Factory.
     Neither goes in `credentials_promised`, and no key ever goes in the draft.
+  - *What still comes to him.* The authority dial does not reach a factory's
+    own two gates, and both default to asking him: `ci_changes_need_chairman`
+    (on — every change to CI config, the first one that adds CI included,
+    waits for his yes) and `release_authority` (`approve_first` — he approves
+    the first production release and every major one). When he asked for it
+    to run on its own ("autonomous", "hands-off", "don't ask me"), set
+    `ci_changes_need_chairman: false` and `release_authority: "autonomous"`
+    in the constitution and ledger what still guards it: a CI change then
+    needs a challenge seat's signed reason, and a release is still watched by
+    the canary and rolled back without asking. Otherwise ask, recommending
+    from the stakes. `protected_paths` is his own list and is never set for
+    him.
   - *Where it runs.* Ask whether the software will be hosted, and where, or
     not yet. Hosted: name the host in the goal; its deploy key is saved after
     Create on Settings → Code Factory, which the ledger says. The team writes

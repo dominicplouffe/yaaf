@@ -133,14 +133,20 @@ def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
     that names a class (@frontier, @balanced, @fast) resolves on it.
     """
     from yaaf.core import llm_credentials, model_policy, prices
+    from yaaf.core.project_credentials import coding_providers
     from yaaf.runtimes import catalog
+    from yaaf.runtimes.providers import DEFAULT_PROVIDER
     from yaaf.runtimes.providers import provider as seller
 
     rows = llm_credentials.choices(session, with_plan=with_plan)
     own = model_policy.lineups(session)
+    coders = coding_providers()
     for row in rows:
         lineup = catalog.lineup_of(row.get("provider") or "", own)
         row["provider_label"] = seller(row.get("provider")).label
+        # Whether it can be a Code Factory's coding key: one for a provider
+        # with a coding CLI of its own (project_credentials.coding_problem).
+        row["can_code"] = (row.get("provider") or DEFAULT_PROVIDER) in coders
         row["classes"] = {cls: {"model": lineup.get(cls),
                                 "priced": bool(lineup.get(cls))
                                 and prices.covered(session, lineup[cls])}
@@ -163,7 +169,14 @@ def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
              "class with no model, or one with no price where the credential bills in "
              "dollars, cannot run — say so rather than draft it. A seat pinned to another "
              "provider's model needs that provider paid too: put {provider: id} in the "
-             "draft's `credentials`, under the same rule — one per provider, or ask.")
+             "draft's `credentials`, under the same rule — one per provider, or ask. "
+             "A Code Factory needs a second choice beside the billing one: its coding "
+             "key (`coding_secret_id`), which pays only the seats that hold the repo, on "
+             "its provider's coding CLI. Any credential with `can_code` will do — it may "
+             "be the billing credential itself, or a second one for the same provider "
+             "(a Claude API key for the talking, a Claude subscription for the coding). "
+             "A factory without one is created unable to start. With exactly one that "
+             "can code, name it; with several, ask, recommending the subscription.")
     return {"credentials": rows, "note": note}
 
 
@@ -321,6 +334,11 @@ PROPOSE_SCHEMA = {
                 "billing_secret_id": {"type": "string"},
                 "credentials": {"type": "object", "additionalProperties": {"type": "string"},
                                 "description": "{provider: credential id}"},
+                "coding_secret_id": {"type": "string",
+                                     "description": "code_factory only: the credential id "
+                                                    "the repo seats code with (a "
+                                                    "list_credentials row with can_code); "
+                                                    "may equal billing_secret_id"},
                 "ceo_model_override": {"type": "string"},
                 "deadline": {"type": "string"},
                 "deadline_source": {"type": "object"},
@@ -1001,6 +1019,9 @@ def _provider_credential_problems(project: dict, session: Session) -> list[str]:
             project.pop("coding_secret_id", None)
         else:
             project["coding_secret_id"] = row.id
+            # By name as well, the way the form reads it (as it reads an
+            # export's), so the review step arrives with the key picked.
+            project["coding_credential_name"] = row.name
     return problems
 
 
@@ -1280,6 +1301,9 @@ def summarise(bundle: dict) -> dict:
         "headcount": sum(len(t.get("employees") or []) for t in teams),
         "constitution_keys": sorted((project.get("constitution") or {}).keys()),
         "pays_with": project.get("billing_secret_name") or None,
+        # A Code Factory's coding key, which it cannot start without.
+        **({"codes_with": project.get("coding_credential_name") or None}
+           if str(project.get("mode") or "") == "code_factory" else {}),
         # Whether it cannot start until somebody gives it a mailbox.
         "needs_mail": bool(project.get("needs_mail")),
     }

@@ -84,6 +84,9 @@ function factorySummary(rules: ConstitutionField[], set: Record<string, unknown>
     at("release_authority") === "autonomous"
       ? "releases go out without asking you"
       : "you approve the first release, and every major one",
+    at("ci_changes_need_chairman") === false
+      ? "a challenge seat signs off changes to CI"
+      : "changes to CI wait for your yes",
     `changes of at most ${at("max_change_lines")} lines`,
     "a reviewer who did not write it signs each change",
     "CI must pass on the exact commit",
