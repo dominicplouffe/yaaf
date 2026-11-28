@@ -94,6 +94,16 @@ def _require_signature(raw: bytes, secret: str | None, provided: str | None,
         )
 
 
+async def _raw_body(request: Request) -> bytes:
+    """The body, read on the event loop, so the route itself can be a plain
+    `def` and run on the thread pool. These routes did their database work
+    inside `async def`: on 28 November 2026 two GitHub deliveries for one
+    change arrived a second apart, the second's UPDATE waited on the event
+    loop for the first's row lock, the first could not commit without the
+    loop, and every request on the server hung for ninety minutes."""
+    return await request.body()
+
+
 def _get_project(session: Session, project_id: str) -> Project:
     project = session.get(Project, project_id)
     if project is None:
@@ -135,11 +145,11 @@ def _seen_delivery(session: Session, project_id: str, delivery: str) -> bool:
 
 
 @router.post("/github/{project_id}")
-async def github_webhook(
-    project_id: str, request: Request, session: Session = Depends(db)
+def github_webhook(
+    project_id: str, request: Request, raw: bytes = Depends(_raw_body),
+    session: Session = Depends(db),
 ) -> dict:
     project = _get_project(session, project_id)
-    raw = await request.body()
     _require_signature(
         raw,
         (project.integrations or {}).get("github_webhook_secret"),
@@ -269,8 +279,9 @@ def _slack_ignored(session: Session, project: Project, reason: str,
 
 
 @router.post("/slack/{project_id}")
-async def slack_webhook(
-    project_id: str, request: Request, session: Session = Depends(db)
+def slack_webhook(
+    project_id: str, request: Request, raw: bytes = Depends(_raw_body),
+    session: Session = Depends(db),
 ) -> dict:
     """Slack events in; only one thing comes out: the chairman, in the mapped
     boardroom channel, becomes a boardroom bus message — identical to posting
@@ -284,7 +295,6 @@ async def slack_webhook(
             detail="Slack is switched off for this project; nothing arriving here "
                    "speaks for anyone.",
         )
-    raw = await request.body()
     signing_secret = effective.signing_secret
     if signing_secret is None:
         raise HTTPException(
@@ -375,11 +385,11 @@ class GenericEvidenceIn(BaseModel):
 
 
 @router.post("/generic/{project_id}")
-async def generic_webhook(
-    project_id: str, request: Request, session: Session = Depends(db)
+def generic_webhook(
+    project_id: str, request: Request, raw: bytes = Depends(_raw_body),
+    session: Session = Depends(db),
 ) -> dict:
     project = _get_project(session, project_id)
-    raw = await request.body()
     # Signature before validation: an unsigned caller learns nothing about the
     # schema, and only a signed body is worth parsing at all.
     _require_signature(

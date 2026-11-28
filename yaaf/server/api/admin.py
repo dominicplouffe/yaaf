@@ -3800,11 +3800,16 @@ async def regrade_goal(project_id: str, session: Session = Depends(db)) -> dict:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     # On the Founder's model, which is what the credential pays: grading on a
     # default would send a Claude model to whatever provider the key is for.
-    grade = await grade_goal(project.goal, env=env, model=founder_model(session))
+    model, goal = founder_model(session), project.goal
+    project_view = {"id": project.id, "doctrine_stamp": project.doctrine_stamp}
+    # Nothing held across the model call: an open transaction is a pooled
+    # connection idle for as long as the provider takes.
+    session.rollback()
+    grade = await grade_goal(goal, env=env, model=model)
     return {
-        "project_id": project.id,
+        "project_id": project_view["id"],
         "graded_at": utcnow().isoformat(),
-        "doctrine_stamp": project.doctrine_stamp,
+        "doctrine_stamp": project_view["doctrine_stamp"],
         "doctrine_current": doctrine.fingerprint(),
         "elements": [
             {"element": e.element, "verdict": e.verdict, "note": e.note}
