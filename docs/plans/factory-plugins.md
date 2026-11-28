@@ -847,3 +847,41 @@ patch), and giving the API the socket.
 - Not yet carried: a plugin project's kind fields in clone and setup-file
   export. Nothing creates a plugin project until step 5, and step 5 must add
   them there (the sibling-footprint rule).
+
+**Step 4 is built** (core's primitives, `yaaf/plugins/primitives.py`). It took
+`check_artifact` and `render` from step 5, because the review needs the
+subject's accepted numbers:
+
+- **Gated artifacts.** `artifact_put` asks the plugin's `check_artifact`
+  before a byte is stored. A refusal stores nothing. An accept may normalise
+  the bytes, patch `kind_state` (JSON merge patch), and name the load-bearing
+  numbers, which core keeps in `plugin_artifacts` beside the row.
+- **Reserved names.** A seat publishing a platform page or a data action's
+  output is refused.
+- **Platform pages.** `render` is asked for a draft when the subject is
+  accepted and a final version when a review passes. Pages are stored as the
+  platform's, with the subject's reader and requirements. A render that fails
+  refuses the publication.
+- **Review.** Core reads a fixed envelope (`subject_sha256`, `verdict`,
+  `rederived`; documented on `ReviewUpload`):
+  - The review must name the latest subject's exact hash.
+  - Its seat must not have published those bytes (or any version, under
+    `independent = "strict"`), even after another seat republished them.
+  - Every load-bearing number is compared, within the manifest's tolerance,
+    with what the *subject* reported. A review's own `reported` is never read.
+  - Then the plugin's `check_review` applies its rubric. A pass attests
+    delivery.
+  - `delivery_outstanding` holds completion until the latest review passes the
+    latest subject, so a new subject version or a later `return` takes it back.
+- **Receipts.** The gateway records each read by a seat of a plugin project
+  that declares receipts, with the fields `fields_of_read` names, and
+  `data_fetch` hands the receipt to the agent. A read whose fields can't be
+  told (or whose plugin can't be asked) is recorded with `fields = None`. It
+  proves the read happened and backs no field citation. Receipt lookups answer
+  only for their own project.
+- Every plugin call fails closed. A host that can't be asked refuses the
+  publication with "could not be consulted".
+- Attacks: `tests/selftest_invariants/test_plugin_primitives.py` (17 tests),
+  publishing over `/agent/artifacts` with a real host. Restoring the PPC
+  branch's two review bugs (reading the review's own `reported`; judging
+  independence by the latest publisher) each turns a test red.

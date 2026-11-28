@@ -3384,3 +3384,26 @@ class PluginVersion(Base):
     root: Mapped[str] = mapped_column(String(500), default="")
     installed_by: Mapped[str | None] = mapped_column(String(40))
     installed_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class PluginArtifact(Base):
+    """What core decided about one artifact of a plugin project, beside its row.
+
+    The primitives of docs/plans/factory-plugins.md §4.4 hold their facts here
+    rather than trusting the file: a subject's load-bearing numbers (what a
+    review's re-derivations are compared with, so a review cannot choose its
+    own yardstick), a review's verdict and the exact subject hash it reviewed,
+    and which rows the platform wrote itself (rendered pages, data-action
+    outputs) so no seat's file is ever mistaken for one."""
+
+    __tablename__ = "plugin_artifacts"
+
+    artifact_id: Mapped[str] = mapped_column(ForeignKey("artifacts.id"), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(40), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    #: subject | gated | review | page | output
+    role: Mapped[str] = mapped_column(String(16))
+    load_bearing: Mapped[dict | None] = mapped_column(JSONVariant)
+    verdict: Mapped[str | None] = mapped_column(String(16))
+    subject_sha256: Mapped[str | None] = mapped_column(String(64))
+    reviewed: Mapped[bool] = mapped_column(Boolean, default=False)

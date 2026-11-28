@@ -162,7 +162,21 @@ class ArtifactBody:
 
 @dataclass(frozen=True)
 class ReviewUpload(Upload):
-    """A review being published, and the exact subject version it names."""
+    """A review being published, and the exact subject version it names.
+
+    Core reads three fields of every review, and holds them before the plugin
+    is asked (yaaf/plugins/primitives.py):
+
+        {"subject_sha256": "<sha256 of the version reviewed>",
+         "verdict": "pass" | "return",
+         "rederived": [{"claim": "<id>", "value": <number>}      # a number it reported
+                       | {"claim": "<id>", "matches": true}]}     # a reported non-number
+
+    Each load-bearing claim of the subject is compared with what the subject
+    reported, within the manifest's tolerance. A "reported" the review states
+    itself is never read. Everything else in the file is the plugin's rubric,
+    for its check_review. A fixture may write "$SUBJECT_SHA256" for the hash;
+    the harness substitutes it."""
 
     subject_sha256: str = ""
 

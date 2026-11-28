@@ -1399,6 +1399,11 @@ def delivery_outstanding(session: Session, project: Project) -> list[str]:
     open_tasks = open_top_level_tasks(session, project.id)
     if open_tasks:
         outstanding.append(f"{len(open_tasks)} task(s) still open")
+    # A factory plugin that declares a review cannot complete without a passing
+    # one of its latest subject: core holds that, so no plugin can forget it.
+    from yaaf.plugins import primitives
+
+    outstanding += primitives.outstanding(session, project)
     return outstanding
 
 

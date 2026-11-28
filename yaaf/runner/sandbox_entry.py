@@ -1950,7 +1950,11 @@ async def t_data_fetch(args):
     resolved.write_bytes(data)
 
     preview = body[:DATA_FETCH_PREVIEW_CHARS]
+    # A factory plugin's projects record each read; the receipt is what a claim
+    # cites to say which pull its numbers came from.
+    receipt = _meta_of(result).get("yaaf/receipt")
     return _text({"status": 200, "body": {
+        **({"receipt": receipt} if receipt else {}),
         "path": str(resolved.relative_to(workspace)),
         "bytes": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),

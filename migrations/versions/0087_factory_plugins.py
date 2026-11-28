@@ -1,4 +1,5 @@
-"""Factory plugins: the plugins an install knows, their versions, and a project's kind.
+"""Factory plugins: installed plugins and versions, a project's kind, and what core
+decided about each plugin artifact.
 
 Revision ID: 0087
 Revises: 0086
@@ -47,6 +48,18 @@ def upgrade() -> None:
         sa.Column("installed_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint("plugin_id", "version", name="uq_plugin_version"),
     )
+    create_table_if_missing(
+        "plugin_artifacts",
+        sa.Column("artifact_id", sa.String(40), sa.ForeignKey("artifacts.id"),
+                  primary_key=True),
+        sa.Column("project_id", sa.String(40), nullable=False, index=True),
+        sa.Column("name", sa.String(255), nullable=False),
+        sa.Column("role", sa.String(16), nullable=False),
+        sa.Column("load_bearing", JSON),
+        sa.Column("verdict", sa.String(16)),
+        sa.Column("subject_sha256", sa.String(64)),
+        sa.Column("reviewed", sa.Boolean, nullable=False, server_default=sa.false()),
+    )
     add_column_if_missing("projects", sa.Column("kind", sa.String(64)))
     add_column_if_missing("projects", sa.Column("kind_mode", sa.String(40)))
     add_column_if_missing("projects", sa.Column("plugin_version_id", sa.String(40)))
@@ -60,5 +73,6 @@ def downgrade() -> None:
 
     for column in ("kind_state", "plugin_version_id", "kind_mode", "kind"):
         op.drop_column("projects", column)
+    op.drop_table("plugin_artifacts")
     op.drop_table("plugin_versions")
     op.drop_table("plugins")

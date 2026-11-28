@@ -294,6 +294,21 @@ _POOLS: dict[str, H.HostPool] = {}
 _POOLS_LOCK = threading.Lock()
 
 
+_MANIFESTS: dict[str, object] = {}
+
+
+def manifest_for(version: PluginVersion):
+    """The full manifest of an installed version, read once from its code. The
+    row's `manifest` is a summary for the screens; the capabilities a primitive
+    enforces come from the file the code was installed with."""
+    from yaaf_plugin_api.manifest import load_path
+
+    cached = _MANIFESTS.get(version.id)
+    if cached is None:
+        cached = _MANIFESTS[version.id] = load_path(version.root)
+    return cached
+
+
 def spec_for(version: PluginVersion) -> H.HostSpec:
     if not version.root:
         raise H.HostFailure("start", f"version {version.version} of {version.plugin_id} has "

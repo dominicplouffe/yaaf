@@ -4782,6 +4782,18 @@ def artifact_put(
         if stamped is not None and stamped.key != policy.PLAN_KEY:
             satisfied.append(stamped)
 
+    # A factory plugin's primitives (docs/plans/factory-plugins.md §4.4): a
+    # gated artifact is the plugin's to accept and may be normalised, a review
+    # is held to its subject's own numbers, and a platform page is no seat's to
+    # publish. Decided before a byte is stored; a refusal stores nothing.
+    from yaaf.plugins import primitives
+
+    gate = primitives.gate_publication(
+        session, ctx.project, agent_id=ctx.agent.id if ctx.agent else None,
+        run_id=ctx.run.id, filename=filename, data=data)
+    if gate is not None:
+        data = gate.data
+
     reader = _reader_of(session, ctx, body.result_for)
     key = f"projects/{ctx.project.id}/{ctx.run.id}/{filename}"
     uri = store().put_bytes(key, data)
@@ -4810,6 +4822,8 @@ def artifact_put(
     )
     session.add(row)
     session.flush()
+    for after in (gate.after if gate is not None else []):
+        after(row)
     chairman_notify(
         session, ctx.project, f"deliverable published: {filename} v{version}",
         f"{filename} (v{version}, {len(data)} bytes) is in the artifact store"

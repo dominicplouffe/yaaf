@@ -418,8 +418,15 @@ class Host:
         rid = self._next_id
         self.calls += 1
         try:
+            try:
+                encoded = wire.encode(list(args))
+            except wire.WireError as exc:
+                # Core's own argument could not cross: nothing was sent, and the
+                # host is still good.
+                raise HostFailure("argument", f"the question could not be sent: {exc}") \
+                    from None
             self._send({"id": rid, "method": "hook", "params": {
-                "kind": key.kind, "key": key.key, "args": wire.encode(list(args))}})
+                "kind": key.kind, "key": key.key, "args": encoded}})
             while True:
                 message = self._next(deadline - time.monotonic(), str(key))
                 if "cb" in message:
