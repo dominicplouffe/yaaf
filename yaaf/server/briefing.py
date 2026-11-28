@@ -199,6 +199,9 @@ LINE_OWNER: dict[str, str] = {
     # — it asked BECAUSE it wanted his read, and he did not give one.
     "asks_lapsed": MATERIAL,
     "rules_changed": MATERIAL,
+    # A plugin project moved onto another version of its plugin: the rules its
+    # next publication meets changed, as surely as an amended constitution.
+    "plugin_moved": MATERIAL,
     # Governed by the dial.
     "plan_gate_closed": "plan_authority",
     "plan_gate_reopened": "plan_authority",
@@ -774,6 +777,31 @@ def _staffing_lines(session: Session, project: Project, cons, since, until) -> l
                  "you either a stand-down or a reason.",
         ))
     return lines
+
+
+def _plugin_lines(session: Session, project: Project, since, until) -> list[dict]:
+    """A plugin project moved onto another version of its plugin. The move is
+    the chairman's, but a co-chair reading the brief learns from this line why
+    a file the plugin accepted yesterday is refused today."""
+    from yaaf.core.models import AuditLog
+
+    moves = list(session.execute(
+        select(AuditLog).where(
+            AuditLog.project_id == project.id, AuditLog.action == "plugin.move",
+            AuditLog.at > since, AuditLog.at <= until,
+        ).order_by(AuditLog.at)
+    ).scalars())
+    if not moves:
+        return []
+    first, last = moves[0].detail or {}, moves[-1].detail or {}
+    was = first.get("from_release") or str(first.get("from", ""))[:12]
+    now = last.get("to_release") or str(last.get("to", ""))[:12]
+    return [_line(
+        "plugin_moved", f"The project moved from plugin version {was} to {now}",
+        count=len(moves), where="settings?s=plugin",
+        note="New work meets the new version's rules. What was already accepted "
+             "keeps its verdict.",
+    )]
 
 
 def _idle_window(session: Session, project: Project, cons: ConstitutionDoc,
@@ -1453,6 +1481,7 @@ def project_briefing(session: Session, project: Project,
     lines += _meeting_lines(session, project, since, until)
     lines += _run_lines(session, project, since, until)
     lines += _staffing_lines(session, project, cons, since, until)
+    lines += _plugin_lines(session, project, since, until)
 
     lines = _triage(lines, cons)
     money = _money(session, project, cons, since, until)
