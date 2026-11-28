@@ -710,7 +710,8 @@ class ConstitutionDoc(BaseModel):
         help="Code Factory only. The checks gate trusts CI, and CI is defined in the repo, "
              "so a change to it could make every check pass. On: a change touching CI "
              "config (.github/workflows and the like) merges only with your yes on that "
-             "commit. Off: a challenge seat's signed reason is enough.")
+             "commit. Off: a challenge seat's signed reason is enough. A factory created "
+             "autonomous starts with it off.")
     min_changed_line_coverage: int = _rule(
         0, ge=0, le=100, group="Code Factory", label="Changed lines tested, at least %",
         help="Code Factory only. Read from the check run named below, which CI reports on "
@@ -739,7 +740,8 @@ class ConstitutionDoc(BaseModel):
              "release and every major one; after that the crew ships minor and patch "
              "releases. 'autonomous': the crew ships every release, and you are told "
              "after. Either way a release points at a commit the platform merged, the "
-             "canary guard watches it, and a broken guard rolls it back without asking.")
+             "canary guard watches it, and a broken guard rolls it back without asking. "
+             "A factory created autonomous starts on 'autonomous'.")
     canary_minutes: int = _rule(
         30, ge=1, le=1440, group="Code Factory", label="Canary watch, in minutes",
         help="Code Factory only. How long the platform reads production health after "
@@ -1323,6 +1325,27 @@ def default_factory_floors(mode: str, constitution: dict[str, Any]) -> dict[str,
     if str(mode) != "code_factory":
         return dict(constitution)
     return {**{k: v for k, v in FACTORY_FLOORS.items() if k not in constitution},
+            **constitution}
+
+
+#: A Code Factory's own two say-so gates, as an autonomous dial leaves them.
+#: The dial's five rules are the lead's authority; these two are the
+#: chairman's yes on a CI change and on a release, and a chairman who chose
+#: "autonomous" chose not to be asked. What still guards each is a challenge
+#: seat's signed reason on a CI change and the canary on a release.
+FACTORY_AUTONOMOUS_GATES: dict[str, Any] = {
+    "ci_changes_need_chairman": False, "release_authority": "autonomous"}
+
+
+def default_factory_gates(mode: str, constitution: dict[str, Any]) -> dict[str, Any]:
+    """A creation-time factory constitution with its say-so gates following
+    the dial: off where the dial is autonomous, rule by rule wherever the
+    constitution was silent — naming one is the switch. Read after
+    `default_autonomy`, so a silent dial counts as the autonomous default.
+    Any other kind, or any other dial, is returned as given."""
+    if str(mode) != "code_factory" or preset_name(constitution) != "autonomous":
+        return dict(constitution)
+    return {**{k: v for k, v in FACTORY_AUTONOMOUS_GATES.items() if k not in constitution},
             **constitution}
 
 

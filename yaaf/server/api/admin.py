@@ -33,6 +33,7 @@ from yaaf.core.constitution import (
     default_autonomy,
     default_briefing,
     default_factory_floors,
+    default_factory_gates,
     default_job_month,
     default_tempo,
     effective,
@@ -1690,8 +1691,9 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
             {**ConstitutionDoc().model_dump(),
              **default_tempo(shape.behaves_as(body.mode, phase),
                              default_job_month(default_factory_floors(
-                                 body.mode, default_briefing(
-                                     default_autonomy(body.constitution)))))})
+                                 body.mode, default_factory_gates(
+                                     body.mode, default_briefing(
+                                         default_autonomy(body.constitution))))))})
     except ValidationError as exc:
         # A rule that cannot hold — a 29th of every month — is the founder's to
         # fix, not a 500. It reached here unchecked for as long as the suite's

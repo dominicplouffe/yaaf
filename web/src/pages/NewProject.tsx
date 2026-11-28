@@ -85,7 +85,7 @@ function factorySummary(rules: ConstitutionField[], set: Record<string, unknown>
       ? "releases go out without asking you"
       : "you approve the first release, and every major one",
     at("ci_changes_need_chairman") === false
-      ? "a challenge seat signs off changes to CI"
+      ? "a reviewer seat signs off changes to CI"
       : "changes to CI wait for your yes",
     `changes of at most ${at("max_change_lines")} lines`,
     "a reviewer who did not write it signs each change",
@@ -429,6 +429,11 @@ export default function NewProject() {
   // Set when a setup file's Autonomy group is not either preset exactly — a
   // constitution hand-edited in Settings, which no button here can represent.
   const [autonomyNotice, setAutonomyNotice] = useState<string | null>(null);
+  // A Code Factory's two say-so gates — your yes on a CI change and on a
+  // release. Null follows the dial (off under autonomous, on under
+  // supervised, as the server fills them: `default_factory_gates`); ticking
+  // or clearing the switch sends both explicitly.
+  const [askGates, setAskGates] = useState<boolean | null>(null);
   const [runtime, setRuntime] = useState("agent_sdk");
   const [controlledDomains, setControlledDomains] = useState("");
   const [teams, setTeams] = useState<TeamDraft[]>([
@@ -584,6 +589,14 @@ export default function NewProject() {
   // the whole form; the file's full constitution/config and any role
   // definitions the library lacks ride along at submit time.
   const [bundle, setBundle] = useState<ProjectBundle | null>(null);
+  // What the gates will be at Create: the switch, else a setup file's own
+  // rules, else the dial.
+  const fileRules = bundle?.project.constitution ?? {};
+  const gatesAsk = askGates ?? (
+    "ci_changes_need_chairman" in fileRules || "release_authority" in fileRules
+      ? fileRules.ci_changes_need_chairman !== false
+        || fileRules.release_authority === "approve_first"
+      : autonomy !== "autonomous");
 
   useEffect(() => {
     if (bundle) return; // a setup file says who leads and who is hired
@@ -1038,6 +1051,8 @@ export default function NewProject() {
       const p = parsed.project;
       setBundle(parsed);
       bundleSeen.current = true;
+      // The file's own gates, or the dial, until the switch is touched again.
+      setAskGates(null);
       setName(p.name);
       setSlug(dedupedSlug(p.slug));
       setGoal(p.goal);
@@ -1404,6 +1419,10 @@ export default function NewProject() {
             ...(autonomyNotice
               ? {}
               : autonomyPresets.find((p) => p.value === autonomy)?.constitution ?? {}),
+            ...(factory && askGates !== null
+              ? { ci_changes_need_chairman: askGates,
+                  release_authority: askGates ? "approve_first" : "autonomous" }
+              : {}),
           },
           integrations: {
             ...(bundle?.project.integrations ?? {}), runtime,
@@ -2350,6 +2369,23 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               {autonomyNotice}
             </p>
           )}
+          {factory && (
+            <label className="check-line" style={{ marginTop: 10 }}>
+              <input type="checkbox" checked={gatesAsk}
+                onChange={(e) => setAskGates(e.target.checked)} />
+              Ask me before a change to CI merges, and before the first and every major release
+            </label>
+          )}
+          {factory && (
+            <p className="help" style={{ marginTop: 4 }}>
+              {gatesAsk
+                ? "The crew waits for your yes on those. Off, a reviewer seat signs off CI "
+                  + "changes and releases ship on their own, watched and rolled back if they break."
+                : "Off: a reviewer seat signs off CI changes, and releases ship on their own — "
+                  + "watched, and rolled back without asking if they break. Both are in "
+                  + "Settings → Rules in force to change later."}
+            </p>
+          )}
           <Compare cards={autonomyPresets}>
             <p>A preset is five rules in the constitution&apos;s Autonomy group — each one editable
               individually later in Settings → Rules in force, with a written reason, binding
@@ -2700,7 +2736,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <div className="orgline">
               <strong>Factory rules</strong>
               <span className="help">
-                {factorySummary(factoryRules, bundle?.project.constitution ?? {})}
+                {factorySummary(factoryRules, {
+                  ...(bundle?.project.constitution ?? {}),
+                  ci_changes_need_chairman: gatesAsk,
+                  release_authority: gatesAsk ? "approve_first" : "autonomous",
+                })}
                 {" "}— each one is in Settings → Rules in force, to change later.
               </span>
             </div>

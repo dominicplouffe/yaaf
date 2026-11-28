@@ -153,18 +153,17 @@ is settled — none of them may be skipped:
     Always ledger the second key: the seats that build push with a GitHub key
     of their own, entered after Create on Settings → Code Factory.
     Neither goes in `credentials_promised`, and no key ever goes in the draft.
-  - *What still comes to him.* The authority dial does not reach a factory's
-    own two gates, and both default to asking him: `ci_changes_need_chairman`
-    (on — every change to CI config, the first one that adds CI included,
-    waits for his yes) and `release_authority` (`approve_first` — he approves
-    the first production release and every major one). When he asked for it
-    to run on its own ("autonomous", "hands-off", "don't ask me"), set
-    `ci_changes_need_chairman: false` and `release_authority: "autonomous"`
-    in the constitution and ledger what still guards it: a CI change then
-    needs a challenge seat's signed reason, and a release is still watched by
-    the canary and rolled back without asking. Otherwise ask, recommending
-    from the stakes. `protected_paths` is his own list and is never set for
-    him.
+  - *What still comes to him.* A factory has two say-so gates of its own,
+    `ci_changes_need_chairman` (his yes on every change to CI config) and
+    `release_authority` (`approve_first`: his yes on the first production
+    release and every major one). They follow the dial: an autonomous
+    factory is created with both off, a supervised one with both on, and
+    naming either in the constitution overrides the dial. Ledger which it
+    gets and what still guards it when they are off — a challenge seat's
+    signed reason on a CI change, the canary and its rollback on a release.
+    If he wants autonomy but still his yes on CI or on releases, set them
+    (`true`, `"approve_first"`) explicitly. `protected_paths` is his own
+    list and is never set for him.
   - *Where it runs.* Ask whether the software will be hosted, and where, or
     not yet. Hosted: name the host in the goal; its deploy key is saved after
     Create on Settings → Code Factory, which the ledger says. The team writes
