@@ -198,3 +198,19 @@ def test_the_broker_key_comes_from_the_master_key_and_differs_from_it(monkeypatc
     assert len(key) == 32 and b"a-master-key-for-tests" not in key
     monkeypatch.setattr(settings(), "master_key", "")
     assert "MASTER_KEY" in H.BrokerLauncher(("127.0.0.1", 1)).unavailable()
+
+
+def test_every_scratch_a_plugin_container_writes_is_writable_by_the_sandbox_user():
+    """The sandbox image has no /scratch, so docker made the mount point root's
+    and the tmpfs took that mode: the plugin's unprivileged user could write
+    nothing there, and openpyxl's first temp file was a PermissionError (MIN-08
+    on a real install). Every tmpfs is opened explicitly, as /tmp already is."""
+    spec = {"module": "m:plugin", "root": "/var/lib/yaaf/plugins/x", "paths": [],
+            "memory_mb": 256}
+    root = "/var/lib/yaaf/plugins/x/abc"
+    opts = [B.container_options(spec, "img", {}),
+            *(B.job_options({"op": op, "root": root, "site": f"{root}/.site", "timeout_s": 60},
+                            "img", {}, "net") for op in ("build", "tests"))]
+    for o in opts:
+        assert set(o["tmpfs"]) == {B.SCRATCH, "/tmp"}
+        assert all("mode=1777" in v.split(",") for v in o["tmpfs"].values()), o["tmpfs"]
