@@ -461,6 +461,14 @@ non-empty and the version changes, MIN-15) returns the new state. The change
 is in the audit log and the daily brief. Already accepted artifacts keep the
 verdict they had. Only new publications meet the new rules.
 
+**Built** (`registry.move`, project Settings → Plugin version, `yaaf plugins
+move`). `version` is the target's id (its commit). The move also keeps the
+project's lead and needs its mode open in the new version; either change makes
+a new project, not a move. The `create` answers in `kind_state` are core's and
+survive a migration that drops them. The move is in the audit log; it is not
+in the daily brief yet. The Plugins screen names each version by its release
+and tag, marks the one new projects get, and counts the projects on each.
+
 ## 6. The conformance suite
 
 Each requirement has a stable id, a sentence, and an automated check. The

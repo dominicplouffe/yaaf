@@ -66,6 +66,9 @@ export const SETTINGS_NAV = [
   { key: "rules", label: "Rules in force", words: "constitution autonomy pace brakes" },
   { group: "Housekeeping" },
   { key: "duplicate", label: "Duplicate & export", words: "clone copy twin" },
+  // A plugin project's version, and the move onto a fixed one.
+  { key: "plugin", label: "Plugin version", only: "plugin",
+    words: "plugin version update upgrade fix move release" },
   { key: "advanced", label: "Advanced", words: "runtime mock" },
 ] as const;
 

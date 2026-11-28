@@ -90,10 +90,15 @@ The result is a **report**, with one line for each requirement:
 | `disabled` | You switched it off (below). |
 
 `yaaf plugins install` waits for the result and prints any failures.
-`--no-wait` returns at once. You can read a version's report again later:
+`--no-wait` returns at once.
+
+Each install is a **version**. Commands name a version by its id, which is
+the commit it was installed at (a local install's id is `local-<hash>`).
+`yaaf plugins list` and Settings → Plugins show each id next to its release,
+which is the `version` in the plugin's manifest. For example:
 
 ```bash
-yaaf plugins report amazon-ppc 1.0.0
+yaaf plugins report amazon-ppc a6ca8e0fc29acae3765d125074d04e522ab17cf2
 ```
 
 ### Choose a kind
@@ -105,14 +110,40 @@ asks the questions the kind declares. Through the REST API or MCP, pass
 Founder's `list_kinds` tool and the MCP `catalog` tool (`what: "kinds"`)
 return the same list.
 
-Each project stays on the plugin version it was created with. Installing a
-newer version changes no running project.
+Each project stays on the plugin version it was created with until its
+chairman moves it (below).
+
+### Update a plugin
+
+When a plugin gets a fix:
+
+1. The author bumps `version` in `yaaf-plugin.toml`, merges, and tags the
+   release (say `v1.0.1`).
+2. The instance admin installs the new tag, in Settings → Plugins or with
+   `yaaf plugins install <url> --ref v1.0.1`. It is checked like any install.
+   The old version stays installed.
+3. **New projects** get the newest version that passed. If the new one failed,
+   they keep getting the old one.
+4. **Running projects** stay where they are until their chairman moves them:
+   project Settings → *Plugin version* → *Move to this*, or
+   `yaaf plugins move <project> <version id>`.
+
+A move keeps the project's mode and lead, and runs the project's saved state
+through the new version's `migrate_state`. Files already accepted keep their
+verdict, and new files meet the new version's rules. The move is in the audit
+log. yaaf refuses a move:
+
+- to a version that did not pass its checks, or is disabled;
+- to a version with another lead, or without the project's mode;
+- when `migrate_state` fails, in which case the project stays where it was.
+
+Moving back to an older version works the same way.
 
 ### Disable or remove
 
 ```bash
-yaaf plugins disable amazon-ppc 1.0.0   # new projects can no longer choose it
-yaaf plugins remove  amazon-ppc 1.0.0   # only when no project runs on it
+yaaf plugins disable amazon-ppc <version id>   # new projects can no longer choose it
+yaaf plugins remove  amazon-ppc <version id>   # only when no project runs on it
 ```
 
 A disabled version keeps serving the projects that already run on it.

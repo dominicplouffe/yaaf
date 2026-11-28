@@ -286,16 +286,20 @@ AI agent, send it [PLUGIN_AGENT_BRIEF.md](PLUGIN_AGENT_BRIEF.md).
 
 ### Running them (`yaaf plugins`)
 
-Installing, disabling and removing are for the instance admin only. Anyone
-signed in can list plugins and read reports.
+Installing, disabling and removing are for the instance admin only, and moving
+a project is for its chairman. Anyone signed in can list plugins and read
+reports. VERSION is a version's id: the commit it was installed at, as
+`yaaf plugins list` shows it. The `1.0.0` in a manifest is its release, not its
+id.
 
 | Command | What it does |
 |---|---|
 | `yaaf plugins install https://github.com/OWNER/REPO [--ref REF] [--no-wait]` | Install the commit that `--ref` (a branch, tag or commit; the default branch when you leave it out) names right now. Waits for the dependency build, the conformance suite and the plugin's own tests, then prints `ready` or the requirements that failed. `--no-wait` returns once the commit is fetched |
-| `yaaf plugins list` | Each installed plugin and its versions, with status |
+| `yaaf plugins list` | Each installed plugin and its versions: status, release, tag, how many projects run on it, and which one new projects get |
 | `yaaf plugins report PLUGIN VERSION` | One version's conformance report, one line per requirement |
 | `yaaf plugins kinds` | What a project can be created as on this box: the built-in modes, then each plugin kind that can be chosen, with its open modes, lead, crews and New Project fields |
-| `yaaf plugins disable PLUGIN VERSION` | New projects can no longer choose this version. Projects already on it keep running |
+| `yaaf plugins move PROJECT [VERSION]` | Move a running project onto another version of its plugin, such as one with a fix (the project's chairman). Without VERSION, lists the versions it can move to |
+| `yaaf plugins disable PLUGIN VERSION` | New projects can no longer choose this version. Projects already on it keep running, until moved |
 | `yaaf plugins remove PLUGIN VERSION` | Delete a version. Refused while any project runs on it |
 
 ### Writing them (`yaaf plugin`)

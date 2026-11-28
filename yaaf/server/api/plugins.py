@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from yaaf.core import shape
-from yaaf.core.models import Plugin, PluginVersion
+from yaaf.core.models import Plugin, PluginVersion, Project
 from yaaf.plugins import registry
 from yaaf.server import authority
 from yaaf.server.deps import db
@@ -40,12 +40,26 @@ class LocalInstall(BaseModel):
     path: str = Field(min_length=1, max_length=1000)
 
 
-def _version_view(v: PluginVersion, *, full: bool = False) -> dict:
+class MoveVersion(BaseModel):
+    version: str = Field(min_length=1, max_length=200)
+
+
+def _version_view(v: PluginVersion, *, full: bool = False, offered: set[str] | None = None,
+                  session: Session | None = None) -> dict:
+    """One installed version. `version` is the commit it was installed at (or
+    local-<hash>), the id every route takes; `release` is the version its
+    manifest declares and `ref` the branch or tag it was installed from, which
+    are what a person recognises."""
     out = {"id": v.id, "plugin": v.plugin_id, "version": v.version, "source": v.source,
+           "release": (v.manifest or {}).get("version"), "ref": v.ref,
            "status": v.status, "selectable": registry.selectable(v),
            "api_version": v.api_version, "installed_at": v.installed_at.isoformat(),
            "kind": (v.manifest or {}).get("kind"), "name": (v.manifest or {}).get("name"),
            "counts": (v.report or {}).get("counts", {})}
+    if offered is not None:
+        out["for_new_projects"] = v.id in offered
+    if session is not None:
+        out["projects"] = len(registry.projects_on(session, v))
     if full:
         out |= {"manifest": v.manifest, "report": v.report, "ref": v.ref}
     return out
@@ -91,13 +105,15 @@ def install_local(body: LocalInstall, session: Session = Depends(db)) -> dict:
 @router.get("/plugins", dependencies=[authority.SIGNED_IN])
 def list_plugins(session: Session = Depends(db)) -> dict:
     out = []
+    offered = {v.id for v in registry.offered(session)}
     for plugin in session.execute(select(Plugin).order_by(Plugin.id)).scalars():
         versions = session.execute(select(PluginVersion).where(
             PluginVersion.plugin_id == plugin.id).order_by(
             PluginVersion.installed_at.desc())).scalars().all()
         out.append({"id": plugin.id, "name": plugin.name, "kind_key": plugin.kind_key,
                     "enabled": plugin.enabled, "repo_url": plugin.repo_url,
-                    "versions": [_version_view(v) for v in versions]})
+                    "versions": [_version_view(v, offered=offered, session=session)
+                                 for v in versions]})
     return {"plugins": out}
 
 
@@ -122,6 +138,44 @@ def remove_version(plugin_id: str, version: str, session: Session = Depends(db))
     except registry.RegistryRefusal as exc:
         raise _refusal(exc) from None
     return {"removed": f"{plugin_id}@{version}"}
+
+
+def _plugin_project(session: Session, project_id: str) -> Project:
+    project = session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"no project {project_id}")
+    if project.plugin_version_id is None:
+        raise HTTPException(409, "this project is not a plugin project")
+    return project
+
+
+@router.get("/projects/{project_id}/plugin", dependencies=[authority.READ])
+def project_plugin(project_id: str, session: Session = Depends(db)) -> dict:
+    """The plugin version a project runs on, and the versions it could move to."""
+    project = _plugin_project(session, project_id)
+    current = session.get(PluginVersion, project.plugin_version_id)
+    offered = {v.id for v in registry.offered(session)}
+    others = session.execute(select(PluginVersion).where(
+        PluginVersion.plugin_id == current.plugin_id, PluginVersion.id != current.id).order_by(
+        PluginVersion.installed_at.desc())).scalars().all()
+    return {"current": _version_view(current, offered=offered),
+            "available": [_version_view(v, offered=offered) for v in others
+                          if registry.selectable(v)]}
+
+
+@router.post("/projects/{project_id}/plugin", dependencies=[authority.CHAIR])
+def move_project_plugin(project_id: str, body: MoveVersion,
+                        session: Session = Depends(db)) -> dict:
+    """Move a running project onto another installed version of its plugin (the
+    chairman's): how a fixed plugin reaches a project created before the fix."""
+    project = _plugin_project(session, project_id)
+    current = session.get(PluginVersion, project.plugin_version_id)
+    target = _version(session, current.plugin_id, body.version)
+    try:
+        moved = registry.move(session, project, target)
+    except registry.RegistryRefusal as exc:
+        raise _refusal(exc) from None
+    return {"moved": moved, "current": _version_view(target)}
 
 
 @router.get("/kinds", dependencies=[authority.SIGNED_IN])

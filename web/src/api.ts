@@ -2231,7 +2231,21 @@ export interface PluginVersionRow {
   name: string | null;
   counts: Partial<Record<PluginResult["status"], number>>;
   report?: { results: PluginResult[]; interrupted?: string };
+  /** The branch or tag it was installed from, and the version its manifest
+      declares: what a person recognises. `version` is the commit, the id. */
   ref?: string | null;
+  release?: string | null;
+  /** Only in the plugin list: whether new projects get this version, and how
+      many projects run on it. */
+  for_new_projects?: boolean;
+  projects?: number;
+}
+
+/** GET /admin/projects/{id}/plugin: the version a project runs on, and the
+    versions it could move to. */
+export interface ProjectPlugin {
+  current: PluginVersionRow;
+  available: PluginVersionRow[];
 }
 
 export interface PluginRow {

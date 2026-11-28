@@ -2524,6 +2524,23 @@ def plugins_remove(plugin: str, version: str) -> None:
         _show(client.delete(f"/admin/plugins/{plugin}/versions/{version}"))
 
 
+@plugins_cli.command("move")
+def plugins_move(
+    project: str = typer.Argument(..., help="The project's slug or id"),
+    version: str = typer.Argument(None, help="The version to move to (the commit id from "
+                                  "`yaaf plugins list`); omit to list the ones it can move to"),
+) -> None:
+    """Move a running project onto another version of its plugin, such as one
+    with a bug fixed (the project's chairman). Its saved state goes through the
+    new version's migrate_state; what was already accepted keeps its verdict."""
+    with _client() as client:
+        pid = _resolve_project(client, project)
+        if version is None:
+            _show(client.get(f"/admin/projects/{pid}/plugin"))
+        else:
+            _show(client.post(f"/admin/projects/{pid}/plugin", json={"version": version}))
+
+
 @plugins_cli.command("kinds")
 def plugins_kinds() -> None:
     """What a project may be created as here: built-in modes and plugin kinds."""

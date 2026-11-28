@@ -32,6 +32,7 @@ import { BriefSection } from "./settings/brief";
 import { AdvancedSection, DuplicateSection } from "./settings/housekeeping";
 import { IntegrationsSection } from "./settings/integrations";
 import { MoneySection } from "./settings/money";
+import { PluginSection } from "./settings/plugin";
 import { RulesPending, RulesSection, useRules } from "./settings/rules";
 import "./settings/settings.css";
 
@@ -160,6 +161,9 @@ export default function Settings({ projectId, dash, org, reload }: {
           <RulesSection rules={rules} dash={dash} theme={theme} flashKey={flashKey}
             setTheme={(t) => go("rules", t)} />
         )}
+        {section === "plugin" && dash.kind?.startsWith("plugin:") && (
+          <PluginSection projectId={projectId} dash={dash} onSaved={saved} onError={failed} />
+        )}
         {section === "duplicate" && <DuplicateSection projectId={projectId} dash={dash} onError={failed} />}
         {section === "advanced" && (
           <AdvancedSection projectId={projectId} dash={dash} rules={rules} onSaved={saved} onError={failed}
@@ -233,7 +237,8 @@ function ProjectRail({ dash, section, notes, onPick }: {
 }) {
   const [find, setFind] = useState("");
   const q = find.trim().toLowerCase();
-  const items = SETTINGS_NAV.filter((item) => !("only" in item) || item.only === dash.mode);
+  const items = SETTINGS_NAV.filter((item) => !("only" in item) || (item.only === "plugin"
+    ? !!dash.kind?.startsWith("plugin:") : item.only === dash.mode));
   const rows: React.ReactNode[] = [];
   let group: string | null = null;
   for (const item of items) {

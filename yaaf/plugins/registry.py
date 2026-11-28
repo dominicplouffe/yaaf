@@ -537,6 +537,64 @@ def remove(session: Session, version: PluginVersion) -> None:
             session.delete(plugin)
 
 
+def move(session: Session, project: Project, target: PluginVersion) -> dict:
+    """Move a plugin project onto another installed version of its plugin: how a
+    fix reaches a project that is already running (§5.5). Only a version a new
+    project could be created on, of the same plugin, keeping the project's mode
+    and lead. Its state goes through the new version's migrate_state; a state
+    the new version cannot take refuses the move. What was already accepted
+    keeps its verdict; only new publications meet the new rules."""
+    current = session.get(PluginVersion, project.plugin_version_id) \
+        if project.plugin_version_id else None
+    if current is None:
+        raise RegistryRefusal("this project is not a plugin project, so it has no plugin "
+                              "version to move", 409)
+    if target.plugin_id != current.plugin_id:
+        raise RegistryRefusal(f"{target.plugin_id} is a different plugin; a project moves "
+                              f"only between versions of {current.plugin_id}", 422)
+    if target.id == current.id:
+        raise RegistryRefusal("the project already runs on this version", 409)
+    if not selectable(target):
+        raise RegistryRefusal(f"version {target.version[:12]} is {target.status}; a project "
+                              "moves only to a version that passed every check", 409)
+    old_m, new_m = manifest_for(current), manifest_for(target)
+    mode = next((m for m in new_m.modes if m.key == project.kind_mode), None)
+    if mode is None or not mode.open:
+        raise RegistryRefusal(f"the new version has no open mode {project.kind_mode!r}, which "
+                              "this project runs in", 422)
+    if new_m.lead != old_m.lead:
+        raise RegistryRefusal(f"the new version is led by {new_m.lead}, not {old_m.lead}; a "
+                              "new lead means a new project", 422)
+    state = dict(project.kind_state or {})
+    own = {k: v for k, v in state.items() if k != "create"}
+    if own and not new_m.state:
+        raise RegistryRefusal("this project holds plugin state, and the new version keeps "
+                              "none (no migrate_state), so the state would be lost", 422)
+    if new_m.state and state:
+        migrated, failure = H.ask_or_fail_closed(
+            pool_for(target), api_hooks.HookKey("migrate_state"), [state, old_m.version])
+        if failure is not None or not isinstance(migrated, dict):
+            why = failure.kind if failure is not None else "it did not return a JSON object"
+            raise RegistryRefusal(f"the new version's migrate_state could not carry this "
+                                  f"project's state ({why}); the project stays where it is",
+                                  409)
+        # The New Project answers are core's record, not the plugin's state: a
+        # migration that drops them does not lose them.
+        if "create" in state:
+            migrated = {**migrated, "create": migrated.get("create", state["create"])}
+        state = dict(migrated)
+    project.plugin_version_id = target.id
+    project.kind_state = state or None
+    detail = {"plugin": target.plugin_id, "from": current.version,
+              "from_release": old_m.version, "to": target.version,
+              "to_release": new_m.version}
+    session.add(AuditLog(id=ids.new_id(ids.AUDIT), project_id=project.id,
+                         actor=acting.stamp(), action="plugin.move", entity="project",
+                         entity_id=project.id, detail=detail))
+    session.flush()
+    return detail
+
+
 # ── running it ─────────────────────────────────────────────────────────────────
 
 

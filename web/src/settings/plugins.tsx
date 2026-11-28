@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { del, get, post, PluginRow, PluginVersionRow } from "../api";
 import { Badge } from "../ui/kit";
+import { versionName } from "../ui/project";
 import { Flash, Group, SectionHead } from "./kit";
 
 const TONE: Record<PluginVersionRow["status"], "good" | "warn" | "critical" | "accent" | undefined> = {
@@ -107,7 +108,8 @@ export function PluginsSection({ plugins, onChanged }: {
             {busy ? "Fetching…" : "Install"}</button>
         </div>
         <p className="help">Pinned to the commit the ref names now: a tag moved later never
-          changes what is installed.</p>
+          changes what is installed. To update a plugin, install its new tag here: new projects
+          get it, and each running project moves in its Settings → Plugin version.</p>
         <Flash note={note} />
       </div>
       {plugins === null ? <p className="help">Loading…</p> : plugins.length === 0 ? (
@@ -124,7 +126,10 @@ export function PluginsSection({ plugins, onChanged }: {
               <div key={v.id} className="set-plugin-version">
                 <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
                   <Badge tone={TONE[v.status]}>{v.status}</Badge>
-                  <code title={v.version}>{v.version.slice(0, 14)}</code>
+                  <b>{versionName(v)}</b>
+                  <code title={v.version}>{v.version.slice(0, 12)}</code>
+                  {v.for_new_projects && <Badge tone="good">new projects</Badge>}
+                  {v.projects ? <span className="help">{v.projects} project{v.projects === 1 ? "" : "s"}</span> : null}
                   <span className="help">{v.source} · {new Date(v.installed_at).toLocaleString()}
                     {" · "}{v.counts.pass ?? 0} passed
                     {v.counts.fail ? `, ${v.counts.fail} failed` : ""}
@@ -135,7 +140,9 @@ export function PluginsSection({ plugins, onChanged }: {
                   {v.status !== "disabled" && v.status !== "installing" && (
                     <button onClick={() => act(v, "disable")}>Disable</button>)}
                   {v.status !== "installing" && (
-                    <button onClick={() => act(v, "remove")}>Remove</button>)}
+                    <button onClick={() => act(v, "remove")} disabled={!!v.projects}
+                      title={v.projects ? "Move its projects to another version first" : undefined}>
+                      Remove</button>)}
                 </div>
                 {open === key && <Report plugin={v.plugin} version={v.version} />}
               </div>
