@@ -171,7 +171,7 @@ def _task_view(task: Task) -> dict:
         "result_for": task.result_for or ResultFor.TEAM,
         "status": task.status,
         "blocked_reason": task.blocked_reason,
-        "blocked_on": task.blocked_on,
+        **({"blocked_on": task.blocked_on} if task.blocked_on else {}),
         "claimed_by_agent_id": task.claimed_by_agent_id,
         "hypothesis_id": task.hypothesis_id,
         # What this work is FOR. Outside Explore a task must name a requirement,

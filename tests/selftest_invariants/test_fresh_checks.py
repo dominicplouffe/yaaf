@@ -263,3 +263,29 @@ def test_the_ceo_asks_for_a_recheck_only_where_the_answer_can_change(
             requirement_id=requirement, kind=RunKind.REQUIREMENT_CHECK).count() == before + 1
     again = client.post(url, json=ask, headers=bearer(ceo))
     assert again.status_code == 409, "it is being judged now"
+
+
+def test_a_rejudged_requirement_that_still_passes_keeps_its_day_and_is_quiet(
+        client, monkeypatch, tmp_path):
+    from yaaf.core.models import Notice
+
+    project, _bare = _factory(client, monkeypatch, tmp_path, "freshrejudge")
+    requirement = _requirement(project, "true")
+    _judge(project, requirement)
+    with db_session() as session:
+        first = session.get(Requirement, requirement).met_at
+        notices = session.query(Notice).filter_by(project_id=project["id"]).count()
+        row = session.get(Project, project["id"])
+        session.get(Requirement, requirement).status = RequirementStatus.CHECKING
+        queued = RunQueue(id=ids.new_id(ids.RUN), project_id=row.id,
+                          kind=RunKind.REQUIREMENT_CHECK,
+                          trigger={"type": "requirement_check", "rejudge": True},
+                          requirement_id=requirement)
+        session.add(queued)
+        session.flush()
+        job = daemon._materialize(session, queued, row)
+    daemon.finalize(job, daemon._run_check_command(job))
+    with db_session() as session:
+        again = session.get(Requirement, requirement)
+        assert again.status == RequirementStatus.MET and again.met_at == first
+        assert session.query(Notice).filter_by(project_id=project["id"]).count() == notices
