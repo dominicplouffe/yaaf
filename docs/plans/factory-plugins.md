@@ -170,8 +170,9 @@ yaaf-server ──JSON-RPC over a socket──▶ plugin host (one per installed
  enforces, stores, records
 ```
 
-- **The host** is a small, fixed program in the `yaaf-sandbox` image
-  (`yaaf.plugins.host`). It imports the plugin's module from a read-only
+- **The host** is a small, fixed program, `yaaf_plugin_api.host`. It lives
+  in the API package, not in core, because the sandbox holds only the API and
+  the plugin; none of yaaf's own dependencies. It imports the plugin's module from a read-only
   mount and answers one JSON-RPC method per hook. Each message is validated
   against the API's schemas on both sides.
 - **Warm, not per call.** Gates run inside `artifact_put` and the plan check,
@@ -744,3 +745,56 @@ with `ReadFields.unknown()` and refuses an empty tuple, which closes the PPC
 receipt bug at the type. And a plugin hands core the load-bearing numbers in
 `Accept.load_bearing` when its artifact is accepted, so the review primitive
 compares re-derivations against the subject's numbers and never the review's.
+
+**Step 2 is built** (the plugin host), except the docker launcher:
+
+- `yaaf_plugin_api.wire`: frames (4-byte length + JSON, capped at 64 MB) and a
+  codec whose decoder builds only the API's own dataclasses. A message naming
+  any other type is a `WireError`.
+- `yaaf_plugin_api.host`: the host program. It imports the plugin, answers
+  one hook per request, and gives a hook's snapshot its callbacks (and a data
+  action its `Gateway`). Plugin output goes to stderr, so fd 1 stays the
+  protocol's. It clears the environment, writes no bytecode, and seeds
+  randomness per call. An audit-hook guard is armed before the plugin's first
+  line and never disarmed. It refuses network, processes, native code, writes
+  outside scratch, reads outside the plugin and Python, and changes to the
+  environment, and it reports each attempt so core fails the call even when the
+  plugin swallowed the PermissionError.
+- `yaaf/plugins/host.py`: core's side.
+  - `HostSpec` (one plugin version), `Host` (one process), `HostPool` (warm
+    hosts per version, recycled after 200 calls or any failure that killed one),
+    and `ask_or_fail_closed` with a fail-closed answer for every hook kind.
+  - Core re-checks which callbacks a hook kind may make, because the host is
+    the plugin's process. It validates every answer with `check_return`, and
+    kills a host that timed out, died, broke the protocol or reached out.
+  - Launchers: `subprocess` (dev and CI only, refused on a box holding the
+    Docker socket by the same rule as host success tests); `host` (a bubblewrap
+    jail with `--unshare-net`, the plugin and API mounted read-only, scratch the
+    only writable mount); and `docker`, which fails closed for now, saying why.
+- Attacks: `tests/selftest_invariants/test_plugin_host.py`. A plugin that
+  hangs, dies, raises, exits, returns garbage or an unusable value, prints a
+  forged frame, connects out, starts a process, loads ctypes, writes outside
+  scratch, reads the parent's environment or a server file, or reaches out at
+  import. A host that lies: it asks for `gateway.call` from a brief, names a
+  foreign type, answers the wrong id, sends a huge or non-JSON frame, or never
+  starts. Each ends in the refusing answer. Removing the guard turns 9 of these
+  red, and removing core's callback check turns the forged-gateway one red.
+
+### Decision needed: how a docker install reaches a plugin host
+
+In a docker deployment only the runner holds the Docker socket
+(`deploy/docker-compose.yml`). The API server, which asks the gates, does not,
+and should not: it is the internet-facing process, and the socket is root on
+the box. The options:
+
+1. **The runner brokers plugin hosts (recommended).** The runner starts host
+   containers with fixed flags (`--network none`, read-only root and plugin,
+   tmpfs scratch, no capabilities, memory and pid caps). The server reaches
+   them over the internal network with a shared secret, speaking the same
+   frames through a `RemoteLauncher`. No new process holds the socket. Cost:
+   with the runner down, plugin gates fail closed. Agents can't act without a
+   runner anyway, but the project-home view would show "could not be read".
+2. **A dedicated plugin-host service** holding the socket and nothing else.
+   It is cleaner to reason about, but it is a second root-holding process to
+   deploy and keep patched.
+3. **Give the API server the socket.** Rejected for the reason above.

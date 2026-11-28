@@ -87,6 +87,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
+# The plugin API ships inside yaaf (core imports it to talk to plugin hosts) and
+# is also its own distribution (packages/yaaf_plugin_api/pyproject.toml) for
+# plugin authors, who should not have to install all of yaaf to write one.
+where = [".", "packages/yaaf_plugin_api/src"]
 include = ["yaaf*"]
 
 # The goal grammar is read at runtime by the Founder's prompt and by the
@@ -96,6 +100,7 @@ include = ["yaaf*"]
 # The dated price snapshot an install with no route to the price feed imports
 # (yaaf.core.price_feed).
 "yaaf.runtimes" = ["*.json"]
+"yaaf_plugin_api" = ["schema/*.json", "py.typed"]
 
 [tool.ruff]
 line-length = 100
