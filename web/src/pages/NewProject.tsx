@@ -38,8 +38,11 @@ type Stakes = "low" | "normal" | "high";
 interface BarReading { stakes: Stakes; proof: boolean; quote: string | null; by: string }
 /** Which bar bundle each stakes level stands for (yaaf.server.bar_reading). */
 const BUNDLE_FOR: Record<Stakes, string> = { high: "full_send", normal: "balanced", low: "frugal" };
-/** The quality rules a reading carries that have no field of their own. */
-const CRAFT_KEYS = ["stakes", "deliverable_review", "max_usd_per_run", "run_timeout_s",
+/** The quality rules a reading carries that have no field of their own.
+    `stakes` is not among them: it is the reading itself, held once in
+    `quality`. Kept in two places it was two answers, and a draft that set one
+    while a reading of the brief set the other was refused at Create. */
+const CRAFT_KEYS = ["deliverable_review", "max_usd_per_run", "run_timeout_s",
   "hard_stop_multiple"];
 const STAKES_WORDS: Record<Stakes, string> = {
   high: "High — the writing and checking seats run on the strongest model, with room for long runs",
@@ -452,11 +455,15 @@ export default function NewProject() {
   const [quality, setQuality] = useState<BarReading | null>(null);
   // The goal the reading above was made for, so an edit to it reads again.
   const [qualityFor, setQualityFor] = useState("");
+  // A reading that lands after a decision, or after the brief it read has
+  // changed, is an answer to a question nobody is asking any more.
+  const decided = useRef(false);
+  const goalNow = useRef("");
   // The bar's craft half. No form fields of their own — the same choice
   // `max_usd_per_run` has always made here — so they ride the reading and are
   // edited in Settings → Rules in force afterwards.
   const [craft, setCraft] = useState<Record<string, unknown>>({
-    stakes: "normal", deliverable_review: "independent_read",
+    deliverable_review: "independent_read",
     max_usd_per_run: 20, run_timeout_s: 5400, hard_stop_multiple: 3,
   });
   // How often the project thinks. Thirteen rules, none of which has ever had a
@@ -568,7 +575,9 @@ export default function NewProject() {
 
   // Read the brief for its bar once the chairman has left it — on the guided
   // view that is reaching the money step, on one page a pause in typing. His
-  // own choice, or a setup file's, is never read over.
+  // own choice, or a setup file's, is never read over — checked again when the
+  // answer lands, because a draft or a pick can arrive while it is in flight.
+  goalNow.current = goal;
   useEffect(() => {
     if (quality?.by === "chairman" || goal.trim().length < 10 || goal === qualityFor) return;
     if (!onePage && step < 3) return;
@@ -576,6 +585,7 @@ export default function NewProject() {
       post<BarReading & { rules: Record<string, unknown> }>("/admin/brief/bar",
         { goal, billing_secret_id: billingCredentialId.trim() || null })
         .then((read) => {
+          if (decided.current || goalNow.current !== goal) return;
           setQualityFor(goal);
           applyReading({ stakes: read.stakes, proof: read.proof, quote: read.quote, by: read.by },
                        read.rules);
@@ -777,12 +787,8 @@ export default function NewProject() {
     const rules = parsed.project.constitution as Record<string, unknown>;
     const matches = (card: PresetCard) =>
       Object.entries(card.constitution).every(([k, v]) => rules[k] === v);
-    // A file's stakes were somebody's decision: they stand, and the brief is
-    // not read over them. Its money keeps the shape it had.
-    if (typeof rules.stakes === "string") {
-      setQuality({ stakes: rules.stakes as Stakes, quote: null, by: "chairman",
-                   proof: Boolean(rules.require_evidence_verification) });
-    }
+    // Its money keeps the shape it had. (Its stakes are taken in `applyBundle`,
+    // which does not wait for the cards.)
     if (rules.project_usd_budget) setJobBudget(Number(rules.project_usd_budget));
     if (rules.project_token_budget) setJobTokens(Number(rules.project_token_budget));
     setMonthlyInstead(!rules.project_usd_budget && !rules.project_token_budget
@@ -846,6 +852,7 @@ export default function NewProject() {
 
   /** The chairman overruling the reading: his choice, with no quote needed. */
   function pickStakes(stakes: Stakes, proof: boolean) {
+    decided.current = true;
     const bundle = barPresets.find((p) => p.value === BUNDLE_FOR[stakes])?.constitution ?? {};
     const rules: Record<string, unknown> = { ...bundle };
     if (proof) {
@@ -1056,6 +1063,16 @@ export default function NewProject() {
       setName(p.name);
       setSlug(dedupedSlug(p.slug));
       setGoal(p.goal);
+      // A file's stakes, or a draft's, were somebody's decision: they stand,
+      // and the brief is not read over them. Taken here, the moment the file
+      // lands, not when the cards do — until then the form looked undecided
+      // and read the brief, and whichever answer arrived last won.
+      const stated = (p.constitution as Record<string, unknown>).stakes;
+      if (stated === "low" || stated === "normal" || stated === "high") {
+        decided.current = true;
+        setQuality({ stakes: stated, quote: null, by: "chairman",
+                     proof: Boolean(p.constitution.require_evidence_verification) });
+      }
       setBillingMode(p.billing_mode);
       if (p.mode) {
         setMode(p.mode);
@@ -1170,8 +1187,7 @@ export default function NewProject() {
       const craftCons = p.constitution as Record<string, unknown>;
       setCraft((prev) => {
         const kept: Record<string, unknown> = { ...prev };
-        for (const key of ["stakes", "deliverable_review", "max_usd_per_run",
-                           "run_timeout_s", "hard_stop_multiple"]) {
+        for (const key of CRAFT_KEYS) {
           if (craftCons[key] !== undefined) kept[key] = craftCons[key];
         }
         return kept;
@@ -1394,6 +1410,9 @@ export default function NewProject() {
             // the four below do, and are posted from the boxes so an edit
             // after picking a card is what actually gets created.
             ...craft,
+            // The one place stakes is decided on this form, so the constitution
+            // and the reading sent beside it cannot disagree.
+            stakes: quality?.stakes ?? "normal",
             queue_ceiling: queueCeiling,
             // A factory's is the server's (FACTORY_FLOORS): sized to a first merge.
             ...(factory ? {} : { drought_hours: droughtHours }),

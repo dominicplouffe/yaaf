@@ -205,3 +205,46 @@ test("a Code Factory's home shows each change and what it waits on", async ({ pa
   await expect(page.getByText(/Approve change #1/).first()).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("a setup file's stakes stand, however late the cards land", async ({ page }) => {
+  /* A file or a Founder draft that names its stakes has decided them. The form
+     used to take that decision only once the preset cards arrived, so in the
+     gap it looked undecided and read the brief instead — and the reading
+     wrote the constitution while the file wrote the line beside it. Create
+     then refused the pair: "the brief was read as high stakes but the
+     constitution says 'low'". Holding the cards back opens that gap on
+     purpose; the brief below is one the word rules read as low. */
+  failOnPageErrors(page);
+  await page.route("**/admin/founder/status", async (route) => {
+    await new Promise((done) => setTimeout(done, 3_000));
+    await route.continue();
+  });
+  const readings: string[] = [];
+  page.on("request", (r) => { if (r.url().includes("/admin/brief/bar")) readings.push(r.url()); });
+
+  await page.goto("/app/#/projects/new");
+  await page.getByRole("button", { name: /Fill in the form/ }).click();
+  const statusLanded = page.waitForResponse((r) => r.url().includes("/admin/founder/status"));
+  await page.locator("#np-file").setInputFiles({
+    name: "printer.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify({
+      yaaf_bundle: 1, kind: "project", source_slug: "printer-pick",
+      exported_at: "2026-11-01T00:00:00Z",
+      project: {
+        slug: "printer-pick", name: "Printer pick", billing_mode: "api_key", mode: "deliver",
+        goal: "Take a quick look at which label printer suits a small desk, just for fun.",
+        controlled_domains: [], constitution: { stakes: "high" },
+        integrations: { runtime: "agent_sdk" }, ceo_role_slug: "ceo", ceo_name: "CEO",
+        teams: [], solo: false,
+      },
+      roles: [], secrets: [],
+    })),
+  });
+  await statusLanded;
+
+  const bar = page.locator(".orgline", { has: page.locator("strong", { hasText: /^Bar$/ }) });
+  await expect(bar).toContainText("high stakes");
+  await expect(bar).toContainText("your choice");
+  expect(readings, "the brief was read over the file's own stakes").toEqual([]);
+});
