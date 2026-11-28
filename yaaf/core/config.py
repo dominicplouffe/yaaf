@@ -99,6 +99,14 @@ class Settings(BaseSettings):
     plugin_broker_bind: str = "0.0.0.0"
     plugin_broker_port: int = 24250
     plugin_broker_address: str = "runner:24250"
+    # Development only, both off by default. allow_local_plugins lets the
+    # instance admin install a plugin from a path on this machine instead of a
+    # pinned GitHub commit. allow_unverified_plugins lets a version whose
+    # conformance suite has not run ("pending") be chosen for a project. A
+    # production box leaves both off: there, only a GitHub install that passed
+    # every requirement is ever offered.
+    allow_local_plugins: bool = False
+    allow_unverified_plugins: bool = False
     sandbox_network: str = "yaaf_sandbox"
     workspaces_root: str = "/var/lib/yaaf/workspaces"
     artifacts_root: str = "/var/lib/yaaf/artifacts"

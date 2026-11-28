@@ -105,3 +105,33 @@ def behaves_as(project: Any, phase: str | None = None) -> str:
     if ships_once(mode, phase):
         return ProjectMode.DELIVER
     return mode
+
+
+# ── factory plugins (docs/plans/factory-plugins.md §8.1) ────────────────────────
+#
+# A plugin project stores its kind ("plugin:<key>") and its plugin mode beside
+# a built-in `mode`, which is set from the plugin mode's shape when the project
+# is made. So every question above is already answered for it, by the mode it
+# behaves as, and no reader that draws one of the built-in shapes has to learn
+# plugins. What it cannot answer is which plugin; these do.
+
+PLUGIN_PREFIX = "plugin:"
+#: A plugin mode's shape, as the built-in mode a project of it is stored as.
+SHAPE_MODES = {"ships_once": ProjectMode.DELIVER, "runs_on_cycles": ProjectMode.OPERATE}
+
+
+def plugin_kind(project: Any) -> str | None:
+    """The plugin kind key ("amazon_ppc") of a plugin project, or None."""
+    kind = project.get("kind") if isinstance(project, dict) else getattr(project, "kind", None)
+    if isinstance(kind, str) and kind.startswith(PLUGIN_PREFIX):
+        return kind[len(PLUGIN_PREFIX):] or None
+    return None
+
+
+def is_plugin_kind(project: Any) -> bool:
+    return plugin_kind(project) is not None
+
+
+def mode_for_shape(shape: str) -> str:
+    """The built-in mode a plugin mode of this shape is stored as."""
+    return str(SHAPE_MODES[shape])

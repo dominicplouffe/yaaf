@@ -61,6 +61,7 @@ OAUTH_CLIENT = "oacl"
 OAUTH_CODE = "oacd"
 MCP_CONFIRMATION = "mcpx"
 PROJECT_CREDENTIAL = "pcrd"  # the credential a project pays a second provider with
+PLUGIN_VERSION = "plgv"  # one installed version of a factory plugin
 USER_SESSION = "uses"  # a browser signed in as a person
 USER_TOKEN = "utok"  # a personal token: the person, at a terminal
 PROVIDER_CHECK = "pchk"  # one model checked on one credential

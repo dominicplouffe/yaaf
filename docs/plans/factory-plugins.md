@@ -812,3 +812,38 @@ patch), and giving the API the socket.
 - Not exercised in CI: the Docker SDK attach path itself (`_DockerHost`), since
   CI has no daemon to start a container in. Its flags are checked as data, and
   the broker is tested with a local process in the container's place.
+
+**Step 3 is built** (the registry and data model):
+
+- Tables `plugins` (id, name, the kind it owns, enabled) and `plugin_versions`
+  (version, source, manifest, status, report, where its code sits), plus
+  `projects.kind`, `kind_mode`, `plugin_version_id` and `kind_state`
+  (migration 0087). A plugin project's built-in `mode` will be set from its
+  plugin mode's shape (`shape.mode_for_shape`), so the readers that draw
+  Explore/Deliver/Operate keep working unchanged.
+- `yaaf/plugins/registry.py`: install from a local path (development only,
+  behind `YAAF_ALLOW_LOCAL_PLUGINS`). The checkout is copied under
+  `YAAF_PLUGINS_ROOT` as `local-<sha256 of its files>`, so the same files are
+  one version and a changed file is a new one. At install the registry decides
+  MIN-02 (a plugin keeps its kind; no two plugins share one), and MIN-04 and
+  MIN-05 by starting the code in a sandboxed host and comparing the hooks it
+  reports with the manifest. A failed version keeps its report and loses its
+  code. Statuses are `pending | ready | failed | disabled`. A new project may
+  choose only `ready`, or `pending` on a box with `YAAF_ALLOW_UNVERIFIED_PLUGINS`.
+  Nothing is `ready` until the conformance suite (step 6) runs.
+- REST (`yaaf/server/api/plugins.py`). The instance admin uses
+  `POST /admin/plugins/local`, `…/disable` and `DELETE …`. Anyone signed in
+  uses `GET /admin/plugins`, `GET …/versions/{version}` and `GET /admin/kinds`
+  (built-in modes plus offered plugin kinds). Every write is audited with its
+  actor. A version a project is pinned to cannot be removed. All six routes are
+  classified as withheld from MCP, with reasons; `/admin/kinds` joins the MCP
+  create tool in step 9.
+- Attacks: `tests/selftest_invariants/test_plugin_registry.py`. Local install
+  is off by default. Only the admin installs. Code that misses a declared hook,
+  or reaches out at import, is recorded failed and never offered. A pending
+  version is offered only where allowed. Two plugins cannot share a kind, and a
+  plugin cannot change its own. A path that is not a checkout is refused. A
+  pinned version cannot be removed.
+- Not yet carried: a plugin project's kind fields in clone and setup-file
+  export. Nothing creates a plugin project until step 5, and step 5 must add
+  them there (the sibling-footprint rule).

@@ -94,6 +94,20 @@ REACHED = {
 #: Routes no tool reaches, and the reason. A reason is required: "we did not
 #: get to it" is a fine answer, but it has to be written down as one.
 WITHHELD = {
+    "POST /admin/plugins/local":
+        "installing a plugin puts code on the whole box; it is the instance admin's, "
+        "on his own screen, and a model client is never the one to add it.",
+    "GET /admin/plugins":
+        "the box's installed plugins are above every project a client is scoped to.",
+    "GET /admin/plugins/{plugin_id}/versions/{version}":
+        "one installed plugin's manifest and report: above every project, as the list is.",
+    "POST /admin/plugins/{plugin_id}/versions/{version}/disable":
+        "withdrawing a plugin decides what every chairman on the box may create.",
+    "DELETE /admin/plugins/{plugin_id}/versions/{version}":
+        "removing installed code is the instance admin's, as installing it is.",
+    "GET /admin/kinds":
+        "the create tool does not take a plugin kind yet; it learns them, and this "
+        "list with them, in build step 9 of docs/plans/factory-plugins.md.",
     "PUT /admin/projects/{project_id}/environments":
         "the seats write environments with environment_set, and under approve_first a "
         "production or staging command a seat wrote waits for the chairman's yes on a "
