@@ -1219,76 +1219,6 @@ table.csv .rownum {
 .pdfview { width: 100%; border: 1px solid var(--border); border-radius: 6px;
   background: var(--surface-2); padding: 12px; }
 
-/* ── settings: a rail, because eleven headings is not navigation ── */
-.settings-lay { display: grid; grid-template-columns: 190px 1fr; gap: 24px; margin-top: 4px; }
-/* A grid column is content-sized by default, so one wide table in one section
-   used to stretch the whole settings page past the window instead of scrolling
-   inside its own card. The column stops at its track; the content scrolls. */
-.settings-lay > * { min-width: 0; }
-.srail { display: flex; flex-direction: column; gap: 2px; align-self: start; position: sticky; top: 16px; }
-/* Block, not the global button's centred inline-flex: flex ignores text-align. */
-.srail button {
-  display: block; text-align: left; font-weight: 400;
-  background: none; border: 0; border-radius: 6px;
-  padding: 7px 11px; color: var(--ink-2); font-size: 13.5px;
-}
-.srail button:hover { background: var(--surface); }
-.srail button.active { background: var(--surface-2); color: var(--ink); font-weight: 500; }
-.srail .grp { font-size: var(--t-micro); letter-spacing: normal;   color: var(--muted); padding: 12px 11px 3px;
-}
-/* A rail item that carries its section's state. "Is anything wrong here?" is
-   the question a settings page is opened with, and answering it in the
-   navigation saves opening all three. */
-.srail button:has(.srail-note) { line-height: 1.35; padding: 8px 11px; }
-.srail-note { display: block; font-size: var(--t-micro); color: var(--muted); }
-.srail-note.good { color: var(--ink-2); }
-.srail-note.warn { color: var(--warning); }
-@media (max-width: 860px) {
-  .settings-lay { grid-template-columns: 1fr; }
-  .srail { position: static; flex-direction: row; flex-wrap: wrap; }
-  .srail .grp { display: none; }
-}
-
-/* ── the rulebook: one rule per row ──
-   Thirty-nine rules used to render as one flex row per group, so "Wake-loop
-   brakes" was nine number boxes shoulder to shoulder and the group heading
-   wore the same class as the field labels under it. A rule is a sentence with
-   a value on the end; this lays it out that way. */
-.rule { display: grid; grid-template-columns: minmax(0, 1fr) 200px;
-  gap: 10px 20px; align-items: start;
-  padding: 12px 2px; border-bottom: 1px solid var(--grid); }
-.rule:last-child { border-bottom: 0; }
-.rule .lbl { font-size: 13.5px; color: var(--ink); }
-.rule .help { margin: 3px 0 0; }
-.rule .ctl { min-width: 0; }
-.rule .ctl input, .rule .ctl select { width: 100%; }
-.rule.dirty { background: rgba(var(--accent-rgb), 0.07); border-radius: 6px; }
-/* A rule the current billing or project mode does not enforce. Dimmed, never
-   hidden: a rule you cannot see is a rule you cannot change. */
-.rule.flash { animation: rule-flash 1.4s ease-out; }
-@keyframes rule-flash {
-  from { background: rgba(var(--accent-rgb), 0.3); }
-  to { background: transparent; }
-}
-.rule-grp { font-size: 12px; font-weight: 600; letter-spacing: 0.3px;
-  color: var(--ink-2); margin: 20px 0 2px; }
-.rule-grp:first-child { margin-top: 6px; }
-.dial-summary { border: 1px solid var(--border); border-radius: 8px; margin: 4px 0 14px; }
-.dial-row { display: flex; align-items: baseline; gap: 12px; padding: 9px 12px;
-  flex-wrap: wrap; }
-.dial-row + .dial-row { border-top: 1px solid var(--border); }
-.dial-name { width: 120px; flex: none; font-size: 12.5px; color: var(--ink-2); }
-.dial-value { flex: 1 1 200px; min-width: 0; }
-
-/* The pending-changes tray. Edits span tabs, so the one question the old page
-   could not answer — "what have I actually touched?" — gets a permanent
-   answer at the bottom of the pane. */
-.rule-tray { position: sticky; bottom: 0; z-index: 2;
-  background: var(--surface-2); border: 1px solid var(--accent);
-  border-radius: 8px; padding: 10px 14px; margin-top: 16px; }
-.rule-tray .diffs { font-size: 12px; color: var(--ink-2); margin: 4px 0 0; }
-.rule-tray .actions { margin-top: 10px; }
-
 /* Agent prose is unbounded; a table cell is not. */
 .clamp { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3;
   -webkit-box-orient: vertical; overflow: hidden; }
@@ -2936,7 +2866,7 @@ del.bd { color: var(--ink-2); background: rgba(var(--critical-rgb), 0.12);
 /* Receded: what is finished, paused, put away or gone. It steps one place
    down the ink ramp rather than fading, because opacity takes the --muted text
    inside it under 4.5:1, and --muted is already the floor that clears it. */
-.pcard.done, .prow.done, .req-card.settled, .rule.dimmed .lbl, .rule.dimmed .ctl,
+.pcard.done, .prow.done, .req-card.settled,
 .rrow.already .rn, .rrow.already .rd, .drill-walk li.na, .drill-list.quiet,
 .llm-credentials tr.is-hidden td:not(.llm-actions), .hrow.ok, .hrow.put-away,
 .onode.st-paused, .onode.st-stood_down, .ib-snoozed-row, .org-branch.gone,
@@ -3321,10 +3251,6 @@ button.danger-text:where(:not(:disabled)):hover { background: rgba(var(--critica
 .pagehead-row { display: flex; justify-content: space-between; align-items: flex-end;
   gap: var(--s4); flex-wrap: wrap; margin-bottom: var(--s4); }
 .pagehead-row > div:first-child { min-width: 0; flex: 1 1 320px; }
-.srail-count { margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
-  background: var(--warning); color: var(--page); font-size: var(--t-micro); font-weight: 700;
-  display: inline-grid; place-items: center; }
-.srail button { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
 /* Icon draws itself display:block inline; inside a sentence it must flow. */
 .help > svg { display: inline !important; vertical-align: -2px; margin-right: 4px; }
 

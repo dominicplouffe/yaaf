@@ -1541,8 +1541,10 @@ function ImportPrices({ onApplied }: { onApplied: () => void }) {
 interface HeldCredential { provider: string; label: string; credential_id: string;
   name: string; bills: string; billing: boolean }
 
-export function ProviderCredentials({ projectId, disabled = false, fallbackId = null }: {
+export function ProviderCredentials({ projectId, disabled = false, fallbackId = null, bare = false }: {
   projectId: string; disabled?: boolean;
+  /** Inside a drawer that already says what this is: no heading of its own. */
+  bare?: boolean;
   /** The project's fallback. While a failover is active the server counts it
       among what pays, but it pays only for as long as that lasts — it is shown
       as the fallback, never here with a "Stop paying" that would not stop it. */
@@ -1570,9 +1572,11 @@ export function ProviderCredentials({ projectId, disabled = false, fallbackId = 
   const others = (held ?? []).filter((h) => !h.billing && h.credential_id !== fallbackId);
 
   return <div aria-label="Other providers">
+    {!bare && <>
     <h3>Other providers</h3>
     <p className="help">Seats on another provider&apos;s model pay with that provider&apos;s
       credential, against this project&apos;s same cap.</p>
+    </>}
     <Why>A seat pinned to another provider&apos;s model — or to a class of another provider,
       like <code>openai/@fast</code> — pays with that provider&apos;s credential, whatever unit
       it bills in. Its runs count against the same cap, in the billing credential&apos;s unit —

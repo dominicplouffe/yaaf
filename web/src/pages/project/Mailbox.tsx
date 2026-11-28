@@ -7,7 +7,7 @@ import { Avatar, EmptyState, Seg } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
 import { Why } from "../../settingsCopy";
 import { ReopenThread } from "../../desk";
-import { Flash, Group, SaveBar, SecretRow, SectionHead, Step, TestSeal, Toggle } from "../../settings/kit";
+import { DangerZone, Flash, Group, PendingBar, SecretRow, SectionHead, Step, TestSeal, Toggle } from "../../settings/kit";
 
 /** The project mailbox: an address the CEO can send a deliverable from and
     read the replies at. The server holds every rule — only the CEO writes,
@@ -87,6 +87,14 @@ interface MailMessageRow {
   error?: string;
 }
 
+/** The common hosted mailboxes, so picking one fills the four server fields
+    most people never need to look at. */
+const PROVIDERS: { key: string; label: string; smtp: string; imap: string }[] = [
+  { key: "gmail", label: "Gmail", smtp: "smtp.gmail.com", imap: "imap.gmail.com" },
+  { key: "m365", label: "Microsoft 365", smtp: "smtp.office365.com", imap: "outlook.office365.com" },
+  { key: "fastmail", label: "Fastmail", smtp: "smtp.fastmail.com", imap: "imap.fastmail.com" },
+];
+
 const DEFAULTS: MailboxConfig = {
   smtp_port: 587, smtp_security: "starttls", imap_port: 993, imap_folder: "INBOX",
   verify_sender: true, enabled: true,
@@ -143,6 +151,14 @@ export function MailboxSettings({ projectId }: { projectId: string }) {
     || FIELDS.some((k) => k !== "accept_new"
       && (form[k] ?? DEFAULTS[k] ?? "") !== (saved[k] ?? DEFAULTS[k] ?? ""))
     || configured && !!form.accept_new !== !!saved.accept_new;
+
+  const changedFields = FIELDS.filter((k) => k !== "accept_new"
+    && (form[k] ?? DEFAULTS[k] ?? "") !== (saved[k] ?? DEFAULTS[k] ?? "")).length
+    + (configured && !!form.accept_new !== !!saved.accept_new ? 1 : 0)
+    + (password.trim() ? 1 : 0)
+    + list.filter((a) => !savedList.includes(a)).length + savedList.filter((a) => !list.includes(a)).length;
+  const pending = changedFields || (!configured && form.address ? 1 : 0);
+  const provider = PROVIDERS.find((p) => p.smtp === form.smtp_host && p.imap === form.imap_host)?.key ?? "other";
 
   const set = <K extends keyof MailboxConfig>(key: K, value: MailboxConfig[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -298,7 +314,14 @@ export function MailboxSettings({ projectId }: { projectId: string }) {
       </div>
     </Group>
 
-    <Group title="Servers">
+    <Group title="Servers" aside={
+      <Seg value={provider} onPick={(k) => {
+        const p = PROVIDERS.find((x) => x.key === k);
+        if (!p) return;
+        setForm((f) => ({ ...f, smtp_host: p.smtp, smtp_security: "starttls", smtp_port: 587,
+          imap_host: p.imap, imap_port: 993, imap_folder: f.imap_folder || "INBOX" }));
+      }} options={[...PROVIDERS.map((p) => ({ key: p.key, label: p.label })), { key: "other", label: "Other" }]} />
+    }>
       <div className="set-card pad set-fields">
         <div className="field-wrap">
           <label className="field" htmlFor="mail-smtp">Sending — SMTP server</label>
@@ -434,10 +457,22 @@ export function MailboxSettings({ projectId }: { projectId: string }) {
       </div>
     </Group>
 
-    <SaveBar dirty={dirty || !configured && !!form.address} busy={busy} onSave={() => save()}
-      label={configured ? "Save changes" : "Set up email"}
-      danger={configured && <button type="button" className="quiet-danger" disabled={busy}
-        onClick={() => setRemoving(true)}>Remove the mailbox…</button>} />
+    <PendingBar count={dirty || pending ? Math.max(pending, 1) : 0} what="to email" busy={busy}
+      note={configured ? "The CEO's next run reads it." : "Test the connection once it is saved."}
+      saveLabel={configured ? "Save" : "Set up email"} onSave={() => save()}
+      onDiscard={() => { if (view) adopt(view); setPassword(""); setPasswordOpen(false); setAdding(""); setAddError(null); }} />
+
+    {configured && (
+      <DangerZone>
+        <div className="set-row">
+          <span className="set-row-lab">Remove the mailbox<span className="set-row-hint">Its threads stay on the record</span></span>
+          <div className="set-row-val">The CEO can no longer send or read email from this project.
+            {view.needs_mail ? " Its work runs through email, so it can't start or resume until a mailbox is set up again." : ""}</div>
+          <div className="set-row-act"><button type="button" className="small danger" disabled={busy}
+            onClick={() => setRemoving(true)}>Remove…</button></div>
+        </div>
+      </DangerZone>
+    )}
 
     {removing && <ConfirmModal title="Remove this project's mailbox?" confirmLabel="Remove" danger busy={busy}
       onCancel={() => setRemoving(false)}

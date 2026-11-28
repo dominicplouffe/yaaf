@@ -41,26 +41,4 @@
 /* After a row of buttons there is no line to tuck under; it stands clear. */
 .actions + .s-why { margin-top: var(--s2); }
 
-/* Inside a rule row the help line is already small and close; the toggle sits
-   right under it rather than pulled up into it. */
-.rule .s-why { margin: 2px 0 0; }
-.rule .s-why-body { margin-top: 2px; }
 
-/* A consequence that must not be missed: short, and in the reader's line of
-   sight rather than in the footnote register of .help. */
-.s-must {
-  margin: var(--s2) 0;
-  font-size: var(--t-small);
-  line-height: 1.5;
-  color: var(--ink-2);
-  max-width: 76ch;
-}
-.s-must.warn { color: var(--warning); }
-
-/* The state line under a section heading: what is true now, in a row. */
-.s-state {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3);
-  margin: 0 0 var(--s3);
-  font-size: var(--t-small); color: var(--ink-2);
-}
-.s-state b { color: var(--ink); font-weight: 600; }

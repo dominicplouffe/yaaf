@@ -496,8 +496,9 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     staging.chmod(0o777)
     project_tree = Path(settings().workspaces_root) / project.slug
     project_tree.mkdir(parents=True, exist_ok=True)
-    from yaaf.runner.daemon import _materialize_mail
+    from yaaf.runner.daemon import _materialize_mail, refresh_mirror
 
+    refresh_mirror(session, project)   # a factory's /project is main, as of now
     _materialize_mail(session, project, project_tree)
     (staging / "system_prompt.txt").write_text(job.system_prompt)
     # A resident session has no context.json — stash the prompt at start so the

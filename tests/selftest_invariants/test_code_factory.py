@@ -375,6 +375,40 @@ def test_a_factory_founded_silent_on_evidence_gets_floors_its_work_can_meet(clie
         assert effective(session, other["id"]).external_ratio_min == 0.5
 
 
+def test_an_autonomous_factory_does_not_ask_for_ci_changes_or_releases(client):
+    """The dial's five rules are the lead's authority, and a factory's two
+    say-so gates sat outside it: an autonomous factory still asked the
+    chairman to approve its first pull request, because it added CI. The
+    dial reaches them now — off under autonomous, on under supervised — and
+    either one named at creation is the switch, and stands."""
+    from yaaf.core.constitution import AUTONOMY_PRESETS
+
+    # make_project is supervised unless told; the product's silent default is
+    # the autonomous dial, which is what "silent" stands for here.
+    autonomous = AUTONOMY_PRESETS["autonomous"]
+    silent = factory(client, slug="silent", start=False, constitution=autonomous)
+    supervised = factory(client, slug="watched", start=False,
+                         constitution=AUTONOMY_PRESETS["supervised"])
+    switched = factory(client, slug="switched", start=False,
+                       constitution={**autonomous, "ci_changes_need_chairman": True,
+                                     "release_authority": "approve_first"})
+    unsaid = client.post("/admin/projects", headers=ADMIN,
+                         json=_body("unsaid", mode="code_factory"))
+    assert unsaid.status_code == 200, unsaid.text
+    with db_session() as session:
+        rules = {name: effective(session, p["id"]) for name, p in
+                 (("silent", silent), ("supervised", supervised), ("switched", switched),
+                  ("unsaid", unsaid.json()))}
+    for name in ("silent", "unsaid"):
+        assert (rules[name].ci_changes_need_chairman, rules[name].release_authority) \
+            == (False, "autonomous"), name
+    assert (rules["supervised"].ci_changes_need_chairman,
+            rules["supervised"].release_authority) == (True, "approve_first")
+    assert rules["switched"].plan_authority == "ceo"
+    assert (rules["switched"].ci_changes_need_chairman,
+            rules["switched"].release_authority) == (True, "approve_first")
+
+
 def test_changing_an_upkeep_rule_rewrites_its_promise(client):
     """A promise was written once and never again: moving the issue rule from 24
     to 48 hours, or turning it off, changed nothing the factory was held to."""

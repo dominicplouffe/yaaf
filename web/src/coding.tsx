@@ -49,8 +49,10 @@ export function CodingPicker({ value, onChange, disabled, id }: {
 
 /** The coding key, under the project's billing credential. Nothing on any
     project that is not a Code Factory. */
-export function CodingCard({ projectId, dash, disabled, onChanged }: {
+export function CodingCard({ projectId, dash, disabled, onChanged, bare }: {
   projectId: string; dash: Dashboard; disabled?: boolean; onChanged: () => void;
+  /** Inside a drawer that already says what this is: no heading of its own. */
+  bare?: boolean;
 }) {
   const [view, setView] = useState<CodingView | null>(dash.coding ?? null);
   const [pick, setPick] = useState(dash.coding?.credential_id ?? "");
@@ -78,9 +80,11 @@ export function CodingCard({ projectId, dash, disabled, onChanged }: {
   }
 
   return <div className="fallback" aria-label="Coding key">
+    {!bare && <>
     <h3>Coding key <span className="help">required to start</span></h3>
     <p className="help">The seats that hold the repo code with this. Everyone else — the lead,
       the boardroom, seats that never touch the repo — runs on the billing credential above.</p>
+    </>}
     <Why>An Anthropic, OpenAI or Google credential, driven by that provider&apos;s own coding
       tool. A coding seat whose role names no model runs the provider&apos;s Frontier model; a
       seat or a role that names one keeps it. It may be a second credential for the provider

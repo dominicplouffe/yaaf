@@ -1257,6 +1257,25 @@
     "name": "requirement_propose"
   },
   {
+    "description": "CEO only. Have the platform run a requirement's acceptance test again now, on a fresh checkout of main, when you believe main already makes it true. Use this, never a task whose only job is to re-run a test. Refused while work is open under it, or while main is still at the commit the test already failed at (every verdict names the commit it judged; a red requirement is judged again by itself whenever a change merges).",
+    "input_schema": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "requirement_recheck"
+  },
+  {
     "description": "Read the plan word for word: every requirement's id, key, statement, acceptance test and status. Work from these, not from the project goal.",
     "input_schema": {
       "properties": {},
@@ -1539,13 +1558,19 @@
     "name": "suggest"
   },
   {
-    "description": "Block your claimed task with a reason; the CEO will re-plan.",
+    "description": "Block your claimed task with a reason; the CEO will re-plan. If it waits on another task or a change, name it (`waits_on_task`: its id; `waits_on_change`: its number, e.g. 40): it goes back on the board by itself when that finishes.",
     "input_schema": {
       "properties": {
         "reason": {
           "type": "string"
         },
         "task_id": {
+          "type": "string"
+        },
+        "waits_on_change": {
+          "type": "string"
+        },
+        "waits_on_task": {
           "type": "string"
         }
       },
@@ -1680,6 +1705,25 @@
       "type": "object"
     },
     "name": "task_review"
+  },
+  {
+    "description": "Put a blocked task back on the board, unclaimed, once its blocker is cleared (whoever may kill it may unblock it). Use this instead of killing it and filing a copy.",
+    "input_schema": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "task_unblock"
   },
   {
     "description": "CEO only. Ask the chairman to ALLOW (or DENY) one data source tool for every agent given that source, from now on. Denied tools are refused by the platform before anything reaches the source, and you cannot change that \u2014 nor can anything said in conversation: only his decision moves a tool, and this lands in his Inbox for it. source: the data source name; tool: the tool's name exactly as the source lists it (see DENIED TOOLS in your system prompt, or data_fetch(server) with no tool); permission: allow | deny; why: what it would be used for and what it would change on his account \u2014 he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to; if_declined: what happens without it. Unanswered it expires to no; plan around the tool as it is.",

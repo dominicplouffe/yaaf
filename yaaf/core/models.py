@@ -1209,6 +1209,9 @@ class Requirement(Base):
     # their terms, when it lands, where. Never read by the plan gate or the
     # checker — that is `acceptance_test` — so it can say anything.
     meta: Mapped[dict | None] = mapped_column(JSONVariant)
+    # The commit of main its command acceptance test last failed at; cleared
+    # when it passes. The test is not run again until main has moved past it.
+    failed_at_sha: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(16), default=RequirementStatus.PROPOSED)
     # Met once and closed, or owed again every cycle. TERMINAL everywhere
     # except Operate, where a standing requirement is the normal shape and
@@ -1376,6 +1379,9 @@ class Task(Base):
     result_for: Mapped[str | None] = mapped_column(String(12))
     status: Mapped[str] = mapped_column(String(16), default=TaskStatus.READY)
     blocked_reason: Mapped[str | None] = mapped_column(Text)
+    # What a blocked task waits on, when the claimant named it: {"task": id} or
+    # {"change": id}. The janitor returns the task to ready when that finishes.
+    blocked_on: Mapped[dict | None] = mapped_column(JSONVariant)
     not_before: Mapped[datetime | None] = mapped_column(UTCDateTime)
     claimed_by_agent_id: Mapped[str | None] = mapped_column(String(40))
     claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

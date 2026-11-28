@@ -822,7 +822,7 @@ patch), and giving the API the socket.
 - Tables `plugins` (id, name, the kind it owns, enabled) and `plugin_versions`
   (version, source, manifest, status, report, where its code sits), plus
   `projects.kind`, `kind_mode`, `plugin_version_id` and `kind_state`
-  (migration 0087). A plugin project's built-in `mode` will be set from its
+  (migration 0088; numbered 0087 until main took that number). A plugin project's built-in `mode` will be set from its
   plugin mode's shape (`shape.mode_for_shape`), so the readers that draw
   Explore/Deliver/Operate keep working unchanged.
 - `yaaf/plugins/registry.py`: install from a local path (development only,

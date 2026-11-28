@@ -290,6 +290,13 @@ def drought_active(session: Session, project_id: str, cons: ConstitutionDoc) -> 
 # ── task rules ──────────────────────────────────────────────────────────────────
 
 
+#: git verbs that reach a remote. A check runs with no GitHub key, so a test
+#: built on one fails whatever the work is (a Snip CEO wrote one, saw it fail
+#: "could not read Username", and killed the task two minutes later).
+_REMOTE_GIT = re.compile(
+    r"\bgit\s+(?:-[Cc]\s+\S+\s+|--\S+\s+)*(fetch|pull|clone|push|ls-remote)\b")
+
+
 def validate_success_test(cons: ConstitutionDoc, success_test: dict) -> None:
     """Structural check, not an LLM judgment: a test must name a command the
     platform can execute or an observable someone can check."""
@@ -301,6 +308,13 @@ def validate_success_test(cons: ConstitutionDoc, success_test: dict) -> None:
                 "success_test.command is too short to be a real check. Give the exact "
                 "command the platform should run, e.g. "
                 '{"type": "command", "command": "curl -sf https://example.com/health"}.'
+            )
+        if (verb := _REMOTE_GIT.search(command)) is not None:
+            raise Refusal(
+                f"This test runs `git {verb.group(1)}`, and checks run with no GitHub "
+                "key, so it can never pass. The platform already puts the code in place "
+                "before it runs a test: a requirement's test runs on a fresh checkout of "
+                "main, a task's in its claimant's checkout. Test what is there."
             )
     elif kind == SuccessTestKind.OBSERVABLE:
         target = (success_test.get("target") or "").strip()
@@ -754,6 +768,31 @@ def check_task_claim(session: Session, project: Project, agent: Agent, task: Tas
         )
 
 
+def check_someone_can_claim(session: Session, creator: Agent, team: Team,
+                            assignee_agent_id: str | None) -> None:
+    """Refuse a task at filing that nobody could ever claim. The claim rule
+    above refuses whoever wrote the test; filing used to check nothing, so a
+    lead alone on its team assigned itself work only it could do and found out
+    at the claim — four tasks on one factory, each left stuck until someone
+    killed it."""
+    if not _has_another_agent(session, creator):
+        return
+    if assignee_agent_id is not None:
+        if assignee_agent_id == creator.id:
+            raise Refusal(
+                "You would be assigning yourself work judged by a test you wrote, and "
+                "the platform never lets the author of a test claim the work it judges. "
+                "Do this under the task you already hold, or assign it to someone else.",
+                status_code=422)
+        return
+    lead = effective_lead(session, team)
+    if lead is not None and lead.id == creator.id:
+        raise Refusal(
+            f"Only {team.name}'s lead claims its team tasks, that is you, and you wrote "
+            "this one's test, so nobody could ever claim it. Ask the CEO to file it.",
+            status_code=422)
+
+
 def _has_another_agent(session: Session, agent: Agent) -> bool:
     """Is there anyone else in this project at all? Solo mode is one agent that
     is CEO, sole team member and derived lead; every separation-of-duties rule
@@ -976,6 +1015,18 @@ def check_task_kill(session: Session, agent: Agent, task: Task) -> None:
         "Only the CEO kills team tasks; only the team lead kills its own subtasks.",
         status_code=403,
     )
+
+
+def unblock(session: Session, task: Task, actor: str, note: str) -> None:
+    """A blocked task back to ready, unclaimed, with the reason on its record."""
+    from_status = task.status
+    task.status = TaskStatus.READY
+    task.blocked_reason = None
+    task.blocked_on = None
+    task.claimed_by_agent_id = None
+    task.claim_run_id = None
+    record_task_event(session, task, TaskStatus.READY, actor, note=f"unblocked: {note[:500]}",
+                      from_status=from_status)
 
 
 def record_task_event(

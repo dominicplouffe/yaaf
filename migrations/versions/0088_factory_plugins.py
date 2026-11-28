@@ -1,8 +1,8 @@
 """Factory plugins: installed plugins and versions, a project's kind, and what core
 decided about each plugin artifact.
 
-Revision ID: 0087
-Revises: 0086
+Revision ID: 0088
+Revises: 0087
 """
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
@@ -13,8 +13,8 @@ from yaaf.core.migration_ops import (
     create_table_if_missing,
 )
 
-revision = "0087"
-down_revision = "0086"
+revision = "0088"
+down_revision = "0087"
 branch_labels = None
 depends_on = None
 

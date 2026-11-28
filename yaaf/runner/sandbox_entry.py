@@ -607,6 +607,21 @@ async def t_release_propose(args):
 
 
 @tool(
+    "requirement_recheck",
+    "CEO only. Have the platform run a requirement's acceptance test again now, on a "
+    "fresh checkout of main, when you believe main already makes it true. Use this, "
+    "never a task whose only job is to re-run a test. Refused while work is open under "
+    "it, or while main is still at the commit the test already failed at (every "
+    "verdict names the commit it judged; a red requirement is judged again by itself "
+    "whenever a change merges).",
+    {"key": str, "reason": str},
+)
+async def t_requirement_recheck(args):
+    return _text(_call("POST", f"/agent/requirements/{args['key']}/recheck",
+                       {"reason": args["reason"]}))
+
+
+@tool(
     "environment_set",
     "Code Factory only. Write an environment the platform deploys to: `name` is "
     "production, staging or preview; `deploy` is the shell command run at the release's "
@@ -642,11 +657,26 @@ async def t_incident_postmortem(args):
                        {"text": args["text"]}))
 
 
-@tool("task_block", "Block your claimed task with a reason; the CEO will re-plan.",
-      {"task_id": str, "reason": str})
+@tool("task_block", "Block your claimed task with a reason; the CEO will re-plan. If it "
+      "waits on another task or a change, name it (`waits_on_task`: its id; "
+      "`waits_on_change`: its number, e.g. 40): it goes back on the board by itself "
+      "when that finishes.",
+      _schema({"task_id": str, "reason": str, "waits_on_task": str, "waits_on_change": str},
+              optional=("waits_on_task", "waits_on_change")))
 async def t_task_block(args):
+    body = {"reason": args["reason"]}
+    for key in ("waits_on_task", "waits_on_change"):
+        if args.get(key):
+            body[key] = str(args[key])
+    return _text(_call("POST", f"/agent/tasks/{args['task_id']}/block", body))
+
+
+@tool("task_unblock", "Put a blocked task back on the board, unclaimed, once its blocker "
+      "is cleared (whoever may kill it may unblock it). Use this instead of killing it "
+      "and filing a copy.", {"task_id": str, "reason": str})
+async def t_task_unblock(args):
     return _text(
-        _call("POST", f"/agent/tasks/{args['task_id']}/block", {"reason": args["reason"]})
+        _call("POST", f"/agent/tasks/{args['task_id']}/unblock", {"reason": args["reason"]})
     )
 
 
@@ -2010,11 +2040,11 @@ def _meta_of(obj) -> dict:
 
 ALL_TOOLS = [
     t_board, t_requirements, t_task_create, t_task_claim, t_task_complete, t_task_review,
-    t_task_block, t_task_kill,
+    t_task_block, t_task_unblock, t_task_kill,
     t_change_open, t_changes_list, t_change_review, t_scenario_add, t_scenario_retire, t_scenarios_list,
     t_release_propose, t_environment_set, t_releases_list, t_incident_postmortem,
     t_plugin_describe, t_plugin_file, t_plugin_action,
-    t_requirement_propose, t_requirement_depends_on,
+    t_requirement_propose, t_requirement_depends_on, t_requirement_recheck,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_ask_chairman, t_ask_close,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_compact, t_memory_forget,
@@ -2056,7 +2086,7 @@ CEO_ONLY_TOOLS = frozenset({
     "flag_raise",
     "hire", "recall", "roles_list", "stand_down", "stand_down_when",
     "hypothesis_add", "hypothesis_kill",
-    "requirement_propose", "requirement_depends_on",
+    "requirement_propose", "requirement_depends_on", "requirement_recheck",
     "review_narrative", "review_report",
     "scope_act",
     "mail_send", "mail_read",
