@@ -276,3 +276,36 @@ def test_an_agent_cannot_read_or_move_the_key(world):
     assert world["client"].get(path, headers=forged).status_code in (401, 403)
     pack = world["client"].get("/agent/context", headers=forged)
     assert pack.status_code == 200 and OAT not in pack.text and "Claude Max" not in pack.text
+
+
+# ── the Founder ─────────────────────────────────────────────────────────────────
+
+
+def test_the_founder_is_told_a_factory_needs_a_coding_key_and_which_can_code(world):
+    """A Founder drafting a factory used to see only "who pays": nothing in its
+    prompt, its credential menu or its draft schema said a factory also needs
+    a coding key, so it drafted factories that could not start and never
+    asked about the second credential."""
+    from yaaf.founder import prompt, tools
+
+    _credential(world["client"], "DeepSeek", "deepseek", "sk-deepseek-coding-selftest")
+    with db_session() as session:
+        menu = tools.list_credentials(session)
+    can_code = {row["name"]: row["can_code"] for row in menu["credentials"]}
+    assert can_code == {"Claude Max": True, "Talk": True, "DeepSeek": False}
+    assert "coding_secret_id" in menu["note"]
+    assert "coding_secret_id" in prompt.system_prompt()
+    assert "coding_secret_id" in str(tools.PROPOSE_SCHEMA)
+
+
+def test_a_drafted_coding_key_arrives_on_the_form_by_name(world):
+    """The form picks a coding key up by name, as from an export. A Founder
+    draft names it by id, so the draft carries the name too."""
+    from yaaf.founder import tools
+
+    project = {"mode": "code_factory", "coding_secret_id": world["coding"]}
+    with db_session() as session:
+        assert tools.billing_problems(project, session) == []
+    assert project["coding_secret_id"] == world["coding"]
+    assert project["coding_credential_name"] == "Claude Max"
+    assert tools.summarise({"project": project})["codes_with"] == "Claude Max"

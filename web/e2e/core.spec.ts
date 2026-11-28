@@ -163,8 +163,14 @@ test("a Code Factory names its own lead and crew", async ({ page }) => {
   // The demo install has no GitHub key: asked for here, before Create, rather
   // than found missing by a repo that was never made.
   await expect(page.getByText(/Connect this install to GitHub first/)).toBeVisible();
-  await expect(page.locator(".orgline", { hasText: "Factory rules" }))
-    .toContainText(/you approve the first release.*hidden tests, security scans, code-health checks/);
+  // Autonomous by default, and so are its two say-so gates; the switch under
+  // the dial hands both back to the chairman.
+  const factoryRules = page.locator(".orgline", { hasText: "Factory rules" });
+  await expect(factoryRules).toContainText(
+    /releases go out without asking you.*a reviewer seat signs off changes to CI.*hidden tests, security scans, code-health checks/);
+  await page.getByLabel(/Ask me before a change to CI merges/).check();
+  await expect(factoryRules).toContainText(
+    /you approve the first release.*changes to CI wait for your yes/);
 
   // Adopting a repo swaps the crew the form chose; it is still the form's.
   await page.getByRole("radio", { name: /A repo I already have/ }).click();
