@@ -141,6 +141,22 @@ def _start_check(spec: H.HostSpec) -> tuple[list[str], list[str]]:
     return [], out
 
 
+def _retry(session: Session, existing: PluginVersion) -> bool:
+    """Installing a commit that is already here returns what is here, except a
+    failed install: that is tried again from the start. The failure may have
+    been the box's (a build directory the sandbox could not write), and an
+    install that answered with the same stale report forever could never
+    recover. No project runs on a failed version, so nothing depends on it."""
+    if existing.status != "failed" or projects_on(session, existing):
+        return False
+    close_pool(existing)
+    if existing.root:
+        shutil.rmtree(existing.root, ignore_errors=True)
+    session.delete(existing)
+    session.flush()
+    return True
+
+
 def install_local(session: Session, path: str | Path) -> Installed:
     """Install a plugin from a directory on this machine (development only)."""
     if not settings().allow_local_plugins:
@@ -171,7 +187,7 @@ def install_local(session: Session, path: str | Path) -> Installed:
     existing = session.execute(select(PluginVersion).where(
         PluginVersion.plugin_id == manifest.id,
         PluginVersion.version == version_label)).scalars().first()
-    if existing is not None:
+    if existing is not None and not _retry(session, existing):
         return Installed(existing, False)
 
     identity = _identity(session, manifest)
@@ -310,7 +326,7 @@ def install_github(session: Session, url: str, ref: str | None = None, *,
         existing = session.execute(select(PluginVersion).where(
             PluginVersion.plugin_id == manifest.id, PluginVersion.version == sha)
         ).scalars().first()
-        if existing is not None:
+        if existing is not None and not _retry(session, existing):
             return Installed(existing, False)
         report = static.to_dict()
         identity = _identity(session, manifest)

@@ -119,6 +119,12 @@ def build(root: Path) -> tuple[bool, str, Path | None]:
     if mode == "docker":
         from yaaf.plugins import broker_client
 
+        # The build container runs as the sandbox's unprivileged user with every
+        # capability dropped, and this process (root in the api image) made the
+        # directory, so open it up as agent workspaces are. Without it pip's
+        # first write into the site is a PermissionError and MIN-03 fails for
+        # every plugin with a dependency.
+        site.chmod(0o777)
         code, log = broker_client.run_job("build", root, site, network=True,
                                           timeout_s=BUILD_TIMEOUT_S)
     elif mode == "host":

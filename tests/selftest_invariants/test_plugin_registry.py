@@ -232,3 +232,28 @@ def test_a_ready_version_adds_its_roles_to_the_library(client, box):
     with db_session() as s:
         slugs = set(s.execute(select(Role.slug)).scalars())
         assert {"grant-lead", "grant-writer"} <= slugs
+
+
+def test_installing_a_failed_commit_again_tries_it_again(client, box, monkeypatch):
+    """A failure can be the box's, not the plugin's (a build directory the
+    sandbox could not write). Answering a second install of that commit with the
+    first one's stale report meant it could never recover once the box was fixed."""
+    from yaaf.plugins import registry as R
+
+    path = checkout(box)
+    real = R.verify
+
+    def box_cannot_build(session, dest, manifest, label, report, **kw):
+        _failed, root, log = real(session, dest, manifest, label, report, **kw)
+        report["counts"]["fail"] = report["counts"].get("fail", 0) + 1
+        return True, root, log
+
+    monkeypatch.setattr(R, "verify", box_cannot_build)
+    first = install(client, path).json()
+    assert first["status"] == "failed"
+    monkeypatch.setattr(R, "verify", real)  # the box is fixed
+    again = install(client, path).json()
+    assert again["created"] is True and again["status"] == "ready", again
+    assert again["version"] == first["version"]
+    [plugin] = client.get("/admin/plugins", headers=ADMIN).json()["plugins"]
+    assert len(plugin["versions"]) == 1

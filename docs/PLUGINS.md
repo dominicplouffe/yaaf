@@ -84,7 +84,7 @@ The result is a **report**, with one line for each requirement:
 | Status | Meaning |
 |---|---|
 | `ready` | Every requirement that applies passed. The kind can be chosen. |
-| `failed` | At least one requirement failed. The report names it and says what to change. |
+| `failed` | At least one requirement failed. The report names it and says what to change. Installing the same commit again runs every check again. |
 | `pending` | The checks have not finished, or could not run. A pending kind cannot be chosen. |
 | `installing` | It is still running. |
 | `disabled` | You switched it off (below). |

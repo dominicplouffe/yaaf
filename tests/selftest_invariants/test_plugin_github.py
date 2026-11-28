@@ -327,3 +327,25 @@ def test_a_build_job_reaches_the_index_and_writes_only_its_site_and_tests_reach_
     for opts in (build, tests):
         assert opts["cap_drop"] == ["ALL"] and "no-new-privileges" in opts["security_opt"]
         assert not any(k.startswith("YAAF") for k in opts["environment"])
+
+
+def test_a_docker_build_can_write_its_site_as_the_sandbox_user(tmp_path, monkeypatch):
+    """The build container runs as the sandbox's own user, not the one that made
+    the site directory. A site only its maker could write failed every real
+    install with a dependency (MIN-03: PermissionError under .site)."""
+    import stat
+
+    from yaaf.plugins import broker_client, build
+
+    (tmp_path / "requirements.lock").write_text(
+        "et-xmlfile==2.0.0 --hash=sha256:" + "a" * 64 + "\n")
+    monkeypatch.setattr(settings(), "sandbox_mode", "docker")
+    seen = {}
+
+    def run_job(op, root, site, **_kw):
+        seen["mode"] = stat.S_IMODE(site.stat().st_mode)
+        return 0, ""
+    monkeypatch.setattr(broker_client, "run_job", run_job)
+    ok, _log, site = build.build(tmp_path)
+    assert ok and site == tmp_path / ".site"
+    assert seen["mode"] == 0o777
