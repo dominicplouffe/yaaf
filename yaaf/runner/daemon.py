@@ -1731,13 +1731,22 @@ def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult
     from_status = requirement.status
 
     if result.check_exit_code == 0:
+        rejudged = bool((job.trigger or {}).get("rejudge"))
         requirement.status = RequirementStatus.MET
-        requirement.met_at = utcnow()
-        requirement.met_by_run_id = job.run_id
+        if not (rejudged and requirement.met_at):
+            # A re-judged requirement keeps the day it was met: the burn-up
+            # and the velocity read that date, and it did not move.
+            requirement.met_at = utcnow()
+            requirement.met_by_run_id = job.run_id
         requirement.failed_at_sha = None
-        policy.record_requirement_event(session, requirement, RequirementStatus.MET,
-                                        "checker", note=f"acceptance test passed{at}",
-                                        from_status=from_status)
+        policy.record_requirement_event(
+            session, requirement, RequirementStatus.MET, "checker",
+            note=f"acceptance test {'still ' if rejudged else ''}passed{at}",
+            from_status=from_status)
+        if rejudged:
+            # Re-judging something already met that is still met is not news,
+            # and a notice wakes a CEO to read it.
+            return
         _notice_ceo_requirement(
             session, requirement,
             f"{requirement.key} is MET. The platform ran its acceptance test and it "
