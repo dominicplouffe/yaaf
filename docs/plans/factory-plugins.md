@@ -885,3 +885,47 @@ subject's accepted numbers:
   publishing over `/agent/artifacts` with a real host. Restoring the PPC
   branch's two review bugs (reading the review's own `reported`; judging
   independence by the latest publisher) each turns a test red.
+
+**Step 5 is built** (hook points, and creating a plugin project):
+
+- **Creation** (`yaaf/plugins/kinds.py`). `POST /admin/projects` takes `kind`,
+  `kind_mode` and `kind_fields`, and an import posts the same body. Before a
+  row exists, the server refuses:
+  - a kind not offered on this box;
+  - a mode the plugin doesn't declare, or doesn't declare open;
+  - a `mode` that disagrees with the plugin mode's shape;
+  - a lead other than the plugin's fixed lead (an unnamed lead is filled);
+  - fields its `create_fields` does not describe (required, type, choices,
+    unknown keys), and whatever its `validate_create` refuses.
+
+  A plugin that cannot be asked refuses the creation. The project stores its
+  kind, mode and pinned version, `kind_state = {"create": fields}`, and the
+  built-in `mode` its shape behaves as.
+- **Export, import and clone.** Export carries `kind`, `kind_mode` and
+  `kind_fields`, so an import goes through every creation check (the pinned
+  version is this box's code and is not exported). A clone keeps the source's
+  pinned version, and is refused if that version may no longer be chosen. It
+  carries the creation fields, not the plugin's later state.
+- **Hook points** (`yaaf/plugins/points.py`), each only adding to core's answer:
+  - the brief goes after core's rules under a heading core writes
+    ("THIS PROJECT'S KIND: …");
+  - `plan_gate` items keep the plan from holding (`evaluate_plan`);
+  - `completion_gate` items keep the project from completing
+    (`delivery_outstanding`), beside the review primitive's own;
+  - setup steps appear on the checklist as `plugin:<key>`;
+  - the dashboard carries `kind`, `kind_mode` and `kind_view` (the declared
+    view, its validated data, or why it could not be read).
+
+  A plugin that is down owes a plan item and a completion item, marks its steps
+  not done, has an empty brief, and shows its view as unreadable.
+- **A plugin only tightens (MIN-14, first slice).** On a plugin project's gated
+  artifact, core's own refusals (a path for a name, bad base64, an invented
+  requirement) fire before the plugin is asked. Step 6 replays core's wider
+  attacks against every plugin's project.
+- The example plugin now declares a plan gate and create fields.
+- Attacks: `tests/selftest_invariants/test_plugin_kinds.py` (18 tests).
+- Deliberately left for step 9 (surfaces), as the sibling-footprint rule asks
+  us to say: the MCP `create_project` tool and the Founder don't take a plugin
+  kind yet; the web form, project home and Settings don't draw one; the CLI,
+  daily brief and agenda don't name the plugin. A plugin's setup steps show on
+  the checklist but can't be skipped, and none is required to start.

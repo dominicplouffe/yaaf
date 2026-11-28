@@ -562,6 +562,7 @@ def build_system_prompt(session: Session, agent: Agent, project: Project,
         "repeating work you suspect has been tried. "
         f"{WORKSPACE_CHAT if lane == 'chat' else _workspace_run()}\n\n"
         f"{repo_guidance.block(session, project)}"
+        f"{_plugin_brief(session, project, lane)}"
         f"{UNTRUSTED_NOTE}"
     )
 
@@ -2196,3 +2197,15 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         for key in CHAT_OMITS:
             pack.pop(key, None)
     return pack
+
+
+def _plugin_brief(session: Session, project: Project, lane: str) -> str:
+    """A factory plugin's guidance for its project's seats, under core's own
+    heading, after every rule of the platform's (yaaf/plugins/points.py)."""
+    from yaaf.core import shape
+
+    if not shape.is_plugin_kind(project):
+        return ""
+    from yaaf.plugins import points
+
+    return points.brief_block(session, project, "chat" if lane == "chat" else "run")

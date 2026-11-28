@@ -26,6 +26,7 @@ from yaaf_plugin_api import (
     Accept,
     ActionResult,
     Brief,
+    Coverage,
     FactoryPlugin,
     Owed,
     Page,
@@ -126,7 +127,7 @@ def test_the_example_plugin_is_built_in_the_shape_the_spec_requires():
     decided = {x.id: x.status for x in r.results}
     assert decided["MIN-01"] == decided["MIN-05"] == decided["MIN-06"] == "pass"
     assert r.status == "pending"  # never "ready" from a checkout alone
-    assert decided["EXT-CRT-1"] == "n/a"
+    assert decided["EXT-CYC-1"] == "n/a"  # it declares no mode that runs on cycles
     sys.path.insert(0, str(EXAMPLE / "tests"))
     try:
         report.import_plugin(EXAMPLE, "grant_factory:plugin")
@@ -223,9 +224,9 @@ def test_a_declared_capability_with_no_hook_is_named():
 
 
 def test_a_hook_the_manifest_did_not_declare_is_refused():
-    @hook.plan_gate
-    def sneaky(self, ctx):
-        return []
+    @hook.classify_tools
+    def sneaky(self, tools):
+        return Coverage()
     problems = H.check_plugin(_plugin_from_example(sneaky=sneaky), _example())
     assert len(problems) == 1 and "not declared" in problems[0]
 

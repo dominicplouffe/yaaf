@@ -931,6 +931,12 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         # A Code Factory's half of its life: build (reads as Deliver) or upkeep
         # (reads as Operate). Null for every other mode.
         "factory_phase": project.factory_phase,
+        # A factory plugin's kind and mode, and the project-home section its
+        # plugin declares (yaaf/plugins/points.py): the view, its data, or why
+        # it could not be read. Null on every built-in project.
+        "kind": project.kind,
+        "kind_mode": project.kind_mode,
+        "kind_view": _kind_view(session, project),
         # What the screens gate on: explore | deliver | operate. A factory being
         # built reads as Deliver and one in upkeep as Operate, so no screen has
         # to learn a fourth shape to draw the right one of three.
@@ -3926,3 +3932,11 @@ def agent_detail(agent_id: str, session: Session = Depends(db)) -> dict:
             for r in recent
         ],
     }
+
+
+def _kind_view(session: Session, project: Project) -> dict | None:
+    if not shape.is_plugin_kind(project):
+        return None
+    from yaaf.plugins import points
+
+    return points.kind_view(session, project)

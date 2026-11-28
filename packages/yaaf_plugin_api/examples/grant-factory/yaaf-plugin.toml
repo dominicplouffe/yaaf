@@ -22,7 +22,9 @@ crews = ["grant-writers"]
 
 [capabilities]
 brief           = true
+plan_gate       = true
 completion_gate = true
+create_fields   = true
 artifacts       = ["application.json"]
 platform_pages  = ["application.md"]
 review          = { of = "application.json", artifact = "application-review.json", rederive_tolerance = 0.05 }

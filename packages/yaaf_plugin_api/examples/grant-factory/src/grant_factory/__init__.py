@@ -14,6 +14,7 @@ from yaaf_plugin_api import (
     ActionResult,
     Brief,
     FactoryPlugin,
+    FieldSpec,
     Owed,
     Page,
     ReadFields,
@@ -33,6 +34,25 @@ class GrantFactory(FactoryPlugin):
     def brief(self, ctx):
         return Brief("Draft application.json from the funder's call. Every budget line "
                      "names the rule of the call it meets; a second seat reviews the draft.")
+
+    @hook.plan_gate
+    def plan(self, ctx):
+        if ctx.latest("calls.json") is None:
+            return [Owed("call", "read the funder's call first (the call_for_proposals "
+                                 "action): a plan for an application is a plan for one call")]
+        return []
+
+    @hook.create_fields
+    def create_fields(self):
+        return [FieldSpec("funder", "string", "Funder", "Who the application goes to.",
+                          required=True),
+                FieldSpec("amount", "number", "Amount asked (USD)", default=10000)]
+
+    @hook.validate_create
+    def validate_create(self, spec):
+        amount = spec.fields.get("amount")
+        return [] if isinstance(amount, (int, float)) and amount > 0 else \
+            ["amount must be more than zero: an application asks for something"]
 
     @hook.completion_gate
     def completion(self, ctx):
