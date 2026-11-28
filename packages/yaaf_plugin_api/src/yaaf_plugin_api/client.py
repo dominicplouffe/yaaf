@@ -149,8 +149,8 @@ class LocalHost:
             shutil.rmtree(self.scratch, ignore_errors=True)
 
 
-def run_tests(root: str | Path, *, python: str | None = None,
-              timeout_s: int = 300) -> tuple[str, list[str]]:
+def run_tests(root: str | Path, *, python: str | None = None, timeout_s: int = 300,
+              extra_paths: list | None = None) -> tuple[str, list[str]]:
     """The plugin's own tests, with pytest: (pass | fail | pending, why)."""
     root = Path(root).resolve()
     if not (root / "tests").is_dir():
@@ -160,7 +160,8 @@ def run_tests(root: str | Path, *, python: str | None = None,
     if probe.returncode != 0:
         return "pending", ["pytest is not installed for the Python the tests would run on"]
     env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
-           "PYTHONPATH": os.pathsep.join([str(API_SRC), *map(str, plugin_paths(root))]),
+           "PYTHONPATH": os.pathsep.join([str(API_SRC), *map(str, plugin_paths(root)),
+                                          *map(str, extra_paths or [])]),
            "PYTHONDONTWRITEBYTECODE": "1"}
     with tempfile.TemporaryDirectory(prefix="yaaf-plugin-tests-") as home:
         env["HOME"] = home

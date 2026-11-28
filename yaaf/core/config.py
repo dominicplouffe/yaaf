@@ -107,6 +107,12 @@ class Settings(BaseSettings):
     # every requirement is ever offered.
     allow_local_plugins: bool = False
     allow_unverified_plugins: bool = False
+    # Where GitHub plugin installs fetch from. GitHub itself; a directory of
+    # bare repos in tests, so the real git commands run without a network.
+    plugin_github_base: str = "https://github.com"
+    # Extra arguments for the dependency build's pip (an internal index or
+    # mirror, say). The lock and --require-hashes still decide what is installed.
+    plugin_pip_args: str = ""
     sandbox_network: str = "yaaf_sandbox"
     workspaces_root: str = "/var/lib/yaaf/workspaces"
     artifacts_root: str = "/var/lib/yaaf/artifacts"

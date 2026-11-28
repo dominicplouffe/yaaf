@@ -119,6 +119,79 @@ def container_options(spec: dict, image: str, labels: dict) -> dict:
     }
 
 
+JOBS = ("build", "tests")
+
+
+def check_job(job, root: Path) -> tuple[dict | None, str | None]:
+    """A build or test job a broker will run: which op, and paths under the
+    plugins root. The command and the container's flags are the broker's."""
+    if not isinstance(job, dict) or job.get("op") not in JOBS:
+        return None, f"op must be one of {', '.join(JOBS)}"
+    resolved = {}
+    for key in ("root", "site"):
+        p = job.get(key)
+        if p is None and key == "site":
+            continue
+        if not isinstance(p, str):
+            return None, f"{key} must be a path"
+        real = Path(p).resolve()
+        if root not in real.parents:
+            return None, f"{p} is not under the plugins root"
+        resolved[key] = str(real)
+    timeout = job.get("timeout_s")
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 1800:
+        return None, "timeout_s is out of range"
+    return {"op": job["op"], **resolved, "timeout_s": timeout}, None
+
+
+def job_options(job: dict, image: str, labels: dict, network: str) -> dict:
+    """The container for one build or test job. A build reaches the package index
+    and writes only its site directory; tests reach nothing and write nothing."""
+    root, site = job["root"], job.get("site")
+    if job["op"] == "build":
+        command = ["python3", "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
+                   "--no-input", "--require-hashes", "--no-deps", "--only-binary=:all:",
+                   "--target", site, "-r", f"{root}/requirements.lock"]
+        volumes = {root: {"bind": root, "mode": "ro"}, site: {"bind": site, "mode": "rw"}}
+        net = network
+    else:
+        paths = [IMAGE_API_SRC, f"{root}/src", root, *([site] if site else [])]
+        command = ["python3", "-m", "pytest", "-q", "-p", "no:cacheprovider", f"{root}/tests"]
+        volumes = {root: {"bind": root, "mode": "ro"},
+                   **({site: {"bind": site, "mode": "ro"}} if site else {})}
+        net = "none"
+    return {
+        "image": image, "command": command, "labels": labels, "volumes": volumes,
+        "network_mode": net, "read_only": True,
+        "tmpfs": {"/tmp": "rw,nosuid,size=256m", SCRATCH: "rw,nosuid,size=64m"},
+        "working_dir": SCRATCH, "mem_limit": "1g", "pids_limit": 256,
+        "environment": {"LANG": "C.UTF-8", "HOME": SCRATCH, "PIP_NO_CACHE_DIR": "1",
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                        **({"PYTHONPATH": ":".join(paths)} if job["op"] == "tests" else {})},
+        "cap_drop": ["ALL"], "security_opt": ["no-new-privileges"], "detach": True,
+    }
+
+
+def _run_job(job: dict) -> tuple[int, str]:  # pragma: no cover - needs a Docker daemon
+    import docker
+
+    from yaaf.core.config import settings
+    from yaaf.runner.sandbox import _stack_labels
+
+    client = docker.from_env()
+    container = client.containers.run(**job_options(
+        job, settings().sandbox_image, _stack_labels({"yaaf.plugin_job": job["op"]}),
+        settings().sandbox_network))
+    try:
+        code = int(container.wait(timeout=job["timeout_s"]).get("StatusCode", 1))
+        return code, container.logs(tail=400).decode(errors="replace")[-8000:]
+    except Exception as exc:
+        return 124, f"the {job['op']} job did not finish: {exc!r}"
+    finally:
+        with contextlib.suppress(Exception):
+            container.remove(force=True)
+
+
 class _DockerHost:
     """One plugin host container, attached: stdin in, stdout out, stderr logged."""
 
@@ -200,6 +273,17 @@ class _Handler(socketserver.BaseRequestHandler):
             with contextlib.suppress(OSError):
                 send_frame(conn, {"broker": "refused", "why": "authentication failed"})
             return
+        if "job" in hello:
+            job, why = check_job(hello.get("job"), server.root)
+            if job is None:
+                with contextlib.suppress(OSError):
+                    send_frame(conn, {"broker": "refused", "why": why})
+                return
+            conn.settimeout(None)
+            code, output = server.run_job(job)
+            with contextlib.suppress(OSError):
+                send_frame(conn, {"broker": "done", "code": code, "log": output[-8000:]})
+            return
         spec, why = check_spec(hello.get("spec"), server.root)
         if spec is None:
             with contextlib.suppress(OSError):
@@ -234,10 +318,12 @@ class BrokerServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
 
     def __init__(self, address: tuple[str, int], *, key: bytes | None = None,
-                 root: Path | None = None, launch: Callable[[dict], Any] | None = None):
+                 root: Path | None = None, launch: Callable[[dict], Any] | None = None,
+                 run_job: Callable[[dict], tuple[int, str]] | None = None):
         self.key = key if key is not None else secret()
         self.root = (root or _plugins_root()).resolve()
         self.launch = launch or _DockerHost
+        self.run_job = run_job or _run_job
         super().__init__(address, _Handler)
 
 

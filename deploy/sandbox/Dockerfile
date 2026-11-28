@@ -73,7 +73,7 @@ RUN python3 -m venv /opt/scan \
 # common cases cost zero setup.)
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir \
-        claude-agent-sdk "anthropic>=1.13,<2" httpx pandas duckdb "mcp<2" playwright
+        claude-agent-sdk "anthropic>=1.13,<2" httpx pandas duckdb "mcp<2" playwright pytest
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # The browser lane (CEO Charter, stage E): Chromium via playwright, for the

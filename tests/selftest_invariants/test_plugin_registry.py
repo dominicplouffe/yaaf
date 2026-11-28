@@ -97,9 +97,9 @@ def test_the_same_files_are_one_version_and_a_changed_file_is_another(client, bo
 from yaaf.plugins.registry import conformance_results as _real_suite  # noqa: E402
 
 
-def _pending(spec):
-    """The suite with the plugin's own tests unrun, as on a docker-mode box."""
-    out = _real_suite(spec)
+def _pending(spec, run_tests=None):
+    """The suite with the plugin's own tests unrun."""
+    out = _real_suite(spec, run_tests=run_tests)
     out["MIN-16"] = ("pending", ["the plugin's own tests have not been run here"])
     return out
 

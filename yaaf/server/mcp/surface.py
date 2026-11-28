@@ -94,6 +94,9 @@ REACHED = {
 #: Routes no tool reaches, and the reason. A reason is required: "we did not
 #: get to it" is a fine answer, but it has to be written down as one.
 WITHHELD = {
+    "POST /admin/plugins":
+        "installing a plugin from GitHub puts its code on the whole box; it is the "
+        "instance admin's, on his own screen, and a model client is never the one to add it.",
     "POST /admin/plugins/local":
         "installing a plugin puts code on the whole box; it is the instance admin's, "
         "on his own screen, and a model client is never the one to add it.",

@@ -6,8 +6,10 @@ seat of every project of its kind. Reading what is installed, and with what
 report, is anyone's who is signed in, so a chairman choosing a kind can read
 why one is not offered.
 
-This step takes a local path (development, behind YAAF_ALLOW_LOCAL_PLUGINS).
-Build step 7 adds the GitHub URL beside it, into the same rows.
+A plugin is installed from a public GitHub URL, pinned to a commit
+(`POST /admin/plugins`), or, for development behind YAAF_ALLOW_LOCAL_PLUGINS,
+from a local path (`POST /admin/plugins/local`). Both land in the same rows
+and pass the same checks.
 """
 
 from __future__ import annotations
@@ -27,6 +29,11 @@ from yaaf.server.identity import signed_in
 # Bound per request, as every /admin router does: the audit row of an install
 # names the person who made it.
 router = APIRouter(dependencies=[Depends(signed_in)])
+
+
+class GithubInstall(BaseModel):
+    url: str = Field(min_length=1, max_length=400)
+    ref: str | None = Field(default=None, max_length=200)
 
 
 class LocalInstall(BaseModel):
@@ -55,6 +62,19 @@ def _version(session: Session, plugin_id: str, version: str) -> PluginVersion:
 
 def _refusal(exc: registry.RegistryRefusal) -> HTTPException:
     return HTTPException(exc.status_code, exc.message)
+
+
+@router.post("/plugins", dependencies=[authority.INSTANCE_ADMIN])
+def install_github(body: GithubInstall, session: Session = Depends(db)) -> dict:
+    """Install a public GitHub repo, pinned to the commit its ref names now. The
+    answer comes once the commit is fetched and its files checked; the version
+    reads `installing` while it is built and its conformance suite runs, then
+    `ready` or `failed`, with the report (GET …/versions/{sha})."""
+    try:
+        installed = registry.install_github(session, body.url, body.ref)
+    except registry.RegistryRefusal as exc:
+        raise _refusal(exc) from None
+    return {**_version_view(installed.version, full=True), "created": installed.created}
 
 
 @router.post("/plugins/local", dependencies=[authority.INSTANCE_ADMIN])

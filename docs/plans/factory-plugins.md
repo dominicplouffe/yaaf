@@ -990,3 +990,61 @@ subject's accepted numbers:
 - Not built: the in-app SDK harness (`plugin_client`, a real yaaf for authors'
   HTTP tests, §7). Authors' tests run against the API and their plugin. The
   `yaaf plugin new` scaffold is also not built.
+
+**Step 7 is built** (install from a public GitHub URL):
+
+- `POST /admin/plugins {"url", "ref"}` (instance admin). It runs at once:
+  - `yaaf/plugins/github.py` accepts only `https://github.com/<owner>/<repo>`
+    (optionally `/tree/<ref>`), and refuses a ref with `..`, a leading `-` or `/`;
+  - the ref is resolved to a commit with `git ls-remote`, preferring a peeled
+    tag's commit;
+  - exactly that commit is fetched shallow, with no submodules, LFS or
+    credential prompt (a private repo is "not found or is not public"). The
+    fetched HEAD must equal the SHA, `.git` is removed, and the repo is capped
+    at 50 MB;
+  - then the static check and MIN-02.
+
+  A bad URL, a missing repo or ref, or a broken manifest is refused there,
+  before anything is recorded. The version is then recorded as `installing`
+  under its SHA, and the build, the suite and the plugin's tests run on a
+  background thread with their own session, ending `ready` or `failed` with the
+  report and build log. A server restart marks an unfinished install failed
+  (`recover_interrupted`, run in `yaaf-server` before its threads start).
+- **MIN-03 and the build** (`yaaf/plugins/build.py`). A plugin that declares
+  dependencies ships `requirements.lock`: each line pinned with `==` and a
+  sha256 hash, and no pip options such as an index URL. Every declared
+  dependency must be in it. The build is `pip install --require-hashes
+  --no-deps --only-binary=:all: --target <root>/.site`. The `.site` directory
+  joins the host's import path, and `spec_for` adds it for every later pool.
+  `plugin_pip_args` can point pip at an internal mirror; the lock still decides
+  what is installed.
+- **Sandboxes for the build and the tests**, by mode:
+  - subprocess: a plain process (development and CI only);
+  - host: a bubblewrap jail with the checkout read-only and `.site` writable;
+    the build has network, the tests don't (`--unshare-net`);
+  - docker: the runner's broker runs a job (`op: build | tests`) with flags it
+    alone decides. The build gets the sandbox network and a read-only root with
+    only `.site` writable; the tests get no network and nothing writable. The
+    sandbox image now carries pytest.
+
+  So local installs in host and docker mode now run the plugin's tests too, and
+  can reach `ready`.
+- `settings.plugin_github_base` (`https://github.com` by default) is where
+  repos are fetched from. Tests serve real bare repos from a directory, so the
+  real git commands run offline.
+- Attacks: `tests/selftest_invariants/test_plugin_github.py` (20 tests):
+  - a tag's commit installs and becomes ready and offered;
+  - a tag moved later never changes the installed files;
+  - eight URLs and refs that must be refused;
+  - only the admin installs;
+  - an unlocked, unhashed, unpinned or own-index lock fails MIN-03 and leaves
+    no code;
+  - a symlink is refused;
+  - a real wheel is installed from a hash-pinned lock with `--no-index` and
+    imported by the plugin's hook in its sandboxed host;
+  - an interrupted install is recovered;
+  - the broker refuses jobs outside the plugins root, unknown ops and a wrong
+    key;
+  - the job containers' flags are checked as data.
+- Not exercised in CI: the Docker SDK path of build and test jobs (no daemon),
+  as with plugin hosts.
