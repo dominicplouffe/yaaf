@@ -184,15 +184,32 @@ def install_local(session: Session, path: str | Path) -> Installed:
             shutil.rmtree(dest)
         shutil.copytree(source, dest, ignore=shutil.ignore_patterns(*_SKIP))
         root = str(dest)
-        start, hooks = _start_check(H.HostSpec.from_checkout(dest, version=version_label))
+        spec = H.HostSpec.from_checkout(dest, version=version_label)
+        start, hooks = _start_check(spec)
         _result(report, "MIN-04", "fail" if start else "pass", start)
         if not start:
             _result(report, "MIN-05", "fail" if hooks else "pass", hooks)
+        if report["counts"]["fail"] == 0:
+            for rid, (status, why) in conformance_results(spec).items():
+                _result(report, rid, status, why)
+            deps = _local_dependencies(dest)
+            _result(report, "MIN-03", "fail" if deps else "pass", deps or [
+                "a local install builds nothing: the plugin declares no dependencies"])
+        roles = None
+        if report["counts"]["fail"] == 0:
+            roles = session.begin_nested()
+            problems = _roles_and_crews(session, dest, manifest)
+            _result(report, "MIN-07", "fail" if problems else "pass", problems)
         failed = report["counts"]["fail"] > 0
+        if roles is not None:
+            # The plugin's roles join the library only with a version that
+            # passed; a failed one leaves the library as it found it.
+            (roles.rollback if failed else roles.commit)()
         if failed:
             shutil.rmtree(dest, ignore_errors=True)
             root = ""
-    report["status"] = "failed" if failed else "pending"
+    pending = any(r["status"] == "pending" for r in report["results"])
+    report["status"] = "failed" if failed else ("pending" if pending else "ready")
 
     plugin = session.get(Plugin, manifest.id)
     if plugin is None and not identity:
@@ -215,6 +232,96 @@ def install_local(session: Session, path: str | Path) -> Installed:
                                  "source": "local", "status": row.status}))
     session.flush()
     return Installed(row, True)
+
+
+def conformance_results(spec: H.HostSpec) -> dict:
+    """The conformance suite (yaaf_plugin_api.conformance), asked through this
+    box's sandboxed plugin host, the same suite an author runs locally."""
+    from yaaf_plugin_api import client, conformance
+
+    pool = H.HostPool(spec, H.launcher_for_mode(), size=1)
+
+    def call(key, args, gateway=None):
+        try:
+            return pool.call(key, args, H.Callbacks(
+                gateway_call=gateway.call if gateway is not None else None))
+        except H.HostFailure as exc:
+            raise conformance.Failure(exc.kind, exc.message, exc.violations) from None
+
+    def run_tests():
+        mode = getattr(settings(), "sandbox_mode", "docker")
+        if mode != "subprocess":
+            return ("pending", [f"a local install on a {mode}-mode box does not run the "
+                                "plugin's own tests; a GitHub install runs them in its build "
+                                "sandbox (build step 7)"])
+        return client.run_tests(spec.root)
+    try:
+        return conformance.run(spec.root, spec.manifest, call, run_tests=run_tests)
+    finally:
+        pool.close()
+
+
+def _local_dependencies(root: Path) -> list[str]:
+    """MIN-03 for a local install: it builds nothing, so it may need nothing."""
+    import tomllib
+
+    path = root / "pyproject.toml"
+    if not path.is_file():
+        return []
+    try:
+        deps = tomllib.loads(path.read_text("utf-8")).get("project", {}).get("dependencies")
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+        return [f"pyproject.toml could not be read: {exc}"]
+    others = [d for d in deps or [] if not str(d).startswith("yaaf-plugin-api")]
+    return [f"a local install builds no dependencies, and this plugin declares "
+            f"{', '.join(others)}: install it from GitHub, where they are built with hashes"
+            ] if others else []
+
+
+def _roles_and_crews(session: Session, root: Path, manifest) -> list[str]:
+    """MIN-07: each role passes the library's own rules (the route a person adds
+    a role through), and joins the library when absent. A role already in the
+    library is left as it is. Its lead is a lead, and its crews are crews."""
+    import json
+
+    from fastapi import HTTPException
+    from pydantic import ValidationError
+
+    from yaaf.core.models import Role
+    from yaaf.server.api.admin import CrewIn, RoleIn, create_role
+
+    out: list[str] = []
+    for path in sorted((root / "roles").glob("*.json")) if (root / "roles").is_dir() else []:
+        try:
+            body = RoleIn.model_validate(json.loads(path.read_text("utf-8")))
+        except (ValueError, ValidationError) as exc:
+            out.append(f"roles/{path.name} is not a role: {str(exc)[:300]}")
+            continue
+        if body.slug != path.stem:
+            out.append(f"roles/{path.name} declares slug {body.slug!r}; name the file after it")
+            continue
+        if body.slug == manifest.lead and not body.is_ceo_role:
+            out.append(f"kind.lead {body.slug} must be a lead (is_ceo_role: true)")
+        if session.execute(select(Role).where(Role.slug == body.slug)).scalars().first():
+            continue
+        try:
+            create_role(body, session)
+        except HTTPException as exc:
+            out.append(f"roles/{path.name}: {exc.detail}")
+    for crew in manifest.crews:
+        try:
+            body = CrewIn.model_validate(json.loads((root / "crews" / f"{crew}.json")
+                                                    .read_text("utf-8")))
+        except (OSError, ValueError, ValidationError) as exc:
+            out.append(f"crews/{crew}.json is not a crew: {str(exc)[:300]}")
+            continue
+        if manifest.lead and body.ceo_role_slug != manifest.lead:
+            out.append(f"crew {crew} is led by {body.ceo_role_slug}, not the kind's lead "
+                       f"{manifest.lead}")
+    if manifest.lead and not (root / "roles" / f"{manifest.lead}.json").is_file() and \
+            not session.execute(select(Role).where(Role.slug == manifest.lead)).scalars().first():
+        out.append(f"kind.lead {manifest.lead} is neither in roles/ nor in the library")
+    return out
 
 
 def _manifest_record(m) -> dict:

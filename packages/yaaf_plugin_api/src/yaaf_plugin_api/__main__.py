@@ -12,7 +12,7 @@ import argparse
 import json
 import sys
 
-from yaaf_plugin_api.report import check
+from yaaf_plugin_api.report import check, full_check
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,8 +23,12 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--json", action="store_true", help="print the report as JSON")
     c.add_argument("--no-import", action="store_true",
                    help="check the files only; do not import the plugin's module")
+    c.add_argument("--full", action="store_true",
+                   help="also run the conformance suite through a local plugin host, and the "
+                        "plugin's own tests: the checks the install runs")
     args = parser.parse_args(argv)
-    report = check(args.path, load_module=not args.no_import)
+    report = full_check(args.path) if args.full else check(args.path,
+                                                           load_module=not args.no_import)
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
     else:

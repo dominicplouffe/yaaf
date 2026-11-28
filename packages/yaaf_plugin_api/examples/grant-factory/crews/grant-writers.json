@@ -1,1 +1,8 @@
-{"slug": "grant-writers", "name": "Grant writers", "roles": ["grant-lead"]}
+{
+  "slug": "grant-writers",
+  "name": "Grant writers",
+  "outcome": "One grant application, drafted against the call and reviewed by a second seat.",
+  "ceo_role_slug": "grant-lead",
+  "domains": ["general"],
+  "teams": [{"name": "Writers", "role_slug": "grant-writer", "employees": ["Wren", "Rowan"], "lead": "Wren"}]
+}

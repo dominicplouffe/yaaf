@@ -929,3 +929,64 @@ subject's accepted numbers:
   kind yet; the web form, project home and Settings don't draw one; the CLI,
   daily brief and agenda don't name the plugin. A plugin's setup steps show on
   the checklist but can't be skipped, and none is required to start.
+
+**Step 6 is built** (the conformance suite, and running it yourself):
+
+- `yaaf_plugin_api.conformance` is one suite with two runners. It is handed a
+  `call` that asks a hook and returns the validated answer or raises
+  `Failure`:
+  - an author runs it with `python -m yaaf_plugin_api check --full`, through
+    `client.LocalHost` (the same host program, as a subprocess);
+  - core runs it at install through the sandboxed host pool
+    (`registry.conformance_results`).
+
+  A test runs both on the same broken plugin and expects the same failing
+  requirements.
+- What it asks:
+  - every gate's accept and refuse fixtures (refusals must say what their
+    `.expect.json` names), the stored bytes again (EXT-ART-2), and the fuzz
+    corpus (`corpus.py`: empty, non-UTF-8, 2,000-deep, 4 MB and more), which a
+    gate may refuse and must never accept;
+  - the review's fixtures against the subject the plugin itself accepted, with
+    `$SUBJECT_SHA256` substituted;
+  - draft and final renders;
+  - `fields_of_read` on recorded and hostile results;
+  - each data action on a fake source built from `fixtures/sources/`, and with
+    the source unreachable, signed out, erroring, timing out, or with its tools
+    switched off; a call to an undeclared tool fails EXT-ACT-3;
+  - brief, gates, steps, view and `migrate_state` in each fixture state (a
+    state's `clears` names gates that must owe nothing there);
+  - `create_fields` and `validate_create` on create fixtures and hostile fields.
+
+  Every pure hook is asked twice, and different answers fail MIN-11. A timeout
+  fails MIN-10, an escape MIN-12, a stack-trace refusal MIN-17, and a bad answer
+  fails its capability's own requirement as well as MIN-08 or MIN-09.
+- Requirements core holds for every plugin (MIN-14, EXT-REV-1/2/3) are reported
+  as held by core, citing their tests. EXT-CYC-1 fails for any open cycling
+  mode until core has a cycle model.
+- MIN-16: each gate must be named by a test in `tests/`, and the plugin's tests
+  must pass under pytest (`client.run_tests`: only the API and the plugin on the
+  path, an empty environment). On an install, they run in subprocess mode. In
+  host and docker mode they wait for the GitHub build sandbox (step 7), so a
+  local install there stays `pending`.
+- Install now decides everything:
+  - MIN-03 for a local install: it builds nothing, so a plugin declaring
+    dependencies fails and is told to install from GitHub.
+  - MIN-07: each role goes through the library's own `create_role` rules in a
+    nested transaction, the lead must be a lead, and crews must be crews led by
+    it. A version that passes adds its roles to the library (existing ones are
+    left alone); a failed one adds nothing.
+  - A version is `ready` only when every applicable requirement passes, and
+    `ready` is offered on any box, with no development flag.
+- The suite caught two real gaps in the example plugin. It patched `kind_state`
+  without declaring `state` (so it had no `migrate_state`), and no test attacked
+  its review gate. The fuzz corpus also made its gates catch `RecursionError`.
+  All three are fixed, and the example's roles and crew are now real library
+  entries.
+- Attacks: `tests/selftest_invariants/test_plugin_conformance.py` (18 tests,
+  each breaking the example one way and expecting that requirement to fail), and
+  `test_plugin_registry.py`, where a suite failure or a bad role fails the
+  install and a ready version adds its roles.
+- Not built: the in-app SDK harness (`plugin_client`, a real yaaf for authors'
+  HTTP tests, §7). Authors' tests run against the API and their plugin. The
+  `yaaf plugin new` scaffold is also not built.

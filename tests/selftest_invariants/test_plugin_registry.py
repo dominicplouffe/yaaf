@@ -67,16 +67,21 @@ def test_an_install_starts_the_code_and_records_what_only_core_can_decide(client
     r = install(client, checkout(box))
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["status"] == "pending" and body["created"] is True
-    for rid in ("MIN-01", "MIN-02", "MIN-04", "MIN-05", "MIN-06"):
+    # Every applicable requirement decided and met, by the static checks, the
+    # registry, the conformance suite through a sandboxed host, and the
+    # plugin's own tests: the only way a version becomes ready.
+    assert body["status"] == "ready" and body["created"] is True, [
+        (r["id"], r["status"], r["why"]) for r in body["report"]["results"]
+        if r["status"] not in ("pass", "n/a")]
+    for rid in ("MIN-01", "MIN-02", "MIN-03", "MIN-04", "MIN-05", "MIN-06", "MIN-07",
+                "MIN-08", "MIN-09", "MIN-11", "MIN-13", "MIN-16", "EXT-REV-2"):
         assert result(body, rid)["status"] == "pass", result(body, rid)
-    assert result(body, "MIN-08")["status"] == "pending"  # the suite (step 6) decides
     installed = Path(settings().plugins_root) / "grant-factory" / body["version"]
     assert (installed / "yaaf-plugin.toml").is_file()
     with db_session() as s:
         audit = s.execute(select(AuditLog).where(AuditLog.action == "plugin.install")
                           ).scalars().one()
-        assert audit.actor.startswith("user:") and audit.detail["status"] == "pending"
+        assert audit.actor.startswith("user:") and audit.detail["status"] == "ready"
 
 
 def test_the_same_files_are_one_version_and_a_changed_file_is_another(client, box):
@@ -89,9 +94,22 @@ def test_the_same_files_are_one_version_and_a_changed_file_is_another(client, bo
     assert changed["created"] is True and changed["version"] != first["version"]
 
 
+from yaaf.plugins.registry import conformance_results as _real_suite  # noqa: E402
+
+
+def _pending(spec):
+    """The suite with the plugin's own tests unrun, as on a docker-mode box."""
+    out = _real_suite(spec)
+    out["MIN-16"] = ("pending", ["the plugin's own tests have not been run here"])
+    return out
+
+
 def test_a_pending_version_is_offered_only_on_a_box_that_allows_unverified(client, box,
                                                                            monkeypatch):
-    install(client, checkout(box))
+    from yaaf.plugins import registry
+
+    monkeypatch.setattr(registry, "conformance_results", _pending)
+    assert install(client, checkout(box)).json()["status"] == "pending"
     kinds = client.get("/admin/kinds", headers=ADMIN).json()["kinds"]
     assert all(k["built_in"] for k in kinds)
     monkeypatch.setattr(settings(), "allow_unverified_plugins", True)
@@ -173,3 +191,44 @@ def test_a_version_a_project_runs_on_cannot_be_removed_from_under_it(client, box
         assert s.get(Plugin, "grant-factory") is None
         assert s.execute(select(PluginVersion)).scalars().first() is None
     assert not (Path(settings().plugins_root) / "grant-factory" / body["version"]).exists()
+
+
+def test_a_version_the_conformance_suite_fails_is_recorded_failed_and_never_offered(
+        client, box, monkeypatch):
+    """The example's gate, changed to accept anything: its refuse fixture is now
+    accepted (MIN-13) and so is every fuzz case (EXT-ART-1)."""
+    path = checkout(box)
+    init = path / "src" / "grant_factory" / "__init__.py"
+    init.write_text(init.read_text().replace(
+        "    def check_application(self, ctx, upload):\n",
+        "    def check_application(self, ctx, upload):\n        return Accept()\n"))
+    monkeypatch.setattr(settings(), "allow_unverified_plugins", True)
+    body = install(client, path).json()
+    assert body["status"] == "failed" and body["selectable"] is False
+    assert "refuse case no-budget.json was accepted" in " ".join(result(body, "MIN-13")["why"])
+    assert result(body, "EXT-ART-1")["status"] == "fail"
+    assert not [k for k in client.get("/admin/kinds", headers=ADMIN).json()["kinds"]
+                if not k["built_in"]]
+
+
+def test_a_role_that_breaks_the_librarys_rules_fails_min_07_and_joins_nothing(client, box):
+    from yaaf.core.models import Role
+
+    path = checkout(box)
+    role = path / "roles" / "grant-writer.json"
+    role.write_text(role.read_text().replace('"category": "build"', '"category": "vibes"'))
+    body = install(client, path).json()
+    assert body["status"] == "failed" and "category must be one of" in " ".join(
+        result(body, "MIN-07")["why"])
+    with db_session() as s:
+        assert s.execute(select(Role).where(Role.slug.in_(["grant-lead", "grant-writer"]))
+                         ).scalars().first() is None
+
+
+def test_a_ready_version_adds_its_roles_to_the_library(client, box):
+    from yaaf.core.models import Role
+
+    assert install(client, checkout(box)).json()["status"] == "ready"
+    with db_session() as s:
+        slugs = set(s.execute(select(Role.slug)).scalars())
+        assert {"grant-lead", "grant-writer"} <= slugs

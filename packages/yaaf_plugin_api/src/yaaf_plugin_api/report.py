@@ -50,7 +50,7 @@ class Report:
     plugin: str | None
     version: str | None
     api: str
-    status: Literal["failed", "pending"]
+    status: Literal["failed", "pending", "ready"]
     results: list[Result]
 
     def failures(self) -> list[Result]:
@@ -115,3 +115,41 @@ def check(root: str | Path, *, load_module: bool = True) -> Report:
     return Report(manifest.id if manifest else None, manifest.version if manifest else None,
                   API_VERSION, "failed" if any(r.status == "fail" for r in results)
                   else "pending", results)
+
+
+def merge(report: Report, decided: dict[str, tuple[str, list[str]]]) -> Report:
+    """A report with the suite's verdicts laid over it. A requirement already
+    failed by the static checks stays failed."""
+    for r in report.results:
+        if r.id in decided and r.status != "fail" and r.status != "n/a":
+            r.status, r.why = decided[r.id][0], list(decided[r.id][1])
+    statuses = {r.status for r in report.results}
+    report.status = "failed" if "fail" in statuses else (
+        "pending" if "pending" in statuses else "ready")
+    return report
+
+
+def full_check(root: str | Path) -> Report:
+    """The static report, then the conformance suite through a local host and
+    the plugin's own tests: what an author runs before pushing. Requirements
+    only the install can decide (the hashed build, core's role and crew
+    checks, uniqueness on that box) stay pending."""
+    from yaaf_plugin_api import client, conformance
+    from yaaf_plugin_api.manifest import load_path
+
+    root = Path(root)
+    report = check(root)
+    if report.status == "failed":
+        return report
+    manifest = load_path(root)
+    host = client.LocalHost(root, manifest)
+    try:
+        host.start()
+        decided = conformance.run(root, manifest, host,
+                                  run_tests=lambda: client.run_tests(root))
+        decided.setdefault("MIN-04", ("pass", ["started in a local host"]))
+    except conformance.Failure as exc:
+        decided = {"MIN-04": ("fail", [f"the plugin did not start in a host: {exc.message}"])}
+    finally:
+        host.stop()
+    return merge(report, decided)

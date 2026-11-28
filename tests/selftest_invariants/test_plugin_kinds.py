@@ -109,7 +109,8 @@ def test_a_kind_that_is_not_offered_or_not_a_plugins_is_refused(client, box, mon
                        ({"kind_mode": "draft"}, "belong to a plugin kind")):
         r = client.post("/admin/projects", json={**base, **extra}, headers=ADMIN)
         assert r.status_code == 422 and why in r.text, (extra, r.text)
-    monkeypatch.setattr(settings(), "allow_unverified_plugins", False)
+    url = f"/admin/plugins/grant-factory/versions/{box['version']}/disable"
+    assert client.post(url, headers=ADMIN).status_code == 200
     r = client.post("/admin/projects", json={**base, "kind": KIND, "kind_fields": {
         "funder": "F"}, "ceo_role_slug": "grant-lead"}, headers=ADMIN)
     assert r.status_code == 422 and "not offered on this box" in r.text

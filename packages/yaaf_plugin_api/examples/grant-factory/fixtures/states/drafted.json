@@ -1,0 +1,3 @@
+{"kind_state": {"asked": 1200, "create": {"funder": "Example Foundation"}},
+ "artifacts": [{"name": "application.json", "version": 1}, {"name": "calls.json", "version": 1, "by_platform": true}],
+ "capabilities": ["calls"], "clears": ["plan_gate", "completion_gate"]}

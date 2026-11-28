@@ -64,7 +64,7 @@ class GrantFactory(FactoryPlugin):
     def check_application(self, ctx, upload):
         try:
             doc = json.loads(upload.data)
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             return Refuse(["application.json is not valid JSON"])
         if not isinstance(doc, dict):
             return Refuse(["application.json must be one JSON object"])
@@ -90,7 +90,7 @@ class GrantFactory(FactoryPlugin):
     def check_review(self, ctx, review, subject):
         try:
             doc = json.loads(review.data)
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             return Refuse(["application-review.json is not valid JSON"])
         if not isinstance(doc, dict) or doc.get("verdict") not in ("pass", "return"):
             return Refuse(['verdict is "pass" or "return"'])
@@ -127,6 +127,11 @@ class GrantFactory(FactoryPlugin):
         if "calls" in ctx.coverage.capabilities:
             return StepState(True, "The funder's calls are connected.")
         return StepState(False, "Connect the data source that holds the funder's calls.")
+
+    @hook.migrate_state
+    def migrate_state(self, old_state, from_version):
+        # Every version so far keeps the same state: {"asked", "create"}.
+        return dict(old_state)
 
     @hook.view
     def view(self, ctx):
