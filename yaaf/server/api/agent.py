@@ -595,9 +595,9 @@ class EnvironmentSet(BaseModel):
 @router.post("/environments")
 def environment_set(body: EnvironmentSet, ctx: RunContext = Depends(run_auth),
                     session: Session = Depends(db)) -> dict:
-    """Code Factory: write where the software runs. A production or staging
-    command written here runs only after the chairman approves a release that
-    shows it to him; the platform refuses it before then."""
+    """Code Factory: write where the software runs. Under "approve_first" a
+    production or staging command written here runs only after the chairman
+    approves a release that shows it to him; under "autonomous", as written."""
     from yaaf.server import releases
 
     return releases.set_environment(session, ctx.project, ctx.agent, body.name,

@@ -521,8 +521,9 @@ def test_a_deploy_secret_split_by_the_output_cut_does_not_leak():
 # for two hours the CEO dictated install-then-deploy lines for the chairman to
 # type into Settings, then asked him to paste back what he had saved, because
 # it could neither write the field nor read it. The values are the team's to
-# write. What stays his is the yes before a command a seat wrote runs with
-# production's keys, said on the release that runs it.
+# write. Under "approve_first" what stays his is the yes before a command a
+# seat wrote runs with production's keys, said on the release that runs it;
+# under "autonomous" nothing does.
 
 FLY = "curl -fsSL https://fly.io/install.sh | sh && $HOME/.fly/bin/flyctl deploy --yes"
 
@@ -547,25 +548,44 @@ def test_a_seat_writes_production_and_reads_it_back(client, gh):
         "environments"]["production"]["deploy"] == FLY, "any seat reads what is saved"
 
 
-def test_a_seat_written_command_waits_for_his_yes_even_when_autonomous(client, gh, health):
+def test_autonomous_runs_a_seat_written_command_without_asking(client, gh, health):
+    """He handed shipping over whole: a command the team wrote is part of it."""
     project = _factory(client, release_authority="autonomous")
     _shipped_change(client, project, gh)
     assert _env_set(client, project).status_code == 200
     body = _propose(client, project, "0.1.0").json()
-    assert body["status"] == ReleaseStatus.PROPOSED, "the dial delegated shipping, not this"
-    assert _deploys(project) == []
+    assert body["status"] == ReleaseStatus.APPROVED and body["approval_id"] is None
+    (queued,) = _deploys(project)
+    with db_session() as session:
+        approvals = session.query(Approval).filter_by(project_id=project["id"]).all()
+        assert not [a for a in approvals if a.status == ApprovalStatus.PENDING]
+
+
+def test_approve_first_shows_him_a_seat_written_command_before_it_runs(client, gh, health):
+    project = _factory(client)
+    _with_prod(client, project)
+    _shipped_change(client, project, gh)
+    _live(client, project, gh, health, "0.1.0")
+
+    # A minor release would ship on its own now; a command the team rewrote
+    # since does not run until he has seen it.
+    assert _env_set(client, project).status_code == 200
+    _shipped_change(client, project, gh)
+    body = _propose(client, project, "0.1.1").json()
+    assert body["status"] == ReleaseStatus.PROPOSED
     with db_session() as session:
         assert FLY in session.get(Approval, body["approval_id"]).body, "he is shown it"
+    deploys_before = len(_deploys(project))
     assert client.post(f"/admin/approvals/{body['approval_id']}/decide", headers=ADMIN,
                        json={"approve": True}).status_code == 200
-    assert len(_deploys(project)) == 1
+    assert len(_deploys(project)) == deploys_before + 1
     _deployed(body["id"], minutes_ago=60)
     _tick(project)
     assert _release(body["id"]).status == ReleaseStatus.LIVE
 
-    # Vouched once, it is his: the dial ships the next one without asking.
+    # Vouched once, it is his: the next minor ships without asking.
     _shipped_change(client, project, gh)
-    assert _propose(client, project, "0.1.1").json()["status"] == ReleaseStatus.APPROVED
+    assert _propose(client, project, "0.1.2").json()["status"] == ReleaseStatus.APPROVED
 
 
 def test_no_seat_changes_the_command_under_a_release_in_flight(client, gh):
@@ -585,7 +605,7 @@ def test_the_runner_refuses_a_seat_written_command_nobody_approved(client, gh):
     from yaaf.core.constitution import effective
     from yaaf.core.models import RunStatus
 
-    project = _factory(client, release_authority="autonomous")
+    project = _factory(client)
     _shipped_change(client, project, gh)
     _with_prod(client, project)
     release = _propose(client, project, "0.1.0").json()
@@ -611,8 +631,10 @@ def test_a_preview_command_a_seat_writes_needs_nobody(client, gh):
     assert _env_set(client, project, name="preview", deploy="fly deploy -a snip-pr-$YAAF_CHANGE_NUMBER",
                     health="https://snip-pr-{number}.fly.dev/health").status_code == 200
     with db_session() as session:
+        from yaaf.core.constitution import effective
+
         env = releases.environment(session.get(Project, project["id"]), "preview")
-        assert releases.unvouched(env, "preview") is None, "preview never holds deploy keys"
+        assert releases.unvouched(env, "preview", effective(session, project["id"])) is None, "preview never holds deploy keys"
 
 
 def test_the_chairmans_save_vouches_for_what_a_seat_wrote(client, gh):
@@ -620,5 +642,7 @@ def test_the_chairmans_save_vouches_for_what_a_seat_wrote(client, gh):
     assert _env_set(client, project).status_code == 200
     _with_prod(client, project)
     with db_session() as session:
+        from yaaf.core.constitution import effective
+
         env = releases.environment(session.get(Project, project["id"]))
-        assert releases.unvouched(env, "production") is None
+        assert releases.unvouched(env, "production", effective(session, project["id"])) is None

@@ -582,8 +582,8 @@ async def t_release_propose(args):
     "commit, in a fresh checkout on a machine with nothing preinstalled, with the "
     "secrets granted to \"deploy\" (preview: \"preview\") as env vars; `health_url` is what "
     "the canary guard reads. Never put a key in the command: keys are secrets. A "
-    "production or staging command you write runs only after the chairman approves a "
-    "release, whose approval shows it to him. Say why in `reason`. releases_list shows "
+    "production or staging command you write runs on the next deploy when releases are "
+    "autonomous; otherwise once the chairman approves a release that shows it. Say why in `reason`. releases_list shows "
     "what is saved now.",
     {"name": str, "deploy": str, "health_url": str, "reason": str},
 )
