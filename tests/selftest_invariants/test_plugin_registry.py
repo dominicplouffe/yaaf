@@ -257,3 +257,32 @@ def test_installing_a_failed_commit_again_tries_it_again(client, box, monkeypatc
     assert again["version"] == first["version"]
     [plugin] = client.get("/admin/plugins", headers=ADMIN).json()["plugins"]
     assert len(plugin["versions"]) == 1
+
+
+def test_a_ready_version_adds_its_crew_so_new_project_can_offer_it(client, box):
+    """The plugin's crew is the team its playbook was written for. Validated but
+    never saved, New Project could not offer it and the chairman rebuilt it by
+    hand from the plugin's README."""
+    assert install(client, checkout(box)).json()["status"] == "ready"
+    crews = {c["slug"]: c for c in client.get("/admin/crews", headers=ADMIN).json()}
+    crew = crews["grant-writers"]
+    assert crew["ceo_role_slug"] == "grant-lead" and crew["source"] == "plugin:grant-factory"
+    assert crew["missing_role_slugs"] == []
+
+
+def test_a_crew_already_in_the_library_is_left_as_a_person_made_it(client, box):
+    mine = {"slug": "grant-writers", "name": "Our own writers", "outcome": "Ours.",
+            "ceo_role_slug": "ceo", "teams": []}
+    assert client.post("/admin/crews", json=mine, headers=ADMIN).status_code == 200
+    assert install(client, checkout(box)).json()["status"] == "ready"
+    crews = {c["slug"]: c for c in client.get("/admin/crews", headers=ADMIN).json()}
+    assert crews["grant-writers"]["name"] == "Our own writers"
+
+
+def test_a_failed_version_adds_no_crew(client, box):
+    path = checkout(box)
+    role = path / "roles" / "grant-writer.json"
+    role.write_text(role.read_text().replace('"category": "build"', '"category": "vibes"'))
+    assert install(client, path).json()["status"] == "failed"
+    slugs = {c["slug"] for c in client.get("/admin/crews", headers=ADMIN).json()}
+    assert "grant-writers" not in slugs

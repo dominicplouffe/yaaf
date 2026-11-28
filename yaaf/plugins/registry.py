@@ -440,14 +440,15 @@ def _local_dependencies(root: Path) -> list[str]:
 def _roles_and_crews(session: Session, root: Path, manifest) -> list[str]:
     """MIN-07: each role passes the library's own rules (the route a person adds
     a role through), and joins the library when absent. A role already in the
-    library is left as it is. Its lead is a lead, and its crews are crews."""
+    library is left as it is. Its lead is a lead, and its crews are crews, led by
+    that lead; each joins the crew library when absent, as the roles do."""
     import json
 
     from fastapi import HTTPException
     from pydantic import ValidationError
 
-    from yaaf.core.models import Role
-    from yaaf.server.api.admin import CrewIn, RoleIn, create_role
+    from yaaf.core.models import Crew, Role
+    from yaaf.server.api.admin import CrewIn, RoleIn, create_crew, create_role
 
     out: list[str] = []
     for path in sorted((root / "roles").glob("*.json")) if (root / "roles").is_dir() else []:
@@ -477,6 +478,16 @@ def _roles_and_crews(session: Session, root: Path, manifest) -> list[str]:
         if manifest.lead and body.ceo_role_slug != manifest.lead:
             out.append(f"crew {crew} is led by {body.ceo_role_slug}, not the kind's lead "
                        f"{manifest.lead}")
+            continue
+        # It joins the crew library as its roles join the role library, so New
+        # Project can offer the team the plugin's playbook was written for. A
+        # crew already there (the same slug) is left as a person may have edited it.
+        if session.execute(select(Crew).where(Crew.slug == body.slug)).scalars().first():
+            continue
+        try:
+            create_crew(body.model_copy(update={"source": f"plugin:{manifest.id}"}), session)
+        except HTTPException as exc:
+            out.append(f"crews/{crew}.json: {exc.detail}")
     if manifest.lead and not (root / "roles" / f"{manifest.lead}.json").is_file() and \
             not session.execute(select(Role).where(Role.slug == manifest.lead)).scalars().first():
         out.append(f"kind.lead {manifest.lead} is neither in roles/ nor in the library")

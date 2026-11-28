@@ -228,3 +228,17 @@ def test_yaaf_plugins_move_lists_then_moves_through_the_route(client, box, monke
     out = runner.invoke(cli.app, ["plugins", "move", "garden", new["version"]])
     assert out.exit_code == 0 and '"to_release": "0.2.0"' in out.output, out.output
     assert pinned(box)[0] == new["id"]
+
+
+def test_the_daily_brief_says_the_project_moved_plugin_version(client, box):
+    """The move is the chairman's, but a co-chair learns from the brief why a
+    file the plugin accepted yesterday is refused today."""
+    import json
+
+    new = fixed(client, box)
+    assert move(client, box, new["version"]).status_code == 200
+    brief = client.get(f"/observe/projects/{box['project']['id']}/briefing?hours=1",
+                       headers=ADMIN).json()
+    text = json.dumps(brief)
+    assert '"plugin_moved"' in text
+    assert "moved from plugin version 0.1.0 to 0.2.0" in text

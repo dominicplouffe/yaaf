@@ -639,6 +639,7 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         problems = stamp_tempo(project, args.get("tempo")) + stamp_quality(project)
         bundle = as_bundle(project)
         problems += (validate(bundle) + billing_problems(bundle["project"], session)
+                     + kind_problems(bundle["project"], session)
                      + doctrine_problems(bundle.get("project") or {}, session))
         if quick:
             from yaaf.founder import quick as quick_founding
@@ -862,8 +863,11 @@ def as_bundle(project: dict) -> dict:
             "teams": [],
             # A Code Factory has one lead (shape.FACTORY_LEAD_ROLE), and a draft
             # that named none was otherwise refused at Create for naming "ceo".
-            "ceo_role_slug": (shape.FACTORY_LEAD_ROLE if project.get("mode") == "code_factory"
-                              else "ceo"),
+            # A plugin kind's lead is its plugin's: left out, the endpoint fills
+            # it in, where a defaulted "ceo" was refused at Create.
+            **({} if project.get("kind") else {
+                "ceo_role_slug": (shape.FACTORY_LEAD_ROLE
+                                  if project.get("mode") == "code_factory" else "ceo")}),
             "ceo_name": "CEO",
             **project,
         },
@@ -908,6 +912,28 @@ def validate(bundle: dict) -> list[str]:
     except HTTPException as exc:
         return [f"ceo_role_slug: {exc.detail}"]
     return date_problems(project) + constitution_problems(project.get("constitution") or {})
+
+
+def kind_problems(project: dict, session: Session) -> list[str]:
+    """A plugin kind's own rules at Create, asked of the draft now: offered on
+    this box, an open mode, its fixed lead, and fields its plugin accepts. A
+    draft that passed every other check and failed these at Create sent a quick
+    founding to `failed` with nothing left to fix it."""
+    if not project.get("kind"):
+        return []
+    from fastapi import HTTPException
+    from pydantic import ValidationError
+
+    from yaaf.server.api.admin import ProjectCreate, _plugin_kind_at_create
+
+    probe = {**project, "chairman_email": project.get("chairman_email") or "chairman@example.com"}
+    try:
+        _plugin_kind_at_create(session, ProjectCreate.model_validate(probe))
+    except ValidationError:
+        return []  # validate() already names these
+    except HTTPException as exc:
+        return [f"kind: {exc.detail}"]
+    return []
 
 
 def billing_problems(project: dict, session: Session) -> list[str]:
