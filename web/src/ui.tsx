@@ -1087,7 +1087,7 @@ export function ExportCsv({ onClick, label }: { onClick: () => void; label?: str
     cancel, so the safe exit is the reflexive one. */
 export function ConfirmModal({
   title, confirmLabel, cancelLabel = "Cancel", danger, busy, onConfirm, onCancel, onDismiss,
-  children,
+  confirmDisabled, children,
 }: {
   title: string;
   confirmLabel: string;
@@ -1101,6 +1101,8 @@ export function ConfirmModal({
   /** Escape and the backdrop, when closing the dialog is not the same as
       answering it with the cancel button. Defaults to onCancel. */
   onDismiss?: () => void;
+  /** The confirm button waits for something in the dialog: an email typed out. */
+  confirmDisabled?: boolean;
   children: React.ReactNode;
 }) {
   const dismiss = onDismiss ?? onCancel;
@@ -1130,7 +1132,7 @@ export function ConfirmModal({
         <h3>{title}</h3>
         <div className="modal-body">{children}</div>
         <div className="actions" style={{ marginBottom: 0 }}>
-          <button className={danger ? "danger" : "primary"} disabled={busy} onClick={onConfirm}>
+          <button className={danger ? "danger" : "primary"} disabled={busy || confirmDisabled} onClick={onConfirm}>
             {busy ? "Saving…" : confirmLabel}
           </button>
           <button className="small" disabled={busy} onClick={onCancel}>

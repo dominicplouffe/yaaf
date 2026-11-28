@@ -94,8 +94,10 @@ export function FallbackPicker({ value, onChange, billingProvider, billingMode, 
 }
 
 /** The fallback credential picker, under the project's billing credential. */
-export function FallbackCard({ projectId, dash, disabled, onChanged }: {
+export function FallbackCard({ projectId, dash, disabled, onChanged, bare }: {
   projectId: string; dash: Dashboard; disabled?: boolean; onChanged: () => void;
+  /** Inside a drawer that already says what this is: no heading of its own. */
+  bare?: boolean;
 }) {
   const registry = useProviders();
   const [view, setView] = useState<FallbackView | null>(dash.fallback ?? null);
@@ -137,8 +139,10 @@ export function FallbackCard({ projectId, dash, disabled, onChanged }: {
 
   const breaker = breakerSentence(view?.breaker ?? null);
   return <div className="fallback" aria-label="Fallback credential">
+    {!bare && <>
     <h3>Fallback credential <span className="help">optional</span></h3>
     <p className="help">If {billingLabel} keeps failing, class seats move here until it recovers.</p>
+    </>}
     <Why>Seats pinned to a model wait instead. It must be another provider&apos;s credential,
       metered the same way as the billing one, with a model for every class this
       project&apos;s seats name.</Why>

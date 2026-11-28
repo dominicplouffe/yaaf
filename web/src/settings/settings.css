@@ -357,3 +357,47 @@ button.quiet-danger:hover:not(:disabled) { background: rgba(var(--critical-rgb),
   .sp-chart { grid-template-rows: 160px auto; }
   .sp-pick-menu { min-width: 200px; }
 }
+
+/* ── unsaved edits: one bar, risen from the bottom only while there are some ── */
+.set-pending { position: fixed; z-index: 30; left: 50%; transform: translateX(-50%);
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px)); width: min(780px, calc(100% - 32px));
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 12px 14px 12px 18px;
+  background: var(--ink); color: var(--page); border-radius: var(--radius-lg); box-shadow: var(--e3);
+  animation: set-rise 0.2s var(--ease); }
+@keyframes set-rise { from { transform: translate(-50%, 24px); opacity: 0; } }
+.set-pending-text { flex: 1 1 240px; min-width: 0; font-size: var(--t-small); display: flex; flex-direction: column; }
+.set-pending-text b { font-size: 14px; }
+.set-pending-text span { opacity: 0.75; }
+.set-pending-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.set-pending-why { font-size: var(--t-micro); opacity: 0.75; }
+.set-pending button { background: transparent; color: var(--page); border-color: rgba(var(--on-accent-rgb), 0.3); }
+.set-pending button:hover:not(:disabled) { background: rgba(127, 127, 127, 0.18); }
+.set-pending button.go { background: var(--page); color: var(--ink); border-color: var(--page); font-weight: 600; }
+.set-pending button.go:hover:not(:disabled) { background: var(--page); opacity: 0.9; }
+.set-pending-chips { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; font-size: var(--t-micro); }
+.set-pending-chips span { background: rgba(127, 127, 127, 0.2); border-radius: 4px; padding: 1px 7px; font-variant-numeric: tabular-nums; }
+.set-pending-more { flex-basis: 100%; }
+.set-pending-more input { background: rgba(127, 127, 127, 0.14); border-color: rgba(127, 127, 127, 0.45); color: var(--page); }
+.set-pending-more input::placeholder { color: var(--page); opacity: 0.55; }
+/* A page with a pending bar keeps its last row clear of it. */
+.set-main:has(.set-pending), .pset-main:has(.set-pending) { padding-bottom: 150px; }
+
+/* ── what cannot be taken back ── */
+.set-group.set-danger-zone { margin-top: var(--s7); }
+.set-danger-h { color: var(--critical); }
+.set-card.set-danger { border-color: rgba(var(--critical-rgb), 0.45); }
+.set-card.set-danger .set-row + .set-row { border-top-color: rgba(var(--critical-rgb), 0.2); }
+
+/* ── a number in its unit ── */
+.unit-in { display: inline-flex; align-items: stretch; width: 160px; max-width: 100%; border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); background: var(--surface); overflow: hidden; }
+.unit-in.wide { width: 220px; }
+.unit-in:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.25); }
+.unit-in input { border: 0; box-shadow: none; min-width: 0; width: 100%; text-align: right; font-variant-numeric: tabular-nums;
+  background: transparent; min-height: 32px; padding: 4px 8px; }
+.unit-in input:focus { outline: none; box-shadow: none; }
+.unit-in .u { display: flex; align-items: center; padding: 0 9px; color: var(--muted); font-size: var(--t-small);
+  background: var(--surface-2); white-space: nowrap; }
+.unit-in .u:first-child { border-right: 1px solid var(--border); }
+.unit-in .u:last-child { border-left: 1px solid var(--border); }
+@media (prefers-reduced-motion: reduce) { .set-pending { animation: none; } }

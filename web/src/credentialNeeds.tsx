@@ -2,6 +2,7 @@ import { ChangeEvent, Fragment, ReactNode, useEffect, useState } from "react";
 import { CredentialField, CredentialNeedView, CredentialResult, get, post, put } from "./api";
 import { fmtAgo } from "./ui";
 import "./credentialNeeds.css";
+import { SectionHead } from "./settings/kit";
 
 /** Access the chairman promised a project: one card per service, from the
     promise to the proof (yaaf/server/credential_needs.py).
@@ -260,13 +261,16 @@ export function CredentialsSection({ projectId, canSteer, focus, onSaved }: {
   if (!needs) return <p className="help">Loading…</p>;
   return (
     <>
-      <h2>Credentials</h2>
-      <p className="help" style={{ marginTop: 0 }}>
-        What your agents sign in with. Each one is tested when you save it, and agents report when one is refused.
-        Other keys and values live in Secrets &amp; variables.
-      </p>
+      <SectionHead title="Credentials"
+        lede="Access you promised the project when you made it. Each one is tested when you save it, and agents say when one is refused. Every other key lives in Secrets & variables.">
+        {needs.length > 0 && <>
+          {needs.filter((n) => n.status === "ok").length > 0 && <span className="badge good">{needs.filter((n) => n.status === "ok").length} working</span>}
+          {needs.filter((n) => n.status !== "ok" && n.status !== "waived").length > 0 && <span className="badge warn">{needs.filter((n) => n.status !== "ok" && n.status !== "waived").length} to add or fix</span>}
+        </>}
+      </SectionHead>
       {needs.length === 0 ? (
-        <p className="help">No credentials were promised for this project. Add keys in Secrets &amp; variables.</p>
+        <div className="set-card pad help">No credentials were promised for this project. An agent that needs one asks for it, and
+          its request shows under <a href={`#/projects/${projectId}/settings?s=secrets`}>Secrets &amp; variables</a>.</div>
       ) : (
         <div className="cn-list">
           {needs.map((need) => (
